@@ -1,0 +1,23 @@
+[model]
+provider = "anthropic"
+name = "claude-sonnet-4-20250514"
+temperature = 0.7
+max_tokens = 8192
+
+[agent]
+max_iterations = 50
+parallel_tool_calls = true
+timeout_seconds = 300
+
+[graph]
+database_path = "~/.graphirm/graph.db"
+max_connections = 4
+
+[tui]
+theme = "dark"
+show_graph_panel = false
+word_wrap = true
+
+[server]
+host = "127.0.0.1"
+port = 3000

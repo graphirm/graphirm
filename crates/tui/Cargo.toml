@@ -1,0 +1,15 @@
+[package]
+name = "graphirm-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Terminal UI for Graphirm"
+
+[dependencies]
+graphirm-agent = { path = "../agent" }
+ratatui = "0.29"
+crossterm = "0.28"
+tokio = { version = "1", features = ["sync", "macros"] }
+serde = { version = "1", features = ["derive"] }

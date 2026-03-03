@@ -1,0 +1,22 @@
+[package]
+name = "graphirm-graph"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Graph persistence layer for Graphirm"
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+petgraph = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
