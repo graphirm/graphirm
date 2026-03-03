@@ -1,5 +1,6 @@
 mod error;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
@@ -38,22 +39,42 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<(), GraphirmError> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Chat { session: _, model } => {
+            // TUI runs in raw/alternate-screen mode — logs must go to a file
+            // so they don't corrupt the rendered UI.
+            let _guard = init_file_logging();
+            run_chat(model).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Initialise a rolling daily log file at `~/.local/share/graphirm/graphirm.log`.
+/// Returns the non-blocking guard — **keep it alive** for the program's lifetime
+/// or buffered log lines will be dropped on exit.
+fn init_file_logging() -> tracing_appender::non_blocking::WorkerGuard {
+    let log_dir = dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("graphirm");
+
+    std::fs::create_dir_all(&log_dir).unwrap_or_default();
+
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "graphirm.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+
     tracing_subscriber::fmt()
+        .with_writer(non_blocking)
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive(tracing::Level::INFO.into()),
         )
         .init();
 
-    let cli = Cli::parse();
-
-    match cli.command {
-        Commands::Chat { session: _, model } => {
-            run_chat(model).await?;
-        }
-    }
-
-    Ok(())
+    guard
 }
 
 fn build_tool_registry() -> ToolRegistry {
