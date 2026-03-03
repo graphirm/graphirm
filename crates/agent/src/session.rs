@@ -3,9 +3,9 @@
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
+use graphirm_graph::GraphStore;
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, NodeId, NodeType};
-use graphirm_graph::GraphStore;
 
 use crate::config::AgentConfig;
 use crate::error::AgentError;

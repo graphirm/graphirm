@@ -1,7 +1,10 @@
 mod error;
 
+use std::sync::Arc;
+
 use clap::{Parser, Subcommand};
 use error::GraphirmError;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
 #[command(name = "graphirm")]
@@ -20,8 +23,8 @@ enum Commands {
         session: Option<String>,
 
         /// Model to use (e.g., "claude-sonnet-4-20250514")
-        #[arg(short, long)]
-        model: Option<String>,
+        #[arg(short, long, default_value = "claude-sonnet-4-20250514")]
+        model: String,
     },
 }
 
@@ -37,15 +40,46 @@ async fn main() -> Result<(), GraphirmError> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Chat { session, model } => {
-            tracing::info!(
-                session = session.as_deref().unwrap_or("new"),
-                model = model.as_deref().unwrap_or("default"),
-                "Starting chat session"
-            );
-            println!("graphirm chat — not yet implemented");
+        Commands::Chat { session: _, model } => {
+            run_chat(model).await?;
         }
     }
+
+    Ok(())
+}
+
+async fn run_chat(model: String) -> Result<(), GraphirmError> {
+    let graph = Arc::new(graphirm_graph::GraphStore::open_memory()?);
+
+    let config = graphirm_agent::AgentConfig {
+        model: model.clone(),
+        ..graphirm_agent::AgentConfig::default()
+    };
+    let session = Arc::new(graphirm_agent::Session::new(graph.clone(), config)?);
+
+    let mut event_bus = graphirm_agent::EventBus::new();
+    let event_rx = event_bus.subscribe();
+
+    let cancel = CancellationToken::new();
+
+    let app = graphirm_tui::app::App::new(event_rx, model);
+
+    let session_for_submit = session.clone();
+
+    // `App::run` is a blocking crossterm loop. Run it on the blocking thread
+    // pool so it doesn't starve other tokio tasks (e.g. the agent loop).
+    tokio::task::spawn_blocking(move || {
+        app.run(move |msg| {
+            if let Err(e) = session_for_submit.add_user_message(&msg) {
+                tracing::error!("Failed to add user message: {}", e);
+            }
+            tracing::info!(message = %msg, "User submitted message");
+        })
+    })
+    .await
+    .map_err(|e| std::io::Error::other(format!("TUI thread panicked: {e}")))??;
+
+    cancel.cancel();
 
     Ok(())
 }

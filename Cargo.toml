@@ -38,6 +38,7 @@ graphirm-tui = { path = "crates/tui" }
 graphirm-server = { path = "crates/server" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

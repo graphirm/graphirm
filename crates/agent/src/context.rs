@@ -1,8 +1,8 @@
 // Context engine: graph traversal for relevant context, relevance scoring
 
+use graphirm_graph::Direction;
 use graphirm_graph::edges::EdgeType;
 use graphirm_graph::nodes::NodeType;
-use graphirm_graph::Direction;
 use graphirm_llm::{ContentPart, LlmMessage, Role};
 
 use crate::error::AgentError;
@@ -17,7 +17,9 @@ pub fn build_context(session: &Session) -> Result<Vec<LlmMessage>, AgentError> {
     let mut messages = Vec::new();
 
     // System prompt
-    messages.push(LlmMessage::system(session.agent_config.system_prompt.clone()));
+    messages.push(LlmMessage::system(
+        session.agent_config.system_prompt.clone(),
+    ));
 
     // Get all conversation nodes linked to this agent
     let mut interactions = session
@@ -52,7 +54,7 @@ pub fn build_context(session: &Session) -> Result<Vec<LlmMessage>, AgentError> {
                 return Err(AgentError::Context(format!(
                     "unknown interaction role '{other}' on node {}",
                     node.id
-                )))
+                )));
             }
         };
 
@@ -71,7 +73,10 @@ pub fn build_context(session: &Session) -> Result<Vec<LlmMessage>, AgentError> {
                             .filter_map(|v| {
                                 let id = v.get("id")?.as_str()?.to_string();
                                 let name = v.get("name")?.as_str()?.to_string();
-                                let arguments = v.get("arguments").cloned().unwrap_or(serde_json::Value::Null);
+                                let arguments = v
+                                    .get("arguments")
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Null);
                                 Some((id, name, arguments))
                             })
                             .collect()
@@ -98,7 +103,11 @@ pub fn build_context(session: &Session) -> Result<Vec<LlmMessage>, AgentError> {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let is_error = node.metadata.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+                let is_error = node
+                    .metadata
+                    .get("is_error")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 messages.push(LlmMessage::tool_result(
                     tool_call_id,
                     data.content.clone(),
@@ -118,9 +127,9 @@ pub fn build_context(session: &Session) -> Result<Vec<LlmMessage>, AgentError> {
 mod tests {
     use super::*;
     use crate::config::AgentConfig;
+    use graphirm_graph::GraphStore;
     use graphirm_graph::edges::GraphEdge;
     use graphirm_graph::nodes::{GraphNode, InteractionData};
-    use graphirm_graph::GraphStore;
     use std::sync::Arc;
 
     #[test]
@@ -205,7 +214,11 @@ mod tests {
         }));
         let user_id = graph.add_node(user_node).unwrap();
         graph
-            .add_edge(GraphEdge::new(EdgeType::Produces, session.id.clone(), user_id))
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                session.id.clone(),
+                user_id,
+            ))
             .unwrap();
 
         // Assistant with tool call (stored in metadata)
@@ -222,7 +235,11 @@ mod tests {
         asst_node.metadata = serde_json::Value::Object(asst_metadata);
         let asst_id = graph.add_node(asst_node).unwrap();
         graph
-            .add_edge(GraphEdge::new(EdgeType::Produces, session.id.clone(), asst_id))
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                session.id.clone(),
+                asst_id,
+            ))
             .unwrap();
 
         // Tool result (tool_call_id and is_error in metadata)
@@ -237,7 +254,11 @@ mod tests {
         tool_node.metadata = serde_json::Value::Object(tool_metadata);
         let tool_id = graph.add_node(tool_node).unwrap();
         graph
-            .add_edge(GraphEdge::new(EdgeType::Produces, session.id.clone(), tool_id))
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                session.id.clone(),
+                tool_id,
+            ))
             .unwrap();
 
         let context = build_context(&session).unwrap();
