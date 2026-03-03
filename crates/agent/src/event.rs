@@ -1,7 +1,7 @@
 // Agent events: streaming events for UI consumption
 
 use graphirm_graph::edges::EdgeId;
-use graphirm_graph::nodes::NodeId;
+use graphirm_graph::nodes::{GraphNode, NodeId};
 use graphirm_llm::StreamEvent;
 use tokio::sync::mpsc;
 use tracing;
@@ -44,9 +44,12 @@ pub enum AgentEvent {
         node_id: NodeId,
         is_error: bool,
     },
+    /// Emitted after each agent turn so the TUI can refresh the graph explorer.
+    /// `recent_nodes` is a snapshot of the most recently created nodes (newest first).
     GraphUpdate {
         node_id: NodeId,
         edge_ids: Vec<EdgeId>,
+        recent_nodes: Vec<GraphNode>,
     },
 }
 

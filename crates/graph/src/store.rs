@@ -533,6 +533,26 @@ impl GraphStore {
         Ok((nodes, edges))
     }
 
+    /// Return the `limit` most recently created nodes, newest first.
+    pub fn list_recent_nodes(&self, limit: usize) -> Result<Vec<GraphNode>, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt =
+            conn.prepare("SELECT id FROM nodes ORDER BY created_at DESC LIMIT ?1")?;
+
+        let ids: Vec<NodeId> = stmt
+            .query_map([limit as i64], |row| {
+                let id: String = row.get(0)?;
+                Ok(NodeId(id))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut nodes = Vec::with_capacity(ids.len());
+        for id in ids {
+            nodes.push(self.get_node(&id)?);
+        }
+        Ok(nodes)
+    }
+
     /// Compute PageRank scores for all nodes in the graph.
     /// Returns a vector of (NodeId, score) pairs sorted by score descending.
     pub fn pagerank(&self) -> Result<Vec<(NodeId, f64)>, GraphError> {

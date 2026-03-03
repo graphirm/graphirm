@@ -1,9 +1,10 @@
 use chrono::Utc;
 
 use graphirm_agent::AgentEvent;
+use graphirm_graph::nodes::{GraphNode, NodeType};
 use graphirm_llm::{Role, StreamEvent};
 
-use crate::app::{App, AppState, ChatMessage};
+use crate::app::{App, AppState, ChatMessage, GraphNodeEntry};
 
 pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
     match event {
@@ -66,9 +67,45 @@ pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 app.status_bar.agent_state = "Working".to_string();
             }
         }
-        AgentEvent::GraphUpdate { .. } => {
-            // Graph explorer refresh triggered separately
+        AgentEvent::GraphUpdate { recent_nodes, .. } => {
+            app.graph_explorer.nodes = recent_nodes
+                .into_iter()
+                .map(|n| graph_node_to_entry(n))
+                .collect();
         }
+    }
+}
+
+/// Build a short display label for a graph node.
+fn node_label(node: &GraphNode) -> String {
+    match &node.node_type {
+        NodeType::Interaction(d) => {
+            let preview: String = d.content.chars().take(48).collect();
+            let ellipsis = if d.content.len() > 48 { "…" } else { "" };
+            format!("[{}] {}{}", d.role, preview, ellipsis)
+        }
+        NodeType::Agent(d) => format!("[agent] {}", d.name),
+        NodeType::Content(d) => {
+            let name = d
+                .path
+                .as_deref()
+                .unwrap_or(&d.content_type);
+            format!("[content] {}", name)
+        }
+        NodeType::Task(d) => format!("[task] {}", d.title),
+        NodeType::Knowledge(d) => format!("[knowledge] {}", d.entity),
+    }
+}
+
+fn graph_node_to_entry(node: GraphNode) -> GraphNodeEntry {
+    let label = node_label(&node);
+    let node_type = node.node_type.type_name().to_string();
+    GraphNodeEntry {
+        id: node.id.to_string(),
+        label,
+        node_type,
+        depth: 0,
+        has_children: false,
     }
 }
 

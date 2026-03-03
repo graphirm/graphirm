@@ -194,6 +194,32 @@ async fn execute_tools_parallel(
     Ok(node_ids)
 }
 
+/// Emit a GraphUpdate event with a fresh snapshot of the 50 most recent nodes.
+/// Errors from querying the store are logged and silently swallowed so a
+/// display refresh failure never crashes the agent loop.
+fn emit_graph_update(
+    session: &Session,
+    node_id: &NodeId,
+    edge_ids: Vec<NodeId>,
+    events: &EventBus,
+) {
+    let recent_nodes = match session.graph.list_recent_nodes(50) {
+        Ok(nodes) => nodes,
+        Err(e) => {
+            tracing::warn!("GraphUpdate: failed to fetch recent nodes: {e}");
+            return;
+        }
+    };
+    events.emit(AgentEvent::GraphUpdate {
+        node_id: node_id.clone(),
+        edge_ids: edge_ids
+            .into_iter()
+            .map(|id| graphirm_graph::edges::EdgeId(id.0))
+            .collect(),
+        recent_nodes,
+    });
+}
+
 /// The main agent loop. Cycles between:
 /// 1. Build context from graph
 /// 2. Call LLM and record response (races against CancellationToken)
@@ -248,6 +274,7 @@ pub async fn run_agent_loop(
                 response_id: response_id.clone(),
                 tool_result_ids: vec![],
             });
+            emit_graph_update(session, &response_id, vec![], events);
             break;
         }
 
@@ -280,8 +307,9 @@ pub async fn run_agent_loop(
 
         events.emit(AgentEvent::TurnEnd {
             response_id: response_id.clone(),
-            tool_result_ids,
+            tool_result_ids: tool_result_ids.clone(),
         });
+        emit_graph_update(session, &response_id, tool_result_ids, events);
 
         // The loop runs 0..max_turns; hitting this on the last iteration with
         // outstanding tool calls means we consumed the full budget.
