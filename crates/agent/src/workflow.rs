@@ -80,6 +80,20 @@ pub async fn stream_and_record(
     session.link_interaction(&node_id)?;
 
     info!(node_id = %node_id, "Recorded assistant response");
+
+    // Emit the full response as a stream of events so the TUI can render it.
+    // We use complete() rather than true streaming, so we synthesise the
+    // MessageStart → MessageDelta(s) → MessageEnd sequence after the fact.
+    events.emit(AgentEvent::MessageStart {
+        node_id: node_id.clone(),
+    });
+    let text = response.text_content();
+    if !text.is_empty() {
+        events.emit(AgentEvent::MessageDelta {
+            node_id: node_id.clone(),
+            delta: graphirm_llm::StreamEvent::TextDelta(text),
+        });
+    }
     events.emit(AgentEvent::MessageEnd {
         node_id: node_id.clone(),
     });
