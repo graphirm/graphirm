@@ -250,6 +250,86 @@ impl GraphStore {
 
         Ok(())
     }
+
+    pub fn add_edge(&self, edge: GraphEdge) -> Result<EdgeId, GraphError> {
+        let conn = self.pool.get()?;
+        let metadata = serde_json::to_string(&edge.metadata)?;
+
+        conn.execute(
+            "INSERT INTO edges (id, edge_type, source_id, target_id, weight, metadata, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                edge.id.0,
+                edge.edge_type.as_str(),
+                edge.source.0,
+                edge.target.0,
+                edge.weight,
+                metadata,
+                edge.created_at.to_rfc3339(),
+            ],
+        )?;
+
+        let mut graph = self.graph.write().map_err(|_| GraphError::LockPoisoned)?;
+        let indices = self
+            .node_indices
+            .read()
+            .map_err(|_| GraphError::LockPoisoned)?;
+
+        let src_idx = *indices
+            .get(&edge.source)
+            .ok_or_else(|| GraphError::NodeNotFound(edge.source.0.clone()))?;
+        let tgt_idx = *indices
+            .get(&edge.target)
+            .ok_or_else(|| GraphError::NodeNotFound(edge.target.0.clone()))?;
+
+        graph.add_edge(src_idx, tgt_idx, edge.id.clone());
+
+        Ok(edge.id)
+    }
+
+    pub fn get_edge(&self, id: &EdgeId) -> Result<GraphEdge, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, edge_type, source_id, target_id, weight, metadata, created_at
+             FROM edges WHERE id = ?1",
+        )?;
+
+        let row = stmt
+            .query_row(params![id.0], |row| {
+                let id: String = row.get(0)?;
+                let edge_type: String = row.get(1)?;
+                let source: String = row.get(2)?;
+                let target: String = row.get(3)?;
+                let weight: f64 = row.get(4)?;
+                let metadata: String = row.get(5)?;
+                let created_at: String = row.get(6)?;
+                Ok((id, edge_type, source, target, weight, metadata, created_at))
+            })
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    GraphError::EdgeNotFound(id.0.clone())
+                }
+                other => GraphError::Sqlite(other),
+            })?;
+
+        let (id_str, edge_type_str, source, target, weight, metadata, created_at) = row;
+
+        let edge_type: EdgeType = serde_json::from_str(&format!("\"{edge_type_str}\""))?;
+        let metadata: serde_json::Value = serde_json::from_str(&metadata)?;
+        let created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
+            .map_err(|e| GraphError::EdgeNotFound(format!("bad timestamp: {e}")))?
+            .with_timezone(&chrono::Utc);
+
+        Ok(GraphEdge {
+            id: EdgeId(id_str),
+            edge_type,
+            source: NodeId(source),
+            target: NodeId(target),
+            weight,
+            metadata,
+            created_at,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -400,6 +480,76 @@ mod tests {
         }));
         let result = store.update_node(&NodeId::from("nonexistent"), node);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn add_and_get_edge_roundtrip() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let n1 = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            token_count: None,
+        }));
+        let n2 = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "Hi!".to_string(),
+            token_count: None,
+        }));
+        let n1_id = n1.id.clone();
+        let n2_id = n2.id.clone();
+        store.add_node(n1).unwrap();
+        store.add_node(n2).unwrap();
+
+        let edge = GraphEdge::new(EdgeType::RespondsTo, n2_id.clone(), n1_id.clone())
+            .with_weight(0.8);
+        let edge_id = edge.id.clone();
+        let returned_id = store.add_edge(edge).unwrap();
+        assert_eq!(returned_id, edge_id);
+
+        let fetched = store.get_edge(&edge_id).unwrap();
+        assert_eq!(fetched.edge_type, EdgeType::RespondsTo);
+        assert_eq!(fetched.source, n2_id);
+        assert_eq!(fetched.target, n1_id);
+        assert!((fetched.weight - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn get_nonexistent_edge_returns_error() {
+        let store = GraphStore::open_memory().unwrap();
+        let result = store.get_edge(&EdgeId::from("nonexistent"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn add_edge_updates_petgraph() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let n1 = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "a".to_string(),
+            token_count: None,
+        }));
+        let n2 = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "b".to_string(),
+            token_count: None,
+        }));
+        let n1_id = n1.id.clone();
+        let n2_id = n2.id.clone();
+        store.add_node(n1).unwrap();
+        store.add_node(n2).unwrap();
+
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                n2_id.clone(),
+                n1_id.clone(),
+            ))
+            .unwrap();
+
+        let graph = store.graph.read().unwrap();
+        assert_eq!(graph.edge_count(), 1);
     }
 
     #[test]
