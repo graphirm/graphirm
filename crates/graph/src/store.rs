@@ -124,8 +124,7 @@ impl GraphStore {
             .collect::<Result<Vec<_>, _>>()?;
 
         for (edge_id, source, target) in edges {
-            if let (Some(&src_idx), Some(&tgt_idx)) = (indices.get(&source), indices.get(&target))
-            {
+            if let (Some(&src_idx), Some(&tgt_idx)) = (indices.get(&source), indices.get(&target)) {
                 graph.add_edge(src_idx, tgt_idx, edge_id);
             }
         }
@@ -178,9 +177,7 @@ impl GraphStore {
                 Ok((id, data, metadata, created_at, updated_at))
             })
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => {
-                    GraphError::NodeNotFound(id.0.clone())
-                }
+                rusqlite::Error::QueryReturnedNoRows => GraphError::NodeNotFound(id.0.clone()),
                 other => GraphError::Sqlite(other),
             })?;
 
@@ -308,9 +305,7 @@ impl GraphStore {
                 Ok((id, edge_type, source, target, weight, metadata, created_at))
             })
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => {
-                    GraphError::EdgeNotFound(id.0.clone())
-                }
+                rusqlite::Error::QueryReturnedNoRows => GraphError::EdgeNotFound(id.0.clone()),
                 other => GraphError::Sqlite(other),
             })?;
 
@@ -349,9 +344,7 @@ impl GraphStore {
                             "SELECT target_id FROM edges WHERE source_id = ?1 AND edge_type = '{}'",
                             et.as_str()
                         ),
-                        None => {
-                            "SELECT target_id FROM edges WHERE source_id = ?1".to_string()
-                        }
+                        None => "SELECT target_id FROM edges WHERE source_id = ?1".to_string(),
                     },
                     &id.0,
                 ),
@@ -361,9 +354,7 @@ impl GraphStore {
                             "SELECT source_id FROM edges WHERE target_id = ?1 AND edge_type = '{}'",
                             et.as_str()
                         ),
-                        None => {
-                            "SELECT source_id FROM edges WHERE target_id = ?1".to_string()
-                        }
+                        None => "SELECT source_id FROM edges WHERE target_id = ?1".to_string(),
                     },
                     &id.0,
                 ),
@@ -425,8 +416,7 @@ impl GraphStore {
                 for et in &edge_type_strs {
                     params_vec.push(Box::new(et.to_string()));
                 }
-                let params_refs: Vec<&dyn ToSql> =
-                    params_vec.iter().map(|p| p.as_ref()).collect();
+                let params_refs: Vec<&dyn ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
 
                 stmt.query_map(params_refs.as_slice(), |row| {
                     let nid: String = row.get(0)?;
@@ -498,8 +488,7 @@ impl GraphStore {
 
             let neighbor_ids = {
                 let conn = self.pool.get()?;
-                let mut stmt =
-                    conn.prepare("SELECT target_id FROM edges WHERE source_id = ?1")?;
+                let mut stmt = conn.prepare("SELECT target_id FROM edges WHERE source_id = ?1")?;
                 stmt.query_map(params![current_id.0], |row| {
                     let nid: String = row.get(0)?;
                     Ok(NodeId(nid))
@@ -557,10 +546,8 @@ impl GraphStore {
         let initial = 1.0 / n;
 
         let node_indices_vec: Vec<petgraph::graph::NodeIndex> = graph.node_indices().collect();
-        let mut scores: HashMap<petgraph::graph::NodeIndex, f64> = node_indices_vec
-            .iter()
-            .map(|&idx| (idx, initial))
-            .collect();
+        let mut scores: HashMap<petgraph::graph::NodeIndex, f64> =
+            node_indices_vec.iter().map(|&idx| (idx, initial)).collect();
 
         for _ in 0..iterations {
             let mut new_scores: HashMap<petgraph::graph::NodeIndex, f64> = node_indices_vec
@@ -579,9 +566,7 @@ impl GraphStore {
                     }
                 } else {
                     let share = scores[&idx] / out_degree as f64;
-                    for neighbor in
-                        graph.neighbors_directed(idx, petgraph::Direction::Outgoing)
-                    {
+                    for neighbor in graph.neighbors_directed(idx, petgraph::Direction::Outgoing) {
                         *new_scores.get_mut(&neighbor).unwrap() += damping * share;
                     }
                 }
@@ -775,8 +760,8 @@ mod tests {
         store.add_node(n1).unwrap();
         store.add_node(n2).unwrap();
 
-        let edge = GraphEdge::new(EdgeType::RespondsTo, n2_id.clone(), n1_id.clone())
-            .with_weight(0.8);
+        let edge =
+            GraphEdge::new(EdgeType::RespondsTo, n2_id.clone(), n1_id.clone()).with_weight(0.8);
         let edge_id = edge.id.clone();
         let returned_id = store.add_edge(edge).unwrap();
         assert_eq!(returned_id, edge_id);
@@ -1152,16 +1137,10 @@ mod tests {
             ))
             .unwrap();
         store
-            .add_edge(GraphEdge::new(
-                EdgeType::Reads,
-                a_id.clone(),
-                c_id.clone(),
-            ))
+            .add_edge(GraphEdge::new(EdgeType::Reads, a_id.clone(), c_id.clone()))
             .unwrap();
 
-        let result = store
-            .traverse(&a_id, &[EdgeType::RespondsTo], 5)
-            .unwrap();
+        let result = store.traverse(&a_id, &[EdgeType::RespondsTo], 5).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, b_id);
     }
@@ -1221,9 +1200,7 @@ mod tests {
         assert_eq!(reads.len(), 1);
         assert_eq!(reads[0].id, c1_id);
 
-        let incoming = store
-            .neighbors(&c1_id, None, Direction::Incoming)
-            .unwrap();
+        let incoming = store.neighbors(&c1_id, None, Direction::Incoming).unwrap();
         assert_eq!(incoming.len(), 1);
         assert_eq!(incoming[0].id, agent_id);
     }
@@ -1269,6 +1246,57 @@ mod tests {
         let graph = store.graph.read().unwrap();
         assert_eq!(graph.node_count(), 2);
         assert_eq!(graph.edge_count(), 0);
+    }
+
+    #[test]
+    fn graph_store_is_send_and_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<GraphStore>();
+        assert_sync::<GraphStore>();
+    }
+
+    #[test]
+    fn concurrent_reads_and_writes() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let store = Arc::new(GraphStore::open_memory().unwrap());
+        let mut handles = Vec::new();
+
+        for i in 0..10 {
+            let store = Arc::clone(&store);
+            handles.push(thread::spawn(move || {
+                let node = GraphNode::new(NodeType::Interaction(InteractionData {
+                    role: "user".to_string(),
+                    content: format!("message {i}"),
+                    token_count: None,
+                }));
+                store.add_node(node).unwrap();
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let graph = store.graph.read().unwrap();
+        assert_eq!(graph.node_count(), 10);
+
+        let indices: Vec<NodeId> = store.node_indices.read().unwrap().keys().cloned().collect();
+
+        let mut read_handles = Vec::new();
+        for id in indices {
+            let store = Arc::clone(&store);
+            read_handles.push(thread::spawn(move || {
+                let node = store.get_node(&id).unwrap();
+                assert!(matches!(node.node_type, NodeType::Interaction(_)));
+            }));
+        }
+
+        for h in read_handles {
+            h.join().unwrap();
+        }
     }
 
     #[test]
