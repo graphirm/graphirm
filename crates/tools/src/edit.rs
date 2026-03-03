@@ -105,11 +105,15 @@ impl Tool for EditTool {
             })))?;
 
         ctx.graph.add_edge(
-            GraphEdge::new(EdgeType::Modifies, ctx.interaction_id.clone(), content_node.clone())
-                .with_metadata(json!({
-                    "old_string": old_string,
-                    "new_string": new_string
-                })),
+            GraphEdge::new(
+                EdgeType::Modifies,
+                ctx.interaction_id.clone(),
+                content_node.clone(),
+            )
+            .with_metadata(json!({
+                "old_string": old_string,
+                "new_string": new_string
+            })),
         )?;
 
         Ok(ToolOutput::success_with_node(
@@ -183,7 +187,10 @@ mod tests {
         let tool = EditTool::new();
         let ctx = make_ctx_with_dir(&dir);
         let result = tool
-            .execute(json!({"path": "dup.txt", "old_string": "foo", "new_string": "bar"}), &ctx)
+            .execute(
+                json!({"path": "dup.txt", "old_string": "foo", "new_string": "bar"}),
+                &ctx,
+            )
             .await;
         assert!(matches!(result, Err(ToolError::ExecutionFailed(_))));
         if let Err(ToolError::ExecutionFailed(msg)) = result {

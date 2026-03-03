@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, NodeType};
 use graphirm_graph::GraphStore;
+use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, NodeType};
 use graphirm_tools::{
+    ToolCall, ToolContext,
     bash::BashTool,
     edit::EditTool,
     executor::{execute_parallel, execute_single},
@@ -12,7 +13,6 @@ use graphirm_tools::{
     read::ReadTool,
     registry::ToolRegistry,
     write::WriteTool,
-    ToolCall, ToolContext,
 };
 use serde_json::json;
 use tempfile::TempDir;
@@ -147,7 +147,11 @@ async fn parallel_reads() {
 
     // Create 3 files
     for i in 1..=3 {
-        std::fs::write(dir.path().join(format!("file{i}.txt")), format!("content {i}")).unwrap();
+        std::fs::write(
+            dir.path().join(format!("file{i}.txt")),
+            format!("content {i}"),
+        )
+        .unwrap();
     }
 
     let calls: Vec<ToolCall> = (1..=3)
@@ -186,7 +190,10 @@ async fn definitions_for_llm() {
     assert_eq!(defs.len(), 7);
     for def in &defs {
         assert!(!def.name.is_empty(), "tool name should not be empty");
-        assert!(!def.description.is_empty(), "tool description should not be empty");
+        assert!(
+            !def.description.is_empty(),
+            "tool description should not be empty"
+        );
         assert!(
             def.parameters.is_object(),
             "tool parameters should be a JSON object for tool: {}",
@@ -213,7 +220,10 @@ async fn graph_trail_after_workflow() {
         arguments: json!({"path": "new.txt", "content": "data"}),
     };
     let write_out = execute_single(&registry, &write_call, &ctx).await.unwrap();
-    assert!(write_out.node_id.is_some(), "write should produce a graph node");
+    assert!(
+        write_out.node_id.is_some(),
+        "write should produce a graph node"
+    );
 
     let read_call = ToolCall {
         id: "r".into(),
@@ -221,7 +231,10 @@ async fn graph_trail_after_workflow() {
         arguments: json!({"path": "tracked.txt"}),
     };
     let read_out = execute_single(&registry, &read_call, &ctx).await.unwrap();
-    assert!(read_out.node_id.is_some(), "read should produce a graph node");
+    assert!(
+        read_out.node_id.is_some(),
+        "read should produce a graph node"
+    );
 
     // Verify the nodes exist in the graph
     let write_node_id = write_out.node_id.unwrap();

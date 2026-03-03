@@ -170,7 +170,10 @@ mod tests {
 
         let tool = LsTool::new();
         let ctx = make_ctx_with_dir(&dir);
-        let out = tool.execute(json!({"show_hidden": true}), &ctx).await.unwrap();
+        let out = tool
+            .execute(json!({"show_hidden": true}), &ctx)
+            .await
+            .unwrap();
         assert!(out.content.contains(".hidden"));
         assert!(out.content.contains("visible.txt"));
     }

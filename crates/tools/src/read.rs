@@ -130,7 +130,10 @@ mod tests {
 
         let tool = ReadTool::new();
         let ctx = make_ctx_with_dir(&dir);
-        let out = tool.execute(json!({"path": "test.txt"}), &ctx).await.unwrap();
+        let out = tool
+            .execute(json!({"path": "test.txt"}), &ctx)
+            .await
+            .unwrap();
         assert!(!out.is_error);
         assert!(out.content.contains("line one"));
         assert!(out.content.contains("line two"));
@@ -164,9 +167,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let tool = ReadTool::new();
         let ctx = make_ctx_with_dir(&dir);
-        let result = tool
-            .execute(json!({"path": "nonexistent.txt"}), &ctx)
-            .await;
+        let result = tool.execute(json!({"path": "nonexistent.txt"}), &ctx).await;
         assert!(matches!(result, Err(ToolError::ExecutionFailed(_))));
     }
 

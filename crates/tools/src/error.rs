@@ -45,7 +45,10 @@ mod tests {
     #[test]
     fn display_permission_denied() {
         let err = ToolError::PermissionDenied("write requires approval".into());
-        assert_eq!(err.to_string(), "Permission denied: write requires approval");
+        assert_eq!(
+            err.to_string(),
+            "Permission denied: write requires approval"
+        );
     }
 
     #[test]

@@ -16,7 +16,10 @@ pub struct ToolPermissions {
 
 impl ToolPermissions {
     pub fn new(fallback: Permission) -> Self {
-        Self { defaults: HashMap::new(), fallback }
+        Self {
+            defaults: HashMap::new(),
+            fallback,
+        }
     }
 
     pub fn allow_all() -> Self {
@@ -32,7 +35,10 @@ impl ToolPermissions {
     }
 
     pub fn get(&self, tool_name: &str) -> Permission {
-        self.defaults.get(tool_name).copied().unwrap_or(self.fallback)
+        self.defaults
+            .get(tool_name)
+            .copied()
+            .unwrap_or(self.fallback)
     }
 
     pub fn check(&self, tool_name: &str) -> Result<Permission, ToolError> {

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::{debug, warn};
 
-use crate::{Tool, ToolCall, ToolContext, ToolError, ToolOutput};
 use crate::registry::ToolRegistry;
+use crate::{Tool, ToolCall, ToolContext, ToolError, ToolOutput};
 
 #[derive(Debug)]
 pub struct ToolCallResult {
@@ -26,7 +26,10 @@ pub async fn execute_parallel(
                 let call_id = call.id.clone();
                 let err_msg = e.to_string();
                 set.spawn(async move {
-                    (call_id, Err::<ToolOutput, ToolError>(ToolError::NotFound(err_msg)))
+                    (
+                        call_id,
+                        Err::<ToolOutput, ToolError>(ToolError::NotFound(err_msg)),
+                    )
                 });
                 continue;
             }
@@ -77,8 +80,8 @@ mod tests {
     use crate::tests::make_test_context;
     use async_trait::async_trait;
     use serde_json::json;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     struct CounterTool {
@@ -148,9 +151,21 @@ mod tests {
         let ctx = make_test_context();
 
         let calls = vec![
-            ToolCall { id: "1".into(), name: "counter".into(), arguments: json!({}) },
-            ToolCall { id: "2".into(), name: "counter".into(), arguments: json!({}) },
-            ToolCall { id: "3".into(), name: "counter".into(), arguments: json!({}) },
+            ToolCall {
+                id: "1".into(),
+                name: "counter".into(),
+                arguments: json!({}),
+            },
+            ToolCall {
+                id: "2".into(),
+                name: "counter".into(),
+                arguments: json!({}),
+            },
+            ToolCall {
+                id: "3".into(),
+                name: "counter".into(),
+                arguments: json!({}),
+            },
         ];
 
         let results = execute_parallel(&reg, calls, &ctx).await;
@@ -168,8 +183,16 @@ mod tests {
         let ctx = make_test_context();
 
         let calls = vec![
-            ToolCall { id: "abc".into(), name: "counter".into(), arguments: json!({}) },
-            ToolCall { id: "def".into(), name: "counter".into(), arguments: json!({}) },
+            ToolCall {
+                id: "abc".into(),
+                name: "counter".into(),
+                arguments: json!({}),
+            },
+            ToolCall {
+                id: "def".into(),
+                name: "counter".into(),
+                arguments: json!({}),
+            },
         ];
 
         let results = execute_parallel(&reg, calls, &ctx).await;
@@ -185,8 +208,16 @@ mod tests {
         let ctx = make_test_context();
 
         let calls = vec![
-            ToolCall { id: "ok".into(), name: "counter".into(), arguments: json!({}) },
-            ToolCall { id: "bad".into(), name: "missing_tool".into(), arguments: json!({}) },
+            ToolCall {
+                id: "ok".into(),
+                name: "counter".into(),
+                arguments: json!({}),
+            },
+            ToolCall {
+                id: "bad".into(),
+                name: "missing_tool".into(),
+                arguments: json!({}),
+            },
         ];
 
         let results = execute_parallel(&reg, calls, &ctx).await;
@@ -232,7 +263,11 @@ mod tests {
         let reg = make_registry_with_counter(counter.clone());
         let ctx = make_test_context();
 
-        let call = ToolCall { id: "x".into(), name: "counter".into(), arguments: json!({}) };
+        let call = ToolCall {
+            id: "x".into(),
+            name: "counter".into(),
+            arguments: json!({}),
+        };
         let out = execute_single(&reg, &call, &ctx).await.unwrap();
         assert_eq!(out.content, "1");
         assert_eq!(counter.load(Ordering::SeqCst), 1);

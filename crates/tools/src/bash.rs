@@ -137,7 +137,11 @@ impl Tool for BashTool {
         };
 
         if is_error {
-            Ok(ToolOutput { content: output_text, is_error: true, node_id: Some(content_node) })
+            Ok(ToolOutput {
+                content: output_text,
+                is_error: true,
+                node_id: Some(content_node),
+            })
         } else {
             Ok(ToolOutput::success_with_node(output_text, content_node))
         }
@@ -242,9 +246,7 @@ mod tests {
             token.cancel();
         });
 
-        let result = tool
-            .execute(json!({"command": "sleep 10"}), &ctx)
-            .await;
+        let result = tool.execute(json!({"command": "sleep 10"}), &ctx).await;
         assert!(matches!(result, Err(ToolError::Cancelled)));
     }
 }

@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 pub use error::ToolError;
-use graphirm_graph::nodes::NodeId;
 use graphirm_graph::GraphStore;
+use graphirm_graph::nodes::NodeId;
 
 /// Context passed to every tool execution.
 #[derive(Clone)]
@@ -41,15 +41,27 @@ pub struct ToolOutput {
 
 impl ToolOutput {
     pub fn success(content: impl Into<String>) -> Self {
-        Self { content: content.into(), is_error: false, node_id: None }
+        Self {
+            content: content.into(),
+            is_error: false,
+            node_id: None,
+        }
     }
 
     pub fn success_with_node(content: impl Into<String>, node_id: NodeId) -> Self {
-        Self { content: content.into(), is_error: false, node_id: Some(node_id) }
+        Self {
+            content: content.into(),
+            is_error: false,
+            node_id: Some(node_id),
+        }
     }
 
     pub fn error(content: impl Into<String>) -> Self {
-        Self { content: content.into(), is_error: true, node_id: None }
+        Self {
+            content: content.into(),
+            is_error: true,
+            node_id: None,
+        }
     }
 }
 
@@ -166,7 +178,10 @@ pub(crate) mod tests {
     async fn tool_execute_success() {
         let tool = EchoTool;
         let ctx = make_test_context();
-        let result = tool.execute(json!({"message": "hello"}), &ctx).await.unwrap();
+        let result = tool
+            .execute(json!({"message": "hello"}), &ctx)
+            .await
+            .unwrap();
         assert_eq!(result.content, "hello");
         assert!(!result.is_error);
     }

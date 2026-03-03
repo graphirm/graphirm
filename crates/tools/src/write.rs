@@ -133,7 +133,10 @@ mod tests {
         let tool = WriteTool::new();
         let ctx = make_ctx_with_dir(&dir);
         let out = tool
-            .execute(json!({"path": "existing.txt", "content": "new content"}), &ctx)
+            .execute(
+                json!({"path": "existing.txt", "content": "new content"}),
+                &ctx,
+            )
             .await
             .unwrap();
         assert!(!out.is_error);
