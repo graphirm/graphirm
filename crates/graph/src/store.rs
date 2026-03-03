@@ -20,7 +20,10 @@ pub struct GraphStore {
 
 impl GraphStore {
     pub fn open(path: &str) -> Result<Self, GraphError> {
-        let manager = SqliteConnectionManager::file(path);
+        let manager = SqliteConnectionManager::file(path).with_init(|conn| {
+            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+            Ok(())
+        });
         let pool = Pool::builder()
             .max_size(4)
             .build(manager)
@@ -37,7 +40,10 @@ impl GraphStore {
     }
 
     pub fn open_memory() -> Result<Self, GraphError> {
-        let manager = SqliteConnectionManager::memory();
+        let manager = SqliteConnectionManager::memory().with_init(|conn| {
+            conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+            Ok(())
+        });
         let pool = Pool::builder()
             .max_size(1)
             .build(manager)
@@ -81,9 +87,6 @@ impl GraphStore {
             CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
             CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(edge_type);
             CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(node_type);
-
-            PRAGMA journal_mode=WAL;
-            PRAGMA foreign_keys=ON;
             ",
         )?;
         Ok(())
@@ -337,35 +340,38 @@ impl GraphStore {
         let neighbor_ids = {
             let conn = self.pool.get()?;
 
-            let (query, param) = match direction {
-                Direction::Outgoing => (
-                    match edge_type {
-                        Some(et) => format!(
-                            "SELECT target_id FROM edges WHERE source_id = ?1 AND edge_type = '{}'",
-                            et.as_str()
-                        ),
-                        None => "SELECT target_id FROM edges WHERE source_id = ?1".to_string(),
-                    },
-                    &id.0,
+            let (query, has_edge_filter) = match (&direction, &edge_type) {
+                (Direction::Outgoing, Some(_)) => (
+                    "SELECT target_id FROM edges WHERE source_id = ?1 AND edge_type = ?2",
+                    true,
                 ),
-                Direction::Incoming => (
-                    match edge_type {
-                        Some(et) => format!(
-                            "SELECT source_id FROM edges WHERE target_id = ?1 AND edge_type = '{}'",
-                            et.as_str()
-                        ),
-                        None => "SELECT source_id FROM edges WHERE target_id = ?1".to_string(),
-                    },
-                    &id.0,
+                (Direction::Outgoing, None) => {
+                    ("SELECT target_id FROM edges WHERE source_id = ?1", false)
+                }
+                (Direction::Incoming, Some(_)) => (
+                    "SELECT source_id FROM edges WHERE target_id = ?1 AND edge_type = ?2",
+                    true,
                 ),
+                (Direction::Incoming, None) => {
+                    ("SELECT source_id FROM edges WHERE target_id = ?1", false)
+                }
             };
 
-            let mut stmt = conn.prepare(&query)?;
-            stmt.query_map(params![param], |row| {
-                let nid: String = row.get(0)?;
-                Ok(NodeId(nid))
-            })?
-            .collect::<Result<Vec<_>, _>>()?
+            let mut stmt = conn.prepare(query)?;
+            if has_edge_filter {
+                let et_str = edge_type.unwrap().as_str();
+                stmt.query_map(params![id.0, et_str], |row| {
+                    let nid: String = row.get(0)?;
+                    Ok(NodeId(nid))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+            } else {
+                stmt.query_map(params![id.0], |row| {
+                    let nid: String = row.get(0)?;
+                    Ok(NodeId(nid))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+            }
         };
 
         let mut neighbors = Vec::new();
