@@ -537,6 +537,73 @@ impl GraphStore {
 
         Ok((nodes, edges))
     }
+
+    /// Compute PageRank scores for all nodes in the graph.
+    /// Returns a vector of (NodeId, score) pairs sorted by score descending.
+    pub fn pagerank(&self) -> Result<Vec<(NodeId, f64)>, GraphError> {
+        let graph = self.graph.read().map_err(|_| GraphError::LockPoisoned)?;
+        let indices = self
+            .node_indices
+            .read()
+            .map_err(|_| GraphError::LockPoisoned)?;
+
+        if graph.node_count() == 0 {
+            return Ok(Vec::new());
+        }
+
+        let damping = 0.85_f64;
+        let iterations = 100;
+        let n = graph.node_count() as f64;
+        let initial = 1.0 / n;
+
+        let node_indices_vec: Vec<petgraph::graph::NodeIndex> = graph.node_indices().collect();
+        let mut scores: HashMap<petgraph::graph::NodeIndex, f64> = node_indices_vec
+            .iter()
+            .map(|&idx| (idx, initial))
+            .collect();
+
+        for _ in 0..iterations {
+            let mut new_scores: HashMap<petgraph::graph::NodeIndex, f64> = node_indices_vec
+                .iter()
+                .map(|&idx| (idx, (1.0 - damping) / n))
+                .collect();
+
+            for &idx in &node_indices_vec {
+                let out_degree = graph
+                    .neighbors_directed(idx, petgraph::Direction::Outgoing)
+                    .count();
+                if out_degree == 0 {
+                    let share = scores[&idx] / n;
+                    for &other in &node_indices_vec {
+                        *new_scores.get_mut(&other).unwrap() += damping * share;
+                    }
+                } else {
+                    let share = scores[&idx] / out_degree as f64;
+                    for neighbor in
+                        graph.neighbors_directed(idx, petgraph::Direction::Outgoing)
+                    {
+                        *new_scores.get_mut(&neighbor).unwrap() += damping * share;
+                    }
+                }
+            }
+
+            scores = new_scores;
+        }
+
+        let idx_to_id: HashMap<petgraph::graph::NodeIndex, NodeId> = indices
+            .iter()
+            .map(|(nid, &idx)| (idx, nid.clone()))
+            .collect();
+
+        let mut result: Vec<(NodeId, f64)> = scores
+            .into_iter()
+            .filter_map(|(idx, score)| idx_to_id.get(&idx).map(|nid| (nid.clone(), score)))
+            .collect();
+
+        result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
@@ -757,6 +824,81 @@ mod tests {
 
         let graph = store.graph.read().unwrap();
         assert_eq!(graph.edge_count(), 1);
+    }
+
+    #[test]
+    fn pagerank_known_topology() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let a = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "hub".to_string(),
+            token_count: None,
+        }));
+        let b = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "spoke1".to_string(),
+            token_count: None,
+        }));
+        let c = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "spoke2".to_string(),
+            token_count: None,
+        }));
+        let d = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "spoke3".to_string(),
+            token_count: None,
+        }));
+
+        let a_id = a.id.clone();
+        let b_id = b.id.clone();
+        let c_id = c.id.clone();
+        let d_id = d.id.clone();
+
+        store.add_node(a).unwrap();
+        store.add_node(b).unwrap();
+        store.add_node(c).unwrap();
+        store.add_node(d).unwrap();
+
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                b_id.clone(),
+                a_id.clone(),
+            ))
+            .unwrap();
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                c_id.clone(),
+                a_id.clone(),
+            ))
+            .unwrap();
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                d_id.clone(),
+                a_id.clone(),
+            ))
+            .unwrap();
+
+        let scores = store.pagerank().unwrap();
+        assert!(!scores.is_empty());
+
+        let a_score = scores.iter().find(|(id, _)| *id == a_id).unwrap().1;
+        let b_score = scores.iter().find(|(id, _)| *id == b_id).unwrap().1;
+        assert!(
+            a_score > b_score,
+            "hub should rank higher than spokes: a={a_score} b={b_score}"
+        );
+    }
+
+    #[test]
+    fn pagerank_empty_graph() {
+        let store = GraphStore::open_memory().unwrap();
+        let scores = store.pagerank().unwrap();
+        assert!(scores.is_empty());
     }
 
     #[test]
