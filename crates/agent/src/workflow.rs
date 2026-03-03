@@ -2,8 +2,8 @@
 
 use graphirm_graph::nodes::{GraphNode, InteractionData, NodeId, NodeType};
 use graphirm_llm::{CompletionConfig, ContentPart, LlmProvider, LlmResponse};
-use graphirm_tools::registry::ToolRegistry;
 use graphirm_tools::ToolContext;
+use graphirm_tools::registry::ToolRegistry;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -43,7 +43,11 @@ pub async fn stream_and_record(
             .tool_calls()
             .iter()
             .filter_map(|part| match part {
-                ContentPart::ToolCall { id, name, arguments } => Some(serde_json::json!({
+                ContentPart::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } => Some(serde_json::json!({
                     "id": id,
                     "name": name,
                     "arguments": arguments
@@ -51,10 +55,19 @@ pub async fn stream_and_record(
                 _ => None,
             })
             .collect();
-        metadata.insert("tool_calls".to_string(), serde_json::Value::Array(tool_calls_json));
+        metadata.insert(
+            "tool_calls".to_string(),
+            serde_json::Value::Array(tool_calls_json),
+        );
     }
-    metadata.insert("usage_input".to_string(), serde_json::json!(response.usage.input_tokens));
-    metadata.insert("usage_output".to_string(), serde_json::json!(response.usage.output_tokens));
+    metadata.insert(
+        "usage_input".to_string(),
+        serde_json::json!(response.usage.input_tokens),
+    );
+    metadata.insert(
+        "usage_output".to_string(),
+        serde_json::json!(response.usage.output_tokens),
+    );
 
     let mut interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
         role: "assistant".to_string(),
@@ -67,7 +80,9 @@ pub async fn stream_and_record(
     session.link_interaction(&node_id)?;
 
     info!(node_id = %node_id, "Recorded assistant response");
-    events.emit(AgentEvent::MessageEnd { node_id: node_id.clone() });
+    events.emit(AgentEvent::MessageEnd {
+        node_id: node_id.clone(),
+    });
 
     Ok((response, node_id))
 }
@@ -96,7 +111,12 @@ async fn execute_tools_parallel(
     // Phase 1: spawn all tools in parallel and collect results
     let mut set = JoinSet::new();
     for part in tool_calls {
-        let ContentPart::ToolCall { id: call_id, name, arguments } = part else {
+        let ContentPart::ToolCall {
+            id: call_id,
+            name,
+            arguments,
+        } = part
+        else {
             continue;
         };
         let tool = tools.get(name)?;
@@ -143,7 +163,10 @@ async fn execute_tools_parallel(
                 if let Err(e) = session.link_interaction(&node_id) {
                     tracing::error!("Failed to link tool result node {node_id}: {e}");
                 } else {
-                    events.emit(AgentEvent::ToolEnd { node_id: node_id.clone(), is_error });
+                    events.emit(AgentEvent::ToolEnd {
+                        node_id: node_id.clone(),
+                        is_error,
+                    });
                     info!(node_id = %node_id, tool = %tool_name, is_error, "Tool execution complete");
                     node_ids.push(node_id);
                 }
@@ -172,7 +195,9 @@ pub async fn run_agent_loop(
     let max_turns = session.agent_config.max_turns;
     let mut all_node_ids: Vec<NodeId> = Vec::new();
 
-    events.emit(AgentEvent::AgentStart { agent_id: session.id.clone() });
+    events.emit(AgentEvent::AgentStart {
+        agent_id: session.id.clone(),
+    });
 
     for turn in 0..max_turns {
         // Check cancellation before starting each turn
@@ -214,7 +239,10 @@ pub async fn run_agent_loop(
 
         let tool_calls: Vec<&ContentPart> = response.tool_calls();
         for part in &tool_calls {
-            let ContentPart::ToolCall { id: call_id, name, .. } = part else {
+            let ContentPart::ToolCall {
+                id: call_id, name, ..
+            } = part
+            else {
                 continue;
             };
             events.emit(AgentEvent::ToolStart {
@@ -224,9 +252,15 @@ pub async fn run_agent_loop(
             });
         }
 
-        let tool_result_ids =
-            execute_tools_parallel(session, tools, &response_id, tool_calls.as_slice(), events, cancel)
-                .await?;
+        let tool_result_ids = execute_tools_parallel(
+            session,
+            tools,
+            &response_id,
+            tool_calls.as_slice(),
+            events,
+            cancel,
+        )
+        .await?;
 
         all_node_ids.extend(tool_result_ids.iter().cloned());
 
@@ -267,8 +301,8 @@ mod test_helpers {
 
     use super::*;
     use graphirm_llm::{
-        CompletionConfig, LlmError, LlmMessage, LlmProvider, LlmResponse, StopReason,
-        TokenUsage, ToolDefinition,
+        CompletionConfig, LlmError, LlmMessage, LlmProvider, LlmResponse, StopReason, TokenUsage,
+        ToolDefinition,
     };
 
     /// Mock LLM provider that returns pre-configured responses in order.
@@ -394,8 +428,9 @@ mod tests {
         let tools = ToolRegistry::new();
         let bus = EventBus::new();
 
-        let (response, node_id) =
-            stream_and_record(&session, &provider, &tools, &bus).await.unwrap();
+        let (response, node_id) = stream_and_record(&session, &provider, &tools, &bus)
+            .await
+            .unwrap();
 
         assert_eq!(response.text_content(), "The answer is 4.");
         assert!(!response.has_tool_calls());
@@ -413,7 +448,10 @@ mod tests {
     #[tokio::test]
     async fn test_agent_loop_single_turn_no_tools() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let config = AgentConfig { max_turns: 10, ..AgentConfig::default() };
+        let config = AgentConfig {
+            max_turns: 10,
+            ..AgentConfig::default()
+        };
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("What is 2+2?").unwrap();
 
@@ -436,7 +474,10 @@ mod tests {
 
         assert!(matches!(events[0], AgentEvent::AgentStart { .. }));
         assert!(matches!(events[1], AgentEvent::TurnStart { turn_index: 0 }));
-        assert!(matches!(events.last().unwrap(), AgentEvent::AgentEnd { .. }));
+        assert!(matches!(
+            events.last().unwrap(),
+            AgentEvent::AgentEnd { .. }
+        ));
 
         // Agent node status should be "completed"
         let agent_node = graph.get_node(&session.id).unwrap();
@@ -449,12 +490,19 @@ mod tests {
     #[tokio::test]
     async fn test_agent_loop_tool_call_then_text() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let config = AgentConfig { max_turns: 10, ..AgentConfig::default() };
+        let config = AgentConfig {
+            max_turns: 10,
+            ..AgentConfig::default()
+        };
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("List files").unwrap();
 
         let provider = MockProvider::new(vec![
-            tool_call_response(vec![("bash", "call_1", serde_json::json!({"command": "ls"}))]),
+            tool_call_response(vec![(
+                "bash",
+                "call_1",
+                serde_json::json!({"command": "ls"}),
+            )]),
             text_response("Here are your files: src/ Cargo.toml"),
         ]);
 
@@ -514,14 +562,29 @@ mod tests {
     #[tokio::test]
     async fn test_agent_loop_recursion_limit() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let config = AgentConfig { max_turns: 3, ..AgentConfig::default() };
+        let config = AgentConfig {
+            max_turns: 3,
+            ..AgentConfig::default()
+        };
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("Do infinite things").unwrap();
 
         let provider = MockProvider::new(vec![
-            tool_call_response(vec![("bash", "c1", serde_json::json!({"command": "echo 1"}))]),
-            tool_call_response(vec![("bash", "c2", serde_json::json!({"command": "echo 2"}))]),
-            tool_call_response(vec![("bash", "c3", serde_json::json!({"command": "echo 3"}))]),
+            tool_call_response(vec![(
+                "bash",
+                "c1",
+                serde_json::json!({"command": "echo 1"}),
+            )]),
+            tool_call_response(vec![(
+                "bash",
+                "c2",
+                serde_json::json!({"command": "echo 2"}),
+            )]),
+            tool_call_response(vec![(
+                "bash",
+                "c3",
+                serde_json::json!({"command": "echo 3"}),
+            )]),
         ]);
 
         let mock_bash = Arc::new(MockTool {
@@ -548,7 +611,10 @@ mod tests {
         while let Ok(e) = rx.try_recv() {
             events.push(e);
         }
-        assert!(matches!(events.last().unwrap(), AgentEvent::AgentEnd { .. }));
+        assert!(matches!(
+            events.last().unwrap(),
+            AgentEvent::AgentEnd { .. }
+        ));
 
         let agent_node = graph.get_node(&session.id).unwrap();
         match &agent_node.node_type {
@@ -560,13 +626,24 @@ mod tests {
     #[tokio::test]
     async fn test_agent_loop_cancellation() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let config = AgentConfig { max_turns: 100, ..AgentConfig::default() };
+        let config = AgentConfig {
+            max_turns: 100,
+            ..AgentConfig::default()
+        };
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("Start working").unwrap();
 
         let provider = MockProvider::new(vec![
-            tool_call_response(vec![("bash", "c1", serde_json::json!({"command": "echo 1"}))]),
-            tool_call_response(vec![("bash", "c2", serde_json::json!({"command": "echo 2"}))]),
+            tool_call_response(vec![(
+                "bash",
+                "c1",
+                serde_json::json!({"command": "echo 1"}),
+            )]),
+            tool_call_response(vec![(
+                "bash",
+                "c2",
+                serde_json::json!({"command": "echo 2"}),
+            )]),
             text_response("done"),
         ]);
 
@@ -600,7 +677,9 @@ mod tests {
             events.push(e);
         }
         assert!(
-            events.iter().any(|e| matches!(e, AgentEvent::AgentEnd { .. })),
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::AgentEnd { .. })),
             "AgentEnd event should be emitted on cancel"
         );
     }

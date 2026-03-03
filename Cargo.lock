@@ -732,6 +732,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "toml",
  "tracing",
  "tracing-subscriber",
@@ -820,11 +821,17 @@ dependencies = [
 name = "graphirm-tui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "crossterm",
  "graphirm-agent",
+ "graphirm-graph",
+ "graphirm-llm",
+ "graphirm-tools",
  "ratatui",
  "serde",
+ "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
