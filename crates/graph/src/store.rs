@@ -553,6 +553,49 @@ mod tests {
     }
 
     #[test]
+    fn delete_node_cascades_edges() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let n1 = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "msg1".to_string(),
+            token_count: None,
+        }));
+        let n2 = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "msg2".to_string(),
+            token_count: None,
+        }));
+        let n3 = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "msg3".to_string(),
+            token_count: None,
+        }));
+        let n1_id = n1.id.clone();
+        let n2_id = n2.id.clone();
+        let n3_id = n3.id.clone();
+        store.add_node(n1).unwrap();
+        store.add_node(n2).unwrap();
+        store.add_node(n3).unwrap();
+
+        let e1 = GraphEdge::new(EdgeType::RespondsTo, n2_id.clone(), n1_id.clone());
+        let e2 = GraphEdge::new(EdgeType::RespondsTo, n3_id.clone(), n2_id.clone());
+        let e1_id = e1.id.clone();
+        let e2_id = e2.id.clone();
+        store.add_edge(e1).unwrap();
+        store.add_edge(e2).unwrap();
+
+        store.delete_node(&n2_id).unwrap();
+
+        assert!(store.get_edge(&e1_id).is_err());
+        assert!(store.get_edge(&e2_id).is_err());
+
+        let graph = store.graph.read().unwrap();
+        assert_eq!(graph.node_count(), 2);
+        assert_eq!(graph.edge_count(), 0);
+    }
+
+    #[test]
     fn open_file_creates_tables() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
