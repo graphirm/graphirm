@@ -446,6 +446,35 @@ impl GraphStore {
 
         Ok(result)
     }
+
+    /// Walk `RespondsTo` edges backwards from `leaf_id` to the root of the conversation.
+    /// Returns nodes newest-first: [leaf, ..., root].
+    pub fn conversation_thread(&self, leaf_id: &NodeId) -> Result<Vec<GraphNode>, GraphError> {
+        let mut thread = Vec::new();
+        let mut current_id = leaf_id.clone();
+
+        loop {
+            let node = self.get_node(&current_id)?;
+            thread.push(node);
+
+            let parent_id: Option<String> = {
+                let conn = self.pool.get()?;
+                conn.query_row(
+                    "SELECT target_id FROM edges WHERE source_id = ?1 AND edge_type = 'responds_to' LIMIT 1",
+                    params![current_id.0],
+                    |row| row.get(0),
+                )
+                .ok()
+            };
+
+            match parent_id {
+                Some(pid) => current_id = NodeId(pid),
+                None => break,
+            }
+        }
+
+        Ok(thread)
+    }
 }
 
 #[cfg(test)]
@@ -666,6 +695,93 @@ mod tests {
 
         let graph = store.graph.read().unwrap();
         assert_eq!(graph.edge_count(), 1);
+    }
+
+    #[test]
+    fn conversation_thread_walks_backwards() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let make_msg = |role: &str, content: &str| {
+            GraphNode::new(NodeType::Interaction(InteractionData {
+                role: role.to_string(),
+                content: content.to_string(),
+                token_count: None,
+            }))
+        };
+
+        let msg1 = make_msg("user", "Hello");
+        let msg2 = make_msg("assistant", "Hi there!");
+        let msg3 = make_msg("user", "How are you?");
+        let msg4 = make_msg("assistant", "I'm good!");
+        let msg5 = make_msg("user", "Great");
+
+        let ids: Vec<NodeId> = vec![
+            msg1.id.clone(),
+            msg2.id.clone(),
+            msg3.id.clone(),
+            msg4.id.clone(),
+            msg5.id.clone(),
+        ];
+
+        store.add_node(msg1).unwrap();
+        store.add_node(msg2).unwrap();
+        store.add_node(msg3).unwrap();
+        store.add_node(msg4).unwrap();
+        store.add_node(msg5).unwrap();
+
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                ids[1].clone(),
+                ids[0].clone(),
+            ))
+            .unwrap();
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                ids[2].clone(),
+                ids[1].clone(),
+            ))
+            .unwrap();
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                ids[3].clone(),
+                ids[2].clone(),
+            ))
+            .unwrap();
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                ids[4].clone(),
+                ids[3].clone(),
+            ))
+            .unwrap();
+
+        let thread = store.conversation_thread(&ids[4]).unwrap();
+
+        assert_eq!(thread.len(), 5);
+        assert_eq!(thread[0].id, ids[4]);
+        assert_eq!(thread[1].id, ids[3]);
+        assert_eq!(thread[2].id, ids[2]);
+        assert_eq!(thread[3].id, ids[1]);
+        assert_eq!(thread[4].id, ids[0]);
+    }
+
+    #[test]
+    fn conversation_thread_single_message() {
+        let store = GraphStore::open_memory().unwrap();
+        let msg = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "lonely".to_string(),
+            token_count: None,
+        }));
+        let id = msg.id.clone();
+        store.add_node(msg).unwrap();
+
+        let thread = store.conversation_thread(&id).unwrap();
+        assert_eq!(thread.len(), 1);
+        assert_eq!(thread[0].id, id);
     }
 
     #[test]
