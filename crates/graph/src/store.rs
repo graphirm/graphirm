@@ -475,6 +475,68 @@ impl GraphStore {
 
         Ok(thread)
     }
+
+    /// Extract a subgraph rooted at `root` up to `depth` hops (following all outgoing edges).
+    /// Returns the root node plus all reachable nodes, and all edges between them.
+    pub fn subgraph(
+        &self,
+        root: &NodeId,
+        depth: usize,
+    ) -> Result<(Vec<GraphNode>, Vec<GraphEdge>), GraphError> {
+        use std::collections::{HashSet, VecDeque};
+
+        let mut visited = HashSet::new();
+        visited.insert(root.clone());
+        let mut queue = VecDeque::new();
+        queue.push_back((root.clone(), 0_usize));
+        let mut nodes = vec![self.get_node(root)?];
+
+        while let Some((current_id, d)) = queue.pop_front() {
+            if d >= depth {
+                continue;
+            }
+
+            let neighbor_ids = {
+                let conn = self.pool.get()?;
+                let mut stmt =
+                    conn.prepare("SELECT target_id FROM edges WHERE source_id = ?1")?;
+                stmt.query_map(params![current_id.0], |row| {
+                    let nid: String = row.get(0)?;
+                    Ok(NodeId(nid))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+            };
+
+            for nid in neighbor_ids {
+                if visited.insert(nid.clone()) {
+                    nodes.push(self.get_node(&nid)?);
+                    queue.push_back((nid, d + 1));
+                }
+            }
+        }
+
+        let mut edges = Vec::new();
+        for node_id in &visited {
+            let edge_ids = {
+                let conn = self.pool.get()?;
+                let mut stmt = conn.prepare("SELECT id FROM edges WHERE source_id = ?1")?;
+                stmt.query_map(params![node_id.0], |row| {
+                    let eid: String = row.get(0)?;
+                    Ok(EdgeId(eid))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+            };
+
+            for eid in edge_ids {
+                let edge = self.get_edge(&eid)?;
+                if visited.contains(&edge.target) {
+                    edges.push(edge);
+                }
+            }
+        }
+
+        Ok((nodes, edges))
+    }
 }
 
 #[cfg(test)]
@@ -695,6 +757,74 @@ mod tests {
 
         let graph = store.graph.read().unwrap();
         assert_eq!(graph.edge_count(), 1);
+    }
+
+    #[test]
+    fn subgraph_returns_nodes_and_edges_within_depth() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let a = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "a".to_string(),
+            token_count: None,
+        }));
+        let b = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "b".to_string(),
+            token_count: None,
+        }));
+        let c = GraphNode::new(NodeType::Content(crate::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: None,
+            body: "c".to_string(),
+            language: None,
+        }));
+        let d = GraphNode::new(NodeType::Content(crate::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: None,
+            body: "d".to_string(),
+            language: None,
+        }));
+
+        let a_id = a.id.clone();
+        let b_id = b.id.clone();
+        let c_id = c.id.clone();
+        let d_id = d.id.clone();
+
+        store.add_node(a).unwrap();
+        store.add_node(b).unwrap();
+        store.add_node(c).unwrap();
+        store.add_node(d).unwrap();
+
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                a_id.clone(),
+                b_id.clone(),
+            ))
+            .unwrap();
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                b_id.clone(),
+                c_id.clone(),
+            ))
+            .unwrap();
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                c_id.clone(),
+                d_id.clone(),
+            ))
+            .unwrap();
+
+        let (nodes, edges) = store.subgraph(&a_id, 1).unwrap();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(edges.len(), 1);
+
+        let (nodes, edges) = store.subgraph(&a_id, 2).unwrap();
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(edges.len(), 2);
     }
 
     #[test]
