@@ -222,10 +222,12 @@ mod tests {
         let mut app = make_app();
         app.focus = crate::app::FocusPanel::Chat;
 
-        handle_key_event(&mut app, key(KeyCode::Up));
+        // Down scrolls toward newer content (higher offset)
+        handle_key_event(&mut app, key(KeyCode::Down));
         assert_eq!(app.chat.scroll_offset, 1);
 
-        handle_key_event(&mut app, key(KeyCode::Down));
+        // Up scrolls toward older content (lower offset)
+        handle_key_event(&mut app, key(KeyCode::Up));
         assert_eq!(app.chat.scroll_offset, 0);
     }
 

@@ -31,14 +31,17 @@ pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 is_tool_call: false,
                 tool_name: None,
             });
+            app.chat.scroll_to_bottom();
         }
         AgentEvent::MessageDelta { delta, .. } => {
             if let StreamEvent::TextDelta(text) = delta {
                 app.chat.append_delta(&text);
+                app.chat.scroll_to_bottom();
             }
         }
         AgentEvent::MessageEnd { .. } => {
             app.state = AppState::WaitingForAgent;
+            app.chat.scroll_to_bottom();
         }
         AgentEvent::ToolStart {
             response_node_id,
@@ -54,6 +57,7 @@ pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 is_tool_call: true,
                 tool_name: Some(tool_name),
             });
+            app.chat.scroll_to_bottom();
         }
         AgentEvent::ToolEnd { is_error, .. } => {
             if is_error {

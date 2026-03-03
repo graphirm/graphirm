@@ -20,12 +20,26 @@ impl ChatView {
         }
     }
 
+    /// Scroll toward older messages (increases offset = higher lines in document).
     pub fn scroll_up(&mut self) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+    }
+
+    /// Scroll toward newer messages (decreases offset = lower lines in document).
+    pub fn scroll_down(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_add(1);
     }
 
-    pub fn scroll_down(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+    /// Snap to the most recent messages (highest line offset).
+    pub fn scroll_to_bottom(&mut self) {
+        // Line count: each message contributes header + content lines + blank separator.
+        // We over-estimate here; ratatui clamps if offset exceeds content height.
+        let total_lines: u16 = self
+            .messages
+            .iter()
+            .map(|m| 2 + m.content.lines().count() as u16)
+            .sum();
+        self.scroll_offset = total_lines;
     }
 
     pub fn render_widget(&self, area: Rect, buf: &mut Buffer) {
@@ -151,15 +165,30 @@ mod tests {
     #[test]
     fn test_chat_view_scroll() {
         let mut chat = ChatView::new();
-        chat.scroll_up();
+        // scroll_down goes toward newer content (higher offset)
+        chat.scroll_down();
         assert_eq!(chat.scroll_offset, 1);
-        chat.scroll_up();
+        chat.scroll_down();
         assert_eq!(chat.scroll_offset, 2);
-        chat.scroll_down();
+        // scroll_up goes toward older content (lower offset)
+        chat.scroll_up();
         assert_eq!(chat.scroll_offset, 1);
-        chat.scroll_down();
-        chat.scroll_down();
+        chat.scroll_up();
+        chat.scroll_up(); // clamps to 0
         assert_eq!(chat.scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_chat_view_scroll_to_bottom() {
+        let mut chat = ChatView::new();
+        chat.add_message(make_message(Role::Human, "Hello"));
+        chat.add_message(make_message(Role::Assistant, "Hi\nSecond line"));
+        chat.scroll_to_bottom();
+        // offset should be non-zero (snapped toward end)
+        assert!(
+            chat.scroll_offset > 0,
+            "scroll_to_bottom should set a positive offset"
+        );
     }
 
     #[test]

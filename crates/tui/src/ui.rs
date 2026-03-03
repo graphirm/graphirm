@@ -92,9 +92,12 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let input_paragraph = Paragraph::new(Line::from(display_text));
     frame.render_widget(input_paragraph, inner);
 
-    // Set cursor position when input panel is focused
+    // Set cursor position when input panel is focused.
+    // Use char count (not byte index) for the display column so multi-byte
+    // characters (e.g. `é`, `→`) don't offset the visible caret.
     if matches!(app.focus, crate::app::FocusPanel::Input) {
-        frame.set_cursor_position((inner.x + app.input.cursor as u16, inner.y));
+        let display_col = app.input.content[..app.input.cursor].chars().count() as u16;
+        frame.set_cursor_position((inner.x + display_col, inner.y));
     }
 }
 

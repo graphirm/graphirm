@@ -95,6 +95,7 @@ impl App {
                                 is_tool_call: false,
                                 tool_name: None,
                             });
+                            self.chat.scroll_to_bottom();
                             self.state = AppState::WaitingForAgent;
                             on_submit(msg);
                         }
