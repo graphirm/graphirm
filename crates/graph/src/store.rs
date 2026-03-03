@@ -200,6 +200,56 @@ impl GraphStore {
             updated_at,
         })
     }
+
+    pub fn update_node(&self, id: &NodeId, mut node: GraphNode) -> Result<(), GraphError> {
+        node.updated_at = chrono::Utc::now();
+        let conn = self.pool.get()?;
+        let data = serde_json::to_string(&node.node_type)?;
+        let metadata = serde_json::to_string(&node.metadata)?;
+
+        let rows = conn.execute(
+            "UPDATE nodes SET node_type = ?1, data = ?2, metadata = ?3, updated_at = ?4
+             WHERE id = ?5",
+            params![
+                node.node_type.type_name(),
+                data,
+                metadata,
+                node.updated_at.to_rfc3339(),
+                id.0,
+            ],
+        )?;
+
+        if rows == 0 {
+            return Err(GraphError::NodeNotFound(id.0.clone()));
+        }
+        Ok(())
+    }
+
+    pub fn delete_node(&self, id: &NodeId) -> Result<(), GraphError> {
+        let conn = self.pool.get()?;
+
+        conn.execute(
+            "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
+            params![id.0],
+        )?;
+
+        let rows = conn.execute("DELETE FROM nodes WHERE id = ?1", params![id.0])?;
+        if rows == 0 {
+            return Err(GraphError::NodeNotFound(id.0.clone()));
+        }
+
+        let mut graph = self.graph.write().map_err(|_| GraphError::LockPoisoned)?;
+        let mut indices = self
+            .node_indices
+            .write()
+            .map_err(|_| GraphError::LockPoisoned)?;
+
+        if let Some(idx) = indices.remove(id) {
+            graph.remove_node(idx);
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -284,6 +334,72 @@ mod tests {
 
         let graph = store.graph.read().unwrap();
         assert_eq!(graph.node_count(), 1);
+    }
+
+    #[test]
+    fn update_node_changes_fields() {
+        let store = GraphStore::open_memory().unwrap();
+        let node = GraphNode::new(NodeType::Task(crate::nodes::TaskData {
+            title: "Original".to_string(),
+            description: "First version".to_string(),
+            status: "pending".to_string(),
+            priority: Some(1),
+        }));
+        let id = node.id.clone();
+        store.add_node(node.clone()).unwrap();
+
+        let mut updated = node;
+        updated.node_type = NodeType::Task(crate::nodes::TaskData {
+            title: "Updated".to_string(),
+            description: "Second version".to_string(),
+            status: "in_progress".to_string(),
+            priority: Some(2),
+        });
+        store.update_node(&id, updated).unwrap();
+
+        let fetched = store.get_node(&id).unwrap();
+        match &fetched.node_type {
+            NodeType::Task(data) => {
+                assert_eq!(data.title, "Updated");
+                assert_eq!(data.status, "in_progress");
+            }
+            _ => panic!("expected Task"),
+        }
+        assert!(fetched.updated_at > fetched.created_at);
+    }
+
+    #[test]
+    fn delete_node_removes_from_store() {
+        let store = GraphStore::open_memory().unwrap();
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "deleteme".to_string(),
+            token_count: None,
+        }));
+        let id = node.id.clone();
+        store.add_node(node).unwrap();
+
+        store.delete_node(&id).unwrap();
+
+        assert!(store.get_node(&id).is_err());
+
+        let indices = store.node_indices.read().unwrap();
+        assert!(!indices.contains_key(&id));
+
+        let graph = store.graph.read().unwrap();
+        assert_eq!(graph.node_count(), 0);
+    }
+
+    #[test]
+    fn update_nonexistent_node_returns_error() {
+        let store = GraphStore::open_memory().unwrap();
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "ghost".to_string(),
+            token_count: None,
+        }));
+        let result = store.update_node(&NodeId::from("nonexistent"), node);
+        assert!(result.is_err());
     }
 
     #[test]
