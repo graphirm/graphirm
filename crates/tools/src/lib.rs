@@ -5,6 +5,7 @@ pub mod find;
 pub mod grep;
 pub mod ls;
 pub mod read;
+pub mod permissions;
 pub mod registry;
 pub mod write;
 
