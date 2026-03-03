@@ -1,6 +1,6 @@
 // Session management: create, resume, list, archive sessions
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
 use graphirm_graph::edges::{EdgeType, GraphEdge};
@@ -15,6 +15,10 @@ pub struct Session {
     pub agent_config: AgentConfig,
     pub graph: Arc<GraphStore>,
     pub created_at: DateTime<Utc>,
+    /// ID of the most recent Interaction node in this session's conversation
+    /// chain. Used to create `RespondsTo` edges that link messages into a
+    /// traversable DAG (rather than a flat star off the agent node).
+    last_interaction_id: Mutex<Option<NodeId>>,
 }
 
 impl Session {
@@ -32,6 +36,7 @@ impl Session {
             agent_config: config,
             graph,
             created_at: now,
+            last_interaction_id: Mutex::new(None),
         })
     }
 
@@ -44,18 +49,56 @@ impl Session {
             token_count: None,
         }));
         let msg_id = self.graph.add_node(interaction_node)?;
+        self.link_interaction(&msg_id)?;
+        Ok(msg_id)
+    }
+
+    /// Record an Interaction node as part of this session's conversation chain.
+    ///
+    /// Adds:
+    /// - A `Produces` edge from the Agent node to the new Interaction node.
+    /// - A `RespondsTo` edge from the new node to the previous Interaction node
+    ///   (if any), forming a traversable conversation chain.
+    pub fn link_interaction(&self, node_id: &NodeId) -> Result<(), AgentError> {
+        // Agent → node (Produces)
         self.graph.add_edge(GraphEdge::new(
             EdgeType::Produces,
             self.id.clone(),
-            msg_id.clone(),
+            node_id.clone(),
         ))?;
-        Ok(msg_id)
+
+        // node → previous (RespondsTo) — chains the conversation for graph traversal
+        let mut last = self
+            .last_interaction_id
+            .lock()
+            .expect("last_interaction_id lock poisoned");
+        if let Some(prev_id) = last.as_ref() {
+            self.graph.add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                node_id.clone(),
+                prev_id.clone(),
+            ))?;
+        }
+        *last = Some(node_id.clone());
+        Ok(())
+    }
+
+    /// Update the Agent node's status field in the graph.
+    /// Typical values: `"active"`, `"completed"`, `"cancelled"`, `"limit_reached"`.
+    pub fn set_status(&self, status: &str) -> Result<(), AgentError> {
+        let mut node = self.graph.get_node(&self.id)?;
+        if let NodeType::Agent(ref mut data) = node.node_type {
+            data.status = status.to_string();
+        }
+        self.graph.update_node(&self.id, node)?;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use graphirm_graph::Direction;
 
     #[test]
     fn test_session_creates_agent_node_in_graph() {
@@ -98,6 +141,47 @@ mod tests {
                 assert_eq!(data.content, "Hello!");
             }
             _ => panic!("expected Interaction node"),
+        }
+    }
+
+    #[test]
+    fn test_session_link_interaction_creates_responds_to_chain() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig::default();
+        let session = Session::new(graph.clone(), config).unwrap();
+
+        // Three sequential messages
+        let id1 = session.add_user_message("msg1").unwrap();
+        let id2 = session.add_user_message("msg2").unwrap();
+        let id3 = session.add_user_message("msg3").unwrap();
+
+        // msg2 should have a RespondsTo edge pointing to msg1
+        let msg2_responds: Vec<_> = graph
+            .neighbors(&id2, Some(EdgeType::RespondsTo), Direction::Outgoing)
+            .unwrap();
+        assert_eq!(msg2_responds.len(), 1);
+        assert_eq!(msg2_responds[0].id, id1);
+
+        // msg3 should have a RespondsTo edge pointing to msg2
+        let msg3_responds: Vec<_> = graph
+            .neighbors(&id3, Some(EdgeType::RespondsTo), Direction::Outgoing)
+            .unwrap();
+        assert_eq!(msg3_responds.len(), 1);
+        assert_eq!(msg3_responds[0].id, id2);
+    }
+
+    #[test]
+    fn test_session_set_status() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig::default();
+        let session = Session::new(graph.clone(), config).unwrap();
+
+        session.set_status("completed").unwrap();
+
+        let node = graph.get_node(&session.id).unwrap();
+        match &node.node_type {
+            NodeType::Agent(data) => assert_eq!(data.status, "completed"),
+            _ => panic!("expected Agent node"),
         }
     }
 }

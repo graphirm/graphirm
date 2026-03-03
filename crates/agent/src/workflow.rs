@@ -1,8 +1,5 @@
 // Agent workflow: async state machine with plan -> act -> observe -> reflect loop
 
-use std::path::PathBuf;
-
-use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{GraphNode, InteractionData, NodeId, NodeType};
 use graphirm_llm::{CompletionConfig, ContentPart, LlmProvider, LlmResponse};
 use graphirm_tools::registry::ToolRegistry;
@@ -19,7 +16,7 @@ use crate::session::Session;
 /// Call the LLM with the current conversation context and record the
 /// assistant response as an Interaction node in the graph.
 ///
-/// Returns the LlmResponse (which may contain tool_calls) and the
+/// Returns the LlmResponse (which may contain tool calls) and the
 /// NodeId of the recorded response node.
 pub async fn stream_and_record(
     session: &Session,
@@ -37,41 +34,27 @@ pub async fn stream_and_record(
         .with_max_tokens(session.agent_config.max_tokens.unwrap_or(8192))
         .with_temperature(session.agent_config.temperature.unwrap_or(0.7));
 
-    let response = llm
-        .complete(context, &tool_defs, &config)
-        .await?;
+    let response = llm.complete(context, &tool_defs, &config).await?;
 
-    // Build metadata for tool_calls if any
+    // Build metadata to persist tool_calls so build_context can reconstruct them
     let mut metadata = serde_json::Map::new();
     if response.has_tool_calls() {
         let tool_calls_json: Vec<serde_json::Value> = response
             .tool_calls()
             .iter()
-            .filter_map(|part| {
-                match part {
-                    ContentPart::ToolCall {
-                        id,
-                        name,
-                        arguments,
-                    } => Some(serde_json::json!({
-                        "id": id,
-                        "name": name,
-                        "arguments": arguments
-                    })),
-                    _ => None,
-                }
+            .filter_map(|part| match part {
+                ContentPart::ToolCall { id, name, arguments } => Some(serde_json::json!({
+                    "id": id,
+                    "name": name,
+                    "arguments": arguments
+                })),
+                _ => None,
             })
             .collect();
         metadata.insert("tool_calls".to_string(), serde_json::Value::Array(tool_calls_json));
     }
-    metadata.insert(
-        "usage_input".to_string(),
-        serde_json::json!(response.usage.input_tokens),
-    );
-    metadata.insert(
-        "usage_output".to_string(),
-        serde_json::json!(response.usage.output_tokens),
-    );
+    metadata.insert("usage_input".to_string(), serde_json::json!(response.usage.input_tokens));
+    metadata.insert("usage_output".to_string(), serde_json::json!(response.usage.output_tokens));
 
     let mut interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
         role: "assistant".to_string(),
@@ -81,27 +64,19 @@ pub async fn stream_and_record(
     interaction_node.metadata = serde_json::Value::Object(metadata);
 
     let node_id = session.graph.add_node(interaction_node)?;
-    session
-        .graph
-        .add_edge(GraphEdge::new(
-            EdgeType::Produces,
-            session.id.clone(),
-            node_id.clone(),
-        ))?;
+    session.link_interaction(&node_id)?;
 
     info!(node_id = %node_id, "Recorded assistant response");
-
-    events
-        .emit(AgentEvent::MessageEnd {
-            node_id: node_id.clone(),
-        })
-        .await;
+    events.emit(AgentEvent::MessageEnd { node_id: node_id.clone() });
 
     Ok((response, node_id))
 }
 
 /// Execute tool calls in parallel using tokio::JoinSet.
-/// Each result is recorded as an Interaction node (role: tool) in the graph.
+///
+/// Uses a two-phase approach: first collect all execution results, then record
+/// them to the graph. This prevents ghost executions where a tool ran but its
+/// output was lost due to a graph write failure mid-drain.
 async fn execute_tools_parallel(
     session: &Session,
     tools: &ToolRegistry,
@@ -114,19 +89,14 @@ async fn execute_tools_parallel(
         graph: session.graph.clone(),
         agent_id: session.id.clone(),
         interaction_id: response_id.clone(),
-        working_dir: PathBuf::from("."),
+        working_dir: session.agent_config.working_dir.clone(),
         signal: cancel.clone(),
     };
 
+    // Phase 1: spawn all tools in parallel and collect results
     let mut set = JoinSet::new();
-
     for part in tool_calls {
-        let ContentPart::ToolCall {
-            id: call_id,
-            name,
-            arguments,
-        } = part
-        else {
+        let ContentPart::ToolCall { id: call_id, name, arguments } = part else {
             continue;
         };
         let tool = tools.get(name)?;
@@ -143,19 +113,22 @@ async fn execute_tools_parallel(
         });
     }
 
-    let mut node_ids = Vec::new();
-
+    let mut exec_results = Vec::new();
     while let Some(join_result) = set.join_next().await {
-        let (call_id, tool_name, exec_result) =
-            join_result.map_err(|e| AgentError::Join(e.to_string()))?;
+        exec_results.push(join_result.map_err(|e| AgentError::Join(e.to_string()))?);
+    }
 
+    // Phase 2: record all results to graph (best-effort — log failures rather
+    // than dropping results for tools that already executed successfully)
+    let mut node_ids = Vec::new();
+    for (call_id, tool_name, exec_result) in exec_results {
         let (content, is_error): (String, bool) = match exec_result {
             Ok(output) => (output.content, output.is_error),
             Err(e) => (e.to_string(), true),
         };
 
         let mut tool_metadata = serde_json::Map::new();
-        tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(call_id));
+        tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(&call_id));
         tool_metadata.insert("is_error".to_string(), serde_json::json!(is_error));
 
         let mut tool_node = GraphNode::new(NodeType::Interaction(InteractionData {
@@ -165,24 +138,20 @@ async fn execute_tools_parallel(
         }));
         tool_node.metadata = serde_json::Value::Object(tool_metadata);
 
-        let node_id = session.graph.add_node(tool_node)?;
-        session
-            .graph
-            .add_edge(GraphEdge::new(
-                EdgeType::Produces,
-                session.id.clone(),
-                node_id.clone(),
-            ))?;
-
-        events
-            .emit(AgentEvent::ToolEnd {
-                node_id: node_id.clone(),
-                is_error,
-            })
-            .await;
-
-        info!(node_id = %node_id, tool = %tool_name, is_error, "Tool execution complete");
-        node_ids.push(node_id);
+        match session.graph.add_node(tool_node) {
+            Ok(node_id) => {
+                if let Err(e) = session.link_interaction(&node_id) {
+                    tracing::error!("Failed to link tool result node {node_id}: {e}");
+                } else {
+                    events.emit(AgentEvent::ToolEnd { node_id: node_id.clone(), is_error });
+                    info!(node_id = %node_id, tool = %tool_name, is_error, "Tool execution complete");
+                    node_ids.push(node_id);
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to record tool result for call {call_id}: {e}");
+            }
+        }
     }
 
     Ok(node_ids)
@@ -190,9 +159,9 @@ async fn execute_tools_parallel(
 
 /// The main agent loop. Cycles between:
 /// 1. Build context from graph
-/// 2. Call LLM and record response
-/// 3. If tool calls present, execute them in parallel and record results
-/// 4. Repeat until no tool calls or max_turns reached
+/// 2. Call LLM and record response (races against CancellationToken)
+/// 3. If tool calls present, dispatch them in parallel and record results
+/// 4. Repeat until no tool calls, max_turns is reached, or cancelled
 pub async fn run_agent_loop(
     session: &Session,
     llm: &dyn LlmProvider,
@@ -203,89 +172,87 @@ pub async fn run_agent_loop(
     let max_turns = session.agent_config.max_turns;
     let mut all_node_ids: Vec<NodeId> = Vec::new();
 
-    events
-        .emit(AgentEvent::AgentStart {
-            agent_id: session.id.clone(),
-        })
-        .await;
+    events.emit(AgentEvent::AgentStart { agent_id: session.id.clone() });
 
     for turn in 0..max_turns {
+        // Check cancellation before starting each turn
         if cancel.is_cancelled() {
             info!("Agent loop cancelled at turn {}", turn);
-            events
-                .emit(AgentEvent::AgentEnd {
-                    agent_id: session.id.clone(),
-                    node_ids: all_node_ids,
-                })
-                .await;
+            let _ = session.set_status("cancelled");
+            events.emit(AgentEvent::AgentEnd {
+                agent_id: session.id.clone(),
+                node_ids: all_node_ids,
+            });
             return Err(AgentError::Cancelled);
         }
 
-        events.emit(AgentEvent::TurnStart { turn_index: turn }).await;
+        events.emit(AgentEvent::TurnStart { turn_index: turn });
 
-        let (response, response_id) = stream_and_record(session, llm, tools, events).await?;
+        // Race the LLM call against the cancellation token so in-flight requests
+        // are interrupted promptly rather than waiting for the provider to respond.
+        let (response, response_id) = tokio::select! {
+            result = stream_and_record(session, llm, tools, events) => result?,
+            _ = cancel.cancelled() => {
+                info!("Agent loop cancelled during LLM call at turn {}", turn);
+                let _ = session.set_status("cancelled");
+                events.emit(AgentEvent::AgentEnd {
+                    agent_id: session.id.clone(),
+                    node_ids: all_node_ids,
+                });
+                return Err(AgentError::Cancelled);
+            }
+        };
         all_node_ids.push(response_id.clone());
 
         if !response.has_tool_calls() {
-            events
-                .emit(AgentEvent::TurnEnd {
-                    response_id: response_id.clone(),
-                    tool_result_ids: vec![],
-                })
-                .await;
+            events.emit(AgentEvent::TurnEnd {
+                response_id: response_id.clone(),
+                tool_result_ids: vec![],
+            });
             break;
         }
 
         let tool_calls: Vec<&ContentPart> = response.tool_calls();
         for part in &tool_calls {
-            let ContentPart::ToolCall { name, .. } = part else {
+            let ContentPart::ToolCall { id: call_id, name, .. } = part else {
                 continue;
             };
-            events
-                .emit(AgentEvent::ToolStart {
-                    node_id: response_id.clone(),
-                    tool_name: name.to_string(),
-                })
-                .await;
+            events.emit(AgentEvent::ToolStart {
+                response_node_id: response_id.clone(),
+                call_id: call_id.clone(),
+                tool_name: name.clone(),
+            });
         }
 
-        let tool_result_ids = execute_tools_parallel(
-            session,
-            tools,
-            &response_id,
-            tool_calls.as_slice(),
-            events,
-            cancel,
-        )
-        .await?;
+        let tool_result_ids =
+            execute_tools_parallel(session, tools, &response_id, tool_calls.as_slice(), events, cancel)
+                .await?;
 
-        all_node_ids.extend(tool_result_ids.clone());
+        all_node_ids.extend(tool_result_ids.iter().cloned());
 
-        events
-            .emit(AgentEvent::TurnEnd {
-                response_id: response_id.clone(),
-                tool_result_ids: tool_result_ids.clone(),
-            })
-            .await;
+        events.emit(AgentEvent::TurnEnd {
+            response_id: response_id.clone(),
+            tool_result_ids,
+        });
 
+        // The loop runs 0..max_turns; hitting this on the last iteration with
+        // outstanding tool calls means we consumed the full budget.
         if turn + 1 >= max_turns {
             info!("Recursion limit reached at {} turns", max_turns);
-            events
-                .emit(AgentEvent::AgentEnd {
-                    agent_id: session.id.clone(),
-                    node_ids: all_node_ids,
-                })
-                .await;
+            let _ = session.set_status("limit_reached");
+            events.emit(AgentEvent::AgentEnd {
+                agent_id: session.id.clone(),
+                node_ids: all_node_ids,
+            });
             return Err(AgentError::RecursionLimit(max_turns));
         }
     }
 
-    events
-        .emit(AgentEvent::AgentEnd {
-            agent_id: session.id.clone(),
-            node_ids: all_node_ids,
-        })
-        .await;
+    let _ = session.set_status("completed");
+    events.emit(AgentEvent::AgentEnd {
+        agent_id: session.id.clone(),
+        node_ids: all_node_ids,
+    });
 
     Ok(())
 }
@@ -345,9 +312,7 @@ mod test_helpers {
             _tools: &[ToolDefinition],
             _config: &CompletionConfig,
         ) -> Result<
-            std::pin::Pin<
-                Box<dyn futures::Stream<Item = graphirm_llm::StreamEvent> + Send>,
-            >,
+            std::pin::Pin<Box<dyn futures::Stream<Item = graphirm_llm::StreamEvent> + Send>>,
             LlmError,
         > {
             Ok(Box::pin(futures::stream::empty()))
@@ -373,10 +338,7 @@ mod test_helpers {
             "Mock tool for testing"
         }
         fn parameters(&self) -> serde_json::Value {
-            serde_json::json!({
-                "type": "object",
-                "properties": {}
-            })
+            serde_json::json!({"type": "object", "properties": {}})
         }
         async fn execute(
             &self,
@@ -395,14 +357,12 @@ mod test_helpers {
         }
     }
 
-    pub fn tool_call_response(
-        calls: Vec<(&str, &str, serde_json::Value)>,
-    ) -> LlmResponse {
+    /// Builds an LlmResponse containing tool calls.
+    /// Each tuple is `(tool_name, call_id, arguments)`.
+    pub fn tool_call_response(calls: Vec<(&str, &str, serde_json::Value)>) -> LlmResponse {
         let content: Vec<ContentPart> = calls
             .into_iter()
-            .map(|(name, id, args)| {
-                ContentPart::tool_call(id, name, args)
-            })
+            .map(|(name, id, args)| ContentPart::tool_call(id, name, args))
             .collect();
         LlmResponse {
             content,
@@ -414,11 +374,13 @@ mod test_helpers {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::test_helpers::*;
-    use crate::config::AgentConfig;
-    use graphirm_graph::GraphStore;
     use std::sync::Arc;
+
+    use super::test_helpers::*;
+    use super::*;
+    use crate::config::AgentConfig;
+    use graphirm_graph::edges::EdgeType;
+    use graphirm_graph::{Direction, GraphStore};
 
     #[tokio::test]
     async fn test_stream_and_record_creates_assistant_node() {
@@ -451,10 +413,7 @@ mod tests {
     #[tokio::test]
     async fn test_agent_loop_single_turn_no_tools() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let config = AgentConfig {
-            max_turns: 10,
-            ..AgentConfig::default()
-        };
+        let config = AgentConfig { max_turns: 10, ..AgentConfig::default() };
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("What is 2+2?").unwrap();
 
@@ -476,32 +435,26 @@ mod tests {
         }
 
         assert!(matches!(events[0], AgentEvent::AgentStart { .. }));
-        assert!(matches!(
-            events[1],
-            AgentEvent::TurnStart { turn_index: 0 }
-        ));
-        assert!(matches!(
-            events.last().unwrap(),
-            AgentEvent::AgentEnd { .. }
-        ));
+        assert!(matches!(events[1], AgentEvent::TurnStart { turn_index: 0 }));
+        assert!(matches!(events.last().unwrap(), AgentEvent::AgentEnd { .. }));
+
+        // Agent node status should be "completed"
+        let agent_node = graph.get_node(&session.id).unwrap();
+        match &agent_node.node_type {
+            graphirm_graph::nodes::NodeType::Agent(d) => assert_eq!(d.status, "completed"),
+            _ => panic!("expected Agent node"),
+        }
     }
 
     #[tokio::test]
     async fn test_agent_loop_tool_call_then_text() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let config = AgentConfig {
-            max_turns: 10,
-            ..AgentConfig::default()
-        };
+        let config = AgentConfig { max_turns: 10, ..AgentConfig::default() };
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("List files").unwrap();
 
         let provider = MockProvider::new(vec![
-            tool_call_response(vec![(
-                "bash",
-                "call_1",
-                serde_json::json!({"command": "ls"}),
-            )]),
+            tool_call_response(vec![("bash", "call_1", serde_json::json!({"command": "ls"}))]),
             text_response("Here are your files: src/ Cargo.toml"),
         ]);
 
@@ -540,17 +493,16 @@ mod tests {
         assert_eq!(tool_ends.len(), 1);
 
         let neighbors = graph
-            .neighbors(
-                &session.id,
-                Some(EdgeType::Produces),
-                graphirm_graph::Direction::Outgoing,
-            )
+            .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
             .unwrap();
         let tool_nodes: Vec<_> = neighbors
             .iter()
-            .filter(|n| match &n.node_type {
-                NodeType::Interaction(d) => d.role == "tool",
-                _ => false,
+            .filter(|n| {
+                if let NodeType::Interaction(d) = &n.node_type {
+                    d.role == "tool"
+                } else {
+                    false
+                }
             })
             .collect();
         assert_eq!(tool_nodes.len(), 1);
@@ -562,29 +514,14 @@ mod tests {
     #[tokio::test]
     async fn test_agent_loop_recursion_limit() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let config = AgentConfig {
-            max_turns: 3,
-            ..AgentConfig::default()
-        };
+        let config = AgentConfig { max_turns: 3, ..AgentConfig::default() };
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("Do infinite things").unwrap();
 
         let provider = MockProvider::new(vec![
-            tool_call_response(vec![(
-                "bash",
-                "c1",
-                serde_json::json!({"command": "echo 1"}),
-            )]),
-            tool_call_response(vec![(
-                "bash",
-                "c2",
-                serde_json::json!({"command": "echo 2"}),
-            )]),
-            tool_call_response(vec![(
-                "bash",
-                "c3",
-                serde_json::json!({"command": "echo 3"}),
-            )]),
+            tool_call_response(vec![("bash", "c1", serde_json::json!({"command": "echo 1"}))]),
+            tool_call_response(vec![("bash", "c2", serde_json::json!({"command": "echo 2"}))]),
+            tool_call_response(vec![("bash", "c3", serde_json::json!({"command": "echo 3"}))]),
         ]);
 
         let mock_bash = Arc::new(MockTool {
@@ -605,40 +542,31 @@ mod tests {
             AgentError::RecursionLimit(n) => assert_eq!(n, 3),
             other => panic!("Expected RecursionLimit, got: {:?}", other),
         }
-
         assert_eq!(provider.call_count(), 3);
 
         let mut events = vec![];
         while let Ok(e) = rx.try_recv() {
             events.push(e);
         }
-        assert!(matches!(
-            events.last().unwrap(),
-            AgentEvent::AgentEnd { .. }
-        ));
+        assert!(matches!(events.last().unwrap(), AgentEvent::AgentEnd { .. }));
+
+        let agent_node = graph.get_node(&session.id).unwrap();
+        match &agent_node.node_type {
+            graphirm_graph::nodes::NodeType::Agent(d) => assert_eq!(d.status, "limit_reached"),
+            _ => panic!("expected Agent node"),
+        }
     }
 
     #[tokio::test]
     async fn test_agent_loop_cancellation() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let config = AgentConfig {
-            max_turns: 100,
-            ..AgentConfig::default()
-        };
+        let config = AgentConfig { max_turns: 100, ..AgentConfig::default() };
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("Start working").unwrap();
 
         let provider = MockProvider::new(vec![
-            tool_call_response(vec![(
-                "bash",
-                "c1",
-                serde_json::json!({"command": "echo 1"}),
-            )]),
-            tool_call_response(vec![(
-                "bash",
-                "c2",
-                serde_json::json!({"command": "echo 2"}),
-            )]),
+            tool_call_response(vec![("bash", "c1", serde_json::json!({"command": "echo 1"}))]),
+            tool_call_response(vec![("bash", "c2", serde_json::json!({"command": "echo 2"}))]),
             text_response("done"),
         ]);
 
@@ -671,9 +599,9 @@ mod tests {
         while let Ok(e) = rx.try_recv() {
             events.push(e);
         }
-        let has_agent_end = events
-            .iter()
-            .any(|e| matches!(e, AgentEvent::AgentEnd { .. }));
-        assert!(has_agent_end, "AgentEnd event should be emitted on cancel");
+        assert!(
+            events.iter().any(|e| matches!(e, AgentEvent::AgentEnd { .. })),
+            "AgentEnd event should be emitted on cancel"
+        );
     }
 }

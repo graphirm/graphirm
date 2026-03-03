@@ -4,6 +4,7 @@ use graphirm_graph::edges::EdgeId;
 use graphirm_graph::nodes::NodeId;
 use graphirm_llm::StreamEvent;
 use tokio::sync::mpsc;
+use tracing;
 
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
@@ -31,8 +32,12 @@ pub enum AgentEvent {
     MessageEnd {
         node_id: NodeId,
     },
+    /// Emitted before a tool is dispatched.
+    /// `response_node_id` is the assistant Interaction node that contains the tool call.
+    /// `call_id` is the LLM-generated tool call ID (matches the ToolEnd result).
     ToolStart {
-        node_id: NodeId,
+        response_node_id: NodeId,
+        call_id: String,
         tool_name: String,
     },
     ToolEnd {
@@ -62,9 +67,14 @@ impl EventBus {
         rx
     }
 
-    pub async fn emit(&self, event: AgentEvent) {
+    /// Emit an event to all subscribers.
+    /// Uses non-blocking `try_send`; if a subscriber's channel is full the event
+    /// is dropped and a warning is logged rather than stalling the agent loop.
+    pub fn emit(&self, event: AgentEvent) {
         for sender in &self.subscribers {
-            let _ = sender.send(event.clone()).await;
+            if sender.try_send(event.clone()).is_err() {
+                tracing::warn!("EventBus: subscriber channel full, dropping event");
+            }
         }
     }
 }
@@ -89,7 +99,8 @@ mod tests {
     #[test]
     fn test_agent_event_debug() {
         let event = AgentEvent::ToolStart {
-            node_id: NodeId::from("node-1"),
+            response_node_id: NodeId::from("node-1"),
+            call_id: "call_abc".to_string(),
             tool_name: "bash".to_string(),
         };
         let debug = format!("{:?}", event);
@@ -102,7 +113,7 @@ mod tests {
         let mut bus = EventBus::new();
         let mut rx = bus.subscribe();
 
-        bus.emit(AgentEvent::TurnStart { turn_index: 0 }).await;
+        bus.emit(AgentEvent::TurnStart { turn_index: 0 });
 
         let event = rx.recv().await.unwrap();
         assert!(matches!(event, AgentEvent::TurnStart { turn_index: 0 }));
@@ -116,8 +127,7 @@ mod tests {
 
         bus.emit(AgentEvent::AgentStart {
             agent_id: NodeId::from("a1"),
-        })
-        .await;
+        });
 
         let e1 = rx1.recv().await.unwrap();
         let e2 = rx2.recv().await.unwrap();
@@ -125,13 +135,13 @@ mod tests {
         assert!(matches!(e2, AgentEvent::AgentStart { .. }));
     }
 
-    #[tokio::test]
-    async fn test_event_bus_dropped_subscriber_does_not_block() {
+    #[test]
+    fn test_event_bus_dropped_subscriber_does_not_block() {
         let mut bus = EventBus::new();
         let rx = bus.subscribe();
         drop(rx);
 
         // Should not panic or block
-        bus.emit(AgentEvent::TurnStart { turn_index: 0 }).await;
+        bus.emit(AgentEvent::TurnStart { turn_index: 0 });
     }
 }

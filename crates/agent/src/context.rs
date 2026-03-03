@@ -28,6 +28,15 @@ pub fn build_context(session: &Session) -> Result<Vec<LlmMessage>, AgentError> {
     // Sort by created_at timestamp
     interactions.sort_by(|a, b| a.created_at.cmp(&b.created_at));
 
+    // Enforce max_context_messages budget: keep the most recent N messages.
+    // The system prompt is always prepended regardless of this limit.
+    if let Some(limit) = session.agent_config.max_context_messages {
+        let len = interactions.len();
+        if len > limit {
+            interactions.drain(..len - limit);
+        }
+    }
+
     // Convert each node to an LlmMessage
     for node in &interactions {
         let NodeType::Interaction(data) = &node.node_type else {
@@ -39,7 +48,12 @@ pub fn build_context(session: &Session) -> Result<Vec<LlmMessage>, AgentError> {
             "user" => Role::Human,
             "assistant" => Role::Assistant,
             "tool" => Role::ToolResult,
-            _ => Role::Human,
+            other => {
+                return Err(AgentError::Context(format!(
+                    "unknown interaction role '{other}' on node {}",
+                    node.id
+                )))
+            }
         };
 
         match role {
