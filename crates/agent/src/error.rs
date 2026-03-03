@@ -19,4 +19,13 @@ pub enum AgentError {
 
     #[error("Context build failed: {0}")]
     Context(String),
+
+    #[error("Recursion limit reached: {0} turns")]
+    RecursionLimit(u32),
+
+    #[error("Agent loop cancelled")]
+    Cancelled,
+
+    #[error("Task join error: {0}")]
+    Join(String),
 }
