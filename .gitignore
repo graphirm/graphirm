@@ -1,0 +1,25 @@
+# Build
+/target/
+*.swp
+*.swo
+
+# Environment & secrets
+.env
+.env.*
+
+# IDE
+.cursor/
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# SQLite
+*.db
+*.db-shm
+*.db-wal
