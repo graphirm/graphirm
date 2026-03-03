@@ -130,6 +130,76 @@ impl GraphStore {
 
         Ok(())
     }
+
+    pub fn add_node(&self, node: GraphNode) -> Result<NodeId, GraphError> {
+        let conn = self.pool.get()?;
+        let data = serde_json::to_string(&node.node_type)?;
+        let metadata = serde_json::to_string(&node.metadata)?;
+
+        conn.execute(
+            "INSERT INTO nodes (id, node_type, data, metadata, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                node.id.0,
+                node.node_type.type_name(),
+                data,
+                metadata,
+                node.created_at.to_rfc3339(),
+                node.updated_at.to_rfc3339(),
+            ],
+        )?;
+
+        let mut graph = self.graph.write().map_err(|_| GraphError::LockPoisoned)?;
+        let mut indices = self
+            .node_indices
+            .write()
+            .map_err(|_| GraphError::LockPoisoned)?;
+        let idx = graph.add_node(node.id.clone());
+        indices.insert(node.id.clone(), idx);
+
+        Ok(node.id)
+    }
+
+    pub fn get_node(&self, id: &NodeId) -> Result<GraphNode, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, data, metadata, created_at, updated_at FROM nodes WHERE id = ?1",
+        )?;
+
+        let row = stmt
+            .query_row(params![id.0], |row| {
+                let id: String = row.get(0)?;
+                let data: String = row.get(1)?;
+                let metadata: String = row.get(2)?;
+                let created_at: String = row.get(3)?;
+                let updated_at: String = row.get(4)?;
+                Ok((id, data, metadata, created_at, updated_at))
+            })
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    GraphError::NodeNotFound(id.0.clone())
+                }
+                other => GraphError::Sqlite(other),
+            })?;
+
+        let (id_str, data, metadata, created_at, updated_at) = row;
+        let node_type: NodeType = serde_json::from_str(&data)?;
+        let metadata: serde_json::Value = serde_json::from_str(&metadata)?;
+        let created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
+            .map_err(|e| GraphError::NodeNotFound(format!("bad timestamp: {e}")))?
+            .with_timezone(&chrono::Utc);
+        let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at)
+            .map_err(|e| GraphError::NodeNotFound(format!("bad timestamp: {e}")))?
+            .with_timezone(&chrono::Utc);
+
+        Ok(GraphNode {
+            id: NodeId(id_str),
+            node_type,
+            metadata,
+            created_at,
+            updated_at,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -158,6 +228,62 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    use crate::nodes::{InteractionData, NodeType};
+
+    #[test]
+    fn add_and_get_node_roundtrip() {
+        let store = GraphStore::open_memory().unwrap();
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "Hello!".to_string(),
+            token_count: Some(3),
+        }));
+        let id = node.id.clone();
+
+        let returned_id = store.add_node(node).unwrap();
+        assert_eq!(returned_id, id);
+
+        let fetched = store.get_node(&id).unwrap();
+        assert_eq!(fetched.id, id);
+        match &fetched.node_type {
+            NodeType::Interaction(data) => {
+                assert_eq!(data.role, "user");
+                assert_eq!(data.content, "Hello!");
+                assert_eq!(data.token_count, Some(3));
+            }
+            _ => panic!("expected Interaction"),
+        }
+    }
+
+    #[test]
+    fn get_nonexistent_node_returns_error() {
+        let store = GraphStore::open_memory().unwrap();
+        let result = store.get_node(&NodeId::from("nonexistent"));
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GraphError::NodeNotFound(id) => assert_eq!(id, "nonexistent"),
+            other => panic!("expected NodeNotFound, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn add_node_updates_petgraph() {
+        let store = GraphStore::open_memory().unwrap();
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "test".to_string(),
+            token_count: None,
+        }));
+        let id = node.id.clone();
+        store.add_node(node).unwrap();
+
+        let indices = store.node_indices.read().unwrap();
+        assert!(indices.contains_key(&id));
+
+        let graph = store.graph.read().unwrap();
+        assert_eq!(graph.node_count(), 1);
     }
 
     #[test]
