@@ -61,13 +61,26 @@ impl App {
     ///
     /// `on_submit` is called when the user presses Enter with non-empty input.
     /// It receives the message text and should send it to the agent.
+    ///
+    /// Requires `Send + 'static` so the caller can hand this off to
+    /// `tokio::task::spawn_blocking` without blocking the async executor.
     pub fn run<F>(mut self, mut on_submit: F) -> io::Result<()>
     where
-        F: FnMut(String),
+        F: FnMut(String) + Send + 'static,
     {
         use crate::events::handle_agent_event;
         use crate::input::{KeyAction, handle_key_event};
         use crate::ui::render_ui;
+
+        // Install a panic hook that restores the terminal before printing the
+        // panic message. Without this, any panic leaves the shell in raw mode
+        // with the alternate screen active — the user loses their terminal.
+        let original_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = disable_raw_mode();
+            let _ = execute!(io::stdout(), LeaveAlternateScreen);
+            original_hook(info);
+        }));
 
         enable_raw_mode()?;
         let mut stdout = io::stdout();

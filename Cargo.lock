@@ -826,12 +826,8 @@ dependencies = [
  "graphirm-agent",
  "graphirm-graph",
  "graphirm-llm",
- "graphirm-tools",
  "ratatui",
- "serde",
- "thiserror 2.0.18",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]

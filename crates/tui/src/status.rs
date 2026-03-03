@@ -42,8 +42,11 @@ impl StatusBar {
             Span::styled(
                 format!("{} ", state_text),
                 Style::default().fg(match state_text.as_str() {
-                    "Streaming" => Color::Green,
-                    "Working" => Color::Yellow,
+                    "Working" | "Thinking..." => Color::Yellow,
+                    "Tool Error" => Color::Red,
+                    "Idle" => Color::DarkGray,
+                    // "Running <tool>..." prefix
+                    s if s.starts_with("Running") => Color::Cyan,
                     _ => Color::DarkGray,
                 }),
             ),

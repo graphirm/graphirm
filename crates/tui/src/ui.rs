@@ -86,7 +86,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::DarkGray),
         )
     } else {
-        Span::raw(app.input.content.clone())
+        Span::raw(app.input.content.as_str())
     };
 
     let input_paragraph = Paragraph::new(Line::from(display_text));

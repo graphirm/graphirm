@@ -11,14 +11,10 @@ description = "Terminal UI for Graphirm"
 graphirm-graph = { path = "../graph" }
 graphirm-agent = { path = "../agent" }
 graphirm-llm = { path = "../llm" }
-graphirm-tools = { path = "../tools" }
 ratatui = "0.29"
 crossterm = "0.28"
 tokio = { version = "1", features = ["sync", "macros", "rt"] }
-tokio-util = "0.7"
-serde = { version = "1", features = ["derive"] }
-chrono = { version = "0.4", features = ["serde"] }
-thiserror = "2"
+chrono = "0.4"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

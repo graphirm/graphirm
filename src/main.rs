@@ -65,12 +65,19 @@ async fn run_chat(model: String) -> Result<(), GraphirmError> {
     let app = graphirm_tui::app::App::new(event_rx, model);
 
     let session_for_submit = session.clone();
-    app.run(move |msg| {
-        if let Err(e) = session_for_submit.add_user_message(&msg) {
-            tracing::error!("Failed to add user message: {}", e);
-        }
-        tracing::info!(message = %msg, "User submitted message");
-    })?;
+
+    // `App::run` is a blocking crossterm loop. Run it on the blocking thread
+    // pool so it doesn't starve other tokio tasks (e.g. the agent loop).
+    tokio::task::spawn_blocking(move || {
+        app.run(move |msg| {
+            if let Err(e) = session_for_submit.add_user_message(&msg) {
+                tracing::error!("Failed to add user message: {}", e);
+            }
+            tracing::info!(message = %msg, "User submitted message");
+        })
+    })
+    .await
+    .map_err(|e| std::io::Error::other(format!("TUI thread panicked: {e}")))??;
 
     cancel.cancel();
 
