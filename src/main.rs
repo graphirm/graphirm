@@ -13,6 +13,10 @@ use tokio_util::sync::CancellationToken;
 #[command(name = "graphirm")]
 #[command(version, about = "Graph-native coding agent")]
 struct Cli {
+    /// Path to the graph database (default: ~/.local/share/graphirm/graph.db)
+    #[arg(long, global = true)]
+    db: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -35,22 +39,140 @@ enum Commands {
         #[arg(short, long, default_value = "anthropic/claude-sonnet-4-20250514")]
         model: String,
     },
+
+    /// Inspect the graph database
+    Graph {
+        #[command(subcommand)]
+        action: GraphAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum GraphAction {
+    /// Show node and edge counts by type
+    Stats,
+    /// List recent nodes (newest first)
+    List {
+        /// Max nodes to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Filter by node type (interaction, agent, content, task, knowledge)
+        #[arg(short, long)]
+        r#type: Option<String>,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<(), GraphirmError> {
     let cli = Cli::parse();
+    let db_path = resolve_db_path(cli.db)?;
 
     match cli.command {
         Commands::Chat { session: _, model } => {
             // TUI runs in raw/alternate-screen mode — logs must go to a file
             // so they don't corrupt the rendered UI.
             let _guard = init_file_logging();
-            run_chat(model).await?;
+            run_chat(model, &db_path).await?;
+        }
+        Commands::Graph { action } => {
+            // Graph inspection commands are synchronous; no TUI, logs to stderr.
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter("error")
+                .init();
+            run_graph_command(action, &db_path)?;
         }
     }
 
     Ok(())
+}
+
+/// Resolve the graph DB path, creating parent directories as needed.
+fn resolve_db_path(override_path: Option<PathBuf>) -> Result<PathBuf, GraphirmError> {
+    let path = override_path.unwrap_or_else(|| {
+        dirs_next::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("graphirm")
+            .join("graph.db")
+    });
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            GraphirmError::Config(format!("Cannot create DB directory {}: {e}", parent.display()))
+        })?;
+    }
+    Ok(path)
+}
+
+fn run_graph_command(action: GraphAction, db_path: &PathBuf) -> Result<(), GraphirmError> {
+    let graph = graphirm_graph::GraphStore::open(db_path.to_str().unwrap_or("graph.db"))?;
+
+    match action {
+        GraphAction::Stats => {
+            let nodes = graph.node_count_db()?;
+            let edges = graph.edge_count_db()?;
+            let by_type = graph.node_counts_by_type()?;
+
+            println!("Graph: {}", db_path.display());
+            println!("  Nodes : {nodes}");
+            println!("  Edges : {edges}");
+            if !by_type.is_empty() {
+                println!("  By type:");
+                for (t, c) in by_type {
+                    println!("    {t:<15} {c}");
+                }
+            }
+        }
+        GraphAction::List { limit, r#type } => {
+            let nodes = graph.list_recent_nodes(limit)?;
+            let nodes: Vec<_> = if let Some(ref filter) = r#type {
+                nodes
+                    .into_iter()
+                    .filter(|n| n.node_type.type_name() == filter.as_str())
+                    .collect()
+            } else {
+                nodes
+            };
+
+            if nodes.is_empty() {
+                println!("No nodes found.");
+                return Ok(());
+            }
+
+            println!(
+                "{:<38}  {:<12}  {}",
+                "ID", "TYPE", "LABEL"
+            );
+            println!("{}", "-".repeat(90));
+            for node in nodes {
+                let label = node_display_label(&node);
+                println!(
+                    "{:<38}  {:<12}  {}",
+                    &node.id.to_string()[..36.min(node.id.to_string().len())],
+                    node.node_type.type_name(),
+                    label
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn node_display_label(node: &graphirm_graph::nodes::GraphNode) -> String {
+    use graphirm_graph::nodes::NodeType;
+    match &node.node_type {
+        NodeType::Interaction(d) => {
+            let preview: String = d.content.chars().take(60).collect();
+            let ellipsis = if d.content.len() > 60 { "…" } else { "" };
+            format!("[{}] {}{}", d.role, preview, ellipsis)
+        }
+        NodeType::Agent(d) => format!("[agent] {} ({})", d.name, d.status),
+        NodeType::Content(d) => {
+            let name = d.path.as_deref().unwrap_or(&d.content_type);
+            format!("[content] {}", name)
+        }
+        NodeType::Task(d) => format!("[task] {} — {}", d.title, d.status),
+        NodeType::Knowledge(d) => format!("[{}] {}", d.entity_type, d.entity),
+    }
 }
 
 /// Initialise a rolling daily log file at `~/.local/share/graphirm/graphirm.log`.
@@ -106,7 +228,7 @@ fn api_key_for_provider(provider_name: &str) -> Result<String, GraphirmError> {
     }
 }
 
-async fn run_chat(model: String) -> Result<(), GraphirmError> {
+async fn run_chat(model: String, db_path: &PathBuf) -> Result<(), GraphirmError> {
     let (provider_name, model_name) = graphirm_llm::factory::parse_model_string(&model)
         .map_err(|e| GraphirmError::Config(e.to_string()))?;
 
@@ -116,7 +238,9 @@ async fn run_chat(model: String) -> Result<(), GraphirmError> {
             .map_err(|e| GraphirmError::Config(e.to_string()))?;
     let provider = Arc::new(provider);
 
-    let graph = Arc::new(graphirm_graph::GraphStore::open_memory()?);
+    let graph = Arc::new(graphirm_graph::GraphStore::open(
+        db_path.to_str().unwrap_or("graph.db"),
+    )?);
 
     let config = graphirm_agent::AgentConfig {
         model: model_name.to_string(),

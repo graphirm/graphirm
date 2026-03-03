@@ -533,6 +533,35 @@ impl GraphStore {
         Ok((nodes, edges))
     }
 
+    /// Return total node count.
+    pub fn node_count_db(&self) -> Result<u64, GraphError> {
+        let conn = self.pool.get()?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes", [], |r| r.get(0))?;
+        Ok(count as u64)
+    }
+
+    /// Return total edge count.
+    pub fn edge_count_db(&self) -> Result<u64, GraphError> {
+        let conn = self.pool.get()?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM edges", [], |r| r.get(0))?;
+        Ok(count as u64)
+    }
+
+    /// Return node counts grouped by type.
+    pub fn node_counts_by_type(&self) -> Result<Vec<(String, u64)>, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt =
+            conn.prepare("SELECT node_type, COUNT(*) FROM nodes GROUP BY node_type ORDER BY COUNT(*) DESC")?;
+        let rows = stmt
+            .query_map([], |row| {
+                let t: String = row.get(0)?;
+                let c: i64 = row.get(1)?;
+                Ok((t, c as u64))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     /// Return the `limit` most recently created nodes, newest first.
     pub fn list_recent_nodes(&self, limit: usize) -> Result<Vec<GraphNode>, GraphError> {
         let conn = self.pool.get()?;
