@@ -28,6 +28,20 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) -> KeyAction {
         }
     }
 
+    // PgUp / PgDn scroll the chat from any panel — no Tab required
+    match key.code {
+        KeyCode::PageUp => {
+            app.chat.pinned_to_bottom = false;
+            app.chat.scroll_offset = app.chat.scroll_offset.saturating_sub(10);
+            return KeyAction::None;
+        }
+        KeyCode::PageDown => {
+            app.chat.scroll_offset = app.chat.scroll_offset.saturating_add(10);
+            return KeyAction::None;
+        }
+        _ => {}
+    }
+
     // Tab to cycle focus
     if key.code == KeyCode::Tab {
         app.focus = next_focus(app.focus, app.show_graph);
@@ -93,8 +107,12 @@ fn handle_chat_key(app: &mut App, key: KeyEvent) -> KeyAction {
             app.chat.scroll_down();
             KeyAction::None
         }
+        KeyCode::End => {
+            app.chat.scroll_to_bottom();
+            KeyAction::None
+        }
         KeyCode::Char(c) => {
-            // If user starts typing in chat panel, switch focus to input
+            // Typing in chat panel switches focus back to input automatically
             app.focus = FocusPanel::Input;
             app.input.insert(c);
             KeyAction::None
@@ -222,11 +240,11 @@ mod tests {
         let mut app = make_app();
         app.focus = crate::app::FocusPanel::Chat;
 
-        // Down scrolls toward newer content (higher offset)
+        // Down scrolls toward newer content (higher offset, step 3)
         handle_key_event(&mut app, key(KeyCode::Down));
-        assert_eq!(app.chat.scroll_offset, 1);
+        assert_eq!(app.chat.scroll_offset, 3);
 
-        // Up scrolls toward older content (lower offset)
+        // Up scrolls toward older content (lower offset, step 3)
         handle_key_event(&mut app, key(KeyCode::Up));
         assert_eq!(app.chat.scroll_offset, 0);
     }

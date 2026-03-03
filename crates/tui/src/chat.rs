@@ -20,26 +20,21 @@ impl ChatView {
         }
     }
 
-    /// Scroll toward older messages (increases offset = higher lines in document).
+    /// Scroll toward older messages. Unpins from bottom.
     pub fn scroll_up(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+        self.pinned_to_bottom = false;
+        self.scroll_offset = self.scroll_offset.saturating_sub(3);
     }
 
-    /// Scroll toward newer messages (decreases offset = lower lines in document).
+    /// Scroll toward newer messages. Re-pins when reaching the bottom.
     pub fn scroll_down(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_add(1);
+        self.scroll_offset = self.scroll_offset.saturating_add(3);
     }
 
-    /// Snap to the most recent messages (highest line offset).
+    /// Pin to the bottom so new messages are always visible.
+    /// The render function computes the correct offset from content + area height.
     pub fn scroll_to_bottom(&mut self) {
-        // Line count: each message contributes header + content lines + blank separator.
-        // We over-estimate here; ratatui clamps if offset exceeds content height.
-        let total_lines: u16 = self
-            .messages
-            .iter()
-            .map(|m| 2 + m.content.lines().count() as u16)
-            .sum();
-        self.scroll_offset = total_lines;
+        self.pinned_to_bottom = true;
     }
 
     pub fn render_widget(&self, area: Rect, buf: &mut Buffer) {
@@ -98,9 +93,20 @@ impl ChatView {
         }
 
         let text = Text::from(lines);
+
+        // When pinned, scroll to show the bottom of the content.
+        // Ratatui does not clamp automatically, so we must compute the correct
+        // offset ourselves: total content lines minus the visible area height.
+        let content_lines = text.lines.len() as u16;
+        let scroll_offset = if self.pinned_to_bottom {
+            content_lines.saturating_sub(inner.height)
+        } else {
+            self.scroll_offset.min(content_lines.saturating_sub(inner.height))
+        };
+
         let paragraph = Paragraph::new(text)
             .wrap(Wrap { trim: false })
-            .scroll((self.scroll_offset, 0));
+            .scroll((scroll_offset, 0));
 
         paragraph.render(inner, buf);
     }
@@ -165,14 +171,14 @@ mod tests {
     #[test]
     fn test_chat_view_scroll() {
         let mut chat = ChatView::new();
-        // scroll_down goes toward newer content (higher offset)
+        // scroll_down moves offset up by 3
         chat.scroll_down();
-        assert_eq!(chat.scroll_offset, 1);
+        assert_eq!(chat.scroll_offset, 3);
         chat.scroll_down();
-        assert_eq!(chat.scroll_offset, 2);
-        // scroll_up goes toward older content (lower offset)
+        assert_eq!(chat.scroll_offset, 6);
+        // scroll_up goes back toward older content (lower offset) by 3
         chat.scroll_up();
-        assert_eq!(chat.scroll_offset, 1);
+        assert_eq!(chat.scroll_offset, 3);
         chat.scroll_up();
         chat.scroll_up(); // clamps to 0
         assert_eq!(chat.scroll_offset, 0);
@@ -184,11 +190,19 @@ mod tests {
         chat.add_message(make_message(Role::Human, "Hello"));
         chat.add_message(make_message(Role::Assistant, "Hi\nSecond line"));
         chat.scroll_to_bottom();
-        // offset should be non-zero (snapped toward end)
+        // pinned_to_bottom flag should be set
         assert!(
-            chat.scroll_offset > 0,
-            "scroll_to_bottom should set a positive offset"
+            chat.pinned_to_bottom,
+            "scroll_to_bottom should pin to bottom"
         );
+    }
+
+    #[test]
+    fn test_scroll_up_unpins() {
+        let mut chat = ChatView::new();
+        assert!(chat.pinned_to_bottom);
+        chat.scroll_up();
+        assert!(!chat.pinned_to_bottom, "scroll_up should unpin from bottom");
     }
 
     #[test]

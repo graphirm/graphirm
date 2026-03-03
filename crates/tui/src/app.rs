@@ -139,6 +139,9 @@ impl App {
 pub struct ChatView {
     pub messages: Vec<ChatMessage>,
     pub scroll_offset: u16,
+    /// When true the view auto-scrolls to the bottom on new content.
+    /// Set to false when the user manually scrolls up.
+    pub pinned_to_bottom: bool,
 }
 
 impl ChatView {
@@ -146,6 +149,7 @@ impl ChatView {
         Self {
             messages: Vec::new(),
             scroll_offset: 0,
+            pinned_to_bottom: true,
         }
     }
 }
