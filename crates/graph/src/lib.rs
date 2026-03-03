@@ -5,4 +5,5 @@ pub mod query;
 pub mod store;
 
 pub use error::GraphError;
+pub use petgraph::Direction;
 pub use store::GraphStore;

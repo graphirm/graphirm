@@ -6,6 +6,8 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 
+use petgraph::Direction;
+
 use crate::edges::{EdgeId, EdgeType, GraphEdge};
 use crate::error::GraphError;
 use crate::nodes::{GraphNode, NodeId, NodeType};
@@ -330,6 +332,58 @@ impl GraphStore {
             created_at,
         })
     }
+
+    pub fn neighbors(
+        &self,
+        id: &NodeId,
+        edge_type: Option<EdgeType>,
+        direction: Direction,
+    ) -> Result<Vec<GraphNode>, GraphError> {
+        let neighbor_ids = {
+            let conn = self.pool.get()?;
+
+            let (query, param) = match direction {
+                Direction::Outgoing => (
+                    match edge_type {
+                        Some(et) => format!(
+                            "SELECT target_id FROM edges WHERE source_id = ?1 AND edge_type = '{}'",
+                            et.as_str()
+                        ),
+                        None => {
+                            "SELECT target_id FROM edges WHERE source_id = ?1".to_string()
+                        }
+                    },
+                    &id.0,
+                ),
+                Direction::Incoming => (
+                    match edge_type {
+                        Some(et) => format!(
+                            "SELECT source_id FROM edges WHERE target_id = ?1 AND edge_type = '{}'",
+                            et.as_str()
+                        ),
+                        None => {
+                            "SELECT source_id FROM edges WHERE target_id = ?1".to_string()
+                        }
+                    },
+                    &id.0,
+                ),
+            };
+
+            let mut stmt = conn.prepare(&query)?;
+            stmt.query_map(params![param], |row| {
+                let nid: String = row.get(0)?;
+                Ok(NodeId(nid))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+        };
+
+        let mut neighbors = Vec::new();
+        for nid in neighbor_ids {
+            neighbors.push(self.get_node(&nid)?);
+        }
+
+        Ok(neighbors)
+    }
 }
 
 #[cfg(test)]
@@ -550,6 +604,68 @@ mod tests {
 
         let graph = store.graph.read().unwrap();
         assert_eq!(graph.edge_count(), 1);
+    }
+
+    #[test]
+    fn neighbors_outgoing() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let agent = GraphNode::new(NodeType::Agent(crate::nodes::AgentData {
+            name: "coder".to_string(),
+            model: "claude".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let content1 = GraphNode::new(NodeType::Content(crate::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: Some("a.rs".to_string()),
+            body: "code".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let content2 = GraphNode::new(NodeType::Content(crate::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: Some("b.rs".to_string()),
+            body: "more code".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let agent_id = agent.id.clone();
+        let c1_id = content1.id.clone();
+        let c2_id = content2.id.clone();
+        store.add_node(agent).unwrap();
+        store.add_node(content1).unwrap();
+        store.add_node(content2).unwrap();
+
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::Reads,
+                agent_id.clone(),
+                c1_id.clone(),
+            ))
+            .unwrap();
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::Modifies,
+                agent_id.clone(),
+                c2_id.clone(),
+            ))
+            .unwrap();
+
+        let all = store
+            .neighbors(&agent_id, None, Direction::Outgoing)
+            .unwrap();
+        assert_eq!(all.len(), 2);
+
+        let reads = store
+            .neighbors(&agent_id, Some(EdgeType::Reads), Direction::Outgoing)
+            .unwrap();
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].id, c1_id);
+
+        let incoming = store
+            .neighbors(&c1_id, None, Direction::Incoming)
+            .unwrap();
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].id, agent_id);
     }
 
     #[test]
