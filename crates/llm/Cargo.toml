@@ -5,12 +5,18 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "LLM provider abstraction for Graphirm"
+description = "LLM provider abstraction layer for Graphirm"
 
 [dependencies]
+rig-core = "0.31"
 async-trait = "0.1"
-tokio = { version = "1", features = ["sync", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio-stream = "0.1"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
