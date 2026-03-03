@@ -1,11 +1,12 @@
 pub mod bash;
 pub mod edit;
 pub mod error;
+pub mod executor;
 pub mod find;
 pub mod grep;
 pub mod ls;
-pub mod read;
 pub mod permissions;
+pub mod read;
 pub mod registry;
 pub mod write;
 
