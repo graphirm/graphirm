@@ -384,6 +384,68 @@ impl GraphStore {
 
         Ok(neighbors)
     }
+
+    pub fn traverse(
+        &self,
+        start: &NodeId,
+        edge_types: &[EdgeType],
+        max_depth: usize,
+    ) -> Result<Vec<GraphNode>, GraphError> {
+        use std::collections::{HashSet, VecDeque};
+
+        let mut visited = HashSet::new();
+        visited.insert(start.clone());
+        let mut queue = VecDeque::new();
+        queue.push_back((start.clone(), 0_usize));
+        let mut result = Vec::new();
+
+        let edge_type_strs: Vec<&str> = edge_types.iter().map(|et| et.as_str()).collect();
+
+        while let Some((current_id, depth)) = queue.pop_front() {
+            if depth >= max_depth {
+                continue;
+            }
+
+            let neighbor_ids = {
+                let conn = self.pool.get()?;
+                let placeholders: String = edge_type_strs
+                    .iter()
+                    .map(|_| "?")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let query = format!(
+                    "SELECT target_id FROM edges WHERE source_id = ?1 AND edge_type IN ({placeholders})"
+                );
+
+                let mut stmt = conn.prepare(&query)?;
+
+                use rusqlite::types::ToSql;
+                let mut params_vec: Vec<Box<dyn ToSql>> = Vec::new();
+                params_vec.push(Box::new(current_id.0.clone()));
+                for et in &edge_type_strs {
+                    params_vec.push(Box::new(et.to_string()));
+                }
+                let params_refs: Vec<&dyn ToSql> =
+                    params_vec.iter().map(|p| p.as_ref()).collect();
+
+                stmt.query_map(params_refs.as_slice(), |row| {
+                    let nid: String = row.get(0)?;
+                    Ok(NodeId(nid))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+            };
+
+            for nid in neighbor_ids {
+                if visited.insert(nid.clone()) {
+                    let node = self.get_node(&nid)?;
+                    result.push(node);
+                    queue.push_back((nid, depth + 1));
+                }
+            }
+        }
+
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
@@ -604,6 +666,116 @@ mod tests {
 
         let graph = store.graph.read().unwrap();
         assert_eq!(graph.edge_count(), 1);
+    }
+
+    #[test]
+    fn traverse_bfs_with_depth() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let make_content = |name: &str| {
+            GraphNode::new(NodeType::Content(crate::nodes::ContentData {
+                content_type: "file".to_string(),
+                path: Some(name.to_string()),
+                body: "".to_string(),
+                language: None,
+            }))
+        };
+
+        let a = make_content("a");
+        let a_id = a.id.clone();
+        let b = make_content("b");
+        let b_id = b.id.clone();
+        let c = make_content("c");
+        let c_id = c.id.clone();
+        let d = make_content("d");
+        let d_id = d.id.clone();
+
+        store.add_node(a).unwrap();
+        store.add_node(b).unwrap();
+        store.add_node(c).unwrap();
+        store.add_node(d).unwrap();
+
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::Contains,
+                a_id.clone(),
+                b_id.clone(),
+            ))
+            .unwrap();
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::Contains,
+                b_id.clone(),
+                c_id.clone(),
+            ))
+            .unwrap();
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::Contains,
+                c_id.clone(),
+                d_id.clone(),
+            ))
+            .unwrap();
+
+        let depth1 = store.traverse(&a_id, &[EdgeType::Contains], 1).unwrap();
+        assert_eq!(depth1.len(), 1);
+        assert_eq!(depth1[0].id, b_id);
+
+        let depth2 = store.traverse(&a_id, &[EdgeType::Contains], 2).unwrap();
+        assert_eq!(depth2.len(), 2);
+
+        let all = store.traverse(&a_id, &[EdgeType::Contains], 10).unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn traverse_filters_edge_types() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let a = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "a".to_string(),
+            token_count: None,
+        }));
+        let b = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "b".to_string(),
+            token_count: None,
+        }));
+        let c = GraphNode::new(NodeType::Content(crate::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: None,
+            body: "c".to_string(),
+            language: None,
+        }));
+
+        let a_id = a.id.clone();
+        let b_id = b.id.clone();
+        let c_id = c.id.clone();
+        store.add_node(a).unwrap();
+        store.add_node(b).unwrap();
+        store.add_node(c).unwrap();
+
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                a_id.clone(),
+                b_id.clone(),
+            ))
+            .unwrap();
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::Reads,
+                a_id.clone(),
+                c_id.clone(),
+            ))
+            .unwrap();
+
+        let result = store
+            .traverse(&a_id, &[EdgeType::RespondsTo], 5)
+            .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, b_id);
     }
 
     #[test]
