@@ -1,7 +1,9 @@
 pub mod anthropic;
+pub mod deepseek;
 pub mod error;
 pub mod factory;
 pub mod mock;
+pub mod ollama;
 pub mod openai;
 pub mod provider;
 pub mod stream;

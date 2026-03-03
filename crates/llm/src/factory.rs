@@ -1,5 +1,7 @@
 use crate::anthropic::AnthropicProvider;
+use crate::deepseek::DeepSeekProvider;
 use crate::error::LlmError;
+use crate::ollama::OllamaProvider;
 use crate::openai::OpenAiProvider;
 use crate::provider::LlmProvider;
 
@@ -19,7 +21,11 @@ pub fn parse_model_string(model_string: &str) -> Result<(&str, &str), LlmError> 
     Ok((parts[0], parts[1]))
 }
 
-/// Create a provider by name and API key.
+/// Create a provider by name and optional API key.
+///
+/// `api_key` is ignored for `"ollama"` (no key needed).
+/// For `"ollama"`, set `OLLAMA_HOST` env var to override the default
+/// `http://localhost:11434`.
 pub fn create_provider(
     provider_name: &str,
     api_key: &str,
@@ -27,14 +33,18 @@ pub fn create_provider(
     match provider_name {
         "anthropic" => Ok(Box::new(AnthropicProvider::new(api_key))),
         "openai" => Ok(Box::new(OpenAiProvider::new(api_key))),
+        "deepseek" => Ok(Box::new(DeepSeekProvider::new(api_key))),
+        "ollama" => Ok(Box::new(OllamaProvider::from_env()?)),
         _ => Err(LlmError::invalid_model(format!(
-            "Unknown provider: '{provider_name}'. Supported: anthropic, openai"
+            "Unknown provider: '{provider_name}'. Supported: anthropic, openai, deepseek, ollama"
         ))),
     }
 }
 
 /// Parse a `"provider/model"` string and create the corresponding provider.
 /// Returns `(provider, model_name)`.
+///
+/// `api_key` is only used for cloud providers. Pass `""` for `"ollama"`.
 pub fn create_provider_from_model_string(
     model_string: &str,
     api_key: &str,
@@ -97,6 +107,18 @@ mod tests {
     fn test_create_provider_openai() {
         let provider = create_provider("openai", "dummy-key").unwrap();
         assert_eq!(provider.provider_name(), "openai");
+    }
+
+    #[test]
+    fn test_create_provider_deepseek() {
+        let provider = create_provider("deepseek", "dummy-key").unwrap();
+        assert_eq!(provider.provider_name(), "deepseek");
+    }
+
+    #[test]
+    fn test_create_provider_ollama() {
+        let provider = create_provider("ollama", "").unwrap();
+        assert_eq!(provider.provider_name(), "ollama");
     }
 
     #[test]
