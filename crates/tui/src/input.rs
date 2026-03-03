@@ -17,22 +17,31 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) -> KeyAction {
                 app.should_quit = true;
                 return KeyAction::Quit;
             }
-            KeyCode::Char('g') => {
-                app.show_graph = !app.show_graph;
-                if !app.show_graph && matches!(app.focus, FocusPanel::Graph) {
-                    app.focus = FocusPanel::Input;
-                }
-                return KeyAction::None;
-            }
             _ => {}
         }
     }
 
-    // PgUp / PgDn scroll the chat from any panel — no Tab required
+    // F2 toggles the graph panel (Ctrl+G is captured by Cursor/code-server)
+    if key.code == KeyCode::F(2) {
+        app.show_graph = !app.show_graph;
+        if !app.show_graph && matches!(app.focus, FocusPanel::Graph) {
+            app.focus = FocusPanel::Input;
+        }
+        return KeyAction::None;
+    }
+
+    // PgUp / PgDn scroll the chat from any panel — no Tab required.
+    // When pinned to bottom, start from the last rendered offset so the view
+    // scrolls up smoothly rather than jumping to the top of all messages.
     match key.code {
         KeyCode::PageUp => {
+            let start = if app.chat.pinned_to_bottom {
+                app.chat.last_computed_scroll
+            } else {
+                app.chat.scroll_offset
+            };
             app.chat.pinned_to_bottom = false;
-            app.chat.scroll_offset = app.chat.scroll_offset.saturating_sub(10);
+            app.chat.scroll_offset = start.saturating_sub(10);
             return KeyAction::None;
         }
         KeyCode::PageDown => {
@@ -224,14 +233,14 @@ mod tests {
     }
 
     #[test]
-    fn test_ctrl_g_toggles_graph() {
+    fn test_f2_toggles_graph() {
         let mut app = make_app();
         assert!(!app.show_graph);
 
-        handle_key_event(&mut app, ctrl_key(KeyCode::Char('g')));
+        handle_key_event(&mut app, key(KeyCode::F(2)));
         assert!(app.show_graph);
 
-        handle_key_event(&mut app, ctrl_key(KeyCode::Char('g')));
+        handle_key_event(&mut app, key(KeyCode::F(2)));
         assert!(!app.show_graph);
     }
 

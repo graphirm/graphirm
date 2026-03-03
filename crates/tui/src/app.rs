@@ -92,7 +92,7 @@ impl App {
 
         loop {
             terminal.draw(|frame| {
-                render_ui(frame, &self);
+                render_ui(frame, &mut self);
             })?;
 
             // Poll for keyboard events with 50ms timeout
@@ -142,6 +142,9 @@ pub struct ChatView {
     /// When true the view auto-scrolls to the bottom on new content.
     /// Set to false when the user manually scrolls up.
     pub pinned_to_bottom: bool,
+    /// The scroll offset that was actually rendered last frame.
+    /// Used to initialize scroll_offset correctly when unpinning from bottom.
+    pub last_computed_scroll: u16,
 }
 
 impl ChatView {
@@ -150,6 +153,7 @@ impl ChatView {
             messages: Vec::new(),
             scroll_offset: 0,
             pinned_to_bottom: true,
+            last_computed_scroll: 0,
         }
     }
 }

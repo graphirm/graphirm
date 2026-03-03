@@ -21,9 +21,15 @@ impl ChatView {
     }
 
     /// Scroll toward older messages. Unpins from bottom.
+    /// When transitioning out of pinned mode, starts from the last rendered
+    /// bottom position so the view scrolls smoothly rather than jumping to top.
     pub fn scroll_up(&mut self) {
-        self.pinned_to_bottom = false;
-        self.scroll_offset = self.scroll_offset.saturating_sub(3);
+        if self.pinned_to_bottom {
+            self.scroll_offset = self.last_computed_scroll.saturating_sub(3);
+            self.pinned_to_bottom = false;
+        } else {
+            self.scroll_offset = self.scroll_offset.saturating_sub(3);
+        }
     }
 
     /// Scroll toward newer messages. Re-pins when reaching the bottom.
@@ -37,7 +43,7 @@ impl ChatView {
         self.pinned_to_bottom = true;
     }
 
-    pub fn render_widget(&self, area: Rect, buf: &mut Buffer) {
+    pub fn render_widget(&mut self, area: Rect, buf: &mut Buffer) {
         let block = Block::default().borders(Borders::ALL).title(" Chat ");
 
         let inner = block.inner(area);
@@ -104,6 +110,10 @@ impl ChatView {
             self.scroll_offset.min(content_lines.saturating_sub(inner.height))
         };
 
+        // Store the computed offset so scroll_up() can start from here
+        // when transitioning out of pinned mode.
+        self.last_computed_scroll = scroll_offset;
+
         let paragraph = Paragraph::new(text)
             .wrap(Wrap { trim: false })
             .scroll((scroll_offset, 0));
@@ -157,7 +167,7 @@ mod tests {
 
         let area = Rect::new(0, 0, 40, 10);
         let mut buf = Buffer::empty(area);
-        chat.render_widget(area, &mut buf);
+        chat.render_widget(area, &mut buf); // &mut self
 
         let lines = buffer_to_lines(&buf);
         let text = lines.join("\n");
@@ -171,17 +181,35 @@ mod tests {
     #[test]
     fn test_chat_view_scroll() {
         let mut chat = ChatView::new();
-        // scroll_down moves offset up by 3
+        // Start unpinned to test raw offset arithmetic (otherwise scroll_up
+        // would initialize from last_computed_scroll which is 0 in unit tests
+        // where no render has occurred yet).
+        chat.pinned_to_bottom = false;
+
+        // scroll_down increases offset (toward newer content)
         chat.scroll_down();
         assert_eq!(chat.scroll_offset, 3);
         chat.scroll_down();
         assert_eq!(chat.scroll_offset, 6);
-        // scroll_up goes back toward older content (lower offset) by 3
+        // scroll_up decreases offset (toward older content)
         chat.scroll_up();
         assert_eq!(chat.scroll_offset, 3);
         chat.scroll_up();
         chat.scroll_up(); // clamps to 0
         assert_eq!(chat.scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_scroll_up_from_pinned_uses_last_computed() {
+        let mut chat = ChatView::new();
+        // Simulate having rendered at offset 20 (e.g. many messages)
+        chat.last_computed_scroll = 20;
+        assert!(chat.pinned_to_bottom);
+
+        // scroll_up from pinned should start from last_computed_scroll, not 0
+        chat.scroll_up();
+        assert!(!chat.pinned_to_bottom);
+        assert_eq!(chat.scroll_offset, 17); // 20 - 3
     }
 
     #[test]
@@ -207,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_chat_view_empty() {
-        let chat = ChatView::new();
+        let mut chat = ChatView::new();
         let area = Rect::new(0, 0, 40, 10);
         let mut buf = Buffer::empty(area);
         chat.render_widget(area, &mut buf);

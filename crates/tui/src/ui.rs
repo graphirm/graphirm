@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::App;
 
-pub fn render_ui(frame: &mut Frame, app: &App) {
+pub fn render_ui(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -23,7 +23,7 @@ pub fn render_ui(frame: &mut Frame, app: &App) {
     app.status_bar.render_widget(chunks[3], frame.buffer_mut());
 }
 
-fn render_header(frame: &mut Frame, area: Rect, app: &App) {
+fn render_header(frame: &mut Frame, area: Rect, app: &mut App) {
     let header = Line::from(vec![
         Span::styled(" graphirm ", Style::default().fg(Color::Cyan)),
         Span::raw("| "),
@@ -50,7 +50,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(header_widget, area);
 }
 
-fn render_main_content(frame: &mut Frame, area: Rect, app: &App) {
+fn render_main_content(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.show_graph {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -65,7 +65,7 @@ fn render_main_content(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-fn render_input(frame: &mut Frame, area: Rect, app: &App) {
+fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     let input_block = Block::default()
         .borders(Borders::ALL)
         .title(" Input ")
@@ -82,7 +82,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
 
     let display_text = if app.input.is_empty() {
         Span::styled(
-            "Type a message... (Ctrl+C to quit, Ctrl+G for graph)",
+            "Type a message... (Ctrl+C to quit, F2 for graph, PgUp/PgDn to scroll)",
             Style::default().fg(Color::DarkGray),
         )
     } else {
@@ -112,14 +112,14 @@ mod tests {
     #[test]
     fn test_layout_renders_without_panic() {
         let (_tx, rx) = mpsc::channel(16);
-        let app = App::new(rx, "claude-4".to_string());
+        let mut app = App::new(rx, "claude-4".to_string());
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
 
         terminal
             .draw(|frame| {
-                render_ui(frame, &app);
+                render_ui(frame, &mut app);
             })
             .unwrap();
     }
@@ -135,7 +135,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render_ui(frame, &app);
+                render_ui(frame, &mut app);
             })
             .unwrap();
     }
@@ -152,7 +152,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render_ui(frame, &app);
+                render_ui(frame, &mut app);
             })
             .unwrap();
 
