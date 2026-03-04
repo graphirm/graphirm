@@ -240,6 +240,191 @@ pub fn score_graph_distance(node_id: &NodeId, distances: &HashMap<NodeId, usize>
     }
 }
 
+/// Find the most recent Interaction node linked to the agent via Produces.
+fn find_current_turn(
+    graph: &GraphStore,
+    agent_id: &NodeId,
+) -> Result<Option<GraphNode>, AgentError> {
+    let neighbors = graph
+        .neighbors(agent_id, Some(EdgeType::Produces), Direction::Outgoing)
+        .map_err(|e| AgentError::Context(e.to_string()))?;
+
+    let mut interactions: Vec<GraphNode> = neighbors
+        .into_iter()
+        .filter(|n| matches!(n.node_type, NodeType::Interaction(_)))
+        .collect();
+
+    interactions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(interactions.into_iter().next())
+}
+
+/// Collect Content and Knowledge nodes reachable from conversation nodes
+/// via Reads, Modifies, Produces, and Summarizes edges (1 hop).
+fn collect_context_nodes(
+    graph: &GraphStore,
+    conversation_ids: &[NodeId],
+) -> Result<Vec<GraphNode>, AgentError> {
+    use crate::compact::is_compacted;
+    let mut seen = std::collections::HashSet::new();
+    let mut context_nodes = Vec::new();
+
+    for conv_id in conversation_ids {
+        seen.insert(conv_id.clone());
+    }
+
+    let relevant_edges = [
+        EdgeType::Reads,
+        EdgeType::Modifies,
+        EdgeType::Produces,
+        EdgeType::Summarizes,
+    ];
+
+    for conv_id in conversation_ids {
+        for et in &relevant_edges {
+            let neighbors = graph
+                .neighbors(conv_id, Some(*et), Direction::Outgoing)
+                .map_err(|e| AgentError::Context(e.to_string()))?;
+
+            for neighbor in neighbors {
+                if seen.insert(neighbor.id.clone()) {
+                    if is_compacted(&neighbor) {
+                        continue;
+                    }
+                    match &neighbor.node_type {
+                        NodeType::Content(_) | NodeType::Knowledge(_) => {
+                            context_nodes.push(neighbor);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(context_nodes)
+}
+
+/// Build a relevance-scored context window from the session graph.
+///
+/// Algorithm:
+/// 1. Find current turn (latest Interaction linked to agent)
+/// 2. Walk conversation thread backward via RespondsTo edges
+/// 3. Reserve the N most recent turns as guaranteed
+/// 4. Collect Content/Knowledge nodes reachable from the conversation
+/// 5. Compute PageRank and BFS distances for scoring
+/// 6. Score all non-guaranteed candidates
+/// 7. Fit scored candidates into the remaining token budget
+/// 8. Assemble ContextWindow with system prompt + selected messages
+pub fn build_context(
+    graph: &GraphStore,
+    agent_id: NodeId,
+    config: &ContextConfig,
+) -> Result<ContextWindow, AgentError> {
+    use crate::compact::is_compacted;
+
+    let system_msg = LlmMessage::system(&config.system_prompt);
+    let system_tokens = estimate_tokens_str(&config.system_prompt);
+
+    let current_turn = match find_current_turn(graph, &agent_id)? {
+        Some(node) => node,
+        None => {
+            return Ok(ContextWindow {
+                system: system_msg,
+                messages: vec![],
+                total_tokens: system_tokens,
+            });
+        }
+    };
+
+    // Walk conversation thread (newest-first), excluding compacted nodes
+    let full_thread = graph
+        .conversation_thread(&current_turn.id)
+        .map_err(|e| AgentError::Context(e.to_string()))?;
+    let thread: Vec<GraphNode> = full_thread
+        .into_iter()
+        .filter(|n| !is_compacted(n))
+        .collect();
+
+    // Split into guaranteed recent and older messages
+    let guaranteed_count = config.guaranteed_recent_turns.min(thread.len());
+    let guaranteed_recent: Vec<GraphNode> = thread[..guaranteed_count].to_vec();
+    let older_conversation: Vec<GraphNode> = thread[guaranteed_count..].to_vec();
+
+    // Token accounting
+    let guaranteed_tokens: usize = guaranteed_recent.iter().map(|n| estimate_tokens(n)).sum();
+    let remaining_budget = config
+        .max_tokens
+        .saturating_sub(system_tokens)
+        .saturating_sub(guaranteed_tokens);
+
+    // Collect Content/Knowledge nodes reachable from conversation
+    let conversation_ids: Vec<NodeId> = thread.iter().map(|n| n.id.clone()).collect();
+    let content_nodes = collect_context_nodes(graph, &conversation_ids)?;
+
+    // Compute scoring inputs
+    let pr_vec = graph
+        .pagerank()
+        .map_err(|e| AgentError::Context(e.to_string()))?;
+    let pagerank_scores: HashMap<NodeId, f64> = pr_vec.into_iter().collect();
+
+    let distances = bfs_distances(graph, &current_turn.id, 10)?;
+
+    // Score older conversation nodes
+    let mut candidates: Vec<ScoredNode> = Vec::new();
+    for node in &older_conversation {
+        let score = score_node(node, &pagerank_scores, &distances, config, graph)?;
+        candidates.push(ScoredNode {
+            node: node.clone(),
+            score,
+            token_estimate: estimate_tokens(node),
+        });
+    }
+
+    // Score content/knowledge nodes (capped by max_content_nodes)
+    let mut content_scored: Vec<ScoredNode> = Vec::new();
+    for node in &content_nodes {
+        let score = score_node(node, &pagerank_scores, &distances, config, graph)?;
+        content_scored.push(ScoredNode {
+            node: node.clone(),
+            score,
+            token_estimate: estimate_tokens(node),
+        });
+    }
+    content_scored.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    content_scored.truncate(config.max_content_nodes);
+    candidates.extend(content_scored);
+
+    // Fit into remaining budget
+    let selected = fit_to_budget(candidates, remaining_budget);
+    let selected_tokens: usize = selected.iter().map(|s| s.token_estimate).sum();
+
+    // Assemble messages: selected (older/context) in chronological order, then guaranteed recent
+    let mut all_nodes: Vec<GraphNode> = selected.into_iter().map(|s| s.node).collect();
+    // guaranteed_recent is newest-first from conversation_thread, reverse for chronological
+    let mut recent_chrono: Vec<GraphNode> = guaranteed_recent;
+    recent_chrono.reverse();
+
+    all_nodes.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    all_nodes.extend(recent_chrono);
+
+    let messages: Vec<LlmMessage> = all_nodes
+        .iter()
+        .filter_map(|n| node_to_message(n))
+        .collect();
+
+    let total_tokens = system_tokens + guaranteed_tokens + selected_tokens;
+
+    Ok(ContextWindow {
+        system: system_msg,
+        messages,
+        total_tokens,
+    })
+}
+
 /// Select the highest-scored nodes that fit within a token budget.
 /// Greedy approach: sort by score descending, take nodes until budget exhausted.
 /// Skips individual nodes that don't fit, continues to try smaller ones.
@@ -517,6 +702,180 @@ mod tests {
         }));
         // 10 words → 14 tokens
         assert_eq!(estimate_tokens(&node), 14);
+    }
+
+    #[test]
+    fn build_context_from_session() {
+        let graph = GraphStore::open_memory().unwrap();
+
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test-agent".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("You are helpful.".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let mut prev_id: Option<NodeId> = None;
+        for i in 0..20 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: role.to_string(),
+                content: format!("Message {i}"),
+                token_count: None,
+            }));
+            node.created_at = Utc::now() - Duration::hours(20 - i as i64);
+            node.updated_at = node.created_at;
+            let node_id = node.id.clone();
+            graph.add_node(node).unwrap();
+
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    node_id.clone(),
+                ))
+                .unwrap();
+
+            if let Some(pid) = &prev_id {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        node_id.clone(),
+                        pid.clone(),
+                    ))
+                    .unwrap();
+            }
+            prev_id = Some(node_id);
+        }
+
+        let config = ContextConfig {
+            max_tokens: 500,
+            system_prompt: "You are helpful.".to_string(),
+            guaranteed_recent_turns: 4,
+            recency_decay: 0.1,
+            enable_compaction: false,
+            ..ContextConfig::default()
+        };
+
+        let window = build_context(&graph, agent_id, &config).unwrap();
+
+        assert_eq!(window.system.role, graphirm_llm::Role::System);
+        assert!(
+            window.messages.len() >= 4,
+            "Should include at least 4 guaranteed recent turns, got {}",
+            window.messages.len()
+        );
+        assert!(
+            window.total_tokens <= config.max_tokens,
+            "Total tokens {} should fit in budget {}",
+            window.total_tokens,
+            config.max_tokens
+        );
+
+        let last_msg = window.messages.last().unwrap();
+        let last_content = &last_msg.content;
+        let has_msg_19 = last_content.iter().any(|part| {
+            matches!(part, graphirm_llm::ContentPart::Text { text } if text.contains("Message 19"))
+        });
+        assert!(has_msg_19, "Last message should contain 'Message 19'");
+    }
+
+    #[test]
+    fn build_context_empty_conversation() {
+        let graph = GraphStore::open_memory().unwrap();
+
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let config = ContextConfig::default();
+        let window = build_context(&graph, agent_id, &config).unwrap();
+
+        assert_eq!(window.system.role, graphirm_llm::Role::System);
+        assert!(window.messages.is_empty());
+    }
+
+    #[test]
+    fn build_context_includes_content_nodes() {
+        let graph = GraphStore::open_memory().unwrap();
+
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let user_msg = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "Fix the bug".to_string(),
+            token_count: None,
+        }));
+        let user_id = user_msg.id.clone();
+        graph.add_node(user_msg).unwrap();
+        graph
+            .add_edge(GraphEdge::new(EdgeType::Produces, agent_id.clone(), user_id.clone()))
+            .unwrap();
+
+        let asst_msg = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "I'll fix main.rs".to_string(),
+            token_count: None,
+        }));
+        let asst_id = asst_msg.id.clone();
+        graph.add_node(asst_msg).unwrap();
+        graph
+            .add_edge(GraphEdge::new(EdgeType::Produces, agent_id.clone(), asst_id.clone()))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(EdgeType::RespondsTo, asst_id.clone(), user_id.clone()))
+            .unwrap();
+
+        let file_node = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".to_string(),
+            path: Some("main.rs".to_string()),
+            body: "fn main() { fixed() }".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let file_id = file_node.id.clone();
+        graph.add_node(file_node).unwrap();
+        graph
+            .add_edge(GraphEdge::new(EdgeType::Modifies, asst_id.clone(), file_id.clone()))
+            .unwrap();
+
+        let config = ContextConfig {
+            max_tokens: 10_000,
+            system_prompt: "Help.".to_string(),
+            guaranteed_recent_turns: 2,
+            ..ContextConfig::default()
+        };
+
+        let window = build_context(&graph, agent_id, &config).unwrap();
+
+        let all_text: String = window
+            .messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter_map(|p| match p {
+                graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert!(
+            all_text.contains("main.rs") || all_text.contains("fixed()"),
+            "Context should include the modified file content"
+        );
     }
 
     #[test]
