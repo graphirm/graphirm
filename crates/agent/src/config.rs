@@ -8,17 +8,12 @@ use serde::Deserialize;
 use crate::error::AgentError;
 
 /// Whether an agent operates as the primary coordinator or a spawned subagent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentMode {
+    #[default]
     Primary,
     Subagent,
-}
-
-impl Default for AgentMode {
-    fn default() -> Self {
-        Self::Primary
-    }
 }
 
 /// Whether a specific tool is explicitly allowed or denied for an agent.
@@ -268,7 +263,7 @@ mod tests {
         assert_eq!(config.permissions.get("bash"), Some(&Permission::Deny));
         assert_eq!(config.permissions.get("write"), Some(&Permission::Deny));
         assert_eq!(config.permissions.get("edit"), Some(&Permission::Deny));
-        assert!(config.permissions.get("read").is_none());
+        assert!(!config.permissions.contains_key("read"));
     }
 
     #[test]

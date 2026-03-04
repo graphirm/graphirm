@@ -110,6 +110,7 @@ fn build_scoped_tools(base_tools: &ToolRegistry, config: &AgentConfig) -> ToolRe
 }
 
 /// Spawn a subagent to work on a specific task.
+#[allow(clippy::too_many_arguments)]
 ///
 /// Creates the graph structure:
 /// ```text
