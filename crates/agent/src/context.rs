@@ -803,6 +803,97 @@ mod tests {
     }
 
     #[test]
+    fn build_context_excludes_compacted_nodes() {
+        let graph = GraphStore::open_memory().unwrap();
+
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let mut prev_id: Option<NodeId> = None;
+        for i in 0..10 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: role.to_string(),
+                content: format!("Message {i}"),
+                token_count: None,
+            }));
+            node.created_at = Utc::now() - Duration::hours(10 - i as i64);
+            node.updated_at = node.created_at;
+
+            if i < 5 {
+                node.metadata = serde_json::json!({"compacted": true});
+            }
+
+            let node_id = node.id.clone();
+            graph.add_node(node).unwrap();
+            graph
+                .add_edge(GraphEdge::new(EdgeType::Produces, agent_id.clone(), node_id.clone()))
+                .unwrap();
+            if let Some(pid) = &prev_id {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        node_id.clone(),
+                        pid.clone(),
+                    ))
+                    .unwrap();
+            }
+            prev_id = Some(node_id);
+        }
+
+        let summary = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "session_summary".to_string(),
+            entity_type: "compaction".to_string(),
+            summary: "Summary of first 5 messages.".to_string(),
+            confidence: 1.0,
+        }));
+        let summary_id = summary.id.clone();
+        graph.add_node(summary).unwrap();
+        graph
+            .add_edge(GraphEdge::new(EdgeType::Produces, agent_id.clone(), summary_id.clone()))
+            .unwrap();
+
+        let config = ContextConfig {
+            max_tokens: 10_000,
+            system_prompt: "Help.".to_string(),
+            guaranteed_recent_turns: 2,
+            enable_compaction: false,
+            ..ContextConfig::default()
+        };
+
+        let window = build_context(&graph, agent_id, &config).unwrap();
+
+        let all_text: String = window
+            .messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter_map(|p| match p {
+                graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        for i in 0..5 {
+            assert!(
+                !all_text.contains(&format!("Message {i}")),
+                "Compacted 'Message {i}' should not appear in context"
+            );
+        }
+
+        assert!(
+            all_text.contains("Message 9"),
+            "Non-compacted 'Message 9' should appear in context"
+        );
+    }
+
+    #[test]
     fn build_context_includes_content_nodes() {
         let graph = GraphStore::open_memory().unwrap();
 
