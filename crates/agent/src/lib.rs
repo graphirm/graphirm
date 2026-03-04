@@ -10,8 +10,8 @@ pub mod workflow;
 pub use compact::{CompactionConfig, CompactionResult, compact_context, is_compacted};
 pub use config::{AgentConfig, AgentMode, Permission};
 pub use context::{
-    ContextConfig, ContextWindow, EdgeWeights, ScoredNode, build_context, estimate_tokens,
-    estimate_tokens_str, fit_to_budget, score_node, score_recency,
+    ContextConfig, ContextWindow, EdgeWeights, ScoredNode, build_context, build_subagent_context,
+    estimate_tokens, estimate_tokens_str, fit_to_budget, score_node, score_recency,
 };
 pub use error::AgentError;
 pub use multi::AgentRegistry;
