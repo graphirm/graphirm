@@ -16,7 +16,10 @@ pub struct CompactionConfig {
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
-            model: "mock".to_string(),
+            // Empty model means "not configured" — callers must set this
+            // explicitly. Using "mock" here would cause silent mock behaviour
+            // in production if the default is accidentally used.
+            model: String::new(),
             max_summary_tokens: 500,
             min_nodes_to_compact: 3,
         }

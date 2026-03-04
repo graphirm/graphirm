@@ -1,8 +1,5 @@
 // Context engine: graph-native relevance scoring and context window building
 
-/// Maximum BFS traversal depth when computing graph-distance scores.
-const BFS_MAX_DEPTH: usize = 10;
-
 use std::collections::{HashMap, VecDeque};
 
 use chrono::Utc;
@@ -16,6 +13,9 @@ use graphirm_graph::{Direction, EdgeType, GraphNode, GraphStore, NodeId, NodeTyp
 use graphirm_llm::LlmMessage;
 
 use crate::error::AgentError;
+
+/// Maximum BFS traversal depth when computing graph-distance scores.
+const BFS_MAX_DEPTH: usize = 10;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct EdgeWeights {
@@ -194,8 +194,15 @@ pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
                     .metadata
                     .get("tool_call_id")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        tracing::warn!(
+                            node_id = %node.id,
+                            "tool-result Interaction node is missing tool_call_id in metadata; \
+                             emitting empty id which may cause provider API rejection"
+                        );
+                        String::new()
+                    });
                 let is_error = node
                     .metadata
                     .get("is_error")
@@ -239,40 +246,19 @@ impl EdgeWeights {
 }
 
 /// Score a node based on the types and counts of its edges.
-/// For each edge type, counts both outgoing and incoming edges,
-/// then multiplies by the configured weight for that type.
+///
+/// Fetches all edges touching the node in a single DB query, then accumulates
+/// the weighted sum in Rust — 1 query vs the previous 24 (12 types × 2 directions).
 pub fn score_edge_weights(
     node_id: &NodeId,
     graph: &GraphStore,
     weights: &EdgeWeights,
 ) -> Result<f64, AgentError> {
-    let weighted_types = [
-        EdgeType::Modifies,
-        EdgeType::Produces,
-        EdgeType::Reads,
-        EdgeType::RelatesTo,
-        EdgeType::RespondsTo,
-        EdgeType::DelegatesTo,
-        EdgeType::DependsOn,
-        EdgeType::Summarizes,
-        EdgeType::Contains,
-        EdgeType::FollowsUp,
-        EdgeType::Steers,
-        EdgeType::SpawnedBy,
-    ];
+    let edges = graph
+        .edges_for_node(node_id)
+        .map_err(|e| AgentError::Context(e.to_string()))?;
 
-    let mut total = 0.0;
-    for et in &weighted_types {
-        let out_count = graph
-            .neighbors(node_id, Some(*et), Direction::Outgoing)
-            .map_err(|e| AgentError::Context(e.to_string()))?
-            .len();
-        let in_count = graph
-            .neighbors(node_id, Some(*et), Direction::Incoming)
-            .map_err(|e| AgentError::Context(e.to_string()))?
-            .len();
-        total += weights.weight_for(*et) * (out_count + in_count) as f64;
-    }
+    let total = edges.iter().map(|e| weights.weight_for(e.edge_type)).sum();
 
     Ok(total)
 }
@@ -341,6 +327,14 @@ fn find_current_turn(
 
 /// Collect Content and Knowledge nodes reachable from conversation nodes
 /// via Reads, Modifies, Produces, and Summarizes edges (1 hop).
+/// Collect Content and Knowledge nodes reachable from conversation nodes via
+/// relevant outgoing edges (Reads, Modifies, Produces, Summarizes).
+///
+/// Only outgoing edges are followed by design: an outgoing edge from a turn to
+/// a Content/Knowledge node means "this turn acted on that resource", which is
+/// the relevant semantic direction. Incoming edges (e.g., other turns that also
+/// modified the same file) are deliberately excluded to avoid pulling in
+/// unrelated context.
 fn collect_context_nodes(
     graph: &GraphStore,
     conversation_ids: &[NodeId],
@@ -402,6 +396,13 @@ pub fn build_context(
     config: &ContextConfig,
 ) -> Result<ContextWindow, AgentError> {
     use crate::compact::is_compacted;
+
+    if config.enable_compaction {
+        tracing::warn!(
+            "ContextConfig.enable_compaction = true but auto-compaction is not yet implemented \
+             (phase-6-followup). Nodes will not be compacted automatically."
+        );
+    }
 
     let system_msg = LlmMessage::system(&config.system_prompt);
     let system_tokens = estimate_tokens_str(&config.system_prompt);

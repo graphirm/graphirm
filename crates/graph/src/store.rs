@@ -331,6 +331,52 @@ impl GraphStore {
         })
     }
 
+    /// Return all edges (with full metadata) that touch `id` in either direction.
+    ///
+    /// Use this instead of calling `neighbors` once per edge type when you need
+    /// to aggregate over all edge types — it issues a single DB query instead of
+    /// one per edge type × direction.
+    pub fn edges_for_node(&self, id: &NodeId) -> Result<Vec<GraphEdge>, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, edge_type, source_id, target_id, weight, metadata, created_at
+             FROM edges
+             WHERE source_id = ?1 OR target_id = ?1",
+        )?;
+
+        let edges = stmt
+            .query_map(params![id.0], |row| {
+                let id: String = row.get(0)?;
+                let edge_type: String = row.get(1)?;
+                let source: String = row.get(2)?;
+                let target: String = row.get(3)?;
+                let weight: f64 = row.get(4)?;
+                let metadata: String = row.get(5)?;
+                let created_at: String = row.get(6)?;
+                Ok((id, edge_type, source, target, weight, metadata, created_at))
+            })?
+            .filter_map(|r| r.ok())
+            .filter_map(|(id_str, et_str, src, tgt, w, meta, ts)| {
+                let edge_type: EdgeType = serde_json::from_str(&format!("\"{et_str}\"")).ok()?;
+                let metadata: serde_json::Value = serde_json::from_str(&meta).ok()?;
+                let created_at = chrono::DateTime::parse_from_rfc3339(&ts)
+                    .ok()?
+                    .with_timezone(&chrono::Utc);
+                Some(GraphEdge {
+                    id: EdgeId(id_str),
+                    edge_type,
+                    source: NodeId(src),
+                    target: NodeId(tgt),
+                    weight: w,
+                    metadata,
+                    created_at,
+                })
+            })
+            .collect();
+
+        Ok(edges)
+    }
+
     pub fn neighbors(
         &self,
         id: &NodeId,
@@ -550,8 +596,9 @@ impl GraphStore {
     /// Return node counts grouped by type.
     pub fn node_counts_by_type(&self) -> Result<Vec<(String, u64)>, GraphError> {
         let conn = self.pool.get()?;
-        let mut stmt =
-            conn.prepare("SELECT node_type, COUNT(*) FROM nodes GROUP BY node_type ORDER BY COUNT(*) DESC")?;
+        let mut stmt = conn.prepare(
+            "SELECT node_type, COUNT(*) FROM nodes GROUP BY node_type ORDER BY COUNT(*) DESC",
+        )?;
         let rows = stmt
             .query_map([], |row| {
                 let t: String = row.get(0)?;
@@ -565,8 +612,7 @@ impl GraphStore {
     /// Return the `limit` most recently created nodes, newest first.
     pub fn list_recent_nodes(&self, limit: usize) -> Result<Vec<GraphNode>, GraphError> {
         let conn = self.pool.get()?;
-        let mut stmt =
-            conn.prepare("SELECT id FROM nodes ORDER BY created_at DESC LIMIT ?1")?;
+        let mut stmt = conn.prepare("SELECT id FROM nodes ORDER BY created_at DESC LIMIT ?1")?;
 
         let ids: Vec<NodeId> = stmt
             .query_map([limit as i64], |row| {
