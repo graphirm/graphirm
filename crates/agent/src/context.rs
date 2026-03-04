@@ -240,6 +240,38 @@ pub fn score_graph_distance(node_id: &NodeId, distances: &HashMap<NodeId, usize>
     }
 }
 
+const W_RECENCY: f64 = 0.3;
+const W_EDGE: f64 = 0.2;
+const W_DISTANCE: f64 = 0.3;
+const W_PAGERANK: f64 = 0.2;
+
+/// Compute composite relevance score for a node.
+/// Combines four signals: recency, edge type weights, graph distance, and PageRank.
+/// Returns a value in approximately [0, 1].
+pub fn score_node(
+    node: &GraphNode,
+    pagerank_scores: &HashMap<NodeId, f64>,
+    distances: &HashMap<NodeId, usize>,
+    config: &ContextConfig,
+    graph: &GraphStore,
+) -> Result<f64, AgentError> {
+    let recency = score_recency(node, config.recency_decay);
+
+    let edge_raw = score_edge_weights(&node.id, graph, &config.edge_weights)?;
+    let edge_normalized = edge_raw / (1.0 + edge_raw);
+
+    let distance = score_graph_distance(&node.id, distances);
+
+    let pagerank = pagerank_scores.get(&node.id).copied().unwrap_or(0.0);
+
+    Ok(
+        W_RECENCY * recency
+            + W_EDGE * edge_normalized
+            + W_DISTANCE * distance
+            + W_PAGERANK * pagerank.min(1.0),
+    )
+}
+
 /// Compute recency score for a node using exponential decay.
 /// Formula: e^(-decay * hours_since_creation)
 /// Returns a value in (0, 1] where 1.0 means "just created".
@@ -466,6 +498,83 @@ mod tests {
         }));
         // 10 words → 14 tokens
         assert_eq!(estimate_tokens(&node), 14);
+    }
+
+    #[test]
+    fn score_node_composite_ranking() {
+        let graph = GraphStore::open_memory().unwrap();
+        let config = ContextConfig::default();
+
+        let current_turn = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "Fix the bug in main.rs".to_string(),
+            token_count: None,
+        }));
+        let ct_id = current_turn.id.clone();
+        graph.add_node(current_turn.clone()).unwrap();
+
+        let mut old_msg = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "I can help with that.".to_string(),
+            token_count: None,
+        }));
+        old_msg.created_at = Utc::now() - Duration::hours(10);
+        old_msg.updated_at = old_msg.created_at;
+        let old_id = old_msg.id.clone();
+        graph.add_node(old_msg.clone()).unwrap();
+        graph
+            .add_edge(GraphEdge::new(EdgeType::RespondsTo, ct_id.clone(), old_id.clone()))
+            .unwrap();
+
+        let file_node = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".to_string(),
+            path: Some("main.rs".to_string()),
+            body: "fn main() { panic!() }".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let file_id = file_node.id.clone();
+        graph.add_node(file_node.clone()).unwrap();
+        graph
+            .add_edge(GraphEdge::new(EdgeType::Modifies, ct_id.clone(), file_id.clone()))
+            .unwrap();
+
+        let pr_vec = graph.pagerank().unwrap();
+        let pagerank_scores: HashMap<NodeId, f64> = pr_vec.into_iter().collect();
+        let distances = bfs_distances(&graph, &ct_id, 10).unwrap();
+
+        let score_old = score_node(&old_msg, &pagerank_scores, &distances, &config, &graph).unwrap();
+        let score_file = score_node(&file_node, &pagerank_scores, &distances, &config, &graph).unwrap();
+
+        assert!(
+            score_file > score_old,
+            "Recent file with Modifies edge ({score_file}) should outscore \
+             10h-old message with RespondsTo edge ({score_old})"
+        );
+    }
+
+    #[test]
+    fn score_node_all_components_contribute() {
+        let graph = GraphStore::open_memory().unwrap();
+        let config = ContextConfig::default();
+
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "test".to_string(),
+            token_count: None,
+        }));
+        let id = node.id.clone();
+        graph.add_node(node.clone()).unwrap();
+
+        let mut pagerank_scores = HashMap::new();
+        pagerank_scores.insert(id.clone(), 0.5);
+
+        let mut distances = HashMap::new();
+        distances.insert(id.clone(), 0);
+
+        let score = score_node(&node, &pagerank_scores, &distances, &config, &graph).unwrap();
+
+        assert!(score > 0.5, "Score should be substantial, got {score}");
+        assert!(score < 1.0, "Score should be below 1.0, got {score}");
     }
 
     #[test]
