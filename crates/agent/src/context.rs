@@ -1,5 +1,8 @@
 // Context engine: graph-native relevance scoring and context window building
 
+/// Maximum BFS traversal depth when computing graph-distance scores.
+const BFS_MAX_DEPTH: usize = 10;
+
 use std::collections::{HashMap, VecDeque};
 
 use chrono::Utc;
@@ -76,6 +79,9 @@ pub struct ContextConfig {
     pub recency_decay: f64,
     #[serde(default)]
     pub edge_weights: EdgeWeights,
+    /// When true, `build_context` will trigger compaction of old nodes that
+    /// exceed the token budget.
+    // TODO(phase-6-followup): auto-trigger compact_context when enable_compaction=true
     #[serde(default = "default_enable_compaction")]
     pub enable_compaction: bool,
 }
@@ -138,19 +144,71 @@ pub fn get_text_content(node: &GraphNode) -> &str {
     }
 }
 
-/// Convert a GraphNode (Interaction) into an LlmMessage.
-/// Returns None for non-Interaction nodes or unknown roles.
+/// Convert a GraphNode into an LlmMessage.
+///
+/// Handles all Interaction roles (user, assistant, assistant+tool_calls, tool results, system)
+/// as well as Content and Knowledge nodes. Returns None for Agent/Task nodes.
 pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
+    use graphirm_llm::{ContentPart, Role};
+
     match &node.node_type {
-        NodeType::Interaction(data) => {
-            let msg = match data.role.as_str() {
-                "user" => LlmMessage::human(&data.content),
-                "assistant" => LlmMessage::assistant(&data.content),
-                "system" => LlmMessage::system(&data.content),
-                _ => return None,
-            };
-            Some(msg)
-        }
+        NodeType::Interaction(data) => match data.role.as_str() {
+            "user" => Some(LlmMessage::human(&data.content)),
+            "system" => Some(LlmMessage::system(&data.content)),
+            "assistant" => {
+                // Reconstruct tool call parts from metadata if present
+                let tool_calls: Vec<(String, String, serde_json::Value)> = node
+                    .metadata
+                    .get("tool_calls")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| {
+                                let id = v.get("id")?.as_str()?.to_string();
+                                let name = v.get("name")?.as_str()?.to_string();
+                                let arguments = v
+                                    .get("arguments")
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Null);
+                                Some((id, name, arguments))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                if tool_calls.is_empty() {
+                    Some(LlmMessage::assistant(&data.content))
+                } else {
+                    let mut content = Vec::new();
+                    if !data.content.is_empty() {
+                        content.push(ContentPart::text(data.content.clone()));
+                    }
+                    for (id, name, arguments) in tool_calls {
+                        content.push(ContentPart::tool_call(id, name, arguments));
+                    }
+                    Some(LlmMessage::new(Role::Assistant, content))
+                }
+            }
+            "tool" => {
+                let tool_call_id = node
+                    .metadata
+                    .get("tool_call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let is_error = node
+                    .metadata
+                    .get("is_error")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                Some(LlmMessage::tool_result(
+                    tool_call_id,
+                    data.content.clone(),
+                    is_error,
+                ))
+            }
+            _ => None,
+        },
         NodeType::Content(data) => {
             let label = match &data.path {
                 Some(path) => format!("[File: {}]\n{}", path, data.body),
@@ -340,7 +398,7 @@ fn collect_context_nodes(
 /// 8. Assemble ContextWindow with system prompt + selected messages
 pub fn build_context(
     graph: &GraphStore,
-    agent_id: NodeId,
+    agent_id: &NodeId,
     config: &ContextConfig,
 ) -> Result<ContextWindow, AgentError> {
     use crate::compact::is_compacted;
@@ -348,7 +406,7 @@ pub fn build_context(
     let system_msg = LlmMessage::system(&config.system_prompt);
     let system_tokens = estimate_tokens_str(&config.system_prompt);
 
-    let current_turn = match find_current_turn(graph, &agent_id)? {
+    let current_turn = match find_current_turn(graph, agent_id)? {
         Some(node) => node,
         None => {
             return Ok(ContextWindow {
@@ -390,7 +448,7 @@ pub fn build_context(
         .map_err(|e| AgentError::Context(e.to_string()))?;
     let pagerank_scores: HashMap<NodeId, f64> = pr_vec.into_iter().collect();
 
-    let distances = bfs_distances(graph, &current_turn.id, 10)?;
+    let distances = bfs_distances(graph, &current_turn.id, BFS_MAX_DEPTH)?;
 
     // Score older conversation nodes
     let mut candidates: Vec<ScoredNode> = Vec::new();
@@ -778,7 +836,7 @@ mod tests {
             ..ContextConfig::default()
         };
 
-        let window = build_context(&graph, agent_id, &config).unwrap();
+        let window = build_context(&graph, &agent_id, &config).unwrap();
 
         assert_eq!(window.system.role, graphirm_llm::Role::System);
         assert!(
@@ -815,7 +873,7 @@ mod tests {
         graph.add_node(agent).unwrap();
 
         let config = ContextConfig::default();
-        let window = build_context(&graph, agent_id, &config).unwrap();
+        let window = build_context(&graph, &agent_id, &config).unwrap();
 
         assert_eq!(window.system.role, graphirm_llm::Role::System);
         assert!(window.messages.is_empty());
@@ -894,7 +952,7 @@ mod tests {
             ..ContextConfig::default()
         };
 
-        let window = build_context(&graph, agent_id, &config).unwrap();
+        let window = build_context(&graph, &agent_id, &config).unwrap();
 
         let all_text: String = window
             .messages
@@ -993,7 +1051,7 @@ mod tests {
             ..ContextConfig::default()
         };
 
-        let window = build_context(&graph, agent_id, &config).unwrap();
+        let window = build_context(&graph, &agent_id, &config).unwrap();
 
         let all_text: String = window
             .messages
@@ -1131,7 +1189,7 @@ mod tests {
             ..ContextConfig::default()
         };
 
-        let window = build_context(&graph, agent_id, &config).unwrap();
+        let window = build_context(&graph, &agent_id, &config).unwrap();
 
         assert_eq!(window.system.role, graphirm_llm::Role::System);
         assert!(

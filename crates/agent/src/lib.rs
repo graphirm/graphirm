@@ -11,7 +11,7 @@ pub use compact::{CompactionConfig, CompactionResult, compact_context, is_compac
 pub use config::AgentConfig;
 pub use context::{
     ContextConfig, ContextWindow, EdgeWeights, ScoredNode, build_context, estimate_tokens,
-    fit_to_budget, score_node, score_recency,
+    estimate_tokens_str, fit_to_budget, score_node, score_recency,
 };
 pub use error::AgentError;
 pub use event::{AgentEvent, EventBus};

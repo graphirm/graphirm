@@ -125,9 +125,16 @@ pub async fn compact_context(
             .get_node(node_id)
             .map_err(|e| AgentError::Context(e.to_string()))?;
 
-        if let Some(obj) = node.metadata.as_object_mut() {
-            obj.insert("compacted".to_string(), serde_json::Value::Bool(true));
+        // Ensure metadata is always a JSON object before inserting the flag.
+        // Nodes loaded from DB with corrupted/null metadata would silently skip
+        // the flag otherwise.
+        if !node.metadata.is_object() {
+            node.metadata = serde_json::Value::Object(serde_json::Map::new());
         }
+        node.metadata
+            .as_object_mut()
+            .expect("just initialized as object")
+            .insert("compacted".to_string(), serde_json::Value::Bool(true));
 
         graph
             .update_node(node_id, node)
