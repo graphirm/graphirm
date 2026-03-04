@@ -143,6 +143,21 @@ pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
     }
 }
 
+/// Estimate token count for a text string using word-based heuristic.
+/// Approximation: tokens ≈ words / 0.75 (1 token ≈ 0.75 words).
+pub fn estimate_tokens_str(text: &str) -> usize {
+    let word_count = text.split_whitespace().count();
+    if word_count == 0 {
+        return 0;
+    }
+    (word_count as f64 / 0.75).ceil() as usize
+}
+
+/// Estimate token count for a GraphNode based on its text content.
+pub fn estimate_tokens(node: &GraphNode) -> usize {
+    estimate_tokens_str(get_text_content(node))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +329,47 @@ mod tests {
             priority: Some(1),
         }));
         assert!(node_to_message(&node).is_none());
+    }
+
+    #[test]
+    fn estimate_tokens_str_known_strings() {
+        // "Hello world" = 2 words → 2 / 0.75 = 2.67 → ceil → 3
+        assert_eq!(estimate_tokens_str("Hello world"), 3);
+
+        // Empty string = 0 tokens
+        assert_eq!(estimate_tokens_str(""), 0);
+
+        // 10 words → 10 / 0.75 = 13.33 → ceil → 14
+        assert_eq!(
+            estimate_tokens_str("one two three four five six seven eight nine ten"),
+            14
+        );
+
+        // Single word → 1 / 0.75 = 1.33 → ceil → 2
+        assert_eq!(estimate_tokens_str("hello"), 2);
+    }
+
+    #[test]
+    fn estimate_tokens_node() {
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "What is the meaning of life the universe and everything".to_string(),
+            token_count: None,
+        }));
+        // 10 words → 14 tokens
+        assert_eq!(estimate_tokens(&node), 14);
+    }
+
+    #[test]
+    fn estimate_tokens_code_content() {
+        let node = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".to_string(),
+            path: Some("main.rs".to_string()),
+            body: "fn main() {\n    println!(\"Hello, world!\");\n}".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let tokens = estimate_tokens(&node);
+        assert!(tokens > 0);
+        assert!(tokens < 100);
     }
 }
