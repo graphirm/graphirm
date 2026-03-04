@@ -88,6 +88,61 @@ impl Default for ContextConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ScoredNode {
+    pub node: GraphNode,
+    pub score: f64,
+    pub token_estimate: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextWindow {
+    pub system: LlmMessage,
+    pub messages: Vec<LlmMessage>,
+    pub total_tokens: usize,
+}
+
+/// Extract the primary text content from any GraphNode variant.
+pub fn get_text_content(node: &GraphNode) -> &str {
+    match &node.node_type {
+        NodeType::Interaction(data) => &data.content,
+        NodeType::Content(data) => &data.body,
+        NodeType::Knowledge(data) => &data.summary,
+        NodeType::Agent(data) => data.system_prompt.as_deref().unwrap_or(""),
+        NodeType::Task(data) => &data.description,
+    }
+}
+
+/// Convert a GraphNode (Interaction) into an LlmMessage.
+/// Returns None for non-Interaction nodes or unknown roles.
+pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
+    match &node.node_type {
+        NodeType::Interaction(data) => {
+            let msg = match data.role.as_str() {
+                "user" => LlmMessage::human(&data.content),
+                "assistant" => LlmMessage::assistant(&data.content),
+                "system" => LlmMessage::system(&data.content),
+                _ => return None,
+            };
+            Some(msg)
+        }
+        NodeType::Content(data) => {
+            let label = match &data.path {
+                Some(path) => format!("[File: {}]\n{}", path, data.body),
+                None => format!("[Content: {}]\n{}", data.content_type, data.body),
+            };
+            Some(LlmMessage::human(label))
+        }
+        NodeType::Knowledge(data) => {
+            Some(LlmMessage::human(format!(
+                "[Knowledge: {} ({})]\n{}",
+                data.entity, data.entity_type, data.summary
+            )))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,5 +206,113 @@ mod tests {
         assert_eq!(config.max_tokens, 32_000);
         assert_eq!(config.guaranteed_recent_turns, 4);
         assert!((config.edge_weights.modifies - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn scored_node_construction() {
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "Hello world".to_string(),
+            token_count: None,
+        }));
+        let scored = ScoredNode {
+            node: node.clone(),
+            score: 0.85,
+            token_estimate: 4,
+        };
+        assert!((scored.score - 0.85).abs() < f64::EPSILON);
+        assert_eq!(scored.token_estimate, 4);
+        assert_eq!(scored.node.id, node.id);
+    }
+
+    #[test]
+    fn context_window_construction() {
+        let window = ContextWindow {
+            system: LlmMessage::system("You are helpful."),
+            messages: vec![
+                LlmMessage::human("Hi"),
+                LlmMessage::assistant("Hello!"),
+            ],
+            total_tokens: 100,
+        };
+        assert_eq!(window.messages.len(), 2);
+        assert_eq!(window.total_tokens, 100);
+    }
+
+    #[test]
+    fn get_text_content_interaction() {
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "What is Rust?".to_string(),
+            token_count: None,
+        }));
+        assert_eq!(get_text_content(&node), "What is Rust?");
+    }
+
+    #[test]
+    fn get_text_content_content_node() {
+        let node = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".to_string(),
+            path: Some("main.rs".to_string()),
+            body: "fn main() {}".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        assert_eq!(get_text_content(&node), "fn main() {}");
+    }
+
+    #[test]
+    fn get_text_content_knowledge_node() {
+        let node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "GraphStore".to_string(),
+            entity_type: "struct".to_string(),
+            summary: "Dual-write graph persistence.".to_string(),
+            confidence: 0.9,
+        }));
+        assert_eq!(get_text_content(&node), "Dual-write graph persistence.");
+    }
+
+    #[test]
+    fn node_to_message_user() {
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "Hello!".to_string(),
+            token_count: None,
+        }));
+        let msg = node_to_message(&node).unwrap();
+        assert_eq!(msg.role, graphirm_llm::Role::Human);
+    }
+
+    #[test]
+    fn node_to_message_assistant() {
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "Hi there!".to_string(),
+            token_count: None,
+        }));
+        let msg = node_to_message(&node).unwrap();
+        assert_eq!(msg.role, graphirm_llm::Role::Assistant);
+    }
+
+    #[test]
+    fn node_to_message_content() {
+        let node = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".to_string(),
+            path: Some("lib.rs".to_string()),
+            body: "pub mod graph;".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let msg = node_to_message(&node).unwrap();
+        assert_eq!(msg.role, graphirm_llm::Role::Human);
+    }
+
+    #[test]
+    fn node_to_message_task_returns_none() {
+        let node = GraphNode::new(NodeType::Task(TaskData {
+            title: "Fix bug".to_string(),
+            description: "Something is broken".to_string(),
+            status: "pending".to_string(),
+            priority: Some(1),
+        }));
+        assert!(node_to_message(&node).is_none());
     }
 }
