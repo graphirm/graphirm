@@ -240,6 +240,25 @@ pub fn score_graph_distance(node_id: &NodeId, distances: &HashMap<NodeId, usize>
     }
 }
 
+/// Select the highest-scored nodes that fit within a token budget.
+/// Greedy approach: sort by score descending, take nodes until budget exhausted.
+/// Skips individual nodes that don't fit, continues to try smaller ones.
+pub fn fit_to_budget(mut scored: Vec<ScoredNode>, budget: usize) -> Vec<ScoredNode> {
+    scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut selected = Vec::new();
+    let mut remaining = budget;
+
+    for node in scored {
+        if node.token_estimate <= remaining {
+            remaining -= node.token_estimate;
+            selected.push(node);
+        }
+    }
+
+    selected
+}
+
 const W_RECENCY: f64 = 0.3;
 const W_EDGE: f64 = 0.2;
 const W_DISTANCE: f64 = 0.3;
@@ -498,6 +517,90 @@ mod tests {
         }));
         // 10 words → 14 tokens
         assert_eq!(estimate_tokens(&node), 14);
+    }
+
+    #[test]
+    fn fit_to_budget_selects_top_scored() {
+        let make_scored = |content: &str, score: f64, tokens: usize| -> ScoredNode {
+            ScoredNode {
+                node: GraphNode::new(NodeType::Interaction(InteractionData {
+                    role: "user".to_string(),
+                    content: content.to_string(),
+                    token_count: None,
+                })),
+                score,
+                token_estimate: tokens,
+            }
+        };
+
+        let scored = vec![
+            make_scored("low", 0.1, 10),
+            make_scored("high", 0.9, 10),
+            make_scored("medium", 0.5, 10),
+            make_scored("very-high", 0.95, 10),
+            make_scored("medium2", 0.4, 10),
+        ];
+
+        // Budget for 30 tokens → fits 3 nodes of 10 tokens each
+        let selected = fit_to_budget(scored, 30);
+        assert_eq!(selected.len(), 3);
+
+        assert!(selected[0].score > selected[1].score);
+        assert!(selected[1].score > selected[2].score);
+
+        assert!((selected[0].score - 0.95).abs() < f64::EPSILON);
+        assert!((selected[1].score - 0.9).abs() < f64::EPSILON);
+        assert!((selected[2].score - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn fit_to_budget_respects_token_limit() {
+        let make_scored = |tokens: usize, score: f64| -> ScoredNode {
+            ScoredNode {
+                node: GraphNode::new(NodeType::Interaction(InteractionData {
+                    role: "user".to_string(),
+                    content: "x".to_string(),
+                    token_count: None,
+                })),
+                score,
+                token_estimate: tokens,
+            }
+        };
+
+        let scored = vec![
+            make_scored(50, 0.9),  // takes 50/100
+            make_scored(40, 0.8),  // takes 90/100
+            make_scored(30, 0.7),  // would need 120 → skip
+            make_scored(10, 0.6),  // takes 100/100
+            make_scored(5, 0.5),   // would need 105 → skip
+        ];
+
+        let selected = fit_to_budget(scored, 100);
+        assert_eq!(selected.len(), 3);
+        let total: usize = selected.iter().map(|s| s.token_estimate).sum();
+        assert!(total <= 100, "Total tokens {total} should fit in budget 100");
+        assert_eq!(total, 100); // 50 + 40 + 10
+    }
+
+    #[test]
+    fn fit_to_budget_empty_input() {
+        let selected = fit_to_budget(vec![], 1000);
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn fit_to_budget_zero_budget() {
+        let scored = vec![ScoredNode {
+            node: GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: "test".to_string(),
+                token_count: None,
+            })),
+            score: 1.0,
+            token_estimate: 10,
+        }];
+        let selected = fit_to_budget(scored, 0);
+        assert!(selected.is_empty());
     }
 
     #[test]
