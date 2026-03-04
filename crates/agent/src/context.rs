@@ -143,6 +143,59 @@ pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
     }
 }
 
+impl EdgeWeights {
+    /// Get the weight for a specific edge type.
+    pub fn weight_for(&self, edge_type: EdgeType) -> f64 {
+        match edge_type {
+            EdgeType::Modifies => self.modifies,
+            EdgeType::Produces => self.produces,
+            EdgeType::Reads => self.reads,
+            EdgeType::RelatesTo => self.relates_to,
+            EdgeType::RespondsTo => self.responds_to,
+            _ => self.other,
+        }
+    }
+}
+
+/// Score a node based on the types and counts of its edges.
+/// For each edge type, counts both outgoing and incoming edges,
+/// then multiplies by the configured weight for that type.
+pub fn score_edge_weights(
+    node_id: &NodeId,
+    graph: &GraphStore,
+    weights: &EdgeWeights,
+) -> Result<f64, AgentError> {
+    let weighted_types = [
+        EdgeType::Modifies,
+        EdgeType::Produces,
+        EdgeType::Reads,
+        EdgeType::RelatesTo,
+        EdgeType::RespondsTo,
+        EdgeType::DelegatesTo,
+        EdgeType::DependsOn,
+        EdgeType::Summarizes,
+        EdgeType::Contains,
+        EdgeType::FollowsUp,
+        EdgeType::Steers,
+        EdgeType::SpawnedBy,
+    ];
+
+    let mut total = 0.0;
+    for et in &weighted_types {
+        let out_count = graph
+            .neighbors(node_id, Some(*et), Direction::Outgoing)
+            .map_err(|e| AgentError::Context(e.to_string()))?
+            .len();
+        let in_count = graph
+            .neighbors(node_id, Some(*et), Direction::Incoming)
+            .map_err(|e| AgentError::Context(e.to_string()))?
+            .len();
+        total += weights.weight_for(*et) * (out_count + in_count) as f64;
+    }
+
+    Ok(total)
+}
+
 /// Compute recency score for a node using exponential decay.
 /// Formula: e^(-decay * hours_since_creation)
 /// Returns a value in (0, 1] where 1.0 means "just created".
@@ -369,6 +422,111 @@ mod tests {
         }));
         // 10 words → 14 tokens
         assert_eq!(estimate_tokens(&node), 14);
+    }
+
+    #[test]
+    fn score_edge_weights_modifies_higher_than_reads() {
+        let graph = GraphStore::open_memory().unwrap();
+        let weights = EdgeWeights::default();
+
+        let a = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "I'll edit that file.".to_string(),
+            token_count: None,
+        }));
+        let content = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".to_string(),
+            path: Some("main.rs".to_string()),
+            body: "fn main() {}".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let a_id = a.id.clone();
+        let content_id = content.id.clone();
+        graph.add_node(a).unwrap();
+        graph.add_node(content.clone()).unwrap();
+        graph
+            .add_edge(GraphEdge::new(EdgeType::Modifies, a_id.clone(), content_id.clone()))
+            .unwrap();
+
+        let b = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "Let me read that.".to_string(),
+            token_count: None,
+        }));
+        let content2 = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".to_string(),
+            path: Some("lib.rs".to_string()),
+            body: "pub mod store;".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let b_id = b.id.clone();
+        let c2_id = content2.id.clone();
+        graph.add_node(b).unwrap();
+        graph.add_node(content2).unwrap();
+        graph
+            .add_edge(GraphEdge::new(EdgeType::Reads, b_id.clone(), c2_id.clone()))
+            .unwrap();
+
+        let score_a = score_edge_weights(&a_id, &graph, &weights).unwrap();
+        let score_b = score_edge_weights(&b_id, &graph, &weights).unwrap();
+        assert!(
+            score_a > score_b,
+            "Modifies ({score_a}) should score higher than Reads ({score_b})"
+        );
+    }
+
+    #[test]
+    fn score_edge_weights_no_edges_scores_zero() {
+        let graph = GraphStore::open_memory().unwrap();
+        let weights = EdgeWeights::default();
+
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "isolated".to_string(),
+            token_count: None,
+        }));
+        let id = node.id.clone();
+        graph.add_node(node).unwrap();
+
+        let score = score_edge_weights(&id, &graph, &weights).unwrap();
+        assert!((score - 0.0).abs() < f64::EPSILON, "Isolated node should score 0.0");
+    }
+
+    #[test]
+    fn score_edge_weights_multiple_edges_sum() {
+        let graph = GraphStore::open_memory().unwrap();
+        let weights = EdgeWeights::default();
+
+        let agent = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "working".to_string(),
+            token_count: None,
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        // Agent modifies two files and reads one
+        for i in 0..3 {
+            let content = GraphNode::new(NodeType::Content(ContentData {
+                content_type: "file".to_string(),
+                path: Some(format!("file{i}.rs")),
+                body: "code".to_string(),
+                language: Some("rust".to_string()),
+            }));
+            let cid = content.id.clone();
+            graph.add_node(content).unwrap();
+            let et = if i < 2 { EdgeType::Modifies } else { EdgeType::Reads };
+            graph
+                .add_edge(GraphEdge::new(et, agent_id.clone(), cid))
+                .unwrap();
+        }
+
+        let score = score_edge_weights(&agent_id, &graph, &weights).unwrap();
+        // 2 * Modifies(1.0) + 1 * Reads(0.6) = 2.6
+        assert!(
+            (score - 2.6).abs() < f64::EPSILON,
+            "Expected 2.6, got {score}"
+        );
     }
 
     #[test]
