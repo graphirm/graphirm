@@ -14,7 +14,10 @@ pub use context::{
     estimate_tokens, estimate_tokens_str, fit_to_budget, score_node, score_recency,
 };
 pub use error::AgentError;
-pub use multi::AgentRegistry;
+pub use multi::{
+    AgentRegistry, Coordinator, LlmFactory, SubagentHandle, collect_subagent_results,
+    spawn_subagent, wait_for_dependencies, wait_for_subagents,
+};
 pub use event::{AgentEvent, EventBus};
 pub use session::Session;
 pub use workflow::run_agent_loop;
