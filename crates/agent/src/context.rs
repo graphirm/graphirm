@@ -143,6 +143,17 @@ pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
     }
 }
 
+/// Compute recency score for a node using exponential decay.
+/// Formula: e^(-decay * hours_since_creation)
+/// Returns a value in (0, 1] where 1.0 means "just created".
+pub fn score_recency(node: &GraphNode, decay: f64) -> f64 {
+    let now = Utc::now();
+    let elapsed = now.signed_duration_since(node.created_at);
+    let hours = elapsed.num_seconds() as f64 / 3600.0;
+    let hours = hours.max(0.0);
+    (-decay * hours).exp()
+}
+
 /// Estimate token count for a text string using word-based heuristic.
 /// Approximation: tokens ≈ words / 0.75 (1 token ≈ 0.75 words).
 pub fn estimate_tokens_str(text: &str) -> usize {
@@ -358,6 +369,76 @@ mod tests {
         }));
         // 10 words → 14 tokens
         assert_eq!(estimate_tokens(&node), 14);
+    }
+
+    #[test]
+    fn score_recency_recent_node_scores_high() {
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "just now".to_string(),
+            token_count: None,
+        }));
+        // Node was just created → hours ≈ 0 → e^0 = 1.0
+        let score = score_recency(&node, 0.1);
+        assert!(score > 0.99, "Recent node should score near 1.0, got {score}");
+    }
+
+    #[test]
+    fn score_recency_old_node_scores_low() {
+        let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "old message".to_string(),
+            token_count: None,
+        }));
+        // Set created_at to 24 hours ago
+        node.created_at = Utc::now() - Duration::hours(24);
+        node.updated_at = node.created_at;
+
+        let score = score_recency(&node, 0.1);
+        // e^(-0.1 * 24) = e^(-2.4) ≈ 0.0907
+        assert!(score < 0.15, "24h-old node with decay=0.1 should score low, got {score}");
+        assert!(score > 0.05, "Score should be positive, got {score}");
+    }
+
+    #[test]
+    fn score_recency_one_hour_beats_twenty_four_hours() {
+        let mut recent = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "1h ago".to_string(),
+            token_count: None,
+        }));
+        recent.created_at = Utc::now() - Duration::hours(1);
+
+        let mut old = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "24h ago".to_string(),
+            token_count: None,
+        }));
+        old.created_at = Utc::now() - Duration::hours(24);
+
+        let score_recent = score_recency(&recent, 0.1);
+        let score_old = score_recency(&old, 0.1);
+        assert!(
+            score_recent > score_old,
+            "1h ago ({score_recent}) should score higher than 24h ago ({score_old})"
+        );
+    }
+
+    #[test]
+    fn score_recency_higher_decay_penalizes_more() {
+        let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "test".to_string(),
+            token_count: None,
+        }));
+        node.created_at = Utc::now() - Duration::hours(5);
+
+        let score_gentle = score_recency(&node, 0.05);
+        let score_harsh = score_recency(&node, 0.5);
+        assert!(
+            score_gentle > score_harsh,
+            "Lower decay ({score_gentle}) should give higher score than higher decay ({score_harsh})"
+        );
     }
 
     #[test]
