@@ -22,7 +22,9 @@ fn build_context_linear(session: &Session) -> Result<Vec<graphirm_llm::LlmMessag
     use graphirm_llm::{ContentPart, LlmMessage, Role};
 
     let mut messages = Vec::new();
-    messages.push(LlmMessage::system(session.agent_config.system_prompt.clone()));
+    messages.push(LlmMessage::system(
+        session.agent_config.system_prompt.clone(),
+    ));
 
     let mut interactions = session
         .graph

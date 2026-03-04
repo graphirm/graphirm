@@ -2,13 +2,14 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use serde::Deserialize;
 
-use graphirm_graph::{
-    Direction, EdgeType, GraphEdge, GraphNode, GraphStore, NodeId, NodeType,
-    InteractionData, ContentData, KnowledgeData, AgentData, TaskData,
-};
+#[cfg(test)]
+use chrono::Duration;
+#[cfg(test)]
+use graphirm_graph::{AgentData, ContentData, GraphEdge, InteractionData, KnowledgeData, TaskData};
+use graphirm_graph::{Direction, EdgeType, GraphNode, GraphStore, NodeId, NodeType};
 use graphirm_llm::LlmMessage;
 
 use crate::error::AgentError;
@@ -29,12 +30,24 @@ pub struct EdgeWeights {
     pub other: f64,
 }
 
-fn default_modifies() -> f64 { 1.0 }
-fn default_produces() -> f64 { 0.8 }
-fn default_reads() -> f64 { 0.6 }
-fn default_relates_to() -> f64 { 0.4 }
-fn default_responds_to() -> f64 { 0.3 }
-fn default_other() -> f64 { 0.1 }
+fn default_modifies() -> f64 {
+    1.0
+}
+fn default_produces() -> f64 {
+    0.8
+}
+fn default_reads() -> f64 {
+    0.6
+}
+fn default_relates_to() -> f64 {
+    0.4
+}
+fn default_responds_to() -> f64 {
+    0.3
+}
+fn default_other() -> f64 {
+    0.1
+}
 
 impl Default for EdgeWeights {
     fn default() -> Self {
@@ -67,12 +80,24 @@ pub struct ContextConfig {
     pub enable_compaction: bool,
 }
 
-fn default_max_tokens() -> usize { 128_000 }
-fn default_system_prompt() -> String { "You are a helpful coding assistant.".to_string() }
-fn default_guaranteed_recent_turns() -> usize { 4 }
-fn default_max_content_nodes() -> usize { 20 }
-fn default_recency_decay() -> f64 { 0.1 }
-fn default_enable_compaction() -> bool { false }
+fn default_max_tokens() -> usize {
+    128_000
+}
+fn default_system_prompt() -> String {
+    "You are a helpful coding assistant.".to_string()
+}
+fn default_guaranteed_recent_turns() -> usize {
+    4
+}
+fn default_max_content_nodes() -> usize {
+    20
+}
+fn default_recency_decay() -> f64 {
+    0.1
+}
+fn default_enable_compaction() -> bool {
+    false
+}
 
 impl Default for ContextConfig {
     fn default() -> Self {
@@ -133,12 +158,10 @@ pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
             };
             Some(LlmMessage::human(label))
         }
-        NodeType::Knowledge(data) => {
-            Some(LlmMessage::human(format!(
-                "[Knowledge: {} ({})]\n{}",
-                data.entity, data.entity_type, data.summary
-            )))
-        }
+        NodeType::Knowledge(data) => Some(LlmMessage::human(format!(
+            "[Knowledge: {} ({})]\n{}",
+            data.entity, data.entity_type, data.summary
+        ))),
         _ => None,
     }
 }
@@ -351,7 +374,7 @@ pub fn build_context(
     let older_conversation: Vec<GraphNode> = thread[guaranteed_count..].to_vec();
 
     // Token accounting
-    let guaranteed_tokens: usize = guaranteed_recent.iter().map(|n| estimate_tokens(n)).sum();
+    let guaranteed_tokens: usize = guaranteed_recent.iter().map(estimate_tokens).sum();
     let remaining_budget = config
         .max_tokens
         .saturating_sub(system_tokens)
@@ -411,10 +434,7 @@ pub fn build_context(
     all_nodes.sort_by(|a, b| a.created_at.cmp(&b.created_at));
     all_nodes.extend(recent_chrono);
 
-    let messages: Vec<LlmMessage> = all_nodes
-        .iter()
-        .filter_map(|n| node_to_message(n))
-        .collect();
+    let messages: Vec<LlmMessage> = all_nodes.iter().filter_map(node_to_message).collect();
 
     let total_tokens = system_tokens + guaranteed_tokens + selected_tokens;
 
@@ -429,7 +449,11 @@ pub fn build_context(
 /// Greedy approach: sort by score descending, take nodes until budget exhausted.
 /// Skips individual nodes that don't fit, continues to try smaller ones.
 pub fn fit_to_budget(mut scored: Vec<ScoredNode>, budget: usize) -> Vec<ScoredNode> {
-    scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut selected = Vec::new();
     let mut remaining = budget;
@@ -468,12 +492,10 @@ pub fn score_node(
 
     let pagerank = pagerank_scores.get(&node.id).copied().unwrap_or(0.0);
 
-    Ok(
-        W_RECENCY * recency
-            + W_EDGE * edge_normalized
-            + W_DISTANCE * distance
-            + W_PAGERANK * pagerank.min(1.0),
-    )
+    Ok(W_RECENCY * recency
+        + W_EDGE * edge_normalized
+        + W_DISTANCE * distance
+        + W_PAGERANK * pagerank.min(1.0))
 }
 
 /// Compute recency score for a node using exponential decay.
@@ -588,10 +610,7 @@ mod tests {
     fn context_window_construction() {
         let window = ContextWindow {
             system: LlmMessage::system("You are helpful."),
-            messages: vec![
-                LlmMessage::human("Hi"),
-                LlmMessage::assistant("Hello!"),
-            ],
+            messages: vec![LlmMessage::human("Hi"), LlmMessage::assistant("Hello!")],
             total_tokens: 100,
         };
         assert_eq!(window.messages.len(), 2);
@@ -833,7 +852,11 @@ mod tests {
             let node_id = node.id.clone();
             graph.add_node(node).unwrap();
             graph
-                .add_edge(GraphEdge::new(EdgeType::Produces, agent_id.clone(), node_id.clone()))
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    node_id.clone(),
+                ))
                 .unwrap();
             if let Some(pid) = &prev_id {
                 graph
@@ -856,7 +879,11 @@ mod tests {
         let summary_id = summary.id.clone();
         graph.add_node(summary).unwrap();
         graph
-            .add_edge(GraphEdge::new(EdgeType::Produces, agent_id.clone(), summary_id.clone()))
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id.clone(),
+                summary_id.clone(),
+            ))
             .unwrap();
 
         let config = ContextConfig {
@@ -914,7 +941,11 @@ mod tests {
         let user_id = user_msg.id.clone();
         graph.add_node(user_msg).unwrap();
         graph
-            .add_edge(GraphEdge::new(EdgeType::Produces, agent_id.clone(), user_id.clone()))
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id.clone(),
+                user_id.clone(),
+            ))
             .unwrap();
 
         let asst_msg = GraphNode::new(NodeType::Interaction(InteractionData {
@@ -925,10 +956,18 @@ mod tests {
         let asst_id = asst_msg.id.clone();
         graph.add_node(asst_msg).unwrap();
         graph
-            .add_edge(GraphEdge::new(EdgeType::Produces, agent_id.clone(), asst_id.clone()))
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id.clone(),
+                asst_id.clone(),
+            ))
             .unwrap();
         graph
-            .add_edge(GraphEdge::new(EdgeType::RespondsTo, asst_id.clone(), user_id.clone()))
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                asst_id.clone(),
+                user_id.clone(),
+            ))
             .unwrap();
 
         let file_node = GraphNode::new(NodeType::Content(ContentData {
@@ -940,7 +979,11 @@ mod tests {
         let file_id = file_node.id.clone();
         graph.add_node(file_node).unwrap();
         graph
-            .add_edge(GraphEdge::new(EdgeType::Modifies, asst_id.clone(), file_id.clone()))
+            .add_edge(GraphEdge::new(
+                EdgeType::Modifies,
+                asst_id.clone(),
+                file_id.clone(),
+            ))
             .unwrap();
 
         let config = ContextConfig {
@@ -966,6 +1009,173 @@ mod tests {
         assert!(
             all_text.contains("main.rs") || all_text.contains("fixed()"),
             "Context should include the modified file content"
+        );
+    }
+
+    #[test]
+    fn integration_30_turn_session_with_tool_calls() {
+        let graph = GraphStore::open_memory().unwrap();
+
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "claude-sonnet".to_string(),
+            system_prompt: Some("You are a Rust expert.".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let mut prev_id: Option<NodeId> = None;
+        let mut all_msg_ids = Vec::new();
+
+        for turn in 0..30 {
+            let mut user_msg = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: format!("Turn {turn}: Please fix the bug in module_{}.rs", turn % 5),
+                token_count: None,
+            }));
+            user_msg.created_at = Utc::now() - Duration::minutes((30 - turn) as i64 * 10);
+            user_msg.updated_at = user_msg.created_at;
+            let user_id = user_msg.id.clone();
+            let user_created_at = user_msg.created_at;
+            graph.add_node(user_msg).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    user_id.clone(),
+                ))
+                .unwrap();
+            if let Some(pid) = &prev_id {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        user_id.clone(),
+                        pid.clone(),
+                    ))
+                    .unwrap();
+            }
+            all_msg_ids.push(user_id.clone());
+
+            let mut asst_msg = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".to_string(),
+                content: format!("Turn {turn}: I'll read and fix module_{}.rs now.", turn % 5),
+                token_count: None,
+            }));
+            asst_msg.created_at = user_created_at + Duration::seconds(30);
+            asst_msg.updated_at = asst_msg.created_at;
+            let asst_id = asst_msg.id.clone();
+            graph.add_node(asst_msg).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    asst_id.clone(),
+                ))
+                .unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::RespondsTo,
+                    asst_id.clone(),
+                    user_id.clone(),
+                ))
+                .unwrap();
+
+            if turn % 3 == 0 {
+                let file = GraphNode::new(NodeType::Content(ContentData {
+                    content_type: "file".to_string(),
+                    path: Some(format!("src/module_{}.rs", turn % 5)),
+                    body: format!("// Fixed in turn {turn}\nfn fixed_function() {{}}\n"),
+                    language: Some("rust".to_string()),
+                }));
+                let file_id = file.id.clone();
+                graph.add_node(file).unwrap();
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::Modifies,
+                        asst_id.clone(),
+                        file_id.clone(),
+                    ))
+                    .unwrap();
+            }
+
+            if turn % 5 == 0 {
+                let read_file = GraphNode::new(NodeType::Content(ContentData {
+                    content_type: "file".to_string(),
+                    path: Some(format!("src/module_{}.rs", turn % 5)),
+                    body: format!("// Original content of module_{}\n", turn % 5),
+                    language: Some("rust".to_string()),
+                }));
+                let rf_id = read_file.id.clone();
+                graph.add_node(read_file).unwrap();
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::Reads,
+                        asst_id.clone(),
+                        rf_id.clone(),
+                    ))
+                    .unwrap();
+            }
+
+            prev_id = Some(asst_id.clone());
+            all_msg_ids.push(asst_id);
+        }
+
+        let config = ContextConfig {
+            max_tokens: 300,
+            system_prompt: "You are a Rust expert.".to_string(),
+            guaranteed_recent_turns: 4,
+            max_content_nodes: 5,
+            recency_decay: 0.05,
+            enable_compaction: false,
+            ..ContextConfig::default()
+        };
+
+        let window = build_context(&graph, agent_id, &config).unwrap();
+
+        assert_eq!(window.system.role, graphirm_llm::Role::System);
+        assert!(
+            window.messages.len() >= 4,
+            "Should include at least 4 guaranteed recent turns, got {}",
+            window.messages.len()
+        );
+        assert!(
+            window.total_tokens <= config.max_tokens,
+            "Total tokens {} exceeds budget {}",
+            window.total_tokens,
+            config.max_tokens
+        );
+
+        let all_text: String = window
+            .messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .filter_map(|p| match p {
+                graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert!(
+            all_text.contains("Turn 29"),
+            "Most recent turn should be in context"
+        );
+        assert!(
+            all_text.contains("Turn 28"),
+            "Second most recent turn should be in context"
+        );
+        // With a tight 300-token budget and 60 total messages, we expect far fewer
+        assert!(
+            window.messages.len() < 60,
+            "Budget should limit messages, got {} (60 = all interaction messages)",
+            window.messages.len()
+        );
+
+        let has_file_ref = all_text.contains("module_") || all_text.contains(".rs");
+        assert!(
+            has_file_ref,
+            "Context should include relevant file references"
         );
     }
 
@@ -1018,17 +1228,20 @@ mod tests {
         };
 
         let scored = vec![
-            make_scored(50, 0.9),  // takes 50/100
-            make_scored(40, 0.8),  // takes 90/100
-            make_scored(30, 0.7),  // would need 120 → skip
-            make_scored(10, 0.6),  // takes 100/100
-            make_scored(5, 0.5),   // would need 105 → skip
+            make_scored(50, 0.9), // takes 50/100
+            make_scored(40, 0.8), // takes 90/100
+            make_scored(30, 0.7), // would need 120 → skip
+            make_scored(10, 0.6), // takes 100/100
+            make_scored(5, 0.5),  // would need 105 → skip
         ];
 
         let selected = fit_to_budget(scored, 100);
         assert_eq!(selected.len(), 3);
         let total: usize = selected.iter().map(|s| s.token_estimate).sum();
-        assert!(total <= 100, "Total tokens {total} should fit in budget 100");
+        assert!(
+            total <= 100,
+            "Total tokens {total} should fit in budget 100"
+        );
         assert_eq!(total, 100); // 50 + 40 + 10
     }
 
@@ -1076,7 +1289,11 @@ mod tests {
         let old_id = old_msg.id.clone();
         graph.add_node(old_msg.clone()).unwrap();
         graph
-            .add_edge(GraphEdge::new(EdgeType::RespondsTo, ct_id.clone(), old_id.clone()))
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                ct_id.clone(),
+                old_id.clone(),
+            ))
             .unwrap();
 
         let file_node = GraphNode::new(NodeType::Content(ContentData {
@@ -1088,15 +1305,21 @@ mod tests {
         let file_id = file_node.id.clone();
         graph.add_node(file_node.clone()).unwrap();
         graph
-            .add_edge(GraphEdge::new(EdgeType::Modifies, ct_id.clone(), file_id.clone()))
+            .add_edge(GraphEdge::new(
+                EdgeType::Modifies,
+                ct_id.clone(),
+                file_id.clone(),
+            ))
             .unwrap();
 
         let pr_vec = graph.pagerank().unwrap();
         let pagerank_scores: HashMap<NodeId, f64> = pr_vec.into_iter().collect();
         let distances = bfs_distances(&graph, &ct_id, 10).unwrap();
 
-        let score_old = score_node(&old_msg, &pagerank_scores, &distances, &config, &graph).unwrap();
-        let score_file = score_node(&file_node, &pagerank_scores, &distances, &config, &graph).unwrap();
+        let score_old =
+            score_node(&old_msg, &pagerank_scores, &distances, &config, &graph).unwrap();
+        let score_file =
+            score_node(&file_node, &pagerank_scores, &distances, &config, &graph).unwrap();
 
         assert!(
             score_file > score_old,
@@ -1142,19 +1365,41 @@ mod tests {
             }))
         };
 
-        let a = make_node("a"); let a_id = a.id.clone();
-        let b = make_node("b"); let b_id = b.id.clone();
-        let c = make_node("c"); let c_id = c.id.clone();
-        let d = make_node("d"); let d_id = d.id.clone();
+        let a = make_node("a");
+        let a_id = a.id.clone();
+        let b = make_node("b");
+        let b_id = b.id.clone();
+        let c = make_node("c");
+        let c_id = c.id.clone();
+        let d = make_node("d");
+        let d_id = d.id.clone();
 
         graph.add_node(a).unwrap();
         graph.add_node(b).unwrap();
         graph.add_node(c).unwrap();
         graph.add_node(d).unwrap();
 
-        graph.add_edge(GraphEdge::new(EdgeType::RespondsTo, a_id.clone(), b_id.clone())).unwrap();
-        graph.add_edge(GraphEdge::new(EdgeType::RespondsTo, b_id.clone(), c_id.clone())).unwrap();
-        graph.add_edge(GraphEdge::new(EdgeType::RespondsTo, c_id.clone(), d_id.clone())).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                a_id.clone(),
+                b_id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                b_id.clone(),
+                c_id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                c_id.clone(),
+                d_id.clone(),
+            ))
+            .unwrap();
 
         let distances = bfs_distances(&graph, &a_id, 10).unwrap();
         assert_eq!(distances[&a_id], 0);
@@ -1175,19 +1420,37 @@ mod tests {
             }))
         };
 
-        let a = make_node("a"); let a_id = a.id.clone();
-        let b = make_node("b"); let b_id = b.id.clone();
-        let c = make_node("c"); let c_id = c.id.clone();
+        let a = make_node("a");
+        let a_id = a.id.clone();
+        let b = make_node("b");
+        let b_id = b.id.clone();
+        let c = make_node("c");
+        let c_id = c.id.clone();
         graph.add_node(a).unwrap();
         graph.add_node(b).unwrap();
         graph.add_node(c).unwrap();
-        graph.add_edge(GraphEdge::new(EdgeType::RespondsTo, a_id.clone(), b_id.clone())).unwrap();
-        graph.add_edge(GraphEdge::new(EdgeType::RespondsTo, b_id.clone(), c_id.clone())).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                a_id.clone(),
+                b_id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                b_id.clone(),
+                c_id.clone(),
+            ))
+            .unwrap();
 
         let distances = bfs_distances(&graph, &a_id, 1).unwrap();
         assert!(distances.contains_key(&a_id));
         assert!(distances.contains_key(&b_id));
-        assert!(!distances.contains_key(&c_id), "C should be beyond max_depth=1");
+        assert!(
+            !distances.contains_key(&c_id),
+            "C should be beyond max_depth=1"
+        );
     }
 
     #[test]
@@ -1243,7 +1506,11 @@ mod tests {
         graph.add_node(a).unwrap();
         graph.add_node(content.clone()).unwrap();
         graph
-            .add_edge(GraphEdge::new(EdgeType::Modifies, a_id.clone(), content_id.clone()))
+            .add_edge(GraphEdge::new(
+                EdgeType::Modifies,
+                a_id.clone(),
+                content_id.clone(),
+            ))
             .unwrap();
 
         let b = GraphNode::new(NodeType::Interaction(InteractionData {
@@ -1287,7 +1554,10 @@ mod tests {
         graph.add_node(node).unwrap();
 
         let score = score_edge_weights(&id, &graph, &weights).unwrap();
-        assert!((score - 0.0).abs() < f64::EPSILON, "Isolated node should score 0.0");
+        assert!(
+            (score - 0.0).abs() < f64::EPSILON,
+            "Isolated node should score 0.0"
+        );
     }
 
     #[test]
@@ -1313,7 +1583,11 @@ mod tests {
             }));
             let cid = content.id.clone();
             graph.add_node(content).unwrap();
-            let et = if i < 2 { EdgeType::Modifies } else { EdgeType::Reads };
+            let et = if i < 2 {
+                EdgeType::Modifies
+            } else {
+                EdgeType::Reads
+            };
             graph
                 .add_edge(GraphEdge::new(et, agent_id.clone(), cid))
                 .unwrap();
@@ -1336,7 +1610,10 @@ mod tests {
         }));
         // Node was just created → hours ≈ 0 → e^0 = 1.0
         let score = score_recency(&node, 0.1);
-        assert!(score > 0.99, "Recent node should score near 1.0, got {score}");
+        assert!(
+            score > 0.99,
+            "Recent node should score near 1.0, got {score}"
+        );
     }
 
     #[test]
@@ -1352,7 +1629,10 @@ mod tests {
 
         let score = score_recency(&node, 0.1);
         // e^(-0.1 * 24) = e^(-2.4) ≈ 0.0907
-        assert!(score < 0.15, "24h-old node with decay=0.1 should score low, got {score}");
+        assert!(
+            score < 0.15,
+            "24h-old node with decay=0.1 should score low, got {score}"
+        );
         assert!(score > 0.05, "Score should be positive, got {score}");
     }
 

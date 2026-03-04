@@ -1,9 +1,6 @@
 // Context compaction: summarize old context, prune graph branches
 
-use graphirm_graph::{
-    EdgeType, GraphEdge, GraphNode, GraphStore, NodeId, NodeType,
-    KnowledgeData,
-};
+use graphirm_graph::{EdgeType, GraphEdge, GraphNode, GraphStore, KnowledgeData, NodeId, NodeType};
 use graphirm_llm::{CompletionConfig, LlmMessage, LlmProvider};
 
 use crate::context::{estimate_tokens, estimate_tokens_str, get_text_content};
@@ -88,8 +85,8 @@ pub async fn compact_context(
         LlmMessage::human(prompt),
     ];
 
-    let completion_config = CompletionConfig::new(&config.model)
-        .with_max_tokens(config.max_summary_tokens as u32);
+    let completion_config =
+        CompletionConfig::new(&config.model).with_max_tokens(config.max_summary_tokens as u32);
 
     let response = llm
         .complete(messages, &[], &completion_config)
@@ -157,7 +154,7 @@ pub fn is_compacted(node: &GraphNode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphirm_graph::{GraphNode, NodeType, InteractionData};
+    use graphirm_graph::{GraphNode, InteractionData, NodeType};
     use graphirm_llm::MockProvider;
 
     #[test]
