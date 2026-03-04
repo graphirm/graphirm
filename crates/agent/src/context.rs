@@ -196,6 +196,50 @@ pub fn score_edge_weights(
     Ok(total)
 }
 
+/// Compute BFS shortest distances from a start node, following all edge types
+/// in both directions, up to max_depth hops.
+pub fn bfs_distances(
+    graph: &GraphStore,
+    start: &NodeId,
+    max_depth: usize,
+) -> Result<HashMap<NodeId, usize>, AgentError> {
+    let mut distances = HashMap::new();
+    distances.insert(start.clone(), 0);
+    let mut queue = VecDeque::new();
+    queue.push_back((start.clone(), 0_usize));
+
+    while let Some((current, depth)) = queue.pop_front() {
+        if depth >= max_depth {
+            continue;
+        }
+
+        let outgoing = graph
+            .neighbors(&current, None, Direction::Outgoing)
+            .map_err(|e| AgentError::Context(e.to_string()))?;
+        let incoming = graph
+            .neighbors(&current, None, Direction::Incoming)
+            .map_err(|e| AgentError::Context(e.to_string()))?;
+
+        for neighbor in outgoing.iter().chain(incoming.iter()) {
+            if !distances.contains_key(&neighbor.id) {
+                distances.insert(neighbor.id.clone(), depth + 1);
+                queue.push_back((neighbor.id.clone(), depth + 1));
+            }
+        }
+    }
+
+    Ok(distances)
+}
+
+/// Score a node based on graph distance from the current turn.
+/// Formula: 1.0 / (1.0 + hops). Returns 0.0 if unreachable.
+pub fn score_graph_distance(node_id: &NodeId, distances: &HashMap<NodeId, usize>) -> f64 {
+    match distances.get(node_id) {
+        Some(&hops) => 1.0 / (1.0 + hops as f64),
+        None => 0.0,
+    }
+}
+
 /// Compute recency score for a node using exponential decay.
 /// Formula: e^(-decay * hours_since_creation)
 /// Returns a value in (0, 1] where 1.0 means "just created".
@@ -422,6 +466,98 @@ mod tests {
         }));
         // 10 words → 14 tokens
         assert_eq!(estimate_tokens(&node), 14);
+    }
+
+    #[test]
+    fn bfs_distances_from_start() {
+        let graph = GraphStore::open_memory().unwrap();
+
+        let make_node = |content: &str| {
+            GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: content.to_string(),
+                token_count: None,
+            }))
+        };
+
+        let a = make_node("a"); let a_id = a.id.clone();
+        let b = make_node("b"); let b_id = b.id.clone();
+        let c = make_node("c"); let c_id = c.id.clone();
+        let d = make_node("d"); let d_id = d.id.clone();
+
+        graph.add_node(a).unwrap();
+        graph.add_node(b).unwrap();
+        graph.add_node(c).unwrap();
+        graph.add_node(d).unwrap();
+
+        graph.add_edge(GraphEdge::new(EdgeType::RespondsTo, a_id.clone(), b_id.clone())).unwrap();
+        graph.add_edge(GraphEdge::new(EdgeType::RespondsTo, b_id.clone(), c_id.clone())).unwrap();
+        graph.add_edge(GraphEdge::new(EdgeType::RespondsTo, c_id.clone(), d_id.clone())).unwrap();
+
+        let distances = bfs_distances(&graph, &a_id, 10).unwrap();
+        assert_eq!(distances[&a_id], 0);
+        assert_eq!(distances[&b_id], 1);
+        assert_eq!(distances[&c_id], 2);
+        assert_eq!(distances[&d_id], 3);
+    }
+
+    #[test]
+    fn bfs_distances_respects_max_depth() {
+        let graph = GraphStore::open_memory().unwrap();
+
+        let make_node = |c: &str| {
+            GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: c.to_string(),
+                token_count: None,
+            }))
+        };
+
+        let a = make_node("a"); let a_id = a.id.clone();
+        let b = make_node("b"); let b_id = b.id.clone();
+        let c = make_node("c"); let c_id = c.id.clone();
+        graph.add_node(a).unwrap();
+        graph.add_node(b).unwrap();
+        graph.add_node(c).unwrap();
+        graph.add_edge(GraphEdge::new(EdgeType::RespondsTo, a_id.clone(), b_id.clone())).unwrap();
+        graph.add_edge(GraphEdge::new(EdgeType::RespondsTo, b_id.clone(), c_id.clone())).unwrap();
+
+        let distances = bfs_distances(&graph, &a_id, 1).unwrap();
+        assert!(distances.contains_key(&a_id));
+        assert!(distances.contains_key(&b_id));
+        assert!(!distances.contains_key(&c_id), "C should be beyond max_depth=1");
+    }
+
+    #[test]
+    fn score_graph_distance_values() {
+        let mut distances = HashMap::new();
+        let id_0 = NodeId::from("n0");
+        let id_1 = NodeId::from("n1");
+        let id_3 = NodeId::from("n3");
+        let id_missing = NodeId::from("missing");
+
+        distances.insert(id_0.clone(), 0);
+        distances.insert(id_1.clone(), 1);
+        distances.insert(id_3.clone(), 3);
+
+        assert!((score_graph_distance(&id_0, &distances) - 1.0).abs() < f64::EPSILON);
+        assert!((score_graph_distance(&id_1, &distances) - 0.5).abs() < f64::EPSILON);
+        assert!((score_graph_distance(&id_3, &distances) - 0.25).abs() < f64::EPSILON);
+        assert!((score_graph_distance(&id_missing, &distances) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn score_graph_distance_neighbor_beats_distant() {
+        let mut distances = HashMap::new();
+        let near = NodeId::from("near");
+        let far = NodeId::from("far");
+        distances.insert(near.clone(), 1);
+        distances.insert(far.clone(), 5);
+
+        assert!(
+            score_graph_distance(&near, &distances) > score_graph_distance(&far, &distances),
+            "Neighbor should score higher than 5-hop node"
+        );
     }
 
     #[test]
