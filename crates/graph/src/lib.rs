@@ -4,6 +4,10 @@ pub mod nodes;
 pub mod query;
 pub mod store;
 
+pub use edges::{EdgeId, EdgeType, GraphEdge};
 pub use error::GraphError;
+pub use nodes::{
+    AgentData, ContentData, GraphNode, InteractionData, KnowledgeData, NodeId, NodeType, TaskData,
+};
 pub use petgraph::Direction;
 pub use store::GraphStore;

@@ -1,5 +1,7 @@
 // Agent workflow: async state machine with plan -> act -> observe -> reflect loop
 
+use graphirm_graph::Direction;
+use graphirm_graph::edges::EdgeType;
 use graphirm_graph::nodes::{GraphNode, InteractionData, NodeId, NodeType};
 use graphirm_llm::{CompletionConfig, ContentPart, LlmProvider, LlmResponse};
 use graphirm_tools::ToolContext;
@@ -8,10 +10,108 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::context::build_context;
 use crate::error::AgentError;
 use crate::event::{AgentEvent, EventBus};
 use crate::session::Session;
+
+/// Linear context builder (Phase 4 implementation).
+/// Walks Produces edges from the agent node, sorts by timestamp,
+/// and converts each Interaction node to an LlmMessage.
+/// Replaced by graph-native build_context in Phase 6 (Task 9).
+fn build_context_linear(session: &Session) -> Result<Vec<graphirm_llm::LlmMessage>, AgentError> {
+    use graphirm_llm::{ContentPart, LlmMessage, Role};
+
+    let mut messages = Vec::new();
+    messages.push(LlmMessage::system(session.agent_config.system_prompt.clone()));
+
+    let mut interactions = session
+        .graph
+        .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
+        .map_err(|e| AgentError::Context(e.to_string()))?;
+
+    interactions.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+
+    if let Some(limit) = session.agent_config.max_context_messages {
+        let len = interactions.len();
+        if len > limit {
+            interactions.drain(..len - limit);
+        }
+    }
+
+    for node in &interactions {
+        let NodeType::Interaction(data) = &node.node_type else {
+            continue;
+        };
+        let role = match data.role.as_str() {
+            "system" => Role::System,
+            "user" => Role::Human,
+            "assistant" => Role::Assistant,
+            "tool" => Role::ToolResult,
+            other => {
+                return Err(AgentError::Context(format!(
+                    "unknown interaction role '{other}' on node {}",
+                    node.id
+                )));
+            }
+        };
+        match role {
+            Role::Human => messages.push(LlmMessage::human(data.content.clone())),
+            Role::Assistant => {
+                let tool_calls: Vec<(String, String, serde_json::Value)> = node
+                    .metadata
+                    .get("tool_calls")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| {
+                                let id = v.get("id")?.as_str()?.to_string();
+                                let name = v.get("name")?.as_str()?.to_string();
+                                let arguments = v
+                                    .get("arguments")
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Null);
+                                Some((id, name, arguments))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if tool_calls.is_empty() {
+                    messages.push(LlmMessage::assistant(data.content.clone()));
+                } else {
+                    let mut content = Vec::new();
+                    if !data.content.is_empty() {
+                        content.push(ContentPart::text(data.content.clone()));
+                    }
+                    for (id, name, arguments) in tool_calls {
+                        content.push(ContentPart::tool_call(id, name, arguments));
+                    }
+                    messages.push(LlmMessage::new(Role::Assistant, content));
+                }
+            }
+            Role::ToolResult => {
+                let tool_call_id = node
+                    .metadata
+                    .get("tool_call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let is_error = node
+                    .metadata
+                    .get("is_error")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                messages.push(LlmMessage::tool_result(
+                    tool_call_id,
+                    data.content.clone(),
+                    is_error,
+                ));
+            }
+            Role::System => messages.push(LlmMessage::system(data.content.clone())),
+        }
+    }
+
+    Ok(messages)
+}
 
 /// Call the LLM with the current conversation context and record the
 /// assistant response as an Interaction node in the graph.
@@ -24,7 +124,7 @@ pub async fn stream_and_record(
     tools: &ToolRegistry,
     events: &EventBus,
 ) -> Result<(LlmResponse, NodeId), AgentError> {
-    let context = build_context(session)?;
+    let context = build_context_linear(session)?;
     let raw_defs = tools.definitions();
     let tool_defs: Vec<graphirm_llm::ToolDefinition> = raw_defs
         .into_iter()
