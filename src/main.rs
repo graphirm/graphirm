@@ -45,6 +45,17 @@ enum Commands {
         #[command(subcommand)]
         action: GraphAction,
     },
+
+    /// Start the HTTP API server
+    Serve {
+        /// Host to bind to
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Port to listen on
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
+    },
 }
 
 #[derive(Subcommand)]
@@ -81,6 +92,38 @@ async fn main() -> Result<(), GraphirmError> {
                 .with_env_filter("error")
                 .init();
             run_graph_command(action, &db_path)?;
+        }
+        Commands::Serve { host, port } => {
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::from_default_env()
+                        .add_directive(tracing::Level::INFO.into()),
+                )
+                .init();
+
+            let graph = Arc::new(graphirm_graph::GraphStore::open(
+                db_path.to_str().unwrap_or("graph.db"),
+            )?);
+            let tools = Arc::new(build_tool_registry());
+            let agent_config = graphirm_agent::AgentConfig::default();
+
+            // LLM provider requires a model spec; default to Anthropic if env
+            // var is set, otherwise print a helpful error and exit.
+            let model_spec = std::env::var("GRAPHIRM_MODEL")
+                .unwrap_or_else(|_| "anthropic/claude-sonnet-4-20250514".to_string());
+            let (provider_name, _model_name) =
+                graphirm_llm::factory::parse_model_string(&model_spec)
+                    .map_err(|e| GraphirmError::Config(e.to_string()))?;
+            let api_key = api_key_for_provider(provider_name)?;
+            let llm: Arc<dyn graphirm_llm::LlmProvider> = Arc::from(
+                graphirm_llm::factory::create_provider(provider_name, &api_key)
+                    .map_err(|e| GraphirmError::Config(e.to_string()))?,
+            );
+
+            let server_config = graphirm_server::ServerConfig { host, port };
+            graphirm_server::start_server(graph, llm, tools, agent_config, server_config)
+                .await
+                .map_err(|e| GraphirmError::Config(e.to_string()))?;
         }
     }
 

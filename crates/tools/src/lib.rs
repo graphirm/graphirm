@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 pub use error::ToolError;
 use graphirm_graph::GraphStore;
 use graphirm_graph::nodes::NodeId;
+pub use registry::ToolRegistry;
 
 /// Context passed to every tool execution.
 #[derive(Clone)]
