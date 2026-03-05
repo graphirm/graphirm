@@ -125,16 +125,18 @@ No Docker. No runtime dependencies. Single static binary.
 | 2 — LLM Provider | rig-core integration, 17+ providers, streaming | ✅ done |
 | 3 — Tool System | bash, read, write, edit, grep, find, ls | ✅ done |
 | 4 — Agent Loop | Async state machine, tool execution, session | ✅ done |
+| 5 — Multi-Agent | Coordinator, delegate tool, subagent spawning, TaskStatus enum | ✅ done |
 | 6 — Context Engine | Relevance scoring, token budgets, compaction | ✅ done |
 | 7 — TUI | ratatui chat panel | ✅ done |
-| 5 — Multi-Agent | Coordinator + subagent spawning | 🔲 next |
-| 8 — HTTP Server | axum REST + SSE | 🔲 pending |
+| 8 — HTTP Server | axum REST + SSE | 🔲 next |
 | 9 — Knowledge Layer | Entity extraction, background consciousness loop, HNSW | 🔲 pending |
 | 10 — Web UI | Graph visualization | 🔲 pending |
 
 **MVP (Phases 0–4 + 7):** ✅ complete — single-agent with graph-tracked interactions and TUI.
 
-**v1.0 (+ Phases 5–6):** Phase 6 done, Phase 5 next.
+**v1.0 (Phases 0–7):** ✅ complete — multi-agent coordinator with graph-based context engine. Primary agent auto-injects the `delegate` tool; subagents run isolated loops with scoped tools and cancel propagation.
+
+**v2.0 (+ Phases 8–10):** HTTP server next.
 
 ---
 
