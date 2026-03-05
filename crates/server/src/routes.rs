@@ -144,6 +144,11 @@ async fn list_sessions(
 }
 
 /// `DELETE /api/sessions/:id` — delete a session, cancelling any running agent.
+///
+/// Cancels the session's agent via its [`CancellationToken`], then spawns a
+/// bounded cleanup task (5-second timeout) to await the join handle before it
+/// is dropped. This prevents the detached task from writing to the graph after
+/// the session has been removed from the map.
 async fn delete_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -157,6 +162,12 @@ async fn delete_session(
         .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
 
     handle.signal.cancel();
+
+    if let Some(jh) = handle.join_handle {
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), jh).await;
+        });
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -263,6 +274,9 @@ async fn abort_session(
         .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
 
     handle.signal.cancel();
+    // Mark cancelled immediately so polling clients see the new status
+    // without waiting for the background task to drain.
+    handle.status = SessionStatus::Cancelled;
 
     if let Some(jh) = handle.join_handle.take() {
         tokio::spawn(async move {
@@ -868,6 +882,54 @@ mod tests {
             "Expected Running or Completed, got {:?}",
             handle.status
         );
+    }
+
+    #[tokio::test]
+    async fn test_prompt_while_running_returns_400() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        // Create session
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        // Manually set session status to Running to simulate an in-progress agent
+        {
+            let key = SessionId::from(created.id.as_str());
+            let mut sessions = state.sessions.write().await;
+            if let Some(h) = sessions.get_mut(&key) {
+                h.status = SessionStatus::Running;
+            }
+        }
+
+        // Second prompt should be rejected with 400
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/sessions/{}/prompt", created.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"content": "Double prompt"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

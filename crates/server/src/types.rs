@@ -120,12 +120,22 @@ pub enum SseEventType {
 
 impl std::fmt::Display for SseEventType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Mirror the serde snake_case representation.
-        let s = serde_json::to_value(self)
-            .ok()
-            .and_then(|v| v.as_str().map(str::to_owned))
-            .unwrap_or_else(|| format!("{self:?}").to_lowercase());
-        f.write_str(&s)
+        // Mirror the serde `snake_case` representation without allocating.
+        let s = match self {
+            Self::AgentStart => "agent_start",
+            Self::AgentEnd => "agent_end",
+            Self::TurnStart => "turn_start",
+            Self::TurnEnd => "turn_end",
+            Self::MessageStart => "message_start",
+            Self::MessageDelta => "message_delta",
+            Self::MessageEnd => "message_end",
+            Self::ToolStart => "tool_start",
+            Self::ToolEnd => "tool_end",
+            Self::GraphUpdate => "graph_update",
+            Self::Error => "error",
+            Self::Heartbeat => "heartbeat",
+        };
+        f.write_str(s)
     }
 }
 
