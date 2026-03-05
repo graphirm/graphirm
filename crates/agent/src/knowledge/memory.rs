@@ -37,7 +37,9 @@ impl MemoryRetriever {
         let node = self.graph.get_node(node_id)?;
 
         let text = match &node.node_type {
-            NodeType::Knowledge(data) => format!("{}: {}", data.entity, data.summary),
+            NodeType::Knowledge(data) => {
+                format!("[{}] {}: {}", data.entity_type, data.entity, data.summary)
+            }
             _ => {
                 return Err(AgentError::Workflow(format!(
                     "Node {node_id} is not a Knowledge node"
