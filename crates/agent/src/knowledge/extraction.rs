@@ -275,7 +275,200 @@ pub async fn post_turn_extract(
         messages.push((data.role.clone(), data.content.clone()));
     }
 
-    extract_knowledge(graph, llm, &messages, response_node_id, config).await
+    // Delegate to the backend-aware dispatcher using the LLM backend (default).
+    // The local-extraction feature is not available at this call site — post-turn
+    // extraction always uses the LLM path. Local/Hybrid backends are invoked
+    // directly via extract_knowledge_with_backend from higher-level orchestration.
+    extract_knowledge_with_backend(
+        graph,
+        Some(llm),
+        #[cfg(not(feature = "local-extraction"))]
+        None::<()>,
+        #[cfg(feature = "local-extraction")]
+        None,
+        &messages,
+        response_node_id,
+        config,
+    )
+    .await
+}
+
+/// Backend-aware extraction dispatcher. Routes to LLM, local ONNX, or hybrid
+/// depending on `ExtractionConfig.backend`.
+///
+/// - `Llm`: calls the LLM provider (existing behaviour, same as `extract_knowledge`)
+/// - `Local`: runs GLiNER2 via ONNX (fast, no token cost, no descriptions)
+/// - `Hybrid`: GLiNER2 first for entities, then LLM synthesises descriptions and
+///   discovers higher-order relationships
+///
+/// `onnx` is only meaningful when the `local-extraction` feature is enabled;
+/// it is ignored otherwise.
+pub async fn extract_knowledge_with_backend(
+    graph: &GraphStore,
+    llm: Option<&dyn LlmProvider>,
+    #[cfg(feature = "local-extraction")] onnx: Option<&crate::knowledge::local_extraction::OnnxExtractor>,
+    #[cfg(not(feature = "local-extraction"))] _onnx: Option<()>,
+    messages: &[(String, String)],
+    source_node_id: &NodeId,
+    config: &ExtractionConfig,
+) -> Result<Vec<NodeId>, AgentError> {
+    if !config.enabled {
+        return Ok(vec![]);
+    }
+
+    let extraction = match &config.backend {
+        ExtractionBackend::Llm => {
+            let llm = llm.ok_or_else(|| {
+                AgentError::Workflow("LLM backend selected but no LLM provider given".into())
+            })?;
+            let prompt = build_extraction_prompt(messages, config);
+            let completion_config = CompletionConfig::new(&config.model);
+            let response = llm
+                .complete(vec![LlmMessage::human(prompt)], &[], &completion_config)
+                .await?;
+            serde_json::from_str::<ExtractionResponse>(&response.text_content())
+                .map_err(|e| AgentError::Workflow(format!("Failed to parse extraction response: {e}")))?
+        }
+
+        #[cfg(feature = "local-extraction")]
+        ExtractionBackend::Local { .. } => {
+            let extractor = onnx.ok_or_else(|| {
+                AgentError::Workflow("Local backend selected but no OnnxExtractor provided".into())
+            })?;
+            let conversation_text = messages
+                .iter()
+                .map(|(role, content)| format!("[{}]: {}", role, content))
+                .collect::<Vec<_>>()
+                .join("\n");
+            extractor
+                .extract(&conversation_text, &config.entity_types, config.min_confidence)
+                .await?
+        }
+
+        #[cfg(not(feature = "local-extraction"))]
+        ExtractionBackend::Local { .. } => {
+            return Err(AgentError::Workflow(
+                "Local extraction backend requires the `local-extraction` feature".into(),
+            ));
+        }
+
+        #[cfg(feature = "local-extraction")]
+        ExtractionBackend::Hybrid { .. } => {
+            let extractor = onnx.ok_or_else(|| {
+                AgentError::Workflow("Hybrid backend selected but no OnnxExtractor provided".into())
+            })?;
+            let conversation_text = messages
+                .iter()
+                .map(|(role, content)| format!("[{}]: {}", role, content))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let local_result = extractor
+                .extract(&conversation_text, &config.entity_types, config.min_confidence)
+                .await?;
+
+            // LLM enrichment — add descriptions and discover relationships.
+            if let Some(llm) = llm {
+                let entity_names: Vec<&str> =
+                    local_result.entities.iter().map(|e| e.name.as_str()).collect();
+                let enrichment_prompt = format!(
+                    "Given these entities extracted from a conversation: {}\n\n\
+                     For each entity, provide a one-sentence description and any relationships between them.\n\n\
+                     Conversation:\n{}\n\n\
+                     Respond with ONLY valid JSON in the ExtractionResponse format.",
+                    entity_names.join(", "),
+                    conversation_text,
+                );
+                let completion_config = CompletionConfig::new(&config.model);
+                match llm
+                    .complete(
+                        vec![LlmMessage::human(enrichment_prompt)],
+                        &[],
+                        &completion_config,
+                    )
+                    .await
+                {
+                    Ok(response) => serde_json::from_str::<ExtractionResponse>(
+                        &response.text_content(),
+                    )
+                    .unwrap_or(local_result),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "LLM enrichment failed, falling back to local-only");
+                        local_result
+                    }
+                }
+            } else {
+                local_result
+            }
+        }
+
+        #[cfg(not(feature = "local-extraction"))]
+        ExtractionBackend::Hybrid { .. } => {
+            return Err(AgentError::Workflow(
+                "Hybrid extraction backend requires the `local-extraction` feature".into(),
+            ));
+        }
+    };
+
+    persist_extracted_entities(graph, source_node_id, &extraction, config)
+}
+
+/// Shared node-creation logic: persists filtered entities as `Knowledge` graph nodes,
+/// links them to the source via `DerivedFrom`, and wires `RelatesTo` edges.
+fn persist_extracted_entities(
+    graph: &GraphStore,
+    source_node_id: &NodeId,
+    extraction: &ExtractionResponse,
+    config: &ExtractionConfig,
+) -> Result<Vec<NodeId>, AgentError> {
+    let filtered: Vec<&ExtractedEntity> = extraction
+        .entities
+        .iter()
+        .filter(|e| e.confidence >= config.min_confidence)
+        .collect();
+
+    let mut name_to_id: HashMap<String, NodeId> = HashMap::new();
+    let mut created_ids: Vec<NodeId> = Vec::new();
+
+    for entity in &filtered {
+        let node_id = graph.add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: entity.name.clone(),
+            entity_type: entity.entity_type.clone(),
+            summary: entity.description.clone(),
+            confidence: entity.confidence,
+        })))?;
+
+        graph.add_edge(GraphEdge::new(
+            EdgeType::DerivedFrom,
+            node_id.clone(),
+            source_node_id.clone(),
+        ))?;
+
+        name_to_id.insert(entity.name.clone(), node_id.clone());
+        created_ids.push(node_id);
+    }
+
+    for entity in &filtered {
+        if let Some(src) = name_to_id.get(&entity.name) {
+            for rel in &entity.relationships {
+                if let Some(tgt) = name_to_id.get(&rel.target_name) {
+                    graph.add_edge(GraphEdge::new(
+                        EdgeType::RelatesTo,
+                        src.clone(),
+                        tgt.clone(),
+                    ))?;
+                }
+            }
+        }
+    }
+
+    tracing::info!(
+        extracted = filtered.len(),
+        total = extraction.entities.len(),
+        backend = ?config.backend,
+        "Knowledge extraction complete"
+    );
+
+    Ok(created_ids)
 }
 
 #[cfg(test)]
@@ -754,6 +947,85 @@ mod tests {
         let result = post_turn_extract(&graph, &llm, &config, &node_id).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_extract_knowledge_with_backend_local_returns_error_without_feature() {
+        let graph = GraphStore::open_memory().unwrap();
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.5,
+            backend: ExtractionBackend::Local {
+                model_path: "/nonexistent/model.onnx".to_string(),
+                tokenizer_path: "/nonexistent/tokenizer.json".to_string(),
+            },
+            ..ExtractionConfig::default()
+        };
+
+        let messages = vec![("user".to_string(), "test".to_string())];
+        let source_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: "test".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let result = extract_knowledge_with_backend(
+            &graph,
+            None,
+            #[cfg(not(feature = "local-extraction"))]
+            None::<()>,
+            #[cfg(feature = "local-extraction")]
+            None,
+            &messages,
+            &source_id,
+            &config,
+        )
+        .await;
+
+        // Without the local-extraction feature the Local backend returns an error.
+        // With the feature, it would also error because no extractor was provided.
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_extract_knowledge_with_backend_llm_creates_nodes() {
+        let graph = GraphStore::open_memory().unwrap();
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.5,
+            backend: ExtractionBackend::Llm,
+            ..ExtractionConfig::default()
+        };
+        let llm = MockExtractionProvider {
+            response_json: r#"{"entities": [{"entity_type": "pattern", "name": "Test", "description": "A test", "confidence": 0.9, "relationships": []}]}"#.to_string(),
+        };
+
+        let messages = vec![("user".to_string(), "test".to_string())];
+        let source_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: "test".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let result = extract_knowledge_with_backend(
+            &graph,
+            Some(&llm as &dyn LlmProvider),
+            #[cfg(not(feature = "local-extraction"))]
+            None::<()>,
+            #[cfg(feature = "local-extraction")]
+            None,
+            &messages,
+            &source_id,
+            &config,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.len(), 1);
     }
 
     #[test]
