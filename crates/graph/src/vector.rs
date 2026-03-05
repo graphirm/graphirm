@@ -2,7 +2,7 @@
 
 use instant_distance::{Builder, HnswMap, Search};
 
-use crate::NodeId;
+use crate::{GraphError, GraphStore, NodeId};
 
 pub struct VectorIndex {
     dimension: usize,
@@ -66,6 +66,23 @@ impl VectorIndex {
         self.map = None;
     }
 
+    /// Load all embeddings from the graph store and build an HNSW index.
+    /// Called on application startup to warm the index from SQLite.
+    pub fn rebuild_from_store(store: &GraphStore, dimension: usize) -> Result<Self, GraphError> {
+        let pairs = store.get_all_embeddings()?;
+
+        let valid_pairs: Vec<(NodeId, Vec<f32>)> = pairs
+            .into_iter()
+            .filter(|(_, emb)| emb.len() == dimension)
+            .collect();
+
+        if valid_pairs.is_empty() {
+            return Ok(Self::new(dimension));
+        }
+
+        Ok(Self::from_pairs(dimension, valid_pairs))
+    }
+
     pub fn rebuild(&mut self) {
         if self.pending.is_empty() {
             return;
@@ -100,6 +117,55 @@ impl VectorIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nodes::{GraphNode, InteractionData, KnowledgeData, NodeType};
+    use crate::store::GraphStore;
+
+    #[test]
+    fn test_rebuild_from_store() {
+        let store = GraphStore::open_memory().unwrap();
+
+        for i in 0..50usize {
+            let node_id = store
+                .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                    entity: format!("entity_{i}"),
+                    entity_type: "function".to_string(),
+                    summary: format!("summary {i}"),
+                    confidence: 0.9,
+                })))
+                .unwrap();
+
+            let mut embedding = vec![0.0f32; 64];
+            embedding[i % 64] = 1.0;
+            embedding[(i + 1) % 64] = 0.5;
+            store.set_embedding(&node_id, &embedding).unwrap();
+        }
+
+        // Non-knowledge node with no embedding — should be ignored
+        let _other = store
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: "hello".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let index = VectorIndex::rebuild_from_store(&store, 64).unwrap();
+        assert_eq!(index.len(), 50);
+
+        let mut query = vec![0.0f32; 64];
+        query[0] = 1.0;
+        query[1] = 0.5;
+        let results = index.search(&query, 3);
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_rebuild_from_store_empty() {
+        let store = GraphStore::open_memory().unwrap();
+        let index = VectorIndex::rebuild_from_store(&store, 128).unwrap();
+        assert_eq!(index.len(), 0);
+        assert!(index.is_empty());
+    }
 
     #[test]
     fn test_vector_index_new() {
