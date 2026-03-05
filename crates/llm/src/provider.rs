@@ -185,6 +185,15 @@ impl LlmResponse {
     }
 }
 
+/// Separate trait for providers that support text embedding.
+///
+/// Not all LLM providers support embeddings, so this is intentionally
+/// separate from [`LlmProvider`] to keep the abstraction boundaries clean.
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, LlmError>;
+}
+
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     async fn complete(

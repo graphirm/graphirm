@@ -12,7 +12,8 @@ pub mod tool;
 pub use error::LlmError;
 pub use mock::{MockProvider, MockResponse};
 pub use provider::{
-    CompletionConfig, ContentPart, LlmMessage, LlmProvider, LlmResponse, Role, StopReason,
+    CompletionConfig, ContentPart, EmbeddingProvider, LlmMessage, LlmProvider, LlmResponse, Role,
+    StopReason,
 };
 pub use stream::{StreamEvent, TokenUsage};
 pub use tool::ToolDefinition;
