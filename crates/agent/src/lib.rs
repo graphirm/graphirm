@@ -1,11 +1,11 @@
 pub mod compact;
 pub mod config;
-pub mod knowledge;
 pub mod context;
 pub mod coordinator;
 pub mod delegate;
 pub mod error;
 pub mod event;
+pub mod knowledge;
 pub mod multi;
 pub mod session;
 pub mod workflow;
