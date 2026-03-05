@@ -194,6 +194,9 @@ pub async fn extract_knowledge(
         if let Some(source_id) = name_to_id.get(&entity.name) {
             for rel in &entity.relationships {
                 if let Some(target_id) = name_to_id.get(&rel.target_name) {
+                    // rel.relationship label (e.g., "uses", "depends_on") is
+                    // intentionally not used here — all relationships collapse
+                    // to RelatesTo edges; label captured for future edge-weight use.
                     graph.add_edge(GraphEdge::new(
                         EdgeType::RelatesTo,
                         source_id.clone(),
