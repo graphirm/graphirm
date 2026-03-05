@@ -83,6 +83,11 @@ impl GraphStore {
                 FOREIGN KEY (target_id) REFERENCES nodes(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS embeddings (
+                node_id TEXT PRIMARY KEY REFERENCES nodes(id),
+                embedding BLOB NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
             CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
             CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(edge_type);
@@ -626,6 +631,56 @@ impl GraphStore {
             nodes.push(self.get_node(&id)?);
         }
         Ok(nodes)
+    }
+
+    /// Store an embedding vector for a node. Overwrites any existing embedding.
+    pub fn set_embedding(&self, node_id: &NodeId, embedding: &[f32]) -> Result<(), GraphError> {
+        let conn = self.pool.get()?;
+        let bytes: &[u8] = bytemuck::cast_slice(embedding);
+        conn.execute(
+            "INSERT OR REPLACE INTO embeddings (node_id, embedding) VALUES (?1, ?2)",
+            params![node_id.0, bytes],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve the embedding vector for a node, if one exists.
+    pub fn get_embedding(&self, node_id: &NodeId) -> Result<Option<Vec<f32>>, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt =
+            conn.prepare("SELECT embedding FROM embeddings WHERE node_id = ?1")?;
+        let result = stmt.query_row(params![node_id.0], |row| {
+            let bytes: Vec<u8> = row.get(0)?;
+            Ok(bytes)
+        });
+
+        match result {
+            Ok(bytes) => {
+                let floats: &[f32] = bytemuck::cast_slice(&bytes);
+                Ok(Some(floats.to_vec()))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Retrieve all stored embeddings as (NodeId, Vec<f32>) pairs.
+    pub fn get_all_embeddings(&self) -> Result<Vec<(NodeId, Vec<f32>)>, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare("SELECT node_id, embedding FROM embeddings")?;
+        let rows = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let bytes: Vec<u8> = row.get(1)?;
+            Ok((id, bytes))
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let (id, bytes) = row?;
+            let floats: &[f32] = bytemuck::cast_slice(&bytes);
+            results.push((NodeId(id), floats.to_vec()));
+        }
+        Ok(results)
     }
 
     /// Compute PageRank scores for all nodes in the graph.
@@ -1415,5 +1470,106 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    use crate::nodes::KnowledgeData;
+
+    #[test]
+    fn test_store_and_retrieve_embedding() {
+        let store = GraphStore::open_memory().unwrap();
+        let node_id = store
+            .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: "test_entity".to_string(),
+                entity_type: "function".to_string(),
+                summary: "test".to_string(),
+                confidence: 0.9,
+            })))
+            .unwrap();
+
+        let embedding: Vec<f32> = vec![0.1, 0.2, 0.3, 0.4, 0.5];
+        store.set_embedding(&node_id, &embedding).unwrap();
+
+        let retrieved = store.get_embedding(&node_id).unwrap();
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.len(), 5);
+        assert!((retrieved[0] - 0.1).abs() < f32::EPSILON);
+        assert!((retrieved[4] - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_get_embedding_returns_none_when_not_set() {
+        let store = GraphStore::open_memory().unwrap();
+        let node_id = store
+            .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: "no_embedding".to_string(),
+                entity_type: "function".to_string(),
+                summary: "test".to_string(),
+                confidence: 0.9,
+            })))
+            .unwrap();
+
+        let retrieved = store.get_embedding(&node_id).unwrap();
+        assert!(retrieved.is_none());
+    }
+
+    #[test]
+    fn test_get_all_embeddings() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let id1 = store
+            .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: "e1".to_string(),
+                entity_type: "function".to_string(),
+                summary: "test".to_string(),
+                confidence: 0.9,
+            })))
+            .unwrap();
+        let id2 = store
+            .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: "e2".to_string(),
+                entity_type: "function".to_string(),
+                summary: "test".to_string(),
+                confidence: 0.9,
+            })))
+            .unwrap();
+        let _id3 = store
+            .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: "no_embed".to_string(),
+                entity_type: "function".to_string(),
+                summary: "test".to_string(),
+                confidence: 0.9,
+            })))
+            .unwrap();
+
+        store.set_embedding(&id1, &[1.0, 2.0, 3.0]).unwrap();
+        store.set_embedding(&id2, &[4.0, 5.0, 6.0]).unwrap();
+
+        let all = store.get_all_embeddings().unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().any(|(id, _)| *id == id1));
+        assert!(all.iter().any(|(id, _)| *id == id2));
+    }
+
+    #[test]
+    fn test_embedding_roundtrip_large_vector() {
+        let store = GraphStore::open_memory().unwrap();
+        let node_id = store
+            .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: "large".to_string(),
+                entity_type: "function".to_string(),
+                summary: "test".to_string(),
+                confidence: 0.9,
+            })))
+            .unwrap();
+
+        // 1536 dimensions matches OpenAI ada-002
+        let embedding: Vec<f32> = (0..1536).map(|i| i as f32 * 0.001).collect();
+        store.set_embedding(&node_id, &embedding).unwrap();
+
+        let retrieved = store.get_embedding(&node_id).unwrap().unwrap();
+        assert_eq!(retrieved.len(), 1536);
+        assert!((retrieved[0] - 0.0).abs() < f32::EPSILON);
+        assert!((retrieved[1535] - 1.535).abs() < 0.001);
     }
 }
