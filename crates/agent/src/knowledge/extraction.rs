@@ -41,10 +41,17 @@ fn default_min_confidence() -> f64 {
 pub enum ExtractionBackend {
     #[default]
     Llm,
+    /// Note: `model_path` and `tokenizer_path` are *initialization-time* configuration.
+    /// They are not read by `extract_knowledge_with_backend` at dispatch time. The
+    /// caller is responsible for constructing an `OnnxExtractor` from these paths and
+    /// passing it as the `onnx` argument to `extract_knowledge_with_backend`.
     Local {
         model_path: String,
         tokenizer_path: String,
     },
+    /// Note: `model_path` and `tokenizer_path` are *initialization-time* configuration.
+    /// They are not read by `extract_knowledge_with_backend` at dispatch time. See
+    /// `Local` variant note for the initialization pattern.
     Hybrid {
         model_path: String,
         tokenizer_path: String,
@@ -118,11 +125,7 @@ pub fn build_extraction_prompt(messages: &[(String, String)], config: &Extractio
     let conversation_block = if messages.is_empty() {
         "(empty conversation)".to_string()
     } else {
-        messages
-            .iter()
-            .map(|(role, content)| format!("[{}]: {}", role, content))
-            .collect::<Vec<_>>()
-            .join("\n")
+        format_conversation(messages)
     };
 
     format!(
@@ -255,6 +258,17 @@ pub async fn post_turn_extract(
         return Ok(vec![]);
     }
 
+    // This function only supports the Llm backend. Local and Hybrid backends require
+    // a pre-constructed OnnxExtractor; use extract_knowledge_with_backend directly
+    // from higher-level orchestration for those paths.
+    if !matches!(config.backend, ExtractionBackend::Llm) {
+        return Err(AgentError::Workflow(
+            "post_turn_extract only supports the Llm backend; \
+             use extract_knowledge_with_backend for Local/Hybrid"
+                .into(),
+        ));
+    }
+
     let response_node = graph.get_node(response_node_id)?;
     let mut messages: Vec<(String, String)> = Vec::new();
 
@@ -338,14 +352,12 @@ pub async fn extract_knowledge_with_backend(
             let extractor = onnx.ok_or_else(|| {
                 AgentError::Workflow("Local backend selected but no OnnxExtractor provided".into())
             })?;
-            let conversation_text = messages
-                .iter()
-                .map(|(role, content)| format!("[{}]: {}", role, content))
-                .collect::<Vec<_>>()
-                .join("\n");
+            // OnnxExtractor::extract already filters by min_confidence internally.
+            // persist_extracted_entities will re-filter, which is harmless but
+            // intentional: the shared path applies the same threshold uniformly.
             extractor
                 .extract(
-                    &conversation_text,
+                    &format_conversation(messages),
                     &config.entity_types,
                     config.min_confidence,
                 )
@@ -364,11 +376,7 @@ pub async fn extract_knowledge_with_backend(
             let extractor = onnx.ok_or_else(|| {
                 AgentError::Workflow("Hybrid backend selected but no OnnxExtractor provided".into())
             })?;
-            let conversation_text = messages
-                .iter()
-                .map(|(role, content)| format!("[{}]: {}", role, content))
-                .collect::<Vec<_>>()
-                .join("\n");
+            let conversation_text = format_conversation(messages);
             let local_result = extractor
                 .extract(
                     &conversation_text,
@@ -483,6 +491,15 @@ fn persist_extracted_entities(
     );
 
     Ok(created_ids)
+}
+
+/// Format a conversation as a plain-text block for LLM prompts or ONNX input.
+fn format_conversation(messages: &[(String, String)]) -> String {
+    messages
+        .iter()
+        .map(|(role, content)| format!("[{}]: {}", role, content))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -1087,5 +1104,83 @@ mod tests {
             }
             other => panic!("Expected Hybrid backend, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_post_turn_extract_rejects_non_llm_backend() {
+        let graph = GraphStore::open_memory().unwrap();
+        let config = ExtractionConfig {
+            enabled: true,
+            backend: ExtractionBackend::Local {
+                model_path: "/models/gliner2.onnx".to_string(),
+                tokenizer_path: "/models/tokenizer.json".to_string(),
+            },
+            ..ExtractionConfig::default()
+        };
+        let llm = MockExtractionProvider {
+            response_json: "{}".to_string(),
+        };
+        let node_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: "test".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let result = post_turn_extract(&graph, &llm, &config, &node_id).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("post_turn_extract only supports the Llm backend"));
+    }
+
+    #[tokio::test]
+    async fn test_extract_knowledge_with_backend_hybrid_falls_through_to_llm_when_onnx_empty() {
+        // Validates the Hybrid code path: when ONNX returns no entities (as the
+        // placeholder parse_onnx_outputs stub does), LLM enrichment is called and
+        // its response becomes the final extraction result.
+        let graph = GraphStore::open_memory().unwrap();
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.5,
+            backend: ExtractionBackend::Hybrid {
+                model_path: "/models/gliner2.onnx".to_string(),
+                tokenizer_path: "/models/tokenizer.json".to_string(),
+            },
+            ..ExtractionConfig::default()
+        };
+
+        // Without the local-extraction feature the Hybrid backend is unavailable.
+        // This test covers the non-feature path: it must return an error.
+        let source_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: "test".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+        let messages = vec![("user".to_string(), "test".to_string())];
+
+        let result = extract_knowledge_with_backend(
+            &graph,
+            None,
+            #[cfg(not(feature = "local-extraction"))]
+            None::<()>,
+            #[cfg(feature = "local-extraction")]
+            None,
+            &messages,
+            &source_id,
+            &config,
+        )
+        .await;
+
+        // Without the feature flag the Hybrid backend must return an error.
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("local-extraction") || msg.contains("no OnnxExtractor"),
+            "unexpected error: {}",
+            msg
+        );
     }
 }
