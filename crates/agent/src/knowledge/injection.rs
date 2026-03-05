@@ -24,18 +24,18 @@ fn extract_knowledge_fields(node: &GraphNode) -> Option<(String, String, String)
 /// Format retrieved knowledge nodes into a system-context block
 /// that can be prepended to the agent's messages.
 pub fn format_memory_context(nodes: &[GraphNode]) -> String {
-    if nodes.is_empty() {
+    let bullets: Vec<String> = nodes
+        .iter()
+        .filter_map(extract_knowledge_fields)
+        .map(|(name, entity_type, desc)| format!("- **{}** ({}): {}", name, entity_type, desc))
+        .collect();
+
+    if bullets.is_empty() {
         return String::new();
     }
 
-    let mut lines = vec!["## Relevant knowledge from past sessions\n".to_string()];
-
-    for node in nodes {
-        if let Some((name, entity_type, description)) = extract_knowledge_fields(node) {
-            lines.push(format!("- **{}** ({}): {}", name, entity_type, description));
-        }
-    }
-
+    let mut lines = vec!["## Relevant knowledge from past sessions".to_string()];
+    lines.extend(bullets);
     lines.join("\n")
 }
 
@@ -94,8 +94,8 @@ mod tests {
         }))
     }
 
-    #[tokio::test]
-    async fn test_format_memory_context() {
+    #[test]
+    fn test_format_memory_context() {
         let nodes = vec![
             knowledge_node("JWT Auth", "pattern", "Token-based authentication"),
             knowledge_node("bcrypt", "library", "Password hashing for secure storage"),
@@ -112,8 +112,8 @@ mod tests {
         assert!(context.contains("Password hashing for secure storage"));
     }
 
-    #[tokio::test]
-    async fn test_format_memory_context_empty() {
+    #[test]
+    fn test_format_memory_context_empty() {
         let nodes: Vec<GraphNode> = vec![];
         let context = format_memory_context(&nodes);
         assert!(context.is_empty());
@@ -151,5 +151,10 @@ mod tests {
 
         assert!(!context.is_empty());
         assert!(context.contains("Relevant knowledge from past sessions"));
+        // At least one of the embedded entities should surface in the formatted output
+        let has_knowledge = context.contains("JWT Auth")
+            || context.contains("bcrypt")
+            || context.contains("OAuth2 flow");
+        assert!(has_knowledge, "Context should contain at least one embedded entity");
     }
 }
