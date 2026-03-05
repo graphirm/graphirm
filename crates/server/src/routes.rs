@@ -2,14 +2,14 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::{Json, Path, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
+use axum::Router;
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 
-use graphirm_agent::{AgentConfig, EventBus, Session, run_agent_loop};
+use graphirm_agent::{run_agent_loop, AgentConfig, EventBus, Session};
 
 use crate::error::ServerError;
 use crate::state::{AppState, SessionHandle};
@@ -168,6 +168,9 @@ async fn prompt_session(
     let relay_session_id = id.clone();
 
     // Relay agent events to the broadcast channel for SSE clients.
+    // This task terminates automatically when the EventBus is dropped at the
+    // end of the agent loop task, which closes the mpsc sender and causes
+    // rx.recv() to return None.
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             let sse = agent_event_to_sse(&relay_session_id, &event);
@@ -183,14 +186,17 @@ async fn prompt_session(
     let join_handle = tokio::spawn(async move {
         let result = run_agent_loop(&session, llm.as_ref(), &tools, &event_bus, &cancel).await;
 
+        // Update status. Do NOT clear join_handle here — storing the handle
+        // into the session map happens after this task is spawned, so clearing
+        // it here risks overwriting Some(handle) set by the spawner with None.
+        // The handle is cleaned up when the session is deleted.
         let mut sessions = sessions.write().await;
         if let Some(h) = sessions.get_mut(&bg_key) {
-            h.status = if result.is_ok() {
-                SessionStatus::Completed
-            } else {
-                SessionStatus::Failed
+            h.status = match &result {
+                Ok(()) => SessionStatus::Completed,
+                Err(graphirm_agent::AgentError::Cancelled) => SessionStatus::Cancelled,
+                Err(_) => SessionStatus::Failed,
             };
-            h.join_handle = None;
         }
 
         result
@@ -289,7 +295,9 @@ fn agent_event_to_sse(session_id: &str, event: &graphirm_agent::AgentEvent) -> S
             }),
         ),
         AgentEvent::GraphUpdate {
-            node_id, edge_ids, ..
+            node_id,
+            edge_ids,
+            ..
         } => (
             SseEventType::GraphUpdate,
             serde_json::json!({
@@ -317,7 +325,7 @@ pub(crate) mod test_helpers {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use tokio::sync::{RwLock, broadcast};
+    use tokio::sync::{broadcast, RwLock};
 
     use graphirm_agent::AgentConfig;
     use graphirm_graph::GraphStore;
@@ -649,7 +657,8 @@ mod tests {
         let key = SessionId::from(created.id.as_str());
         let handle = sessions.get(&key).unwrap();
         assert!(
-            handle.status == SessionStatus::Running || handle.status == SessionStatus::Completed,
+            handle.status == SessionStatus::Running
+                || handle.status == SessionStatus::Completed,
             "Expected Running or Completed, got {:?}",
             handle.status
         );

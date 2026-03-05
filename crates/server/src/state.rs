@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -63,6 +63,7 @@ mod tests {
         assert_eq!(SessionStatus::Running.to_string(), "running");
         assert_eq!(SessionStatus::Completed.to_string(), "completed");
         assert_eq!(SessionStatus::Failed.to_string(), "failed");
+        assert_eq!(SessionStatus::Cancelled.to_string(), "cancelled");
     }
 
     #[test]

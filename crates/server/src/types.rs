@@ -62,6 +62,8 @@ pub enum SessionStatus {
     Completed,
     /// The agent loop exited with an error.
     Failed,
+    /// The agent loop was cancelled via [`CancellationToken`].
+    Cancelled,
 }
 
 impl SessionStatus {
@@ -72,6 +74,7 @@ impl SessionStatus {
             SessionStatus::Running => "running",
             SessionStatus::Completed => "completed",
             SessionStatus::Failed => "failed",
+            SessionStatus::Cancelled => "cancelled",
         }
     }
 }
@@ -239,6 +242,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(SessionStatus::Completed).unwrap(),
             serde_json::json!("completed")
+        );
+        assert_eq!(
+            serde_json::to_value(SessionStatus::Cancelled).unwrap(),
+            serde_json::json!("cancelled")
         );
     }
 
