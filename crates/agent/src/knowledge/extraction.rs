@@ -77,6 +77,60 @@ impl Default for ExtractionConfig {
     }
 }
 
+/// Builds the extraction prompt to send to the LLM, embedding the conversation
+/// and instructing the model to return structured JSON with knowledge entities.
+pub fn build_extraction_prompt(
+    messages: &[(String, String)],
+    config: &ExtractionConfig,
+) -> String {
+    let entity_types_list = config.entity_types.join(", ");
+
+    let conversation_block = if messages.is_empty() {
+        "(empty conversation)".to_string()
+    } else {
+        messages
+            .iter()
+            .map(|(role, content)| format!("[{}]: {}", role, content))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        r#"Extract knowledge entities from the following conversation.
+
+For each entity, provide:
+- entity_type: one of [{entity_types}]
+- name: short identifier for the entity
+- description: one-sentence description of what it is or why it matters
+- confidence: 0.0-1.0 how confident you are this is a real, useful entity
+- relationships: array of {{ target_name, relationship }} pairs linking to other entities
+
+Only extract entities with confidence >= {min_confidence}.
+
+Respond with ONLY valid JSON in this exact format:
+{{
+  "entities": [
+    {{
+      "entity_type": "pattern",
+      "name": "Example Pattern",
+      "description": "Description of the pattern",
+      "confidence": 0.9,
+      "relationships": [
+        {{ "target_name": "OtherEntity", "relationship": "uses" }}
+      ]
+    }}
+  ]
+}}
+
+CONVERSATION:
+{conversation}
+"#,
+        entity_types = entity_types_list,
+        min_confidence = config.min_confidence,
+        conversation = conversation_block,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,5 +237,47 @@ mod tests {
         let debug = format!("{:?}", rel);
         assert!(debug.contains("tokio"));
         assert!(debug.contains("depends_on"));
+    }
+
+    #[test]
+    fn test_build_extraction_prompt_structure() {
+        let messages = vec![
+            ("user".to_string(), "How should I implement authentication?".to_string()),
+            ("assistant".to_string(), "You should use JWT tokens with bcrypt for password hashing. Store sessions in Redis.".to_string()),
+            ("user".to_string(), "What about refresh tokens?".to_string()),
+        ];
+        let config = ExtractionConfig::default();
+        let prompt = build_extraction_prompt(&messages, &config);
+
+        assert!(prompt.contains("authentication"));
+        assert!(prompt.contains("JWT"));
+        assert!(prompt.contains("entity_type"));
+        assert!(prompt.contains("confidence"));
+        assert!(prompt.contains("function"));
+        assert!(prompt.contains("pattern"));
+    }
+
+    #[test]
+    fn test_build_extraction_prompt_includes_entity_types() {
+        let messages = vec![
+            ("user".to_string(), "Hello".to_string()),
+        ];
+        let config = ExtractionConfig {
+            entity_types: vec!["function".into(), "api".into()],
+            ..ExtractionConfig::default()
+        };
+        let prompt = build_extraction_prompt(&messages, &config);
+        assert!(prompt.contains("function"));
+        assert!(prompt.contains("api"));
+        assert!(!prompt.contains("architecture"));
+    }
+
+    #[test]
+    fn test_build_extraction_prompt_empty_conversation() {
+        let messages: Vec<(String, String)> = vec![];
+        let config = ExtractionConfig::default();
+        let prompt = build_extraction_prompt(&messages, &config);
+        assert!(prompt.contains("entity_type"));
+        assert!(prompt.contains("CONVERSATION"));
     }
 }
