@@ -695,7 +695,7 @@ mod tests {
         let get_resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/sessions/{}", created.id))
+                    .uri(format!("/api/sessions/{}", created.id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -795,7 +795,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("DELETE")
-                    .uri(&format!("/api/sessions/{}", created.id))
+                    .uri(format!("/api/sessions/{}", created.id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -807,7 +807,7 @@ mod tests {
         let get_resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/sessions/{}", created.id))
+                    .uri(format!("/api/sessions/{}", created.id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -847,7 +847,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!("/api/sessions/{}/prompt", created.id))
+                    .uri(format!("/api/sessions/{}/prompt", created.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"content": "Hello!"}"#))
                     .unwrap(),
@@ -919,7 +919,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!("/api/sessions/{}/prompt", created.id))
+                    .uri(format!("/api/sessions/{}/prompt", created.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"content": "Do something"}"#))
                     .unwrap(),
@@ -933,7 +933,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!("/api/sessions/{}/abort", created.id))
+                    .uri(format!("/api/sessions/{}/abort", created.id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -995,7 +995,7 @@ mod tests {
         let msg_resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/sessions/{}/messages", created.id))
+                    .uri(format!("/api/sessions/{}/messages", created.id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1036,7 +1036,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!("/api/sessions/{}/prompt", created.id))
+                    .uri(format!("/api/sessions/{}/prompt", created.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"content": "Hello!"}"#))
                     .unwrap(),
@@ -1049,7 +1049,7 @@ mod tests {
         let msg_resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/sessions/{}/messages", created.id))
+                    .uri(format!("/api/sessions/{}/messages", created.id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1089,7 +1089,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/sessions/{}/children", created.id))
+                    .uri(format!("/api/sessions/{}/children", created.id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1200,7 +1200,7 @@ mod tests {
         let graph_resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/graph/{}", created.id))
+                    .uri(format!("/api/graph/{}", created.id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1249,7 +1249,7 @@ mod tests {
         let node_resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/graph/{}/node/{}", created.id, agent_node_id))
+                    .uri(format!("/api/graph/{}/node/{}", created.id, agent_node_id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1284,7 +1284,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/graph/{}/node/nonexistent", created.id))
+                    .uri(format!("/api/graph/{}/node/nonexistent", created.id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1328,7 +1328,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!(
+                    .uri(format!(
                         "/api/graph/{}/subgraph/{}?depth=2",
                         created.id, agent_node_id
                     ))
@@ -1371,7 +1371,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/graph/{}/tasks", created.id))
+                    .uri(format!("/api/graph/{}/tasks", created.id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1411,7 +1411,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/graph/{}/knowledge", created.id))
+                    .uri(format!("/api/graph/{}/knowledge", created.id))
                     .body(Body::empty())
                     .unwrap(),
             )
