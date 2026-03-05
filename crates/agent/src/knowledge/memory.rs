@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use graphirm_graph::{vector::VectorIndex, GraphStore, NodeId, NodeType};
+use graphirm_graph::{vector::VectorIndex, GraphNode, GraphStore, NodeId, NodeType};
 use graphirm_llm::EmbeddingProvider;
 
 use crate::error::AgentError;
@@ -74,7 +74,7 @@ impl MemoryRetriever {
         &self,
         query: &str,
         k: usize,
-    ) -> Result<Vec<graphirm_graph::GraphNode>, AgentError> {
+    ) -> Result<Vec<GraphNode>, AgentError> {
         let query_embedding = self.llm.embed(query).await.map_err(AgentError::Llm)?;
 
         let index = self.vector_index.read().await;
