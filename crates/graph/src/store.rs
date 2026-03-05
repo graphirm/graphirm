@@ -84,7 +84,7 @@ impl GraphStore {
             );
 
             CREATE TABLE IF NOT EXISTS embeddings (
-                node_id TEXT PRIMARY KEY REFERENCES nodes(id),
+                node_id TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
                 embedding BLOB NOT NULL
             );
 
@@ -634,6 +634,9 @@ impl GraphStore {
     }
 
     /// Store an embedding vector for a node. Overwrites any existing embedding.
+    // Bytes are stored in native-endian order via bytemuck::cast_slice.
+    // This is correct for single-machine SQLite but will silently corrupt
+    // embeddings if the .db file is moved between architectures.
     pub fn set_embedding(&self, node_id: &NodeId, embedding: &[f32]) -> Result<(), GraphError> {
         let conn = self.pool.get()?;
         let bytes: &[u8] = bytemuck::cast_slice(embedding);
@@ -1571,5 +1574,27 @@ mod tests {
         assert_eq!(retrieved.len(), 1536);
         assert!((retrieved[0] - 0.0).abs() < f32::EPSILON);
         assert!((retrieved[1535] - 1.535).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_delete_node_removes_embedding() {
+        let store = GraphStore::open_memory().unwrap();
+        let node_id = store
+            .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: "cascade_test".to_string(),
+                entity_type: "function".to_string(),
+                summary: "will be deleted".to_string(),
+                confidence: 0.8,
+            })))
+            .unwrap();
+
+        store.set_embedding(&node_id, &[1.0, 2.0, 3.0]).unwrap();
+
+        assert!(store.get_embedding(&node_id).unwrap().is_some());
+
+        store.delete_node(&node_id).unwrap();
+
+        let all = store.get_all_embeddings().unwrap();
+        assert!(all.iter().all(|(id, _)| *id != node_id));
     }
 }
