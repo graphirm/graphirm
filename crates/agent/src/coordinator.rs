@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use graphirm_graph::nodes::NodeId;
 use graphirm_graph::GraphStore;
+use graphirm_graph::nodes::NodeId;
 use graphirm_tools::registry::ToolRegistry;
 use tokio_util::sync::CancellationToken;
 
@@ -92,7 +92,14 @@ impl Coordinator {
         primary_tools.register(Arc::new(delegate));
 
         let llm = (self.llm_factory)(&primary_config.model);
-        run_agent_loop(&session, llm.as_ref(), &primary_tools, &self.events, &cancel).await?;
+        run_agent_loop(
+            &session,
+            llm.as_ref(),
+            &primary_tools,
+            &self.events,
+            &cancel,
+        )
+        .await?;
 
         Ok(session.id)
     }
@@ -203,7 +210,10 @@ edit = "deny"
         let neighbors = graph
             .neighbors(&session_id, Some(EdgeType::Produces), Direction::Outgoing)
             .unwrap();
-        assert!(neighbors.len() >= 2, "Expected user msg + assistant response");
+        assert!(
+            neighbors.len() >= 2,
+            "Expected user msg + assistant response"
+        );
     }
 
     #[tokio::test]
@@ -265,7 +275,11 @@ edit = "deny"
 
         // Primary agent should have delegated at least one task
         let delegated = graph
-            .neighbors(&session_id, Some(EdgeType::DelegatesTo), Direction::Outgoing)
+            .neighbors(
+                &session_id,
+                Some(EdgeType::DelegatesTo),
+                Direction::Outgoing,
+            )
             .unwrap();
         assert_eq!(
             delegated.len(),

@@ -86,10 +86,7 @@ fn node_label(node: &GraphNode) -> String {
         }
         NodeType::Agent(d) => format!("[agent] {}", d.name),
         NodeType::Content(d) => {
-            let name = d
-                .path
-                .as_deref()
-                .unwrap_or(&d.content_type);
+            let name = d.path.as_deref().unwrap_or(&d.content_type);
             format!("[content] {}", name)
         }
         NodeType::Task(d) => format!("[task] {}", d.title),

@@ -650,8 +650,7 @@ impl GraphStore {
     /// Retrieve the embedding vector for a node, if one exists.
     pub fn get_embedding(&self, node_id: &NodeId) -> Result<Option<Vec<f32>>, GraphError> {
         let conn = self.pool.get()?;
-        let mut stmt =
-            conn.prepare("SELECT embedding FROM embeddings WHERE node_id = ?1")?;
+        let mut stmt = conn.prepare("SELECT embedding FROM embeddings WHERE node_id = ?1")?;
         let result = stmt.query_row(params![node_id.0], |row| {
             let bytes: Vec<u8> = row.get(0)?;
             Ok(bytes)

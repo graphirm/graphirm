@@ -3,14 +3,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use graphirm_graph::nodes::NodeId;
 use graphirm_graph::GraphStore;
+use graphirm_graph::nodes::NodeId;
 use graphirm_tools::registry::ToolRegistry;
 use graphirm_tools::{Tool, ToolContext, ToolError, ToolOutput};
 use tokio_util::sync::CancellationToken;
 
 use crate::event::EventBus;
-use crate::multi::{spawn_subagent, wait_for_subagents, AgentRegistry, LlmFactory};
+use crate::multi::{AgentRegistry, LlmFactory, spawn_subagent, wait_for_subagents};
 
 /// Tool that allows the primary agent to delegate work to a subagent.
 ///
@@ -92,7 +92,11 @@ impl Tool for SubagentTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    async fn execute(
+        &self,
+        args: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
         let agent_name = args["agent"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("Missing 'agent' field".to_string()))?;
@@ -150,8 +154,8 @@ impl Tool for SubagentTool {
 impl SubagentTool {
     /// Read the subagent's final assistant responses from the graph.
     fn collect_subagent_output(&self, agent_id: &NodeId) -> Result<String, ToolError> {
-        use graphirm_graph::edges::EdgeType;
         use graphirm_graph::Direction;
+        use graphirm_graph::edges::EdgeType;
 
         let neighbors = self
             .graph

@@ -107,7 +107,8 @@ impl ChatView {
         let scroll_offset = if self.pinned_to_bottom {
             content_lines.saturating_sub(inner.height)
         } else {
-            self.scroll_offset.min(content_lines.saturating_sub(inner.height))
+            self.scroll_offset
+                .min(content_lines.saturating_sub(inner.height))
         };
 
         // Store the computed offset so scroll_up() can start from here

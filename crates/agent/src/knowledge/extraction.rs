@@ -87,10 +87,7 @@ impl Default for ExtractionConfig {
 
 /// Builds the extraction prompt to send to the LLM, embedding the conversation
 /// and instructing the model to return structured JSON with knowledge entities.
-pub fn build_extraction_prompt(
-    messages: &[(String, String)],
-    config: &ExtractionConfig,
-) -> String {
+pub fn build_extraction_prompt(messages: &[(String, String)], config: &ExtractionConfig) -> String {
     let entity_types_list = config.entity_types.join(", ");
 
     let conversation_block = if messages.is_empty() {
@@ -237,8 +234,11 @@ pub async fn post_turn_extract(
     let mut messages: Vec<(String, String)> = Vec::new();
 
     // Walk outgoing RespondsTo edges to collect parent messages in order.
-    let parents =
-        graph.neighbors(response_node_id, Some(EdgeType::RespondsTo), Direction::Outgoing)?;
+    let parents = graph.neighbors(
+        response_node_id,
+        Some(EdgeType::RespondsTo),
+        Direction::Outgoing,
+    )?;
     for parent in &parents {
         if let NodeType::Interaction(data) = &parent.node_type {
             messages.push((data.role.clone(), data.content.clone()));
@@ -262,7 +262,7 @@ mod tests {
     use graphirm_graph::{Direction, EdgeType, GraphNode, GraphStore, InteractionData, NodeType};
     use graphirm_llm::{
         CompletionConfig, ContentPart, LlmError, LlmMessage, LlmProvider, LlmResponse, StopReason,
-        StreamEvent, ToolDefinition, TokenUsage,
+        StreamEvent, TokenUsage, ToolDefinition,
     };
     use std::pin::Pin;
 
@@ -344,10 +344,9 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids =
-            extract_knowledge(&graph, &llm, &messages, &source_node_id, &config)
-                .await
-                .unwrap();
+        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_node_id, &config)
+            .await
+            .unwrap();
 
         assert_eq!(node_ids.len(), 2);
         for id in &node_ids {
@@ -388,14 +387,17 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids =
-            extract_knowledge(&graph, &llm, &messages, &source_id, &config)
-                .await
-                .unwrap();
+        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_id, &config)
+            .await
+            .unwrap();
 
         assert_eq!(node_ids.len(), 1);
         let neighbors = graph
-            .neighbors(&node_ids[0], Some(EdgeType::DerivedFrom), Direction::Outgoing)
+            .neighbors(
+                &node_ids[0],
+                Some(EdgeType::DerivedFrom),
+                Direction::Outgoing,
+            )
             .unwrap();
         assert!(neighbors.iter().any(|n| n.id == source_id));
     }
@@ -439,10 +441,9 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids =
-            extract_knowledge(&graph, &llm, &messages, &source_id, &config)
-                .await
-                .unwrap();
+        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_id, &config)
+            .await
+            .unwrap();
 
         assert_eq!(node_ids.len(), 1);
     }
@@ -488,10 +489,9 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids =
-            extract_knowledge(&graph, &llm, &messages, &source_id, &config)
-                .await
-                .unwrap();
+        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_id, &config)
+            .await
+            .unwrap();
 
         assert_eq!(node_ids.len(), 2);
         let neighbors = graph
@@ -624,9 +624,7 @@ mod tests {
 
     #[test]
     fn test_build_extraction_prompt_includes_entity_types() {
-        let messages = vec![
-            ("user".to_string(), "Hello".to_string()),
-        ];
+        let messages = vec![("user".to_string(), "Hello".to_string())];
         let config = ExtractionConfig {
             entity_types: vec!["function".into(), "api".into()],
             ..ExtractionConfig::default()
@@ -701,7 +699,11 @@ mod tests {
         assert_eq!(node_ids.len(), 1);
 
         let neighbors = graph
-            .neighbors(&node_ids[0], Some(EdgeType::DerivedFrom), Direction::Outgoing)
+            .neighbors(
+                &node_ids[0],
+                Some(EdgeType::DerivedFrom),
+                Direction::Outgoing,
+            )
             .unwrap();
         assert!(neighbors.iter().any(|n| n.id == assistant_id));
     }

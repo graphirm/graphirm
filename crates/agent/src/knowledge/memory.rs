@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use graphirm_graph::{vector::VectorIndex, GraphNode, GraphStore, NodeId, NodeType};
+use graphirm_graph::{GraphNode, GraphStore, NodeId, NodeType, vector::VectorIndex};
 use graphirm_llm::EmbeddingProvider;
 
 use crate::error::AgentError;
@@ -208,11 +208,31 @@ mod tests {
         let retriever = MemoryRetriever::new(graph.clone(), vector_index.clone(), llm, 64);
 
         let topics = vec![
-            ("JWT Auth", "pattern", "Token-based authentication using JSON Web Tokens"),
-            ("bcrypt", "library", "Password hashing library for secure storage"),
-            ("PostgreSQL", "database", "Relational database for persistent storage"),
-            ("React hooks", "pattern", "React state management with useState and useEffect"),
-            ("OAuth2 flow", "pattern", "Authorization protocol for third-party access"),
+            (
+                "JWT Auth",
+                "pattern",
+                "Token-based authentication using JSON Web Tokens",
+            ),
+            (
+                "bcrypt",
+                "library",
+                "Password hashing library for secure storage",
+            ),
+            (
+                "PostgreSQL",
+                "database",
+                "Relational database for persistent storage",
+            ),
+            (
+                "React hooks",
+                "pattern",
+                "React state management with useState and useEffect",
+            ),
+            (
+                "OAuth2 flow",
+                "pattern",
+                "Authorization protocol for third-party access",
+            ),
         ];
 
         for (name, entity_type, desc) in &topics {
@@ -294,9 +314,7 @@ mod tests {
 
         let retriever = MemoryRetriever::new(graph.clone(), vector_index.clone(), llm, 64);
 
-        let node_id = graph
-            .add_node(knowledge_node("Entity", "Summary"))
-            .unwrap();
+        let node_id = graph.add_node(knowledge_node("Entity", "Summary")).unwrap();
 
         let result = retriever.embed_knowledge_node(&node_id).await;
         assert!(matches!(result, Err(AgentError::Workflow(_))));

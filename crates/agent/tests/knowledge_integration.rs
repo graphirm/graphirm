@@ -7,8 +7,8 @@ use graphirm_agent::knowledge::{
     memory::MemoryRetriever,
 };
 use graphirm_graph::{
-    vector::VectorIndex, Direction, EdgeType, GraphEdge, GraphNode, GraphStore, InteractionData,
-    KnowledgeData, NodeType,
+    Direction, EdgeType, GraphEdge, GraphNode, GraphStore, InteractionData, KnowledgeData,
+    NodeType, vector::VectorIndex,
 };
 use graphirm_llm::{EmbeddingProvider, LlmError, MockProvider};
 use tokio::sync::RwLock;
@@ -126,7 +126,8 @@ async fn test_full_knowledge_pipeline() {
     // Embed each knowledge node into the HNSW index
     let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
     let embedding_provider: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
-    let retriever = MemoryRetriever::new(graph.clone(), vector_index.clone(), embedding_provider, 64);
+    let retriever =
+        MemoryRetriever::new(graph.clone(), vector_index.clone(), embedding_provider, 64);
 
     for id in &knowledge_ids {
         retriever.embed_knowledge_node(id).await.unwrap();

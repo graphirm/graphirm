@@ -60,7 +60,7 @@ mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
-    use graphirm_graph::{vector::VectorIndex, GraphNode, GraphStore, KnowledgeData, NodeType};
+    use graphirm_graph::{GraphNode, GraphStore, KnowledgeData, NodeType, vector::VectorIndex};
     use graphirm_llm::{EmbeddingProvider, LlmError};
     use tokio::sync::RwLock;
 
@@ -128,9 +128,21 @@ mod tests {
         let retriever = MemoryRetriever::new(graph.clone(), vector_index.clone(), llm, 64);
 
         let topics = vec![
-            ("JWT Auth", "pattern", "Token-based authentication using JSON Web Tokens"),
-            ("bcrypt", "library", "Password hashing library for secure storage"),
-            ("OAuth2 flow", "pattern", "Authorization protocol for third-party access"),
+            (
+                "JWT Auth",
+                "pattern",
+                "Token-based authentication using JSON Web Tokens",
+            ),
+            (
+                "bcrypt",
+                "library",
+                "Password hashing library for secure storage",
+            ),
+            (
+                "OAuth2 flow",
+                "pattern",
+                "Authorization protocol for third-party access",
+            ),
         ];
 
         for (name, entity_type, desc) in &topics {
@@ -155,6 +167,9 @@ mod tests {
         let has_knowledge = context.contains("JWT Auth")
             || context.contains("bcrypt")
             || context.contains("OAuth2 flow");
-        assert!(has_knowledge, "Context should contain at least one embedded entity");
+        assert!(
+            has_knowledge,
+            "Context should contain at least one embedded entity"
+        );
     }
 }

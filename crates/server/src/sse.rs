@@ -114,8 +114,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_broadcast_stream_maps_to_sse_events() {
-        use std::convert::Infallible;
         use axum::response::sse::Event;
+        use std::convert::Infallible;
 
         let (tx, _) = broadcast::channel::<SseEvent>(256);
         let rx = tx.subscribe();
@@ -124,14 +124,14 @@ mod tests {
         tx.send(make_event("s2", SseEventType::ToolStart)).unwrap();
         drop(tx);
 
-        let stream = BroadcastStream::new(rx)
-            .filter_map(|r| r.ok())
-            .map(|event: SseEvent| -> Result<Event, Infallible> {
+        let stream = BroadcastStream::new(rx).filter_map(|r| r.ok()).map(
+            |event: SseEvent| -> Result<Event, Infallible> {
                 let data = serde_json::to_string(&event).unwrap_or_default();
                 Ok(Event::default()
                     .event(event.event_type.to_string())
                     .data(data))
-            });
+            },
+        );
 
         let events: Vec<_> = stream.collect().await;
         assert_eq!(events.len(), 2);
@@ -156,8 +156,6 @@ mod tests {
 
         let events: Vec<SseEvent> = stream.collect().await;
         assert_eq!(events.len(), 2);
-        assert!(events
-            .iter()
-            .all(|e| e.session_id == SessionId::from("s1")));
+        assert!(events.iter().all(|e| e.session_id == SessionId::from("s1")));
     }
 }

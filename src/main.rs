@@ -140,7 +140,10 @@ fn resolve_db_path(override_path: Option<PathBuf>) -> Result<PathBuf, GraphirmEr
     });
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            GraphirmError::Config(format!("Cannot create DB directory {}: {e}", parent.display()))
+            GraphirmError::Config(format!(
+                "Cannot create DB directory {}: {e}",
+                parent.display()
+            ))
         })?;
     }
     Ok(path)
@@ -181,10 +184,7 @@ fn run_graph_command(action: GraphAction, db_path: &PathBuf) -> Result<(), Graph
                 return Ok(());
             }
 
-            println!(
-                "{:<38}  {:<12}  {}",
-                "ID", "TYPE", "LABEL"
-            );
+            println!("{:<38}  {:<12}  {}", "ID", "TYPE", "LABEL");
             println!("{}", "-".repeat(90));
             for node in nodes {
                 let label = node_display_label(&node);
@@ -276,9 +276,8 @@ async fn run_chat(model: String, db_path: &PathBuf) -> Result<(), GraphirmError>
         .map_err(|e| GraphirmError::Config(e.to_string()))?;
 
     let api_key = api_key_for_provider(provider_name)?;
-    let provider =
-        graphirm_llm::factory::create_provider(provider_name, &api_key)
-            .map_err(|e| GraphirmError::Config(e.to_string()))?;
+    let provider = graphirm_llm::factory::create_provider(provider_name, &api_key)
+        .map_err(|e| GraphirmError::Config(e.to_string()))?;
     let provider = Arc::new(provider);
 
     let graph = Arc::new(graphirm_graph::GraphStore::open(

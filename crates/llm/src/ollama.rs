@@ -23,16 +23,15 @@ pub struct OllamaProvider {
 impl OllamaProvider {
     /// Connect to Ollama at the default localhost address.
     pub fn new() -> Result<Self, LlmError> {
-        let client =
-            ollama::Client::new(Nothing).map_err(|e| LlmError::provider(e.to_string()))?;
+        let client = ollama::Client::new(Nothing).map_err(|e| LlmError::provider(e.to_string()))?;
         Ok(Self { client })
     }
 
     /// Connect to Ollama at a custom base URL (e.g. `http://spoke-ip:11434`).
     /// Falls back to the `OLLAMA_HOST` env var, then `http://localhost:11434`.
     pub fn from_env() -> Result<Self, LlmError> {
-        let host = std::env::var("OLLAMA_HOST")
-            .unwrap_or_else(|_| "http://localhost:11434".to_string());
+        let host =
+            std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
 
         let client = ollama::Client::builder()
             .api_key(Nothing)

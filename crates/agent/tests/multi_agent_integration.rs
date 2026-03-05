@@ -81,13 +81,7 @@ async fn test_full_multi_agent_flow() {
     let events = Arc::new(EventBus::new());
 
     // Use Coordinator::run_primary — it auto-injects the delegate tool.
-    let coordinator = Coordinator::new(
-        graph.clone(),
-        registry,
-        factory,
-        base_tools,
-        events,
-    );
+    let coordinator = Coordinator::new(graph.clone(), registry, factory, base_tools, events);
     let cancel = CancellationToken::new();
     let session_id = coordinator
         .run_primary("Review the auth module and give me a summary.", cancel)
@@ -102,7 +96,11 @@ async fn test_full_multi_agent_flow() {
 
     // 2. Primary agent delegated a task
     let delegated = graph
-        .neighbors(&session_id, Some(EdgeType::DelegatesTo), Direction::Outgoing)
+        .neighbors(
+            &session_id,
+            Some(EdgeType::DelegatesTo),
+            Direction::Outgoing,
+        )
         .unwrap();
     assert_eq!(delegated.len(), 1, "Primary should have delegated 1 task");
 
@@ -114,7 +112,11 @@ async fn test_full_multi_agent_flow() {
 
     // 3. Task spawned a subagent
     let spawned = graph
-        .neighbors(&task_node.id, Some(EdgeType::SpawnedBy), Direction::Outgoing)
+        .neighbors(
+            &task_node.id,
+            Some(EdgeType::SpawnedBy),
+            Direction::Outgoing,
+        )
         .unwrap();
     assert_eq!(spawned.len(), 1, "Task should have spawned 1 subagent");
 
@@ -127,9 +129,7 @@ async fn test_full_multi_agent_flow() {
         .unwrap();
     let assistant_responses: Vec<_> = subagent_outputs
         .iter()
-        .filter(|n| {
-            matches!(&n.node_type, NodeType::Interaction(d) if d.role == "assistant")
-        })
+        .filter(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "assistant"))
         .collect();
     assert!(
         !assistant_responses.is_empty(),
@@ -142,9 +142,7 @@ async fn test_full_multi_agent_flow() {
         .unwrap();
     let primary_assistant_responses: Vec<_> = primary_outputs
         .iter()
-        .filter(|n| {
-            matches!(&n.node_type, NodeType::Interaction(d) if d.role == "assistant")
-        })
+        .filter(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "assistant"))
         .collect();
     assert!(
         primary_assistant_responses.len() >= 2,
@@ -218,9 +216,7 @@ async fn test_multi_agent_graph_isolation() {
 
     let user_messages: Vec<_> = subagent_messages
         .iter()
-        .filter(|n| {
-            matches!(&n.node_type, NodeType::Interaction(d) if d.role == "user")
-        })
+        .filter(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "user"))
         .collect();
 
     // The subagent should have 1 user message (the task description), not 3
@@ -279,7 +275,10 @@ async fn test_subagent_tool_cancel_propagation() {
 
     // A child_token() derived from parent_cancel after cancellation is immediately cancelled.
     let child = parent_cancel.child_token();
-    assert!(child.is_cancelled(), "Child tokens should inherit parent cancellation");
+    assert!(
+        child.is_cancelled(),
+        "Child tokens should inherit parent cancellation"
+    );
 
     // The tool's execute would use self.cancel.child_token() which is also cancelled.
     // We don't actually run the tool here — the propagation logic is in execute().
@@ -330,7 +329,15 @@ async fn test_coordinator_does_not_require_manual_delegate_wiring() {
         .unwrap();
 
     let delegated = graph
-        .neighbors(&session_id, Some(EdgeType::DelegatesTo), Direction::Outgoing)
+        .neighbors(
+            &session_id,
+            Some(EdgeType::DelegatesTo),
+            Direction::Outgoing,
+        )
         .unwrap();
-    assert_eq!(delegated.len(), 1, "Coordinator should auto-wire delegation");
+    assert_eq!(
+        delegated.len(),
+        1,
+        "Coordinator should auto-wire delegation"
+    );
 }

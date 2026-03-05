@@ -534,14 +534,12 @@ pub fn build_subagent_context(
         NodeType::Task(data) => {
             format!("## Task: {}\n\n{}", data.title, data.description)
         }
-        _ => {
-            task_node
-                .metadata
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("No task description available.")
-                .to_string()
-        }
+        _ => task_node
+            .metadata
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("No task description available.")
+            .to_string(),
     };
 
     messages.push(LlmMessage::human(task_content));
@@ -732,8 +730,7 @@ mod tests {
         let k1_id = knowledge1.id.clone();
         graph.add_node(knowledge1).unwrap();
 
-        let context =
-            build_subagent_context(&graph, &config, &task_id, &[c1_id, k1_id]).unwrap();
+        let context = build_subagent_context(&graph, &config, &task_id, &[c1_id, k1_id]).unwrap();
 
         // System + task + 2 context nodes = 4
         assert_eq!(context.len(), 4);

@@ -179,10 +179,13 @@ mod tests {
             })))
             .unwrap();
         // Store a 32-dim embedding, but rebuild for 64-dim
-        store.set_embedding(&node_id, &vec![0.0f32; 32]).unwrap();
+        store.set_embedding(&node_id, &[0.0f32; 32]).unwrap();
 
         let index = VectorIndex::rebuild_from_store(&store, 64).unwrap();
-        assert!(index.is_empty(), "wrong-dimension embeddings should be filtered out");
+        assert!(
+            index.is_empty(),
+            "wrong-dimension embeddings should be filtered out"
+        );
     }
 
     #[test]

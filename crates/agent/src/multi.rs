@@ -40,8 +40,8 @@ impl AgentRegistry {
         })?;
 
         for entry in entries {
-            let entry = entry
-                .map_err(|e| AgentError::Workflow(format!("Failed to read entry: {}", e)))?;
+            let entry =
+                entry.map_err(|e| AgentError::Workflow(format!("Failed to read entry: {}", e)))?;
             let file_path = entry.path();
 
             if file_path.extension().and_then(|e| e.to_str()) != Some("toml") {
@@ -59,7 +59,10 @@ impl AgentRegistry {
     ///
     /// Returns an error if more than one agent has `mode = "primary"`.
     pub fn from_configs(configs: HashMap<String, AgentConfig>) -> Result<Self, AgentError> {
-        let primary_count = configs.values().filter(|c| c.mode == AgentMode::Primary).count();
+        let primary_count = configs
+            .values()
+            .filter(|c| c.mode == AgentMode::Primary)
+            .count();
         if primary_count > 1 {
             return Err(AgentError::Workflow(format!(
                 "AgentRegistry has {primary_count} primary agents; at most 1 is allowed"
@@ -180,8 +183,7 @@ pub async fn spawn_subagent(
 
     // Build scoped context: skip system message (Session handles that),
     // add user messages from task + context nodes
-    let scoped_messages =
-        build_subagent_context(graph, &agent_config, &task_id, &context_nodes)?;
+    let scoped_messages = build_subagent_context(graph, &agent_config, &task_id, &context_nodes)?;
     for msg in &scoped_messages {
         if msg.role != graphirm_llm::Role::System {
             let content_text = msg
@@ -216,8 +218,14 @@ pub async fn spawn_subagent(
     );
 
     let join_handle = tokio::spawn(async move {
-        let result =
-            run_agent_loop(&session, llm.as_ref(), &scoped_tools, &events_clone, &cancel).await;
+        let result = run_agent_loop(
+            &session,
+            llm.as_ref(),
+            &scoped_tools,
+            &events_clone,
+            &cancel,
+        )
+        .await;
 
         // Update task status in graph
         let status = if result.is_ok() {
@@ -367,7 +375,11 @@ pub fn collect_subagent_results(
     for agent_node in &spawned {
         // agent --Produces--> interactions/content/knowledge
         let outputs = graph
-            .neighbors(&agent_node.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .neighbors(
+                &agent_node.id,
+                Some(EdgeType::Produces),
+                Direction::Outgoing,
+            )
             .map_err(|e| AgentError::Context(e.to_string()))?;
 
         for node in &outputs {
@@ -535,7 +547,10 @@ max_turns = 10
         let result = AgentRegistry::load_from_dir(dir.path());
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("primary"), "Error should mention primary: {err}");
+        assert!(
+            err.contains("primary"),
+            "Error should mention primary: {err}"
+        );
     }
 
     // ── spawn_subagent tests ─────────────────────────────────────────────────
@@ -619,7 +634,11 @@ max_turns = 10
 
         // Verify SpawnedBy edge: task → subagent
         let spawned = graph
-            .neighbors(&handle.task_id, Some(EdgeType::SpawnedBy), Direction::Outgoing)
+            .neighbors(
+                &handle.task_id,
+                Some(EdgeType::SpawnedBy),
+                Direction::Outgoing,
+            )
             .unwrap();
         assert_eq!(spawned.len(), 1);
         assert_eq!(spawned[0].id, handle.agent_id);
@@ -847,9 +866,8 @@ max_turns = 10
         let registry = AgentRegistry::from_configs(agents).unwrap();
         let tools = Arc::new(ToolRegistry::new());
         let events = Arc::new(EventBus::new());
-        let factory: LlmFactory = Arc::new(move |_| {
-            Box::new(MockProvider::new(vec![MockResponse::text("done")]))
-        });
+        let factory: LlmFactory =
+            Arc::new(move |_| Box::new(MockProvider::new(vec![MockResponse::text("done")])));
 
         let parent_agent = GraphNode::new(NodeType::Agent(AgentData {
             name: "build".to_string(),
@@ -944,6 +962,10 @@ max_turns = 10
 
         assert!(!results.is_empty());
         let has_jwt_content = results.iter().any(|r| r.contains("JWT"));
-        assert!(has_jwt_content, "Results should contain subagent output: {:?}", results);
+        assert!(
+            has_jwt_content,
+            "Results should contain subagent output: {:?}",
+            results
+        );
     }
 }

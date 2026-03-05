@@ -22,14 +22,13 @@ pub struct DeepSeekProvider {
 
 impl DeepSeekProvider {
     pub fn new(api_key: impl Into<String>) -> Self {
-        let client = deepseek::Client::new(api_key.into())
-            .expect("Failed to build DeepSeek client");
+        let client =
+            deepseek::Client::new(api_key.into()).expect("Failed to build DeepSeek client");
         Self { client }
     }
 
     pub fn from_env() -> Self {
-        let api_key =
-            std::env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY env var not set");
+        let api_key = std::env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY env var not set");
         Self::new(api_key)
     }
 }
