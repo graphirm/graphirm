@@ -17,6 +17,8 @@ r2d2 = "0.8"
 r2d2_sqlite = "0.25"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+instant-distance = "0.6"
+bytemuck = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"

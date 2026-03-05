@@ -46,6 +46,8 @@ pub enum EdgeType {
     FollowsUp,
     Steers,
     RelatesTo,
+    /// Links a knowledge node back to the interaction it was derived from.
+    DerivedFrom,
 }
 
 impl EdgeType {
@@ -63,6 +65,7 @@ impl EdgeType {
             EdgeType::FollowsUp => "follows_up",
             EdgeType::Steers => "steers",
             EdgeType::RelatesTo => "relates_to",
+            EdgeType::DerivedFrom => "derived_from",
         }
     }
 
@@ -80,6 +83,7 @@ impl EdgeType {
             EdgeType::FollowsUp,
             EdgeType::Steers,
             EdgeType::RelatesTo,
+            EdgeType::DerivedFrom,
         ]
     }
 }
@@ -160,8 +164,8 @@ mod tests {
     }
 
     #[test]
-    fn edge_type_all_has_twelve_variants() {
-        assert_eq!(EdgeType::all().len(), 12);
+    fn edge_type_all_has_thirteen_variants() {
+        assert_eq!(EdgeType::all().len(), 13);
     }
 
     #[test]

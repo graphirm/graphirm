@@ -3,6 +3,7 @@ pub mod error;
 pub mod nodes;
 pub mod query;
 pub mod store;
+pub mod vector;
 
 pub use edges::{EdgeId, EdgeType, GraphEdge};
 pub use error::GraphError;
