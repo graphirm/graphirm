@@ -8,10 +8,22 @@ authors.workspace = true
 description = "HTTP API and SDK server for Graphirm"
 
 [dependencies]
+graphirm-graph = { path = "../graph" }
 graphirm-agent = { path = "../agent" }
+graphirm-llm = { path = "../llm" }
+graphirm-tools = { path = "../tools" }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+tokio-stream = { version = "0.1", features = ["sync"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+thiserror = "2"
+tracing = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+async-trait = "0.1"
