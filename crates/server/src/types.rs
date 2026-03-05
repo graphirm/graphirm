@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use graphirm_graph::{GraphEdge, GraphNode};
@@ -23,7 +24,7 @@ pub struct SessionResponse {
     pub id: String,
     pub agent: String,
     pub model: String,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
     pub status: String,
 }
 
@@ -54,6 +55,7 @@ pub struct ErrorResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     #[test]
     fn health_response_serde_roundtrip() {
@@ -69,11 +71,12 @@ mod tests {
 
     #[test]
     fn session_response_serde_roundtrip() {
+        let now = Utc::now();
         let session = SessionResponse {
             id: "abc-123".to_string(),
             agent: "graphirm".to_string(),
             model: "claude-sonnet-4-20250514".to_string(),
-            created_at: "2026-03-03T12:00:00Z".to_string(),
+            created_at: now,
             status: "idle".to_string(),
         };
         let json = serde_json::to_string(&session).unwrap();
@@ -82,6 +85,11 @@ mod tests {
         assert_eq!(back.agent, "graphirm");
         assert_eq!(back.model, "claude-sonnet-4-20250514");
         assert_eq!(back.status, "idle");
+        // Timestamps roundtrip through ISO-8601 — sub-nanosecond precision may differ
+        assert_eq!(
+            back.created_at.timestamp(),
+            now.timestamp()
+        );
     }
 
     #[test]

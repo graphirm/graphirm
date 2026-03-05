@@ -2,6 +2,9 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 
+use crate::types::ErrorResponse;
+
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
     #[error("Not found: {0}")]
@@ -29,7 +32,7 @@ impl IntoResponse for ServerError {
             ServerError::Graph(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
             ServerError::Agent(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
         };
-        (status, Json(serde_json::json!({ "error": message }))).into_response()
+        (status, Json(ErrorResponse { error: message })).into_response()
     }
 }
 

@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use graphirm_agent::{AgentConfig, AgentError, Session};
 use graphirm_graph::GraphStore;
 use graphirm_llm::LlmProvider;
-use graphirm_tools::registry::ToolRegistry;
+use graphirm_tools::ToolRegistry;
 
 use crate::types::SseEvent;
 
