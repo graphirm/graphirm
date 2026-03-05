@@ -64,7 +64,7 @@ mod tests {
         assert!(!config.enabled);
         assert_eq!(config.model, "gpt-4o-mini");
         assert_eq!(config.min_confidence, 0.7);
-        assert!(!config.entity_types.is_empty());
+        assert_eq!(config.entity_types.len(), 8);
     }
 
     #[test]
@@ -77,7 +77,7 @@ mod tests {
         assert!(config.enabled);
         assert_eq!(config.model, "claude-3-haiku");
         assert_eq!(config.min_confidence, 0.7); // default
-        assert!(!config.entity_types.is_empty()); // default
+        assert_eq!(config.entity_types.len(), 8); // default
     }
 
     #[test]
@@ -90,7 +90,7 @@ mod tests {
         };
         let json = serde_json::to_string(&config).unwrap();
         let back: ExtractionConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.enabled, true);
+        assert!(back.enabled);
         assert_eq!(back.model, "deepseek-chat");
         assert_eq!(back.entity_types.len(), 2);
         assert!((back.min_confidence - 0.85).abs() < f64::EPSILON);
