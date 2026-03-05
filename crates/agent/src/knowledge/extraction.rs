@@ -31,6 +31,26 @@ fn default_min_confidence() -> f64 {
     0.7
 }
 
+/// Selects which extraction backend to use for a given `ExtractionConfig`.
+///
+/// - `Llm`: sends the conversation to an LLM and parses the JSON response (default)
+/// - `Local`: runs a GLiNER2 ONNX model on CPU for fast, zero-cost entity extraction
+/// - `Hybrid`: GLiNER2 for entities + LLM for description synthesis and relationship discovery
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractionBackend {
+    #[default]
+    Llm,
+    Local {
+        model_path: String,
+        tokenizer_path: String,
+    },
+    Hybrid {
+        model_path: String,
+        tokenizer_path: String,
+    },
+}
+
 /// Configuration for post-turn knowledge extraction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractionConfig {
@@ -38,7 +58,7 @@ pub struct ExtractionConfig {
     #[serde(default)]
     pub enabled: bool,
 
-    /// LLM model to use for extraction.
+    /// LLM model to use for extraction (LLM and Hybrid backends).
     #[serde(default = "default_model")]
     pub model: String,
 
@@ -49,6 +69,10 @@ pub struct ExtractionConfig {
     /// Minimum confidence score [0.0, 1.0] for a node to be persisted.
     #[serde(default = "default_min_confidence")]
     pub min_confidence: f64,
+
+    /// Which extraction backend to use.
+    #[serde(default)]
+    pub backend: ExtractionBackend,
 }
 
 /// A knowledge entity extracted from a conversation turn.
@@ -81,13 +105,17 @@ impl Default for ExtractionConfig {
             model: default_model(),
             entity_types: default_entity_types(),
             min_confidence: default_min_confidence(),
+            backend: ExtractionBackend::default(),
         }
     }
 }
 
 /// Builds the extraction prompt to send to the LLM, embedding the conversation
 /// and instructing the model to return structured JSON with knowledge entities.
-pub fn build_extraction_prompt(messages: &[(String, String)], config: &ExtractionConfig) -> String {
+pub fn build_extraction_prompt(
+    messages: &[(String, String)],
+    config: &ExtractionConfig,
+) -> String {
     let entity_types_list = config.entity_types.join(", ");
 
     let conversation_block = if messages.is_empty() {
@@ -234,11 +262,8 @@ pub async fn post_turn_extract(
     let mut messages: Vec<(String, String)> = Vec::new();
 
     // Walk outgoing RespondsTo edges to collect parent messages in order.
-    let parents = graph.neighbors(
-        response_node_id,
-        Some(EdgeType::RespondsTo),
-        Direction::Outgoing,
-    )?;
+    let parents =
+        graph.neighbors(response_node_id, Some(EdgeType::RespondsTo), Direction::Outgoing)?;
     for parent in &parents {
         if let NodeType::Interaction(data) = &parent.node_type {
             messages.push((data.role.clone(), data.content.clone()));
@@ -262,7 +287,7 @@ mod tests {
     use graphirm_graph::{Direction, EdgeType, GraphNode, GraphStore, InteractionData, NodeType};
     use graphirm_llm::{
         CompletionConfig, ContentPart, LlmError, LlmMessage, LlmProvider, LlmResponse, StopReason,
-        StreamEvent, TokenUsage, ToolDefinition,
+        StreamEvent, ToolDefinition, TokenUsage,
     };
     use std::pin::Pin;
 
@@ -344,9 +369,10 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_node_id, &config)
-            .await
-            .unwrap();
+        let node_ids =
+            extract_knowledge(&graph, &llm, &messages, &source_node_id, &config)
+                .await
+                .unwrap();
 
         assert_eq!(node_ids.len(), 2);
         for id in &node_ids {
@@ -387,17 +413,14 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_id, &config)
-            .await
-            .unwrap();
+        let node_ids =
+            extract_knowledge(&graph, &llm, &messages, &source_id, &config)
+                .await
+                .unwrap();
 
         assert_eq!(node_ids.len(), 1);
         let neighbors = graph
-            .neighbors(
-                &node_ids[0],
-                Some(EdgeType::DerivedFrom),
-                Direction::Outgoing,
-            )
+            .neighbors(&node_ids[0], Some(EdgeType::DerivedFrom), Direction::Outgoing)
             .unwrap();
         assert!(neighbors.iter().any(|n| n.id == source_id));
     }
@@ -441,9 +464,10 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_id, &config)
-            .await
-            .unwrap();
+        let node_ids =
+            extract_knowledge(&graph, &llm, &messages, &source_id, &config)
+                .await
+                .unwrap();
 
         assert_eq!(node_ids.len(), 1);
     }
@@ -489,9 +513,10 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_id, &config)
-            .await
-            .unwrap();
+        let node_ids =
+            extract_knowledge(&graph, &llm, &messages, &source_id, &config)
+                .await
+                .unwrap();
 
         assert_eq!(node_ids.len(), 2);
         let neighbors = graph
@@ -529,6 +554,7 @@ mod tests {
             model: "deepseek-chat".to_string(),
             entity_types: vec!["function".to_string(), "api".to_string()],
             min_confidence: 0.85,
+            backend: ExtractionBackend::Llm,
         };
         let json = serde_json::to_string(&config).unwrap();
         let back: ExtractionConfig = serde_json::from_str(&json).unwrap();
@@ -624,7 +650,9 @@ mod tests {
 
     #[test]
     fn test_build_extraction_prompt_includes_entity_types() {
-        let messages = vec![("user".to_string(), "Hello".to_string())];
+        let messages = vec![
+            ("user".to_string(), "Hello".to_string()),
+        ];
         let config = ExtractionConfig {
             entity_types: vec!["function".into(), "api".into()],
             ..ExtractionConfig::default()
@@ -699,11 +727,7 @@ mod tests {
         assert_eq!(node_ids.len(), 1);
 
         let neighbors = graph
-            .neighbors(
-                &node_ids[0],
-                Some(EdgeType::DerivedFrom),
-                Direction::Outgoing,
-            )
+            .neighbors(&node_ids[0], Some(EdgeType::DerivedFrom), Direction::Outgoing)
             .unwrap();
         assert!(neighbors.iter().any(|n| n.id == assistant_id));
     }
@@ -730,5 +754,50 @@ mod tests {
         let result = post_turn_extract(&graph, &llm, &config, &node_id).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_extraction_config_default_backend_is_llm() {
+        let config = ExtractionConfig::default();
+        assert!(matches!(config.backend, ExtractionBackend::Llm));
+    }
+
+    #[test]
+    fn test_extraction_config_local_backend_deserialize() {
+        let toml_str = r#"
+            enabled = true
+
+            [backend]
+            local = { model_path = "/models/gliner2-base.onnx", tokenizer_path = "/models/tokenizer.json" }
+        "#;
+        let config: ExtractionConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.enabled);
+        match &config.backend {
+            ExtractionBackend::Local { model_path, .. } => {
+                assert!(model_path.contains("gliner2"));
+            }
+            other => panic!("Expected Local backend, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_extraction_config_hybrid_backend_deserialize() {
+        let toml_str = r#"
+            enabled = true
+
+            [backend]
+            hybrid = { model_path = "/models/gliner2-base.onnx", tokenizer_path = "/models/tokenizer.json" }
+        "#;
+        let config: ExtractionConfig = toml::from_str(toml_str).unwrap();
+        match &config.backend {
+            ExtractionBackend::Hybrid {
+                model_path,
+                tokenizer_path,
+            } => {
+                assert!(model_path.contains("gliner2"));
+                assert!(tokenizer_path.contains("tokenizer"));
+            }
+            other => panic!("Expected Hybrid backend, got {:?}", other),
+        }
     }
 }
