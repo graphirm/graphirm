@@ -840,13 +840,24 @@ dependencies = [
 name = "graphirm-server"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
+ "chrono",
  "graphirm-agent",
+ "graphirm-graph",
+ "graphirm-llm",
+ "graphirm-tools",
+ "http",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
+ "tokio-util",
  "tower",
  "tower-http",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2575,6 +2586,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
