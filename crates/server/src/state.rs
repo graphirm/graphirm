@@ -1,8 +1,10 @@
+//! Shared application state and per-session bookkeeping.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -11,49 +13,44 @@ use graphirm_graph::GraphStore;
 use graphirm_llm::LlmProvider;
 use graphirm_tools::ToolRegistry;
 
-use crate::types::SseEvent;
+use crate::types::{SessionId, SessionStatus, SseEvent};
 
+/// Shared state cloned into every axum handler via `State<AppState>`.
+///
+/// All fields behind `Arc` so cloning is cheap. The `sessions` map is
+/// protected by a `RwLock` for concurrent reads and exclusive writes.
+/// `AppState: Clone + Send + Sync` — verified by the compile-time test below.
 #[derive(Clone)]
 pub struct AppState {
+    /// Persistent graph store shared with the agent loop.
     pub graph: Arc<GraphStore>,
+    /// LLM provider used by spawned agent loops.
     pub llm: Arc<dyn LlmProvider>,
+    /// Tool registry passed to spawned agent loops.
     pub tools: Arc<ToolRegistry>,
+    /// Broadcast channel for fan-out SSE delivery to all connected clients.
     pub event_tx: broadcast::Sender<SseEvent>,
-    pub sessions: Arc<RwLock<HashMap<String, SessionHandle>>>,
+    /// Live sessions keyed by their [`SessionId`].
+    pub sessions: Arc<RwLock<HashMap<SessionId, SessionHandle>>>,
+    /// Default agent config used when a `POST /sessions` body omits fields.
     pub default_config: AgentConfig,
 }
 
+/// Bookkeeping for a single active or completed session.
 pub struct SessionHandle {
+    /// The session object shared with the agent loop task.
     pub session: Arc<Session>,
+    /// Cancellation token — drop or cancel to abort the running agent loop.
     pub signal: CancellationToken,
+    /// Handle to the spawned agent loop task.
+    ///
+    /// `None` until the first prompt is submitted; `Some` while running or
+    /// after completion (allows joining to collect errors).
     pub join_handle: Option<JoinHandle<Result<(), AgentError>>>,
+    /// Current lifecycle status of the session.
     pub status: SessionStatus,
+    /// UTC timestamp when the session was created.
     pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionStatus {
-    Idle,
-    Running,
-    Completed,
-    Failed,
-}
-
-impl SessionStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            SessionStatus::Idle => "idle",
-            SessionStatus::Running => "running",
-            SessionStatus::Completed => "completed",
-            SessionStatus::Failed => "failed",
-        }
-    }
-}
-
-impl std::fmt::Display for SessionStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
 }
 
 #[cfg(test)]
