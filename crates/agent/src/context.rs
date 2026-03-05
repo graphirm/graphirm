@@ -675,7 +675,7 @@ mod tests {
         let task_node = GraphNode::new(NodeType::Task(TaskData {
             title: "Analyze auth module".to_string(),
             description: "Read all files in src/auth/ and summarize patterns.".to_string(),
-            status: "pending".to_string(),
+            status: graphirm_graph::nodes::TaskStatus::Pending,
             priority: Some(1),
         }));
         let task_id = task_node.id.clone();
@@ -708,7 +708,7 @@ mod tests {
         let task_node = GraphNode::new(NodeType::Task(TaskData {
             title: "Review code".to_string(),
             description: "Review the auth module.".to_string(),
-            status: "pending".to_string(),
+            status: graphirm_graph::nodes::TaskStatus::Pending,
             priority: None,
         }));
         let task_id = task_node.id.clone();
@@ -767,7 +767,7 @@ mod tests {
         let task_node = GraphNode::new(NodeType::Task(TaskData {
             title: "Simple task".to_string(),
             description: "Do something simple.".to_string(),
-            status: "pending".to_string(),
+            status: graphirm_graph::nodes::TaskStatus::Pending,
             priority: None,
         }));
         let task_id = task_node.id.clone();
@@ -937,7 +937,7 @@ mod tests {
         let node = GraphNode::new(NodeType::Task(TaskData {
             title: "Fix bug".to_string(),
             description: "Something is broken".to_string(),
-            status: "pending".to_string(),
+            status: graphirm_graph::nodes::TaskStatus::Pending,
             priority: Some(1),
         }));
         assert!(node_to_message(&node).is_none());

@@ -52,11 +52,33 @@ pub struct ContentData {
     pub language: Option<String>,
 }
 
+/// Typed status for Task nodes. Replaces bare `String` to prevent typo-driven silent failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    #[default]
+    Pending,
+    Running,
+    Completed,
+    Failed,
+}
+
+impl fmt::Display for TaskStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TaskStatus::Pending => write!(f, "pending"),
+            TaskStatus::Running => write!(f, "running"),
+            TaskStatus::Completed => write!(f, "completed"),
+            TaskStatus::Failed => write!(f, "failed"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskData {
     pub title: String,
     pub description: String,
-    pub status: String,
+    pub status: TaskStatus,
     pub priority: Option<u8>,
 }
 
@@ -212,7 +234,7 @@ mod tests {
         let node = GraphNode::new(NodeType::Task(TaskData {
             title: "Implement login".to_string(),
             description: "Add OAuth2 login flow".to_string(),
-            status: "pending".to_string(),
+            status: TaskStatus::Pending,
             priority: Some(1),
         }));
         let json = serde_json::to_string(&node).unwrap();
@@ -254,7 +276,7 @@ mod tests {
         let task = NodeType::Task(TaskData {
             title: "t".to_string(),
             description: "d".to_string(),
-            status: "pending".to_string(),
+            status: TaskStatus::Pending,
             priority: None,
         });
         assert_eq!(task.type_name(), "task");

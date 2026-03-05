@@ -21,6 +21,9 @@ use crate::multi::{spawn_subagent, wait_for_subagents, AgentRegistry, LlmFactory
 /// 3. Runs the subagent's agent loop
 /// 4. Waits for completion
 /// 5. Returns a summary of what the subagent produced
+///
+/// Subagents receive a **child** cancellation token derived from the parent's token,
+/// so cancelling the parent automatically cancels all subagents it spawned.
 pub struct SubagentTool {
     graph: Arc<GraphStore>,
     agents: Arc<AgentRegistry>,
@@ -28,6 +31,9 @@ pub struct SubagentTool {
     base_tools: Arc<ToolRegistry>,
     events: Arc<EventBus>,
     parent_agent_id: NodeId,
+    /// Parent agent's cancel token. A child token is passed to each spawned subagent
+    /// so that cancelling the parent also cancels its children.
+    cancel: CancellationToken,
 }
 
 impl SubagentTool {
@@ -38,6 +44,7 @@ impl SubagentTool {
         base_tools: Arc<ToolRegistry>,
         events: Arc<EventBus>,
         parent_agent_id: NodeId,
+        cancel: CancellationToken,
     ) -> Self {
         Self {
             graph,
@@ -46,6 +53,7 @@ impl SubagentTool {
             base_tools,
             events,
             parent_agent_id,
+            cancel,
         }
     }
 }
@@ -102,7 +110,8 @@ impl Tool for SubagentTool {
             })
             .unwrap_or_default();
 
-        let cancel = CancellationToken::new();
+        // Child token: cancelling the parent agent also cancels this subagent.
+        let cancel = self.cancel.child_token();
 
         let handle = spawn_subagent(
             &self.graph,
@@ -241,7 +250,7 @@ mod tests {
                 ..AgentConfig::default()
             },
         );
-        AgentRegistry::from_configs(configs)
+        AgentRegistry::from_configs(configs).unwrap()
     }
 
     #[test]
@@ -253,7 +262,15 @@ mod tests {
         let factory = mock_factory();
         let parent_id = NodeId::from("parent-1");
 
-        let delegate = SubagentTool::new(graph, registry, factory, tools, events, parent_id);
+        let delegate = SubagentTool::new(
+            graph,
+            registry,
+            factory,
+            tools,
+            events,
+            parent_id,
+            CancellationToken::new(),
+        );
 
         assert_eq!(delegate.name(), "delegate");
         assert!(delegate.description().contains("subagent"));
@@ -289,6 +306,7 @@ mod tests {
             tools,
             events,
             parent_id.clone(),
+            CancellationToken::new(),
         );
 
         let args = serde_json::json!({
@@ -325,6 +343,7 @@ mod tests {
             tools,
             events,
             parent_id,
+            CancellationToken::new(),
         );
 
         let args = serde_json::json!({

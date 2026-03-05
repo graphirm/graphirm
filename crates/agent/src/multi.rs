@@ -1,17 +1,17 @@
-// Multi-agent: coordinator pattern, subagent spawning, result aggregation
+// Multi-agent: subagent spawning, result aggregation, task dependency tracking
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use graphirm_graph::edges::{EdgeType, GraphEdge};
-use graphirm_graph::nodes::{GraphNode, NodeId, NodeType, TaskData};
+use graphirm_graph::nodes::{GraphNode, NodeId, NodeType, TaskData, TaskStatus};
 use graphirm_graph::{Direction, GraphStore};
 use graphirm_llm::LlmProvider;
 use graphirm_tools::registry::ToolRegistry;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::config::{AgentConfig, AgentMode};
 use crate::context::build_subagent_context;
@@ -21,6 +21,7 @@ use crate::session::Session;
 use crate::workflow::run_agent_loop;
 
 /// Registry of agent configurations loaded from TOML files.
+#[derive(Debug)]
 pub struct AgentRegistry {
     configs: HashMap<String, AgentConfig>,
 }
@@ -51,12 +52,20 @@ impl AgentRegistry {
             configs.insert(config.name.clone(), config);
         }
 
-        Ok(Self { configs })
+        Self::from_configs(configs)
     }
 
     /// Create a registry from a pre-built map (useful for testing).
-    pub fn from_configs(configs: HashMap<String, AgentConfig>) -> Self {
-        Self { configs }
+    ///
+    /// Returns an error if more than one agent has `mode = "primary"`.
+    pub fn from_configs(configs: HashMap<String, AgentConfig>) -> Result<Self, AgentError> {
+        let primary_count = configs.values().filter(|c| c.mode == AgentMode::Primary).count();
+        if primary_count > 1 {
+            return Err(AgentError::Workflow(format!(
+                "AgentRegistry has {primary_count} primary agents; at most 1 is allowed"
+            )));
+        }
+        Ok(Self { configs })
     }
 
     /// Get an agent config by name.
@@ -145,7 +154,7 @@ pub async fn spawn_subagent(
     let task_node = GraphNode::new(NodeType::Task(TaskData {
         title: format!("Delegated to {}", agent_name),
         description: task_description.to_string(),
-        status: "pending".to_string(),
+        status: TaskStatus::Pending,
         priority: None,
     }));
     let task_id = task_node.id.clone();
@@ -212,18 +221,18 @@ pub async fn spawn_subagent(
 
         // Update task status in graph
         let status = if result.is_ok() {
-            "completed"
+            TaskStatus::Completed
         } else {
-            "failed"
+            TaskStatus::Failed
         };
         if let Ok(mut task_node) = graph_for_status.get_node(&task_id_for_status) {
             if let NodeType::Task(ref mut data) = task_node.node_type {
-                data.status = status.to_string();
+                data.status = status;
             }
             let _ = graph_for_status.update_node(&task_id_for_status, task_node);
         }
 
-        info!(agent = %agent_name_owned, status, "Subagent finished");
+        info!(agent = %agent_name_owned, status = %status, "Subagent finished");
         result
     });
 
@@ -237,9 +246,10 @@ pub async fn spawn_subagent(
 
 /// Wait for all subagent handles to complete.
 ///
-/// Returns a list of (task_id, agent_id) for each completed subagent.
-/// Collects errors but continues waiting for all handles to prevent leaks.
-/// Only returns an error if all subagents failed AND results are empty.
+/// Returns a list of (task_id, agent_id) for each successfully completed subagent.
+/// Continues waiting for all handles even after failures to prevent task leaks.
+/// Returns an error (the first one) if any subagent failed. Panicking subagents
+/// (JoinError) are also treated as failures.
 pub async fn wait_for_subagents(
     handles: Vec<SubagentHandle>,
 ) -> Result<Vec<(NodeId, NodeId)>, AgentError> {
@@ -253,14 +263,15 @@ pub async fn wait_for_subagents(
                 results.push((handle.task_id, handle.agent_id));
             }
             Ok(Err(e)) => {
-                info!(agent = %handle.name, error = %e, "Subagent failed");
+                warn!(agent = %handle.name, error = %e, "Subagent failed");
                 errors.push(AgentError::SubagentFailed {
                     name: handle.name.clone(),
                     reason: e.to_string(),
                 });
-                results.push((handle.task_id, handle.agent_id));
+                // Do NOT push to results — failed subagents are tracked via graph node status
             }
             Err(join_err) => {
+                warn!(agent = %handle.name, "Subagent panicked");
                 errors.push(AgentError::Join(format!(
                     "Subagent '{}' panicked: {}",
                     handle.name, join_err
@@ -269,7 +280,7 @@ pub async fn wait_for_subagents(
         }
     }
 
-    if !errors.is_empty() && results.is_empty() {
+    if !errors.is_empty() {
         return Err(errors.remove(0));
     }
 
@@ -277,13 +288,18 @@ pub async fn wait_for_subagents(
 }
 
 /// Wait for all tasks that a given task depends on (via DependsOn edges) to
-/// reach "completed" status. Polls the graph every 100ms.
+/// reach `Completed` status. Polls the graph every 100ms.
 ///
 /// Used to enforce task ordering: if Task B DependsOn Task A, call
-/// `wait_for_dependencies(graph, task_b_id)` before spawning Task B.
+/// `wait_for_dependencies(graph, task_b_id, &cancel, timeout)` before spawning Task B.
+///
+/// Returns `Err(Cancelled)` if the cancel token fires, `Err(Workflow)` on timeout,
+/// and `Err(SubagentFailed)` if any prerequisite task reaches `Failed` status.
 pub async fn wait_for_dependencies(
     graph: &GraphStore,
     task_id: &NodeId,
+    cancel: &CancellationToken,
+    timeout: std::time::Duration,
 ) -> Result<(), AgentError> {
     let deps = graph
         .neighbors(task_id, Some(EdgeType::DependsOn), Direction::Outgoing)
@@ -294,6 +310,7 @@ pub async fn wait_for_dependencies(
     }
 
     let dep_ids: Vec<NodeId> = deps.iter().map(|n| n.id.clone()).collect();
+    let deadline = tokio::time::Instant::now() + timeout;
 
     loop {
         let mut all_done = true;
@@ -302,16 +319,33 @@ pub async fn wait_for_dependencies(
                 .get_node(dep_id)
                 .map_err(|e| AgentError::Context(format!("Failed to read dep: {}", e)))?;
             if let NodeType::Task(data) = &node.node_type {
-                if data.status != "completed" {
-                    all_done = false;
-                    break;
+                match data.status {
+                    TaskStatus::Completed => {}
+                    TaskStatus::Failed => {
+                        return Err(AgentError::SubagentFailed {
+                            name: dep_id.to_string(),
+                            reason: "prerequisite task failed".to_string(),
+                        });
+                    }
+                    _ => {
+                        all_done = false;
+                        break;
+                    }
                 }
             }
         }
         if all_done {
             return Ok(());
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::select! {
+            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+            _ = tokio::time::sleep_until(deadline) => {
+                return Err(AgentError::Workflow(
+                    format!("Dependency wait for task {} timed out after {:?}", task_id, timeout)
+                ));
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+        }
     }
 }
 
@@ -366,86 +400,7 @@ pub fn collect_subagent_results(
     Ok(results)
 }
 
-/// Orchestrates multi-agent workflows.
-///
-/// The Coordinator owns the agent registry, LLM factory, shared graph, tools,
-/// and event bus. It runs the primary agent loop and provides the plumbing for
-/// subagent spawning via the `delegate` tool.
-pub struct Coordinator {
-    graph: Arc<GraphStore>,
-    agents: AgentRegistry,
-    llm_factory: LlmFactory,
-    tools: Arc<ToolRegistry>,
-    events: Arc<EventBus>,
-}
-
-impl Coordinator {
-    pub fn new(
-        graph: Arc<GraphStore>,
-        agents: AgentRegistry,
-        llm_factory: LlmFactory,
-        tools: Arc<ToolRegistry>,
-        events: Arc<EventBus>,
-    ) -> Self {
-        Self {
-            graph,
-            agents,
-            llm_factory,
-            tools,
-            events,
-        }
-    }
-
-    /// Run the primary agent with the given user prompt.
-    /// Returns the Session's agent NodeId.
-    pub async fn run_primary(
-        &self,
-        prompt: &str,
-        cancel: CancellationToken,
-    ) -> Result<NodeId, AgentError> {
-        let primary_config = self
-            .agents
-            .primary()
-            .ok_or_else(|| {
-                AgentError::Workflow("No primary agent configured in registry".to_string())
-            })?
-            .clone();
-
-        let session = Session::new(self.graph.clone(), primary_config.clone())?;
-        session.add_user_message(prompt)?;
-
-        let llm = (self.llm_factory)(&primary_config.model);
-
-        run_agent_loop(&session, llm.as_ref(), &self.tools, &self.events, &cancel).await?;
-
-        Ok(session.id)
-    }
-
-    /// Access the agent registry (for SubagentTool).
-    pub fn registry(&self) -> &AgentRegistry {
-        &self.agents
-    }
-
-    /// Access the graph store.
-    pub fn graph(&self) -> &Arc<GraphStore> {
-        &self.graph
-    }
-
-    /// Access the LLM factory.
-    pub fn llm_factory(&self) -> &LlmFactory {
-        &self.llm_factory
-    }
-
-    /// Access the base tool registry.
-    pub fn tools(&self) -> &Arc<ToolRegistry> {
-        &self.tools
-    }
-
-    /// Access the event bus.
-    pub fn events(&self) -> &Arc<EventBus> {
-        &self.events
-    }
-}
+// Coordinator lives in coordinator.rs to avoid a circular import with delegate.rs.
 
 #[cfg(test)]
 mod tests {
@@ -453,7 +408,7 @@ mod tests {
     use std::io::Write;
     use tempfile::TempDir;
 
-    use graphirm_graph::nodes::{AgentData, GraphNode, NodeType, TaskData};
+    use graphirm_graph::nodes::{AgentData, GraphNode, NodeType, TaskData, TaskStatus};
     use graphirm_llm::{MockProvider, MockResponse};
 
     fn write_toml(dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf {
@@ -563,6 +518,26 @@ edit = "deny"
         assert_eq!(registry.list().len(), 1);
     }
 
+    #[test]
+    fn test_registry_rejects_multiple_primaries() {
+        let second_primary_toml = r#"
+[agent]
+name = "other-primary"
+mode = "primary"
+model = "some-model"
+system_prompt = "Another primary."
+max_turns = 10
+"#;
+        let dir = TempDir::new().unwrap();
+        write_toml(&dir, "build", build_toml());
+        write_toml(&dir, "other", second_primary_toml);
+
+        let result = AgentRegistry::load_from_dir(dir.path());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("primary"), "Error should mention primary: {err}");
+    }
+
     // ── spawn_subagent tests ─────────────────────────────────────────────────
 
     fn explore_config() -> AgentConfig {
@@ -593,7 +568,7 @@ edit = "deny"
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let mut agents = HashMap::new();
         agents.insert("explore".to_string(), explore_config());
-        let registry = AgentRegistry::from_configs(agents);
+        let registry = AgentRegistry::from_configs(agents).unwrap();
         let tools = Arc::new(ToolRegistry::new());
         let events = Arc::new(EventBus::new());
         let factory = mock_factory_text("I found some patterns.");
@@ -653,7 +628,7 @@ edit = "deny"
     #[tokio::test]
     async fn test_spawn_subagent_unknown_agent() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let registry = AgentRegistry::from_configs(HashMap::new());
+        let registry = AgentRegistry::from_configs(HashMap::new()).unwrap();
         let tools = Arc::new(ToolRegistry::new());
         let events = Arc::new(EventBus::new());
         let factory = mock_factory_text("unused");
@@ -693,7 +668,7 @@ edit = "deny"
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let mut agents = HashMap::new();
         agents.insert("explore".to_string(), explore_config());
-        let registry = AgentRegistry::from_configs(agents);
+        let registry = AgentRegistry::from_configs(agents).unwrap();
         let tools = Arc::new(ToolRegistry::new());
         let events = Arc::new(EventBus::new());
         let factory = mock_factory_text("Done exploring.");
@@ -745,60 +720,12 @@ edit = "deny"
         for (task_id, _agent_id) in &results {
             let task_node = graph.get_node(task_id).unwrap();
             if let NodeType::Task(data) = &task_node.node_type {
-                assert_eq!(data.status, "completed");
+                assert_eq!(data.status, TaskStatus::Completed);
             }
         }
     }
 
-    // ── Coordinator tests ────────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn test_coordinator_run_primary_simple() {
-        let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let dir = TempDir::new().unwrap();
-        write_toml(&dir, "build", build_toml());
-        let registry = AgentRegistry::load_from_dir(dir.path()).unwrap();
-        let tools = Arc::new(ToolRegistry::new());
-        let events = Arc::new(EventBus::new());
-        let factory = mock_factory_text("Hello from the primary agent!");
-
-        let coordinator = Coordinator::new(graph.clone(), registry, factory, tools, events);
-
-        let cancel = CancellationToken::new();
-        let session_id = coordinator
-            .run_primary("What is 2+2?", cancel)
-            .await
-            .unwrap();
-
-        // Verify session created an agent node
-        let agent_node = graph.get_node(&session_id).unwrap();
-        assert!(matches!(agent_node.node_type, NodeType::Agent(_)));
-
-        // Verify the user message was recorded
-        let neighbors = graph
-            .neighbors(&session_id, Some(EdgeType::Produces), Direction::Outgoing)
-            .unwrap();
-        assert!(neighbors.len() >= 2); // user msg + assistant response
-    }
-
-    #[tokio::test]
-    async fn test_coordinator_run_primary_no_primary_agent() {
-        let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let dir = TempDir::new().unwrap();
-        write_toml(&dir, "explore", explore_toml()); // only subagent, no primary
-        let registry = AgentRegistry::load_from_dir(dir.path()).unwrap();
-        let tools = Arc::new(ToolRegistry::new());
-        let events = Arc::new(EventBus::new());
-        let factory = mock_factory_text("unused");
-
-        let coordinator = Coordinator::new(graph, registry, factory, tools, events);
-
-        let cancel = CancellationToken::new();
-        let result = coordinator.run_primary("Hello", cancel).await;
-
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AgentError::Workflow(_)));
-    }
+    // Coordinator tests live in coordinator.rs.
 
     // ── wait_for_dependencies tests ──────────────────────────────────────────
 
@@ -807,7 +734,7 @@ edit = "deny"
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let mut agents = HashMap::new();
         agents.insert("worker".to_string(), worker_config());
-        let registry = AgentRegistry::from_configs(agents);
+        let registry = AgentRegistry::from_configs(agents).unwrap();
         let tools = Arc::new(ToolRegistry::new());
         let events = Arc::new(EventBus::new());
 
@@ -858,7 +785,7 @@ edit = "deny"
         let task_b_node = GraphNode::new(NodeType::Task(TaskData {
             title: "Task B".to_string(),
             description: "Depends on Task A".to_string(),
-            status: "pending".to_string(),
+            status: TaskStatus::Pending,
             priority: None,
         }));
         let task_b_id = task_b_node.id.clone();
@@ -875,7 +802,15 @@ edit = "deny"
 
         // Wait for A to finish before spawning B
         wait_for_subagents(vec![handle_a]).await.unwrap();
-        wait_for_dependencies(&graph, &task_b_id).await.unwrap();
+        let cancel = CancellationToken::new();
+        wait_for_dependencies(
+            &graph,
+            &task_b_id,
+            &cancel,
+            std::time::Duration::from_secs(30),
+        )
+        .await
+        .unwrap();
 
         // Now spawn Task B
         let handle_b = spawn_subagent(
@@ -909,7 +844,7 @@ edit = "deny"
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let mut agents = HashMap::new();
         agents.insert("explore".to_string(), explore_config());
-        let registry = AgentRegistry::from_configs(agents);
+        let registry = AgentRegistry::from_configs(agents).unwrap();
         let tools = Arc::new(ToolRegistry::new());
         let events = Arc::new(EventBus::new());
         let factory: LlmFactory = Arc::new(move |_| {
@@ -959,7 +894,7 @@ edit = "deny"
         // Verify each task is completed
         for task_node in &delegated {
             if let NodeType::Task(data) = &task_node.node_type {
-                assert_eq!(data.status, "completed");
+                assert_eq!(data.status, TaskStatus::Completed);
             }
         }
     }
@@ -971,7 +906,7 @@ edit = "deny"
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let mut agents = HashMap::new();
         agents.insert("explore".to_string(), explore_config());
-        let registry = AgentRegistry::from_configs(agents);
+        let registry = AgentRegistry::from_configs(agents).unwrap();
         let tools = Arc::new(ToolRegistry::new());
         let events = Arc::new(EventBus::new());
         let factory = mock_factory_text("Found: auth uses JWT tokens with 24h expiry.");

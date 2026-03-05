@@ -782,7 +782,7 @@ mod tests {
         let node = GraphNode::new(NodeType::Task(crate::nodes::TaskData {
             title: "Original".to_string(),
             description: "First version".to_string(),
-            status: "pending".to_string(),
+            status: crate::nodes::TaskStatus::Pending,
             priority: Some(1),
         }));
         let id = node.id.clone();
@@ -792,7 +792,7 @@ mod tests {
         updated.node_type = NodeType::Task(crate::nodes::TaskData {
             title: "Updated".to_string(),
             description: "Second version".to_string(),
-            status: "in_progress".to_string(),
+            status: crate::nodes::TaskStatus::Running,
             priority: Some(2),
         });
         store.update_node(&id, updated).unwrap();
@@ -801,7 +801,7 @@ mod tests {
         match &fetched.node_type {
             NodeType::Task(data) => {
                 assert_eq!(data.title, "Updated");
-                assert_eq!(data.status, "in_progress");
+                assert_eq!(data.status, crate::nodes::TaskStatus::Running);
             }
             _ => panic!("expected Task"),
         }
