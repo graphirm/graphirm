@@ -2,26 +2,28 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Json, Path, State};
+use axum::Router;
+use axum::extract::{Json, Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
-use axum::Router;
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 
-use graphirm_agent::{run_agent_loop, AgentConfig, EventBus, Session};
+use graphirm_agent::{AgentConfig, EventBus, Session, run_agent_loop};
+use graphirm_graph::{Direction, EdgeType, GraphNode, NodeId, NodeType};
 
 use crate::error::ServerError;
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
-    CreateSessionRequest, HealthResponse, PromptRequest, SessionId, SessionResponse, SessionStatus,
-    SseEvent, SseEventType,
+    CreateSessionRequest, GraphResponse, HealthResponse, PromptRequest, SessionId, SessionResponse,
+    SessionStatus, SseEvent, SseEventType, SubgraphQuery,
 };
 
 /// Build the axum router with all routes wired to shared [`AppState`].
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
+        // Session management
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/sessions/{id}",
@@ -29,6 +31,20 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/sessions/{id}/prompt", post(prompt_session))
         .route("/api/sessions/{id}/abort", post(abort_session))
+        .route("/api/sessions/{id}/messages", get(get_messages))
+        .route("/api/sessions/{id}/children", get(get_children))
+        // Graph queries
+        .route("/api/graph/{session_id}", get(get_session_graph))
+        .route(
+            "/api/graph/{session_id}/node/{node_id}",
+            get(get_graph_node),
+        )
+        .route(
+            "/api/graph/{session_id}/subgraph/{node_id}",
+            get(get_subgraph),
+        )
+        .route("/api/graph/{session_id}/tasks", get(get_tasks))
+        .route("/api/graph/{session_id}/knowledge", get(get_knowledge))
         .with_state(state)
 }
 
@@ -213,20 +229,195 @@ async fn prompt_session(
     Ok(StatusCode::ACCEPTED)
 }
 
-/// `POST /api/sessions/:id/abort` — cancel the running agent loop.
+/// `POST /api/sessions/{id}/abort` — cancel the running agent loop.
+///
+/// Signals cancellation via the session's [`CancellationToken`], then takes
+/// the join handle and spawns a background cleanup task that awaits completion
+/// with a 5-second timeout.
 async fn abort_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ServerError> {
+    let key = SessionId::from(id.as_str());
+    let mut sessions = state.sessions.write().await;
+    let handle = sessions
+        .get_mut(&key)
+        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
+
+    handle.signal.cancel();
+
+    if let Some(jh) = handle.join_handle.take() {
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), jh).await;
+        });
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Messages & children ───────────────────────────────────────────────────────
+
+/// `GET /api/sessions/{id}/messages` — list Interaction nodes for this session.
+async fn get_messages(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<GraphNode>>, ServerError> {
     let key = SessionId::from(id.as_str());
     let sessions = state.sessions.read().await;
     let handle = sessions
         .get(&key)
         .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
 
-    handle.signal.cancel();
+    let neighbors = state
+        .graph
+        .neighbors(
+            &handle.session.id,
+            Some(EdgeType::Produces),
+            Direction::Outgoing,
+        )
+        .map_err(ServerError::Graph)?;
 
-    Ok(StatusCode::NO_CONTENT)
+    let messages: Vec<GraphNode> = neighbors
+        .into_iter()
+        .filter(|n| matches!(n.node_type, NodeType::Interaction(_)))
+        .collect();
+
+    Ok(Json(messages))
+}
+
+/// `GET /api/sessions/{id}/children` — list subagent sessions spawned by this session.
+///
+/// Returns an empty list until multi-agent spawning writes `SpawnedBy` edges (Phase 5+).
+async fn get_children(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<SessionResponse>>, ServerError> {
+    let key = SessionId::from(id.as_str());
+    let sessions = state.sessions.read().await;
+    let _ = sessions
+        .get(&key)
+        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
+
+    Ok(Json(vec![]))
+}
+
+// ── Graph queries ─────────────────────────────────────────────────────────────
+
+/// `GET /api/graph/{session_id}` — return the full subgraph rooted at the session's agent node.
+async fn get_session_graph(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<GraphResponse>, ServerError> {
+    let key = SessionId::from(session_id.as_str());
+    let sessions = state.sessions.read().await;
+    let handle = sessions
+        .get(&key)
+        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+
+    let (nodes, edges) = state
+        .graph
+        .subgraph(&handle.session.id, 10)
+        .map_err(ServerError::Graph)?;
+
+    Ok(Json(GraphResponse { nodes, edges }))
+}
+
+/// `GET /api/graph/{session_id}/node/{node_id}` — fetch a single graph node by ID.
+async fn get_graph_node(
+    State(state): State<AppState>,
+    Path((session_id, node_id)): Path<(String, String)>,
+) -> Result<Json<GraphNode>, ServerError> {
+    let key = SessionId::from(session_id.as_str());
+    let sessions = state.sessions.read().await;
+    let _ = sessions
+        .get(&key)
+        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+    drop(sessions);
+
+    let node = state
+        .graph
+        .get_node(&NodeId::from(node_id.as_str()))
+        .map_err(|_| ServerError::NotFound(format!("Node not found: {node_id}")))?;
+
+    Ok(Json(node))
+}
+
+/// `GET /api/graph/{session_id}/subgraph/{node_id}` — return a subgraph rooted at any node.
+async fn get_subgraph(
+    State(state): State<AppState>,
+    Path((session_id, node_id)): Path<(String, String)>,
+    Query(query): Query<SubgraphQuery>,
+) -> Result<Json<GraphResponse>, ServerError> {
+    let key = SessionId::from(session_id.as_str());
+    let sessions = state.sessions.read().await;
+    let _ = sessions
+        .get(&key)
+        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+    drop(sessions);
+
+    let depth = query.depth.unwrap_or(3);
+    let (nodes, edges) = state
+        .graph
+        .subgraph(&NodeId::from(node_id.as_str()), depth)
+        .map_err(ServerError::Graph)?;
+
+    Ok(Json(GraphResponse { nodes, edges }))
+}
+
+/// `GET /api/graph/{session_id}/tasks` — list Task nodes produced by this session.
+async fn get_tasks(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<Vec<GraphNode>>, ServerError> {
+    let key = SessionId::from(session_id.as_str());
+    let sessions = state.sessions.read().await;
+    let handle = sessions
+        .get(&key)
+        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+
+    let neighbors = state
+        .graph
+        .neighbors(
+            &handle.session.id,
+            Some(EdgeType::Produces),
+            Direction::Outgoing,
+        )
+        .map_err(ServerError::Graph)?;
+
+    let tasks: Vec<GraphNode> = neighbors
+        .into_iter()
+        .filter(|n| matches!(n.node_type, NodeType::Task(_)))
+        .collect();
+
+    Ok(Json(tasks))
+}
+
+/// `GET /api/graph/{session_id}/knowledge` — list Knowledge nodes produced by this session.
+async fn get_knowledge(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<Vec<GraphNode>>, ServerError> {
+    let key = SessionId::from(session_id.as_str());
+    let sessions = state.sessions.read().await;
+    let handle = sessions
+        .get(&key)
+        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+
+    let neighbors = state
+        .graph
+        .neighbors(
+            &handle.session.id,
+            Some(EdgeType::Produces),
+            Direction::Outgoing,
+        )
+        .map_err(ServerError::Graph)?;
+
+    let knowledge: Vec<GraphNode> = neighbors
+        .into_iter()
+        .filter(|n| matches!(n.node_type, NodeType::Knowledge(_)))
+        .collect();
+
+    Ok(Json(knowledge))
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -295,9 +486,7 @@ fn agent_event_to_sse(session_id: &str, event: &graphirm_agent::AgentEvent) -> S
             }),
         ),
         AgentEvent::GraphUpdate {
-            node_id,
-            edge_ids,
-            ..
+            node_id, edge_ids, ..
         } => (
             SseEventType::GraphUpdate,
             serde_json::json!({
@@ -325,7 +514,7 @@ pub(crate) mod test_helpers {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use tokio::sync::{broadcast, RwLock};
+    use tokio::sync::{RwLock, broadcast};
 
     use graphirm_agent::AgentConfig;
     use graphirm_graph::GraphStore;
@@ -657,8 +846,7 @@ mod tests {
         let key = SessionId::from(created.id.as_str());
         let handle = sessions.get(&key).unwrap();
         assert!(
-            handle.status == SessionStatus::Running
-                || handle.status == SessionStatus::Completed,
+            handle.status == SessionStatus::Running || handle.status == SessionStatus::Completed,
             "Expected Running or Completed, got {:?}",
             handle.status
         );
@@ -681,5 +869,473 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ── Abort ─────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_abort_running_session() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        // Create session
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        // Start agent
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&format!("/api/sessions/{}/prompt", created.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"content": "Do something"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Abort
+        let abort_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&format!("/api/sessions/{}/abort", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(abort_resp.status(), StatusCode::NO_CONTENT);
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let sessions = state.sessions.read().await;
+        let key = SessionId::from(created.id.as_str());
+        let handle = sessions.get(&key).unwrap();
+        assert!(handle.signal.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_abort_nonexistent_session_returns_404() {
+        let app = create_router(test_app_state());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions/nonexistent/abort")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ── Messages & children ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_messages_empty_session() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let msg_resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(&format!("/api/sessions/{}/messages", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(msg_resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(msg_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let messages: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        assert!(messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_messages_with_prompt() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&format!("/api/sessions/{}/prompt", created.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"content": "Hello!"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let msg_resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(&format!("/api/sessions/{}/messages", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(msg_resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(msg_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let messages: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        assert!(!messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_children_returns_empty_list() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(&format!("/api/sessions/{}/children", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let children: Vec<SessionResponse> = serde_json::from_slice(&body).unwrap();
+        assert!(children.is_empty());
+    }
+
+    // ── Graph queries ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_session_graph() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let graph_resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(&format!("/api/graph/{}", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(graph_resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(graph_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let graph: crate::types::GraphResponse = serde_json::from_slice(&body).unwrap();
+        assert!(!graph.nodes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_graph_node() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let sessions = state.sessions.read().await;
+        let agent_node_id = sessions
+            .get(&SessionId::from(created.id.as_str()))
+            .unwrap()
+            .session
+            .id
+            .to_string();
+        drop(sessions);
+
+        let node_resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(&format!("/api/graph/{}/node/{}", created.id, agent_node_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(node_resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_graph_node_not_found() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(&format!("/api/graph/{}/node/nonexistent", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_get_subgraph() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let sessions = state.sessions.read().await;
+        let agent_node_id = sessions
+            .get(&SessionId::from(created.id.as_str()))
+            .unwrap()
+            .session
+            .id
+            .to_string();
+        drop(sessions);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(&format!(
+                        "/api/graph/{}/subgraph/{}?depth=2",
+                        created.id, agent_node_id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let graph: crate::types::GraphResponse = serde_json::from_slice(&body).unwrap();
+        assert!(!graph.nodes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_tasks_empty() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(&format!("/api/graph/{}/tasks", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let tasks: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        assert!(tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_knowledge_empty() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(&format!("/api/graph/{}/knowledge", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let knowledge: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        assert!(knowledge.is_empty());
     }
 }

@@ -22,7 +22,7 @@ pub struct DeepSeekProvider {
 
 impl DeepSeekProvider {
     pub fn new(api_key: impl Into<String>) -> Self {
-        let client = deepseek::Client::new(&api_key.into())
+        let client = deepseek::Client::new(api_key.into())
             .expect("Failed to build DeepSeek client");
         Self { client }
     }
