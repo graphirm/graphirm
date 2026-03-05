@@ -1,6 +1,12 @@
 //! Post-turn knowledge extraction from conversations.
 
+use std::collections::HashMap;
+
+use graphirm_graph::{EdgeType, GraphEdge, GraphNode, GraphStore, KnowledgeData, NodeId, NodeType};
+use graphirm_llm::{CompletionConfig, LlmMessage, LlmProvider};
 use serde::{Deserialize, Serialize};
+
+use crate::error::AgentError;
 
 fn default_entity_types() -> Vec<String> {
     vec![
@@ -131,9 +137,328 @@ CONVERSATION:
     )
 }
 
+/// Extracts knowledge entities from a conversation turn using an LLM call,
+/// persists them as `Knowledge` nodes in the graph, and links them back to the
+/// source interaction via `DerivedFrom` edges. Inter-entity `RelatesTo` edges
+/// are created for any relationships the LLM identifies.
+pub async fn extract_knowledge(
+    graph: &GraphStore,
+    llm: &dyn LlmProvider,
+    messages: &[(String, String)],
+    source_node_id: &NodeId,
+    config: &ExtractionConfig,
+) -> Result<Vec<NodeId>, AgentError> {
+    if !config.enabled {
+        return Ok(vec![]);
+    }
+
+    let prompt = build_extraction_prompt(messages, config);
+    let completion_config = CompletionConfig::new(&config.model);
+    let response = llm
+        .complete(vec![LlmMessage::human(prompt)], &[], &completion_config)
+        .await?;
+
+    let extraction: ExtractionResponse = serde_json::from_str(&response.text_content())
+        .map_err(|e| AgentError::Workflow(format!("Failed to parse extraction response: {e}")))?;
+
+    let filtered: Vec<&ExtractedEntity> = extraction
+        .entities
+        .iter()
+        .filter(|e| e.confidence >= config.min_confidence)
+        .collect();
+
+    // First pass: create all knowledge nodes and build a name → NodeId map.
+    let mut name_to_id: HashMap<String, NodeId> = HashMap::new();
+    let mut created_ids: Vec<NodeId> = Vec::new();
+
+    for entity in &filtered {
+        let node_id = graph.add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: entity.name.clone(),
+            entity_type: entity.entity_type.clone(),
+            summary: entity.description.clone(),
+            confidence: entity.confidence,
+        })))?;
+
+        graph.add_edge(GraphEdge::new(
+            EdgeType::DerivedFrom,
+            node_id.clone(),
+            source_node_id.clone(),
+        ))?;
+
+        name_to_id.insert(entity.name.clone(), node_id.clone());
+        created_ids.push(node_id);
+    }
+
+    // Second pass: wire RelatesTo edges between entities using the name map.
+    for entity in &filtered {
+        if let Some(source_id) = name_to_id.get(&entity.name) {
+            for rel in &entity.relationships {
+                if let Some(target_id) = name_to_id.get(&rel.target_name) {
+                    graph.add_edge(GraphEdge::new(
+                        EdgeType::RelatesTo,
+                        source_id.clone(),
+                        target_id.clone(),
+                    ))?;
+                }
+            }
+        }
+    }
+
+    tracing::info!(
+        extracted = filtered.len(),
+        total = extraction.entities.len(),
+        "Knowledge extraction complete"
+    );
+
+    Ok(created_ids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use async_trait::async_trait;
+    use futures::Stream;
+    use graphirm_graph::{Direction, EdgeType, GraphNode, GraphStore, InteractionData, NodeType};
+    use graphirm_llm::{
+        CompletionConfig, ContentPart, LlmError, LlmMessage, LlmProvider, LlmResponse, StopReason,
+        StreamEvent, ToolDefinition, TokenUsage,
+    };
+    use std::pin::Pin;
+
+    struct MockExtractionProvider {
+        response_json: String,
+    }
+
+    #[async_trait]
+    impl LlmProvider for MockExtractionProvider {
+        async fn complete(
+            &self,
+            _messages: Vec<LlmMessage>,
+            _tools: &[ToolDefinition],
+            _config: &CompletionConfig,
+        ) -> Result<LlmResponse, LlmError> {
+            Ok(LlmResponse {
+                content: vec![ContentPart::text(self.response_json.clone())],
+                usage: TokenUsage::new(10, 100),
+                stop_reason: StopReason::EndTurn,
+            })
+        }
+
+        async fn stream(
+            &self,
+            _messages: Vec<LlmMessage>,
+            _tools: &[ToolDefinition],
+            _config: &CompletionConfig,
+        ) -> Result<Pin<Box<dyn Stream<Item = StreamEvent> + Send>>, LlmError> {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+
+        fn provider_name(&self) -> &str {
+            "mock-extraction"
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extract_knowledge_creates_nodes() {
+        let graph = GraphStore::open_memory().unwrap();
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.5,
+            ..ExtractionConfig::default()
+        };
+        let llm = MockExtractionProvider {
+            response_json: r#"{
+                "entities": [
+                    {
+                        "entity_type": "pattern",
+                        "name": "JWT Authentication",
+                        "description": "Token-based auth using JSON Web Tokens",
+                        "confidence": 0.92,
+                        "relationships": []
+                    },
+                    {
+                        "entity_type": "library",
+                        "name": "bcrypt",
+                        "description": "Password hashing library",
+                        "confidence": 0.88,
+                        "relationships": [
+                            { "target_name": "JWT Authentication", "relationship": "used_with" }
+                        ]
+                    }
+                ]
+            }"#
+            .to_string(),
+        };
+
+        let messages = vec![
+            ("user".to_string(), "How do I do auth?".to_string()),
+            ("assistant".to_string(), "Use JWT with bcrypt".to_string()),
+        ];
+
+        let source_node_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".to_string(),
+                content: "Use JWT with bcrypt".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let node_ids =
+            extract_knowledge(&graph, &llm, &messages, &source_node_id, &config)
+                .await
+                .unwrap();
+
+        assert_eq!(node_ids.len(), 2);
+        for id in &node_ids {
+            let node = graph.get_node(id).unwrap();
+            assert!(matches!(node.node_type, NodeType::Knowledge(_)));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extract_knowledge_creates_derived_from_edges() {
+        let graph = GraphStore::open_memory().unwrap();
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.5,
+            ..ExtractionConfig::default()
+        };
+        let llm = MockExtractionProvider {
+            response_json: r#"{
+                "entities": [
+                    {
+                        "entity_type": "decision",
+                        "name": "Use Rust",
+                        "description": "Chose Rust for performance",
+                        "confidence": 0.95,
+                        "relationships": []
+                    }
+                ]
+            }"#
+            .to_string(),
+        };
+
+        let messages = vec![("user".to_string(), "Why Rust?".to_string())];
+        let source_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: "Why Rust?".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let node_ids =
+            extract_knowledge(&graph, &llm, &messages, &source_id, &config)
+                .await
+                .unwrap();
+
+        assert_eq!(node_ids.len(), 1);
+        let neighbors = graph
+            .neighbors(&node_ids[0], Some(EdgeType::DerivedFrom), Direction::Outgoing)
+            .unwrap();
+        assert!(neighbors.iter().any(|n| n.id == source_id));
+    }
+
+    #[tokio::test]
+    async fn test_extract_knowledge_filters_by_confidence() {
+        let graph = GraphStore::open_memory().unwrap();
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.9,
+            ..ExtractionConfig::default()
+        };
+        let llm = MockExtractionProvider {
+            response_json: r#"{
+                "entities": [
+                    {
+                        "entity_type": "function",
+                        "name": "high_confidence",
+                        "description": "Very sure about this one",
+                        "confidence": 0.95,
+                        "relationships": []
+                    },
+                    {
+                        "entity_type": "function",
+                        "name": "low_confidence",
+                        "description": "Not sure about this",
+                        "confidence": 0.4,
+                        "relationships": []
+                    }
+                ]
+            }"#
+            .to_string(),
+        };
+
+        let messages = vec![("user".to_string(), "test".to_string())];
+        let source_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: "test".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let node_ids =
+            extract_knowledge(&graph, &llm, &messages, &source_id, &config)
+                .await
+                .unwrap();
+
+        assert_eq!(node_ids.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_extract_knowledge_creates_relates_to_edges() {
+        let graph = GraphStore::open_memory().unwrap();
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.5,
+            ..ExtractionConfig::default()
+        };
+        let llm = MockExtractionProvider {
+            response_json: r#"{
+                "entities": [
+                    {
+                        "entity_type": "pattern",
+                        "name": "EntityA",
+                        "description": "First entity",
+                        "confidence": 0.9,
+                        "relationships": [
+                            { "target_name": "EntityB", "relationship": "uses" }
+                        ]
+                    },
+                    {
+                        "entity_type": "library",
+                        "name": "EntityB",
+                        "description": "Second entity",
+                        "confidence": 0.85,
+                        "relationships": []
+                    }
+                ]
+            }"#
+            .to_string(),
+        };
+
+        let messages = vec![("user".to_string(), "entities".to_string())];
+        let source_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: "entities".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let node_ids =
+            extract_knowledge(&graph, &llm, &messages, &source_id, &config)
+                .await
+                .unwrap();
+
+        assert_eq!(node_ids.len(), 2);
+        let neighbors = graph
+            .neighbors(&node_ids[0], Some(EdgeType::RelatesTo), Direction::Outgoing)
+            .unwrap();
+        assert_eq!(neighbors.len(), 1);
+    }
 
     #[test]
     fn test_extraction_config_defaults() {
