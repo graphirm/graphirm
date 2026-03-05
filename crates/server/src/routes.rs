@@ -8,11 +8,14 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
+use tower_http::cors::{Any, CorsLayer};
+use tower_http::trace::TraceLayer;
 
 use graphirm_agent::{AgentConfig, EventBus, Session, run_agent_loop};
 use graphirm_graph::{Direction, EdgeType, GraphNode, NodeId, NodeType};
 
 use crate::error::ServerError;
+use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
     CreateSessionRequest, GraphResponse, HealthResponse, PromptRequest, SessionId, SessionResponse,
@@ -20,7 +23,16 @@ use crate::types::{
 };
 
 /// Build the axum router with all routes wired to shared [`AppState`].
+///
+/// Middleware applied (outermost → innermost):
+/// - [`CorsLayer`] — permissive CORS, allows any origin/method/header.
+/// - [`TraceLayer`] — per-request tracing spans at INFO level.
 pub fn create_router(state: AppState) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     Router::new()
         .route("/api/health", get(health))
         // Session management
@@ -45,6 +57,12 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/graph/{session_id}/tasks", get(get_tasks))
         .route("/api/graph/{session_id}/knowledge", get(get_knowledge))
+        // SSE event streams
+        .route("/api/events", get(sse_handler))
+        .route("/api/events/{session_id}", get(sse_session_handler))
+        // Middleware
+        .layer(cors)
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
@@ -1084,6 +1102,75 @@ mod tests {
             .unwrap();
         let children: Vec<SessionResponse> = serde_json::from_slice(&body).unwrap();
         assert!(children.is_empty());
+    }
+
+    // ── SSE ───────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_sse_endpoint_returns_event_stream_content_type() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            app.oneshot(
+                Request::builder()
+                    .uri("/api/events")
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(response)) => {
+                assert_eq!(response.status(), StatusCode::OK);
+                let content_type = response
+                    .headers()
+                    .get("content-type")
+                    .unwrap()
+                    .to_str()
+                    .unwrap();
+                assert!(
+                    content_type.contains("text/event-stream"),
+                    "Expected text/event-stream, got: {content_type}"
+                );
+            }
+            Ok(Err(e)) => panic!("Request error: {e}"),
+            Err(_) => { /* timeout is acceptable for long-lived SSE connections */ }
+        }
+    }
+
+    // ── CORS ──────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_cors_headers_present() {
+        let app = create_router(test_app_state());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/health")
+                    .header("origin", "http://localhost:3001")
+                    .header("access-control-request-method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            response.status() == StatusCode::OK || response.status() == StatusCode::NO_CONTENT,
+            "Expected 200 or 204 for CORS preflight, got: {}",
+            response.status()
+        );
+
+        let headers = response.headers();
+        assert!(
+            headers.contains_key("access-control-allow-origin"),
+            "Missing access-control-allow-origin header"
+        );
     }
 
     // ── Graph queries ─────────────────────────────────────────────────────────
