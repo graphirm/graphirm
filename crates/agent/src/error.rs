@@ -28,4 +28,10 @@ pub enum AgentError {
 
     #[error("Task join error: {0}")]
     Join(String),
+
+    #[error("Subagent '{name}' failed: {reason}")]
+    SubagentFailed { name: String, reason: String },
+
+    #[error("Agent not found in registry: {0}")]
+    AgentNotFound(String),
 }

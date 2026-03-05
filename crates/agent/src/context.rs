@@ -504,6 +504,81 @@ pub fn build_context(
     })
 }
 
+/// Build a scoped LLM message context for a subagent.
+///
+/// Unlike `build_context` (which reads the full conversation history from a
+/// session), this builds a minimal context from:
+/// 1. The agent's system prompt
+/// 2. The task description (from the Task node)
+/// 3. Content from explicitly referenced context nodes
+///
+/// This ensures subagents see only what's relevant to their task — no access
+/// to the parent agent's full conversation.
+pub fn build_subagent_context(
+    graph: &GraphStore,
+    agent_config: &crate::config::AgentConfig,
+    task_id: &NodeId,
+    context_node_ids: &[NodeId],
+) -> Result<Vec<LlmMessage>, AgentError> {
+    let mut messages = Vec::new();
+
+    // System prompt
+    messages.push(LlmMessage::system(&agent_config.system_prompt));
+
+    // Task description
+    let task_node = graph
+        .get_node(task_id)
+        .map_err(|e| AgentError::Context(format!("Failed to read task node: {}", e)))?;
+
+    let task_content = match &task_node.node_type {
+        NodeType::Task(data) => {
+            format!("## Task: {}\n\n{}", data.title, data.description)
+        }
+        _ => {
+            task_node
+                .metadata
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("No task description available.")
+                .to_string()
+        }
+    };
+
+    messages.push(LlmMessage::human(task_content));
+
+    // Referenced context nodes
+    for node_id in context_node_ids {
+        let node = graph
+            .get_node(node_id)
+            .map_err(|e| AgentError::Context(format!("Failed to read context node: {}", e)))?;
+
+        let context_text = match &node.node_type {
+            NodeType::Content(data) => {
+                let header = match &data.path {
+                    Some(path) => format!("File: {}", path),
+                    None => format!("Content ({})", data.content_type),
+                };
+                format!("{}\n```\n{}\n```", header, data.body)
+            }
+            NodeType::Knowledge(data) => {
+                format!(
+                    "Knowledge — {} ({}): {}",
+                    data.entity, data.entity_type, data.summary
+                )
+            }
+            NodeType::Interaction(data) => {
+                format!("Previous finding: {}", data.content)
+            }
+            _ => serde_json::to_string_pretty(&node.node_type)
+                .unwrap_or_else(|_| "Unknown context".to_string()),
+        };
+
+        messages.push(LlmMessage::human(context_text));
+    }
+
+    Ok(messages)
+}
+
 /// Select the highest-scored nodes that fit within a token budget.
 /// Greedy approach: sort by score descending, take nodes until budget exhausted.
 /// Skips individual nodes that don't fit, continues to try smaller ones.
@@ -586,6 +661,121 @@ pub fn estimate_tokens(node: &GraphNode) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::Arc;
+
+    #[test]
+    fn test_build_subagent_context_basic() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = crate::config::AgentConfig {
+            system_prompt: "You are an exploration agent.".to_string(),
+            ..crate::config::AgentConfig::default()
+        };
+
+        let task_node = GraphNode::new(NodeType::Task(TaskData {
+            title: "Analyze auth module".to_string(),
+            description: "Read all files in src/auth/ and summarize patterns.".to_string(),
+            status: graphirm_graph::nodes::TaskStatus::Pending,
+            priority: Some(1),
+        }));
+        let task_id = task_node.id.clone();
+        graph.add_node(task_node).unwrap();
+
+        let context = build_subagent_context(&graph, &config, &task_id, &[]).unwrap();
+
+        // System prompt + task description = 2 messages
+        assert_eq!(context.len(), 2);
+        assert_eq!(context[0].role, graphirm_llm::Role::System);
+        assert_eq!(context[1].role, graphirm_llm::Role::Human);
+        let task_text: String = context[1]
+            .content
+            .iter()
+            .filter_map(|p| match p {
+                graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(task_text.contains("Analyze auth module"));
+        assert!(task_text.contains("summarize patterns"));
+    }
+
+    #[test]
+    fn test_build_subagent_context_with_referenced_nodes() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = crate::config::AgentConfig::default();
+
+        let task_node = GraphNode::new(NodeType::Task(TaskData {
+            title: "Review code".to_string(),
+            description: "Review the auth module.".to_string(),
+            status: graphirm_graph::nodes::TaskStatus::Pending,
+            priority: None,
+        }));
+        let task_id = task_node.id.clone();
+        graph.add_node(task_node).unwrap();
+
+        let content1 = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".to_string(),
+            path: Some("src/auth/mod.rs".to_string()),
+            body: "pub mod login;\npub mod session;".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let c1_id = content1.id.clone();
+        graph.add_node(content1).unwrap();
+
+        let knowledge1 = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "auth patterns".to_string(),
+            entity_type: "concept".to_string(),
+            summary: "Uses JWT with refresh tokens".to_string(),
+            confidence: 0.9,
+        }));
+        let k1_id = knowledge1.id.clone();
+        graph.add_node(knowledge1).unwrap();
+
+        let context =
+            build_subagent_context(&graph, &config, &task_id, &[c1_id, k1_id]).unwrap();
+
+        // System + task + 2 context nodes = 4
+        assert_eq!(context.len(), 4);
+        let msg2_text: String = context[2]
+            .content
+            .iter()
+            .filter_map(|p| match p {
+                graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let msg3_text: String = context[3]
+            .content
+            .iter()
+            .filter_map(|p| match p {
+                graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(msg2_text.contains("src/auth/mod.rs"));
+        assert!(msg3_text.contains("JWT with refresh tokens"));
+    }
+
+    #[test]
+    fn test_build_subagent_context_empty_context_nodes() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = crate::config::AgentConfig::default();
+
+        let task_node = GraphNode::new(NodeType::Task(TaskData {
+            title: "Simple task".to_string(),
+            description: "Do something simple.".to_string(),
+            status: graphirm_graph::nodes::TaskStatus::Pending,
+            priority: None,
+        }));
+        let task_id = task_node.id.clone();
+        graph.add_node(task_node).unwrap();
+
+        let context = build_subagent_context(&graph, &config, &task_id, &[]).unwrap();
+        assert_eq!(context.len(), 2); // system + task only
+    }
 
     #[test]
     fn context_config_default_values() {
@@ -747,7 +937,7 @@ mod tests {
         let node = GraphNode::new(NodeType::Task(TaskData {
             title: "Fix bug".to_string(),
             description: "Something is broken".to_string(),
-            status: "pending".to_string(),
+            status: graphirm_graph::nodes::TaskStatus::Pending,
             priority: Some(1),
         }));
         assert!(node_to_message(&node).is_none());
