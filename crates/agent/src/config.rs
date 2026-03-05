@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use crate::error::AgentError;
+use crate::knowledge::extraction::ExtractionConfig;
 
 /// Whether an agent operates as the primary coordinator or a spawned subagent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -48,6 +49,9 @@ pub struct AgentConfig {
     /// Per-tool permissions. Tools not listed default to allowed.
     #[serde(default)]
     pub permissions: HashMap<String, Permission>,
+    /// Knowledge extraction config. `None` disables post-turn extraction.
+    #[serde(default)]
+    pub extraction: Option<ExtractionConfig>,
 }
 
 fn default_working_dir() -> PathBuf {
@@ -69,6 +73,7 @@ impl Default for AgentConfig {
             working_dir: default_working_dir(),
             max_context_messages: None,
             permissions: HashMap::new(),
+            extraction: None,
         }
     }
 }
@@ -105,6 +110,8 @@ struct AgentConfigSection {
     working_dir: PathBuf,
     #[serde(default)]
     max_context_messages: Option<usize>,
+    #[serde(default)]
+    extraction: Option<ExtractionConfig>,
 }
 
 fn default_system_prompt() -> String {
@@ -134,6 +141,7 @@ impl AgentConfig {
             working_dir: file.agent.working_dir,
             max_context_messages: file.agent.max_context_messages,
             permissions: file.permissions,
+            extraction: file.agent.extraction,
         })
     }
 

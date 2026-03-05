@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use graphirm_graph::{EdgeType, GraphEdge, GraphNode, GraphStore, KnowledgeData, NodeId, NodeType};
+use graphirm_graph::{
+    Direction, EdgeType, GraphEdge, GraphNode, GraphStore, KnowledgeData, NodeId, NodeType,
+};
 use graphirm_llm::{CompletionConfig, LlmMessage, LlmProvider};
 use serde::{Deserialize, Serialize};
 
@@ -214,6 +216,41 @@ pub async fn extract_knowledge(
     );
 
     Ok(created_ids)
+}
+
+/// Called after each agent turn. Gathers the recent conversation from the graph
+/// (the response node and its parent messages via `RespondsTo` edges) and runs
+/// knowledge extraction. Returns the IDs of any newly-created `Knowledge` nodes.
+///
+/// Non-fatal by design — callers should log and continue on error.
+pub async fn post_turn_extract(
+    graph: &GraphStore,
+    llm: &dyn LlmProvider,
+    config: &ExtractionConfig,
+    response_node_id: &NodeId,
+) -> Result<Vec<NodeId>, AgentError> {
+    if !config.enabled {
+        return Ok(vec![]);
+    }
+
+    let response_node = graph.get_node(response_node_id)?;
+    let mut messages: Vec<(String, String)> = Vec::new();
+
+    // Walk outgoing RespondsTo edges to collect parent messages in order.
+    let parents =
+        graph.neighbors(response_node_id, Some(EdgeType::RespondsTo), Direction::Outgoing)?;
+    for parent in &parents {
+        if let NodeType::Interaction(data) = &parent.node_type {
+            messages.push((data.role.clone(), data.content.clone()));
+        }
+    }
+
+    // Append the response node itself so the LLM sees the full exchange.
+    if let NodeType::Interaction(data) = &response_node.node_type {
+        messages.push((data.role.clone(), data.content.clone()));
+    }
+
+    extract_knowledge(graph, llm, &messages, response_node_id, config).await
 }
 
 #[cfg(test)]
@@ -608,5 +645,88 @@ mod tests {
         assert!(prompt.contains("entity_type"));
         assert!(prompt.contains("CONVERSATION"));
         assert!(prompt.contains("(empty conversation)"));
+    }
+
+    #[tokio::test]
+    async fn test_post_turn_extraction_hook() {
+        let graph = GraphStore::open_memory().unwrap();
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.5,
+            ..ExtractionConfig::default()
+        };
+        let llm = MockExtractionProvider {
+            response_json: r#"{
+                "entities": [
+                    {
+                        "entity_type": "convention",
+                        "name": "snake_case naming",
+                        "description": "Use snake_case for Rust function names",
+                        "confidence": 0.9,
+                        "relationships": []
+                    }
+                ]
+            }"#
+            .to_string(),
+        };
+
+        let user_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: "What naming convention should I use?".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let assistant_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".to_string(),
+                content: "Use snake_case for functions in Rust.".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                assistant_id.clone(),
+                user_id.clone(),
+            ))
+            .unwrap();
+
+        let result = post_turn_extract(&graph, &llm, &config, &assistant_id).await;
+
+        assert!(result.is_ok());
+        let node_ids = result.unwrap();
+        assert_eq!(node_ids.len(), 1);
+
+        let neighbors = graph
+            .neighbors(&node_ids[0], Some(EdgeType::DerivedFrom), Direction::Outgoing)
+            .unwrap();
+        assert!(neighbors.iter().any(|n| n.id == assistant_id));
+    }
+
+    #[tokio::test]
+    async fn test_post_turn_extraction_disabled() {
+        let graph = GraphStore::open_memory().unwrap();
+        let config = ExtractionConfig {
+            enabled: false,
+            ..ExtractionConfig::default()
+        };
+        let llm = MockExtractionProvider {
+            response_json: "{}".to_string(),
+        };
+
+        let node_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: "test".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let result = post_turn_extract(&graph, &llm, &config, &node_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
     }
 }

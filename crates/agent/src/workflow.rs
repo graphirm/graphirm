@@ -280,6 +280,20 @@ pub async fn run_agent_loop(
         };
         all_node_ids.push(response_id.clone());
 
+        // Post-turn knowledge extraction — non-fatal; log and continue on error.
+        if let Some(ref extraction_config) = session.agent_config.extraction {
+            if let Err(e) = crate::knowledge::extraction::post_turn_extract(
+                &session.graph,
+                llm,
+                extraction_config,
+                &response_id,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "Knowledge extraction failed (non-fatal)");
+            }
+        }
+
         if !response.has_tool_calls() {
             events.emit(AgentEvent::TurnEnd {
                 response_id: response_id.clone(),
