@@ -13,6 +13,7 @@ pub mod types;
 
 // Re-export the most commonly used types at the crate root.
 pub use error::ServerError;
+pub use routes::create_router;
 pub use state::{AppState, SessionHandle};
 pub use types::{
     CreateSessionRequest, ErrorResponse, GraphResponse, HealthResponse, PromptRequest, SessionId,

@@ -28,3 +28,4 @@ uuid = { version = "1", features = ["v4"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
 async-trait = "0.1"
+http = "1"
