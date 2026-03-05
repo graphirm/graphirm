@@ -39,7 +39,9 @@ impl OnnxExtractor {
     /// Load a GLiNER2 ONNX model and its tokenizer from disk.
     pub fn new(model_path: &Path, tokenizer_path: &Path) -> Result<Self, AgentError> {
         let session = Session::builder()
-            .map_err(|e| AgentError::Workflow(format!("Failed to create ONNX session builder: {e}")))?
+            .map_err(|e| {
+                AgentError::Workflow(format!("Failed to create ONNX session builder: {e}"))
+            })?
             .with_intra_threads(4)
             .map_err(|e| AgentError::Workflow(format!("Failed to configure intra threads: {e}")))?
             .commit_from_file(model_path)
@@ -113,10 +115,11 @@ impl OnnxExtractor {
         // TODO: Implement GLiNER2-specific output parsing once the ONNX export format is
         // validated. The model outputs span logits that need to be decoded against the
         // tokenizer's offset mapping and matched to entity type labels.
-        let raw_entities: Vec<RawOnnxEntity> = parse_onnx_outputs(&outputs, &encoding, entity_types)
-            .into_iter()
-            .filter(|e| e.confidence >= min_confidence)
-            .collect();
+        let raw_entities: Vec<RawOnnxEntity> =
+            parse_onnx_outputs(&outputs, &encoding, entity_types)
+                .into_iter()
+                .filter(|e| e.confidence >= min_confidence)
+                .collect();
 
         Ok(raw_entities_to_extraction_response(raw_entities))
     }

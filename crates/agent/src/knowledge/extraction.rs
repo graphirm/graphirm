@@ -112,10 +112,7 @@ impl Default for ExtractionConfig {
 
 /// Builds the extraction prompt to send to the LLM, embedding the conversation
 /// and instructing the model to return structured JSON with knowledge entities.
-pub fn build_extraction_prompt(
-    messages: &[(String, String)],
-    config: &ExtractionConfig,
-) -> String {
+pub fn build_extraction_prompt(messages: &[(String, String)], config: &ExtractionConfig) -> String {
     let entity_types_list = config.entity_types.join(", ");
 
     let conversation_block = if messages.is_empty() {
@@ -262,8 +259,11 @@ pub async fn post_turn_extract(
     let mut messages: Vec<(String, String)> = Vec::new();
 
     // Walk outgoing RespondsTo edges to collect parent messages in order.
-    let parents =
-        graph.neighbors(response_node_id, Some(EdgeType::RespondsTo), Direction::Outgoing)?;
+    let parents = graph.neighbors(
+        response_node_id,
+        Some(EdgeType::RespondsTo),
+        Direction::Outgoing,
+    )?;
     for parent in &parents {
         if let NodeType::Interaction(data) = &parent.node_type {
             messages.push((data.role.clone(), data.content.clone()));
@@ -306,7 +306,9 @@ pub async fn post_turn_extract(
 pub async fn extract_knowledge_with_backend(
     graph: &GraphStore,
     llm: Option<&dyn LlmProvider>,
-    #[cfg(feature = "local-extraction")] onnx: Option<&crate::knowledge::local_extraction::OnnxExtractor>,
+    #[cfg(feature = "local-extraction")] onnx: Option<
+        &crate::knowledge::local_extraction::OnnxExtractor,
+    >,
     #[cfg(not(feature = "local-extraction"))] _onnx: Option<()>,
     messages: &[(String, String)],
     source_node_id: &NodeId,
@@ -326,8 +328,9 @@ pub async fn extract_knowledge_with_backend(
             let response = llm
                 .complete(vec![LlmMessage::human(prompt)], &[], &completion_config)
                 .await?;
-            serde_json::from_str::<ExtractionResponse>(&response.text_content())
-                .map_err(|e| AgentError::Workflow(format!("Failed to parse extraction response: {e}")))?
+            serde_json::from_str::<ExtractionResponse>(&response.text_content()).map_err(|e| {
+                AgentError::Workflow(format!("Failed to parse extraction response: {e}"))
+            })?
         }
 
         #[cfg(feature = "local-extraction")]
@@ -341,7 +344,11 @@ pub async fn extract_knowledge_with_backend(
                 .collect::<Vec<_>>()
                 .join("\n");
             extractor
-                .extract(&conversation_text, &config.entity_types, config.min_confidence)
+                .extract(
+                    &conversation_text,
+                    &config.entity_types,
+                    config.min_confidence,
+                )
                 .await?
         }
 
@@ -363,13 +370,20 @@ pub async fn extract_knowledge_with_backend(
                 .collect::<Vec<_>>()
                 .join("\n");
             let local_result = extractor
-                .extract(&conversation_text, &config.entity_types, config.min_confidence)
+                .extract(
+                    &conversation_text,
+                    &config.entity_types,
+                    config.min_confidence,
+                )
                 .await?;
 
             // LLM enrichment — add descriptions and discover relationships.
             if let Some(llm) = llm {
-                let entity_names: Vec<&str> =
-                    local_result.entities.iter().map(|e| e.name.as_str()).collect();
+                let entity_names: Vec<&str> = local_result
+                    .entities
+                    .iter()
+                    .map(|e| e.name.as_str())
+                    .collect();
                 let enrichment_prompt = format!(
                     "Given these entities extracted from a conversation: {}\n\n\
                      For each entity, provide a one-sentence description and any relationships between them.\n\n\
@@ -387,10 +401,10 @@ pub async fn extract_knowledge_with_backend(
                     )
                     .await
                 {
-                    Ok(response) => serde_json::from_str::<ExtractionResponse>(
-                        &response.text_content(),
-                    )
-                    .unwrap_or(local_result),
+                    Ok(response) => {
+                        serde_json::from_str::<ExtractionResponse>(&response.text_content())
+                            .unwrap_or(local_result)
+                    }
                     Err(e) => {
                         tracing::warn!(error = %e, "LLM enrichment failed, falling back to local-only");
                         local_result
@@ -480,7 +494,7 @@ mod tests {
     use graphirm_graph::{Direction, EdgeType, GraphNode, GraphStore, InteractionData, NodeType};
     use graphirm_llm::{
         CompletionConfig, ContentPart, LlmError, LlmMessage, LlmProvider, LlmResponse, StopReason,
-        StreamEvent, ToolDefinition, TokenUsage,
+        StreamEvent, TokenUsage, ToolDefinition,
     };
     use std::pin::Pin;
 
@@ -562,10 +576,9 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids =
-            extract_knowledge(&graph, &llm, &messages, &source_node_id, &config)
-                .await
-                .unwrap();
+        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_node_id, &config)
+            .await
+            .unwrap();
 
         assert_eq!(node_ids.len(), 2);
         for id in &node_ids {
@@ -606,14 +619,17 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids =
-            extract_knowledge(&graph, &llm, &messages, &source_id, &config)
-                .await
-                .unwrap();
+        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_id, &config)
+            .await
+            .unwrap();
 
         assert_eq!(node_ids.len(), 1);
         let neighbors = graph
-            .neighbors(&node_ids[0], Some(EdgeType::DerivedFrom), Direction::Outgoing)
+            .neighbors(
+                &node_ids[0],
+                Some(EdgeType::DerivedFrom),
+                Direction::Outgoing,
+            )
             .unwrap();
         assert!(neighbors.iter().any(|n| n.id == source_id));
     }
@@ -657,10 +673,9 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids =
-            extract_knowledge(&graph, &llm, &messages, &source_id, &config)
-                .await
-                .unwrap();
+        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_id, &config)
+            .await
+            .unwrap();
 
         assert_eq!(node_ids.len(), 1);
     }
@@ -706,10 +721,9 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids =
-            extract_knowledge(&graph, &llm, &messages, &source_id, &config)
-                .await
-                .unwrap();
+        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_id, &config)
+            .await
+            .unwrap();
 
         assert_eq!(node_ids.len(), 2);
         let neighbors = graph
@@ -843,9 +857,7 @@ mod tests {
 
     #[test]
     fn test_build_extraction_prompt_includes_entity_types() {
-        let messages = vec![
-            ("user".to_string(), "Hello".to_string()),
-        ];
+        let messages = vec![("user".to_string(), "Hello".to_string())];
         let config = ExtractionConfig {
             entity_types: vec!["function".into(), "api".into()],
             ..ExtractionConfig::default()
@@ -920,7 +932,11 @@ mod tests {
         assert_eq!(node_ids.len(), 1);
 
         let neighbors = graph
-            .neighbors(&node_ids[0], Some(EdgeType::DerivedFrom), Direction::Outgoing)
+            .neighbors(
+                &node_ids[0],
+                Some(EdgeType::DerivedFrom),
+                Direction::Outgoing,
+            )
             .unwrap();
         assert!(neighbors.iter().any(|n| n.id == assistant_id));
     }
