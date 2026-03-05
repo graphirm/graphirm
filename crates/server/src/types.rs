@@ -118,6 +118,17 @@ pub enum SseEventType {
     Heartbeat,
 }
 
+impl std::fmt::Display for SseEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Mirror the serde snake_case representation.
+        let s = serde_json::to_value(self)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_else(|| format!("{self:?}").to_lowercase());
+        f.write_str(&s)
+    }
+}
+
 // ── Request types ─────────────────────────────────────────────────────────────
 
 /// Request body for `POST /api/sessions`.
