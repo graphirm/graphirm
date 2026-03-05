@@ -55,13 +55,19 @@ impl VectorIndex {
     }
 
     pub fn insert(&mut self, id: NodeId, embedding: Vec<f32>) {
+        debug_assert_eq!(
+            embedding.len(),
+            self.dimension,
+            "embedding dimension mismatch: expected {}, got {}",
+            self.dimension,
+            embedding.len()
+        );
         self.pending.push((id, embedding));
         self.map = None;
     }
 
     pub fn rebuild(&mut self) {
         if self.pending.is_empty() {
-            self.map = None;
             return;
         }
         let points: Vec<Point> = self.pending.iter().map(|(_, v)| Point(v.clone())).collect();
