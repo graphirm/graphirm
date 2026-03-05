@@ -279,5 +279,6 @@ mod tests {
         let prompt = build_extraction_prompt(&messages, &config);
         assert!(prompt.contains("entity_type"));
         assert!(prompt.contains("CONVERSATION"));
+        assert!(prompt.contains("(empty conversation)"));
     }
 }
