@@ -67,6 +67,36 @@ impl MemoryRetriever {
         tracing::debug!(node_id = %node_id, "Embedded knowledge node");
         Ok(())
     }
+
+    /// Embed a query string and search the HNSW index for the k most
+    /// similar knowledge nodes. Returns full node objects from the graph.
+    pub async fn retrieve_relevant(
+        &self,
+        query: &str,
+        k: usize,
+    ) -> Result<Vec<graphirm_graph::GraphNode>, AgentError> {
+        let query_embedding = self.llm.embed(query).await.map_err(AgentError::Llm)?;
+
+        let index = self.vector_index.read().await;
+        let candidates = index.search(&query_embedding, k);
+        drop(index);
+
+        let mut nodes = Vec::with_capacity(candidates.len());
+        for (node_id, _distance) in candidates {
+            match self.graph.get_node(&node_id) {
+                Ok(node) => nodes.push(node),
+                Err(e) => {
+                    tracing::warn!(
+                        node_id = %node_id,
+                        error = %e,
+                        "Knowledge node in HNSW index but missing from graph"
+                    );
+                }
+            }
+        }
+
+        Ok(nodes)
+    }
 }
 
 #[cfg(test)]
@@ -167,6 +197,84 @@ mod tests {
 
         let result = retriever.embed_knowledge_node(&node_id).await;
         assert!(matches!(result, Err(AgentError::Workflow(_))));
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_relevant_finds_similar_knowledge() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
+        let llm: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+
+        let retriever = MemoryRetriever::new(graph.clone(), vector_index.clone(), llm, 64);
+
+        let topics = vec![
+            ("JWT Auth", "pattern", "Token-based authentication using JSON Web Tokens"),
+            ("bcrypt", "library", "Password hashing library for secure storage"),
+            ("PostgreSQL", "database", "Relational database for persistent storage"),
+            ("React hooks", "pattern", "React state management with useState and useEffect"),
+            ("OAuth2 flow", "pattern", "Authorization protocol for third-party access"),
+        ];
+
+        for (name, entity_type, desc) in &topics {
+            let node_id = graph
+                .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                    entity: name.to_string(),
+                    entity_type: entity_type.to_string(),
+                    summary: desc.to_string(),
+                    confidence: 0.9,
+                })))
+                .unwrap();
+            retriever.embed_knowledge_node(&node_id).await.unwrap();
+        }
+
+        {
+            let mut idx = vector_index.write().await;
+            idx.rebuild();
+        }
+
+        let results = retriever
+            .retrieve_relevant("implement user login", 3)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+
+        for node in &results {
+            assert!(matches!(node.node_type, NodeType::Knowledge(_)));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_relevant_empty_index() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
+        let llm: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+
+        let retriever = MemoryRetriever::new(graph.clone(), vector_index, llm, 64);
+
+        let results = retriever.retrieve_relevant("anything", 5).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_relevant_k_larger_than_index() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
+        let llm: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+
+        let retriever = MemoryRetriever::new(graph.clone(), vector_index.clone(), llm, 64);
+
+        let node_id = graph
+            .add_node(knowledge_node("Only Node", "The only knowledge node"))
+            .unwrap();
+        retriever.embed_knowledge_node(&node_id).await.unwrap();
+
+        {
+            let mut idx = vector_index.write().await;
+            idx.rebuild();
+        }
+
+        let results = retriever.retrieve_relevant("query", 100).await.unwrap();
+        assert_eq!(results.len(), 1);
     }
 
     #[tokio::test]
