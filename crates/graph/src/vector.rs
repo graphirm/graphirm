@@ -168,6 +168,24 @@ mod tests {
     }
 
     #[test]
+    fn test_rebuild_from_store_filters_wrong_dimension() {
+        let store = GraphStore::open_memory().unwrap();
+        let node_id = store
+            .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: "mismatch".to_string(),
+                entity_type: "function".to_string(),
+                summary: "wrong dimension".to_string(),
+                confidence: 0.9,
+            })))
+            .unwrap();
+        // Store a 32-dim embedding, but rebuild for 64-dim
+        store.set_embedding(&node_id, &vec![0.0f32; 32]).unwrap();
+
+        let index = VectorIndex::rebuild_from_store(&store, 64).unwrap();
+        assert!(index.is_empty(), "wrong-dimension embeddings should be filtered out");
+    }
+
+    #[test]
     fn test_vector_index_new() {
         let index = VectorIndex::new(128);
         assert_eq!(index.dimension(), 128);
