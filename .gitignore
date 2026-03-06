@@ -26,3 +26,6 @@ Thumbs.db
 
 # Git worktrees
 .worktrees/
+
+# Internal docs (plans, strategy, findings — keep local only)
+docs/

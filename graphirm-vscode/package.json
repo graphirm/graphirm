@@ -7,7 +7,7 @@
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/consoulhub/graphirm"
+    "url": "https://github.com/graphirm/graphirm"
   },
   "license": "MIT",
   "engines": {
