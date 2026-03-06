@@ -81,13 +81,27 @@ export function initGraph(send) {
       });
     }
   });
+
+  document.getElementById('layout-toggle-btn').addEventListener('click', () => {
+    _layoutMode = _layoutMode === 'force' ? 'timeline' : 'force';
+    const btn = document.getElementById('layout-toggle-btn');
+    btn.textContent = _layoutMode === 'force' ? 'Timeline' : 'Force';
+    btn.classList.toggle('active', _layoutMode === 'timeline');
+
+    // Re-render with new layout
+    if (_currentData) {
+      renderGraph(_currentData);
+    }
+  });
 }
 
 export function handleGraphMessage(msg) {
   if (msg.type === 'session_loaded' || msg.type === 'refreshed') {
-    renderGraph(msg.graph || { nodes: [], edges: [] });
+    _currentData = msg.graph || { nodes: [], edges: [] };
+    renderGraph(_currentData);
   } else if (msg.type === 'subgraph') {
-    renderGraph(msg.subgraph);
+    _currentData = msg.subgraph;
+    renderGraph(_currentData);
   } else if (msg.type === 'node_detail') {
     showNodeDetail(msg.node);
   }
@@ -282,8 +296,20 @@ function renderGraph({ nodes, edges }) {
   _simulation = d3.forceSimulation(nodes)
     .force('link', d3.forceLink(simEdges).id(d => d.id).distance(80))
     .force('charge', d3.forceManyBody().strength(-200))
-    .force('center', d3.forceCenter(_width / 2, _height / 2))
-    .on('tick', () => {
+    .force('center', d3.forceCenter(_width / 2, _height / 2));
+
+  // Branch on layout mode
+  if (_layoutMode === 'timeline') {
+    // Timeline mode: fixed positions
+    applyTimelineLayout(nodes, edges, _width, _height);
+    _simulation.alpha(0).stop();
+  } else {
+    // Force mode: free-floating
+    releaseNodePositions(nodes);
+    _simulation.alpha(0.3).restart();
+  }
+
+  _simulation.on('tick', () => {
       link
         .attr('x1', d => d.source.x)
         .attr('y1', d => d.source.y)
