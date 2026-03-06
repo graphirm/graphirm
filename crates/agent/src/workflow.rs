@@ -288,6 +288,13 @@ pub async fn run_agent_loop(
     // Reset each time a new prompt is submitted (i.e. per run_agent_loop call).
     let mut read_cache: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
+    
+    // NEW: Add escalation detector
+    let mut escalation_detector = crate::escalation::EscalationDetector::new(
+        8,  // soft_escalation_turn (adjust based on testing)
+        2,  // soft_escalation_threshold (repeated calls within window)
+    );
+    let mut escalation_triggered = false;
 
     events.emit(AgentEvent::AgentStart {
         agent_id: session.id.clone(),
@@ -352,6 +359,59 @@ pub async fn run_agent_loop(
         }
 
         let tool_calls: Vec<&ContentPart> = response.tool_calls();
+        
+        // NEW: Check for escalation
+        if !escalation_triggered {
+            let (should_escalate, repeated_count) = 
+                escalation_detector.should_escalate(turn as usize, &tool_calls);
+            
+            if should_escalate {
+                info!(
+                    turn = turn as usize,
+                    repeated_count = repeated_count,
+                    "Soft escalation triggered: switching to synthesis mode"
+                );
+                
+                // Add synthesis directive as system message
+                let synthesis_msg = "Based on the information you've gathered so far, \
+                    please synthesize your findings and provide your analysis. \
+                    Do not make additional tool calls. Format your response as a clear conclusion.";
+                
+                session.add_user_message(synthesis_msg)?;
+                escalation_triggered = true;
+                
+                // Get fresh context and call LLM again
+                let (synthesis_response, synthesis_id) = 
+                    stream_and_record(session, llm, tools, events).await?;
+                all_node_ids.push(synthesis_id.clone());
+                
+                // If model still has tool calls after synthesis directive, hard stop
+                if synthesis_response.has_tool_calls() {
+                    tracing::error!(
+                        turn = turn as usize,
+                        tool_calls = ?synthesis_response.tool_calls().len(),
+                        "Model ignored synthesis directive; hard recursion limit"
+                    );
+                    return Err(AgentError::RecursionLimit(turn));
+                }
+                
+                // Success: model synthesized
+                events.emit(AgentEvent::TurnEnd {
+                    response_id: synthesis_id.clone(),
+                    tool_result_ids: vec![],
+                });
+                emit_graph_update(session, &synthesis_id, vec![], events);
+                break;
+            }
+        }
+
+        // Record tool calls for next iteration
+        for part in &tool_calls {
+            if let Some(key) = crate::escalation::ToolCallKey::from_content_part(part) {
+                escalation_detector.record_tool_call(turn as usize, key);
+            }
+        }
+        
         for part in &tool_calls {
             let ContentPart::ToolCall {
                 id: call_id, name, ..
@@ -364,6 +424,26 @@ pub async fn run_agent_loop(
                 call_id: call_id.clone(),
                 tool_name: name.clone(),
             });
+        }
+
+        // NEW: Add detailed logging
+        info!(
+            turn = turn as usize,
+            tool_count = tool_calls.len(),
+            "Executing {} tool calls in parallel",
+            tool_calls.len()
+        );
+
+        for (idx, tool_call) in tool_calls.iter().enumerate() {
+            if let ContentPart::ToolCall { name, arguments, .. } = tool_call {
+                tracing::debug!(
+                    turn = turn as usize,
+                    tool_index = idx,
+                    tool_name = %name,
+                    args = ?arguments,
+                    "Tool call details"
+                );
+            }
         }
 
         let tool_result_ids = execute_tools_parallel(
