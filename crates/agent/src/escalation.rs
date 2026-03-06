@@ -56,7 +56,7 @@ impl EscalationDetector {
     /// Check if soft escalation should trigger
     /// Looks at recent tool call history and detects repeated patterns
     pub fn should_escalate(&self, turn: usize, _tool_calls: &[&ContentPart]) -> (bool, usize) {
-        if turn <= self.soft_escalation_turn {
+        if turn < self.soft_escalation_turn {
             return (false, 0);
         }
 
@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn test_escalation_threshold_triggers() {
-        let mut detector = EscalationDetector::new(3, 2);
+        let mut detector = EscalationDetector::new(4, 2);
         
         let key1 = ToolCallKey {
             tool_name: "read".to_string(),
