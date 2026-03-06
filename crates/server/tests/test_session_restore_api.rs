@@ -100,8 +100,18 @@ mod tests {
 
         // Add multiple agent nodes representing restored sessions
         let sessions_data = vec![
-            ("session-api-001", "auth-refactor", "claude-sonnet-4", "completed"),
-            ("session-api-002", "feature-build", "claude-haiku-4", "active"),
+            (
+                "session-api-001",
+                "auth-refactor",
+                "claude-sonnet-4",
+                "completed",
+            ),
+            (
+                "session-api-002",
+                "feature-build",
+                "claude-haiku-4",
+                "active",
+            ),
             ("session-api-003", "debug-error", "gpt-4o", "failed"),
         ];
 

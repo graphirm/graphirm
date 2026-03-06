@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use graphirm_agent::SessionStatus;
 use graphirm_agent::SessionMetadata;
+use graphirm_agent::SessionStatus;
 use graphirm_graph::{GraphError, GraphStore};
 
 /// Query GraphStore for all Agent nodes and reconstruct session metadata.
@@ -45,8 +45,14 @@ pub async fn restore_sessions_from_graph(
         sessions.insert(node.id.0.clone(), metadata);
     }
 
-    tracing::info!(session_count = sessions.len(), "Session restoration complete");
-    tracing::debug!("Session restoration complete: {} sessions loaded", sessions.len());
+    tracing::info!(
+        session_count = sessions.len(),
+        "Session restoration complete"
+    );
+    tracing::debug!(
+        "Session restoration complete: {} sessions loaded",
+        sessions.len()
+    );
 
     Ok(sessions)
 }
