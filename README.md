@@ -10,6 +10,7 @@ A graph-native coding agent in Rust. Every interaction, tool call, and file read
 - **Relevance-scored context** — PageRank + recency + graph distance, not "last N messages"
 - **Multi-provider** — Anthropic, DeepSeek, OpenAI, Ollama, 17+ via rig-core
 - **VS Code extension** — two-pane chat + live graph visualization
+- **Agent Trace export** — Export sessions to open standard interchange format for external tool integration
 - **Single binary** — no Docker, no runtime deps
 - **Session persistence & restoration** — Sessions automatically survive server restarts; full history restored from SQLite on startup with zero manual steps
 
@@ -37,6 +38,29 @@ Then open VS Code / Cursor → `Ctrl+Shift+P` → **Graphirm: Open Panel**.
 **Terminal only:** Run `./target/release/graphirm chat` for a TUI in the current directory. Same graph backend; sessions are per process.
 
 The graph database lives at `~/.local/share/graphirm/graph.db` by default. Override with `--db /path/to/graph.db` when starting `serve` or `chat`.
+
+## Export Sessions to Agent Trace Format
+
+Export any session to the open-standard Agent Trace interchange format for integration with external tools, documentation, or code review systems:
+
+```bash
+# Export to stdout (pretty-printed JSON)
+graphirm export <session-id>
+
+# Export to file
+graphirm export <session-id> --output trace.json
+
+# View full format
+graphirm export --help
+```
+
+Agent Trace format includes the complete conversation thread with all tool calls and results, making it easy to:
+- Link AI conversations to code changes
+- Integrate with documentation systems
+- Audit agent decision-making
+- Build custom analysis tools
+
+See [Agent Trace spec](https://github.com/anthropics/agent-trace-spec) (CC BY 4.0) for format details.
 
 ## Architecture
 
