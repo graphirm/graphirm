@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     use chrono::Utc;
@@ -142,7 +141,8 @@ mod tests {
         assert_eq!(sessions.len(), 5);
 
         for (id, _status_str, expected_status) in &status_mappings {
-            let metadata = &sessions[id];
+            let session_id_str = id.to_string();
+            let metadata = &sessions[&session_id_str];
             assert_eq!(
                 metadata.status, *expected_status,
                 "Status mismatch for session {id}"
