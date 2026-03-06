@@ -9,15 +9,15 @@
 //! - **TraceTurn**: Individual conversation turn (user message, assistant response, tool output)
 //! - **TraceToolCall**: Tool invocation within an assistant turn
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// Top-level Agent Trace record for a session.
 ///
 /// Contains the session ID, trace version, and all turns in conversation order.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AgentTraceRecord {
     /// Agent Trace format version (currently "0.1")
-    pub version: String,
+    pub version: &'static str,
     /// Unique session identifier (UUID)
     pub session_id: String,
     /// Ordered list of conversation turns
@@ -28,7 +28,7 @@ pub struct AgentTraceRecord {
 ///
 /// A turn is either a user message, assistant response, or tool output.
 /// Assistant turns may include tool calls.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TraceTurn {
     /// Unique identifier for this turn (node ID from graph)
     pub id: String,
@@ -45,7 +45,7 @@ pub struct TraceTurn {
 /// A tool invocation within an assistant turn.
 ///
 /// Records what tool was called, its parameters, and the result.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TraceToolCall {
     /// Unique identifier for this tool call (node ID from graph)
     pub id: String,
@@ -85,7 +85,7 @@ mod tests {
         };
 
         let record = AgentTraceRecord {
-            version: "0.1".to_string(),
+            version: "0.1",
             session_id: "session-abc123".to_string(),
             turns: vec![user_turn, assistant_turn],
         };
@@ -101,9 +101,9 @@ mod tests {
         assert!(json.contains("\"name\":\"bash\""), "tool name missing");
         assert!(json.contains("\"tool_calls\""), "tool_calls array missing");
 
-        // Assert turn count
-        let deserialized: AgentTraceRecord = serde_json::from_str(&json).expect("deserialization failed");
-        assert_eq!(deserialized.turns.len(), 2, "expected 2 turns");
+        // Assert turn count by checking the JSON structure
+        assert!(json.contains("turn-001"), "first turn missing");
+        assert!(json.contains("turn-002"), "second turn missing");
     }
 
     #[test]
