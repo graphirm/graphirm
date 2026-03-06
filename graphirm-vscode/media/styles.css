@@ -240,3 +240,25 @@ textarea {
 }
 
 .node-actions button { font-size: 11px; padding: 3px 8px; }
+
+/* Layout toggle button */
+#layout-toggle-btn {
+  padding: 6px 12px;
+  background: var(--button-background, var(--vscode-button-background, #0e639c));
+  color: var(--button-foreground, var(--vscode-button-foreground, #fff));
+  border: 1px solid var(--button-border, var(--vscode-button-border, transparent));
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color 0.15s;
+}
+
+#layout-toggle-btn:hover {
+  background: var(--button-hovered-background, var(--vscode-button-hoverBackground, rgba(255, 255, 255, 0.1)));
+}
+
+#layout-toggle-btn.active {
+  background: var(--accent-color, var(--vscode-button-background, #0e639c));
+  color: white;
+}
