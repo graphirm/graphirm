@@ -694,13 +694,13 @@ impl GraphStore {
 
         let conn = self.pool.get()?;
         
-        // Query all Interaction nodes that have a "spawned_by" edge from this session
+        // Query all Interaction nodes that have a "produces" edge from this session
         let mut stmt = conn.prepare(
             "SELECT n.id, n.data, n.metadata, n.created_at, n.updated_at 
              FROM nodes n
              JOIN edges e ON e.target_id = n.id
              WHERE e.source_id = ?1 
-             AND e.edge_type = 'spawned_by'
+             AND e.edge_type = 'produces'
              AND n.node_type = 'interaction'
              ORDER BY n.created_at ASC",
         )?;

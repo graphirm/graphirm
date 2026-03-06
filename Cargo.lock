@@ -982,6 +982,7 @@ dependencies = [
  "graphirm-tools",
  "graphirm-tui",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",

@@ -75,6 +75,22 @@ pub fn export_session(graph: &GraphStore, session_id: &str) -> Result<AgentTrace
     // Fetch all Interaction nodes in the session's thread (in creation order)
     let nodes = graph.get_session_thread(session_id)?;
     let mut turns = Vec::new();
+    
+    // Build a map of tool_call_id → result for quick lookup
+    let mut tool_results: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for node in &nodes {
+        if let NodeType::Interaction(ref data) = node.node_type {
+            if data.role == "tool" {
+                // Store the tool result by its tool_call_id
+                if let Some(tool_call_id) = node.metadata
+                    .get("tool_call_id")
+                    .and_then(|v| v.as_str())
+                {
+                    tool_results.insert(tool_call_id.to_string(), data.content.clone());
+                }
+            }
+        }
+    }
 
     for node in &nodes {
         // Extract the interaction data; skip non-Interaction nodes
@@ -87,31 +103,12 @@ pub fn export_session(graph: &GraphStore, session_id: &str) -> Result<AgentTrace
             continue;
         }
 
-        // Fetch any tool results that were called during this turn
-        let tool_calls = graph
-            .get_tool_results_for(&node.id)?
-            .into_iter()
-            .filter_map(|n| {
-                // Each tool result is an Interaction node with role="tool"
-                if let NodeType::Interaction(ref d) = n.node_type {
-                    // Extract the tool name from metadata
-                    let tool_name = n
-                        .metadata
-                        .get("tool_name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-
-                    Some(TraceToolCall {
-                        id: n.id.to_string(),
-                        name: tool_name,
-                        result: d.content.clone(),
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
+        // For assistant turns, extract tool calls from metadata
+        let tool_calls = if data.role == "assistant" {
+            extract_tool_calls_from_metadata(&node.metadata, &tool_results)
+        } else {
+            Vec::new()
+        };
 
         turns.push(TraceTurn {
             id: node.id.to_string(),
@@ -129,7 +126,50 @@ pub fn export_session(graph: &GraphStore, session_id: &str) -> Result<AgentTrace
     })
 }
 
-#[cfg(test)]
+/// Extract tool calls from assistant turn metadata.
+/// 
+/// The metadata contains a "tool_calls" array with structure:
+/// [{"name": "ls", "id": "call_001", "arguments": {...}}, ...]
+fn extract_tool_calls_from_metadata(
+    metadata: &serde_json::Value,
+    tool_results: &std::collections::HashMap<String, String>,
+) -> Vec<TraceToolCall> {
+    let mut calls = Vec::new();
+    
+    if let Some(metadata_obj) = metadata.as_object() {
+        if let Some(tool_calls_value) = metadata_obj.get("tool_calls") {
+            if let Some(tool_calls_array) = tool_calls_value.as_array() {
+                for tool_call in tool_calls_array {
+                    if let Some(tool_call_obj) = tool_call.as_object() {
+                        let name = tool_call_obj
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let id = tool_call_obj
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let result = tool_results
+                            .get(&id)
+                            .cloned()
+                            .unwrap_or_else(|| "(no result)".to_string());
+                        
+                        calls.push(TraceToolCall {
+                            id,
+                            name,
+                            result,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    calls
+}
+
 mod tests {
     use super::*;
     use std::sync::Arc;
