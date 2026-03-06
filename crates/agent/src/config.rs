@@ -128,10 +128,24 @@ pub struct AgentConfig {
     /// Knowledge extraction config. `None` disables post-turn extraction.
     #[serde(default)]
     pub extraction: Option<ExtractionConfig>,
+    /// Turn at which to start checking for repeated tool calls
+    #[serde(default = "default_soft_escalation_turn")]
+    pub soft_escalation_turn: usize,
+    /// Number of repeated tool calls to trigger escalation
+    #[serde(default = "default_soft_escalation_threshold")]
+    pub soft_escalation_threshold: usize,
 }
 
 fn default_working_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn default_soft_escalation_turn() -> usize {
+    8
+}
+
+fn default_soft_escalation_threshold() -> usize {
+    2
 }
 
 impl Default for AgentConfig {
@@ -150,6 +164,8 @@ impl Default for AgentConfig {
             max_context_messages: None,
             permissions: HashMap::new(),
             extraction: None,
+            soft_escalation_turn: default_soft_escalation_turn(),
+            soft_escalation_threshold: default_soft_escalation_threshold(),
         }
     }
 }
@@ -188,6 +204,10 @@ struct AgentConfigSection {
     max_context_messages: Option<usize>,
     #[serde(default)]
     extraction: Option<ExtractionConfig>,
+    #[serde(default = "default_soft_escalation_turn")]
+    soft_escalation_turn: usize,
+    #[serde(default = "default_soft_escalation_threshold")]
+    soft_escalation_threshold: usize,
 }
 
 fn default_system_prompt() -> String {
@@ -218,6 +238,8 @@ impl AgentConfig {
             max_context_messages: file.agent.max_context_messages,
             permissions: file.permissions,
             extraction: file.agent.extraction,
+            soft_escalation_turn: file.agent.soft_escalation_turn,
+            soft_escalation_threshold: file.agent.soft_escalation_threshold,
         })
     }
 

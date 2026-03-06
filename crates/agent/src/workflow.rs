@@ -291,8 +291,8 @@ pub async fn run_agent_loop(
 
     // Initialize escalation detector to catch repeated tool calls
     let mut escalation_detector = crate::escalation::EscalationDetector::new(
-        8,  // soft_escalation_turn (adjust based on testing)
-        2,  // soft_escalation_threshold (repeated calls within window)
+        session.agent_config.soft_escalation_turn,
+        session.agent_config.soft_escalation_threshold,
     );
     let mut escalation_triggered = false;
 
@@ -387,12 +387,12 @@ pub async fn run_agent_loop(
                 
                 // If model still has tool calls after synthesis directive, hard stop
                 if synthesis_response.has_tool_calls() {
-                    error!(
-                        turn = turn as usize,
-                        tool_calls = ?synthesis_response.tool_calls().len(),
-                        "Model ignored synthesis directive; hard recursion limit"
-                    );
-                    return Err(AgentError::RecursionLimit(turn));
+                error!(
+                    turn = turn as usize,
+                    tool_calls = ?synthesis_response.tool_calls().len(),
+                    "Model ignored synthesis directive; hard recursion limit"
+                );
+                return Err(AgentError::RecursionLimit(turn as u32));
                 }
                 
                 // Success: model synthesized
@@ -474,7 +474,7 @@ pub async fn run_agent_loop(
                 agent_id: session.id.clone(),
                 node_ids: all_node_ids,
             });
-            return Err(AgentError::RecursionLimit(max_turns));
+            return Err(AgentError::RecursionLimit(max_turns as u32));
         }
     }
 
