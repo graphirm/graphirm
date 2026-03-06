@@ -11,6 +11,10 @@
 
 use serde::Serialize;
 
+use crate::nodes::NodeType;
+use crate::store::GraphStore;
+use crate::error::GraphError;
+
 /// Top-level Agent Trace record for a session.
 ///
 /// Contains the session ID, trace version, and all turns in conversation order.
@@ -55,9 +59,90 @@ pub struct TraceToolCall {
     pub result: String,
 }
 
+/// Export a session to Agent Trace format.
+///
+/// Queries the graph for all Interaction nodes in the session's thread,
+/// filters out tool result nodes (role="tool"), and nests their corresponding
+/// tool calls into each assistant turn.
+///
+/// # Arguments
+/// * `graph` - The GraphStore to query
+/// * `session_id` - The session ID to export
+///
+/// # Returns
+/// An AgentTraceRecord on success, or a GraphError if the session is not found.
+pub fn export_session(graph: &GraphStore, session_id: &str) -> Result<AgentTraceRecord, GraphError> {
+    // Fetch all Interaction nodes in the session's thread (in creation order)
+    let nodes = graph.get_session_thread(session_id)?;
+    let mut turns = Vec::new();
+
+    for node in &nodes {
+        // Extract the interaction data; skip non-Interaction nodes
+        let NodeType::Interaction(ref data) = node.node_type else {
+            continue;
+        };
+
+        // Skip tool result nodes—they get merged into the parent turn below
+        if data.role == "tool" {
+            continue;
+        }
+
+        // Fetch any tool results that were called during this turn
+        let tool_calls = graph
+            .get_tool_results_for(&node.id)?
+            .into_iter()
+            .filter_map(|n| {
+                // Each tool result is an Interaction node with role="tool"
+                if let NodeType::Interaction(ref d) = n.node_type {
+                    // Extract the tool name from metadata
+                    let tool_name = n
+                        .metadata
+                        .get("tool_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+
+                    Some(TraceToolCall {
+                        id: n.id.to_string(),
+                        name: tool_name,
+                        result: d.content.clone(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        turns.push(TraceTurn {
+            id: node.id.to_string(),
+            role: data.role.clone(),
+            content: data.content.clone(),
+            tool_calls,
+            created_at: node.created_at.to_rfc3339(),
+        });
+    }
+
+    Ok(AgentTraceRecord {
+        version: "0.1",
+        session_id: session_id.to_string(),
+        turns,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn export_session_empty_graph() {
+        // Create an in-memory store
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        // Try to export a non-existent session
+        let result = export_session(&graph, "nonexistent-session");
+        // Should return an error (session not found)
+        assert!(result.is_err());
+    }
 
     #[test]
     fn agent_trace_record_serializes() {
