@@ -4,6 +4,7 @@ pub mod context;
 pub mod coordinator;
 pub mod delegate;
 pub mod error;
+pub mod escalation;
 pub mod event;
 pub mod knowledge;
 pub mod multi;
