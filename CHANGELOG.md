@@ -13,16 +13,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - `graphirm export <session-id> --output trace.json` — export to file
   - Supports linking AI conversations to code changes, documentation systems, and custom tools
   - Complete tool call nesting and metadata preservation
+- **DAG Timeline Layout** — Visual redesign of graph explorer with temporal and type-based node positioning
+- **Session Restoration** — Sessions automatically survive server restarts with full history preserved
+- **Landing Page** — graphirm.ai static site with installation and usage documentation
 
-### Features in 3.0
+### Platform Features
 
 - Graph-native session persistence with SQLite
 - Multi-provider LLM support (Anthropic, DeepSeek, OpenAI, Ollama, 17+ via rig-core)
 - VS Code / Cursor extension with two-pane chat + live graph visualization
-- DAG timeline layout for session visualization
-- Session restoration on server restart
-- Agent Trace export to standard interchange format
 - Single-binary deployment (no Docker, no runtime dependencies)
+- REST API with SSE streaming
+- Cross-session memory with knowledge layer
 
 ---
 
