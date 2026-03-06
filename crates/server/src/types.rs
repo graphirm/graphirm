@@ -203,6 +203,22 @@ pub struct GraphResponse {
     pub edges: Vec<GraphEdge>,
 }
 
+/// Soft escalation metrics for a session.
+///
+/// Tracks when and how often the agent's soft escalation mechanism triggered
+/// in response to repeated tool calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EscalationMetrics {
+    /// The session ID these metrics belong to.
+    pub session_id: String,
+    /// Total number of times soft escalation was triggered.
+    pub total_escalations: usize,
+    /// Average turn number at which escalations occurred.
+    pub avg_turn_triggered: f64,
+    /// The turn number of the most recent escalation, if any.
+    pub last_escalation_turn: Option<usize>,
+}
+
 /// A single SSE event pushed to connected clients.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SseEvent {
