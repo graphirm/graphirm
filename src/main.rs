@@ -177,9 +177,7 @@ async fn main() -> Result<(), GraphirmError> {
                 .with_env_filter("error")
                 .init();
 
-            let graph = graphirm_graph::GraphStore::open(
-                db_path.to_str().unwrap_or("graph.db"),
-            )?;
+            let graph = open_graph(&db_path)?;
             let record = graphirm_graph::export_session(&graph, &args.session_id)?;
             let json = serde_json::to_string_pretty(&record).map_err(|e| {
                 GraphirmError::Config(format!("Failed to serialize export: {e}"))
@@ -221,6 +219,12 @@ fn resolve_db_path(override_path: Option<PathBuf>) -> Result<PathBuf, GraphirmEr
         })?;
     }
     Ok(path)
+}
+
+/// Helper to open the graph with the configured database path.
+fn open_graph(db_path: &PathBuf) -> Result<graphirm_graph::GraphStore, GraphirmError> {
+    graphirm_graph::GraphStore::open(db_path.to_str().unwrap_or("graph.db"))
+        .map_err(|e| GraphirmError::Config(e.to_string()))
 }
 
 fn run_graph_command(action: GraphAction, db_path: &PathBuf) -> Result<(), GraphirmError> {
