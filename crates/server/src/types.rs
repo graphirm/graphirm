@@ -243,6 +243,7 @@ mod tests {
         let now = Utc::now();
         let session = SessionResponse {
             id: "abc-123".to_string(),
+            name: "test-session".to_string(),
             agent: "graphirm".to_string(),
             model: "claude-sonnet-4-20250514".to_string(),
             created_at: now,
@@ -251,6 +252,7 @@ mod tests {
         let json = serde_json::to_string(&session).unwrap();
         let back: SessionResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, "abc-123");
+        assert_eq!(back.name, "test-session");
         assert_eq!(back.agent, "graphirm");
         assert_eq!(back.model, "claude-sonnet-4-20250514");
         assert_eq!(back.status, SessionStatus::Idle);

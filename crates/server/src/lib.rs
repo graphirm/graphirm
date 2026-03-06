@@ -9,6 +9,7 @@ pub mod middleware;
 pub mod request_log;
 pub mod routes;
 pub mod sdk;
+pub mod session;
 pub mod sse;
 pub mod state;
 pub mod types;
@@ -22,6 +23,9 @@ pub use types::{
     CreateSessionRequest, ErrorResponse, GraphResponse, HealthResponse, PromptRequest, SessionId,
     SessionResponse, SessionStatus, SseEvent, SseEventType, SubgraphQuery,
 };
+
+// Session restoration
+pub use crate::session::restore_sessions_from_graph;
 
 // ── Server entry point ────────────────────────────────────────────────────────
 
@@ -70,6 +74,20 @@ pub async fn start_server(
     server_config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (event_tx, _) = broadcast::channel::<SseEvent>(1024);
+
+    // Attempt to restore previous sessions from the graph store.
+    // Sessions remain in the graph and can be queried; this is primarily for
+    // logging and future features (e.g., populating an active session cache).
+    match restore_sessions_from_graph(&graph).await {
+        Ok(sessions) => {
+            if !sessions.is_empty() {
+                info!("Restored {} sessions from graph", sessions.len());
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to restore sessions from graph: {e}");
+        }
+    }
 
     let state = AppState {
         graph,
