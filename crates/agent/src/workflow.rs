@@ -372,11 +372,20 @@ pub async fn run_agent_loop(
                     "Soft escalation triggered: switching to synthesis mode"
                 );
                 
-                // Add synthesis directive as system message
+                // Emit event for observability
                 let synthesis_msg = "Based on the information you've gathered so far, \
                     please synthesize your findings and provide your analysis. \
                     Do not make additional tool calls. Format your response as a clear conclusion.";
                 
+                events.emit(crate::event::AgentEvent::SoftEscalationTriggered(
+                    crate::event::SoftEscalationTriggeredEvent {
+                        turn: turn as usize,
+                        repeated_tool_calls: repeated_count,
+                        synthesis_directive: synthesis_msg.to_string(),
+                    }
+                ));
+                
+                // Add synthesis directive as system message
                 session.add_user_message(synthesis_msg)?;
                 escalation_triggered = true;
                 

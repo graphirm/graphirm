@@ -7,6 +7,13 @@ use tokio::sync::mpsc;
 use tracing;
 
 #[derive(Debug, Clone)]
+pub struct SoftEscalationTriggeredEvent {
+    pub turn: usize,
+    pub repeated_tool_calls: usize,
+    pub synthesis_directive: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum AgentEvent {
     AgentStart {
         agent_id: NodeId,
@@ -51,6 +58,7 @@ pub enum AgentEvent {
         edge_ids: Vec<EdgeId>,
         recent_nodes: Vec<GraphNode>,
     },
+    SoftEscalationTriggered(SoftEscalationTriggeredEvent),
 }
 
 pub struct EventBus {
