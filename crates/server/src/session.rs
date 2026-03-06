@@ -18,6 +18,8 @@ use graphirm_graph::{GraphError, GraphStore};
 pub async fn restore_sessions_from_graph(
     graph: &Arc<GraphStore>,
 ) -> Result<HashMap<String, SessionMetadata>, GraphError> {
+    tracing::debug!("Querying graph for Agent nodes to restore sessions");
+
     let agent_nodes = graph.get_agent_nodes()?;
 
     let mut sessions = HashMap::new();
@@ -42,6 +44,9 @@ pub async fn restore_sessions_from_graph(
 
         sessions.insert(node.id.0.clone(), metadata);
     }
+
+    tracing::info!(session_count = sessions.len(), "Session restoration complete");
+    tracing::debug!("Session restoration complete: {} sessions loaded", sessions.len());
 
     Ok(sessions)
 }
