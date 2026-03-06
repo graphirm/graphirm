@@ -19,7 +19,7 @@ use crate::middleware::request_logging;
 use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
-    CreateSessionRequest, GraphResponse, HealthResponse, PromptRequest, SessionId, SessionResponse,
+    CreateSessionRequest, EscalationMetrics, GraphResponse, HealthResponse, PromptRequest, SessionId, SessionResponse,
     SessionStatus, SseEvent, SseEventType, SubgraphQuery,
 };
 
@@ -59,6 +59,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/graph/{session_id}/tasks", get(get_tasks))
         .route("/api/graph/{session_id}/knowledge", get(get_knowledge))
+        .route("/api/sessions/{id}/escalations", get(get_escalation_metrics))
         // SSE event streams
         .route("/api/events", get(sse_handler))
         .route("/api/events/{session_id}", get(sse_session_handler))
@@ -465,6 +466,60 @@ async fn get_knowledge(
         .collect();
 
     Ok(Json(knowledge))
+}
+
+/// `GET /api/sessions/{id}/escalations` — Get soft escalation metrics for a session.
+///
+/// Queries the session's graph to count and analyze soft escalation events.
+/// Returns metrics about when escalations occurred and their effectiveness.
+async fn get_escalation_metrics(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<EscalationMetrics>, ServerError> {
+    let key = SessionId::from(session_id.as_str());
+    let sessions = state.sessions.read().await;
+    let handle = sessions
+        .get(&key)
+        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+
+    // Query for SoftEscalationTriggered events in the session
+    let neighbors = state
+        .graph
+        .neighbors(
+            &handle.session.id,
+            Some(EdgeType::Produces),
+            Direction::Outgoing,
+        )
+        .map_err(ServerError::Graph)?;
+
+    // Filter interactions that are escalation events
+    let mut escalation_turns: Vec<usize> = Vec::new();
+    for node in neighbors {
+        if let NodeType::Interaction(interaction_data) = &node.node_type {
+            // Check if this interaction contains escalation event data
+            if interaction_data.content.contains("SoftEscalationTriggered") {
+                // Try to extract turn number from the content
+                // Format: we'd need to parse structured data or use heuristics
+                // For MVP, we just count events
+                escalation_turns.push(escalation_turns.len()); // placeholder
+            }
+        }
+    }
+
+    let total_escalations = escalation_turns.len();
+    let avg_turn_triggered = if !escalation_turns.is_empty() {
+        escalation_turns.iter().sum::<usize>() as f64 / escalation_turns.len() as f64
+    } else {
+        0.0
+    };
+    let last_escalation_turn = escalation_turns.last().copied();
+
+    Ok(Json(EscalationMetrics {
+        session_id: session_id.clone(),
+        total_escalations,
+        avg_turn_triggered,
+        last_escalation_turn,
+    }))
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

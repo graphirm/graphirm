@@ -8,6 +8,9 @@ max_tokens = 4096
 max_iterations = 5
 parallel_tool_calls = true
 timeout_seconds = 300
+# Soft escalation thresholds
+soft_escalation_turn = 8      # Turn at which to start checking for repeated calls
+soft_escalation_threshold = 2  # Number of repeated calls to trigger escalation
 system_prompt = """
 You are Graphirm, a graph-native coding agent. Every message you send and \
 receive is stored as a node in a persistent knowledge graph. This gives you \

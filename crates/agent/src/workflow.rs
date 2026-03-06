@@ -6,7 +6,7 @@ use graphirm_tools::ToolContext;
 use graphirm_tools::registry::ToolRegistry;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, error, debug};
 
 use crate::error::AgentError;
 use crate::event::{AgentEvent, EventBus};
@@ -288,11 +288,11 @@ pub async fn run_agent_loop(
     // Reset each time a new prompt is submitted (i.e. per run_agent_loop call).
     let mut read_cache: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
-    
-    // NEW: Add escalation detector
+
+    // Initialize escalation detector to catch repeated tool calls
     let mut escalation_detector = crate::escalation::EscalationDetector::new(
-        8,  // soft_escalation_turn (adjust based on testing)
-        2,  // soft_escalation_threshold (repeated calls within window)
+        session.agent_config.soft_escalation_turn,
+        session.agent_config.soft_escalation_threshold,
     );
     let mut escalation_triggered = false;
 
@@ -359,8 +359,8 @@ pub async fn run_agent_loop(
         }
 
         let tool_calls: Vec<&ContentPart> = response.tool_calls();
-        
-        // NEW: Check for escalation
+
+        // Check for escalation: detect repeated tool calls and trigger synthesis directive
         if !escalation_triggered {
             let (should_escalate, repeated_count) = 
                 escalation_detector.should_escalate(turn as usize, &tool_calls);
@@ -372,11 +372,20 @@ pub async fn run_agent_loop(
                     "Soft escalation triggered: switching to synthesis mode"
                 );
                 
-                // Add synthesis directive as system message
+                // Emit event for observability
                 let synthesis_msg = "Based on the information you've gathered so far, \
                     please synthesize your findings and provide your analysis. \
                     Do not make additional tool calls. Format your response as a clear conclusion.";
                 
+                events.emit(crate::event::AgentEvent::SoftEscalationTriggered(
+                    crate::event::SoftEscalationTriggeredEvent {
+                        turn: turn as usize,
+                        repeated_tool_calls: repeated_count,
+                        synthesis_directive: synthesis_msg.to_string(),
+                    }
+                ));
+                
+                // Add synthesis directive as system message
                 session.add_user_message(synthesis_msg)?;
                 escalation_triggered = true;
                 
@@ -387,12 +396,12 @@ pub async fn run_agent_loop(
                 
                 // If model still has tool calls after synthesis directive, hard stop
                 if synthesis_response.has_tool_calls() {
-                    tracing::error!(
-                        turn = turn as usize,
-                        tool_calls = ?synthesis_response.tool_calls().len(),
-                        "Model ignored synthesis directive; hard recursion limit"
-                    );
-                    return Err(AgentError::RecursionLimit(turn));
+                error!(
+                    turn = turn as usize,
+                    tool_calls = ?synthesis_response.tool_calls().len(),
+                    "Model ignored synthesis directive; hard recursion limit"
+                );
+                return Err(AgentError::RecursionLimit(turn as u32));
                 }
                 
                 // Success: model synthesized
@@ -411,7 +420,7 @@ pub async fn run_agent_loop(
                 escalation_detector.record_tool_call(turn as usize, key);
             }
         }
-        
+
         for part in &tool_calls {
             let ContentPart::ToolCall {
                 id: call_id, name, ..
@@ -426,7 +435,7 @@ pub async fn run_agent_loop(
             });
         }
 
-        // NEW: Add detailed logging
+        // Log tool execution details
         info!(
             turn = turn as usize,
             tool_count = tool_calls.len(),
@@ -436,7 +445,7 @@ pub async fn run_agent_loop(
 
         for (idx, tool_call) in tool_calls.iter().enumerate() {
             if let ContentPart::ToolCall { name, arguments, .. } = tool_call {
-                tracing::debug!(
+                debug!(
                     turn = turn as usize,
                     tool_index = idx,
                     tool_name = %name,
@@ -474,7 +483,7 @@ pub async fn run_agent_loop(
                 agent_id: session.id.clone(),
                 node_ids: all_node_ids,
             });
-            return Err(AgentError::RecursionLimit(max_turns));
+            return Err(AgentError::RecursionLimit(max_turns as u32));
         }
     }
 
