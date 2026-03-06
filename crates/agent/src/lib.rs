@@ -24,5 +24,5 @@ pub use multi::{
     AgentRegistry, LlmFactory, SubagentHandle, collect_subagent_results, spawn_subagent,
     wait_for_dependencies, wait_for_subagents,
 };
-pub use session::Session;
+pub use session::{Session, SessionMetadata, SessionStatus};
 pub use workflow::run_agent_loop;
