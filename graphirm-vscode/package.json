@@ -33,7 +33,7 @@
       "properties": {
         "graphirm.serverUrl": {
           "type": "string",
-          "default": "http://localhost:3000",
+          "default": "http://localhost:5555",
           "description": "URL of the running graphirm server"
         }
       }

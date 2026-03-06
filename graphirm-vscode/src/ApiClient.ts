@@ -45,7 +45,7 @@ export interface GraphData {
 function serverUrl(): string {
   return vscode.workspace
     .getConfiguration('graphirm')
-    .get<string>('serverUrl', 'http://localhost:3000');
+    .get<string>('serverUrl', 'http://localhost:5555');
 }
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {

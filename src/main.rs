@@ -66,7 +66,7 @@ enum Commands {
         host: String,
 
         /// Port to listen on
-        #[arg(short, long, default_value = "3000")]
+        #[arg(short, long, default_value = "5555")]
         port: u16,
 
         /// Path to write request log JSONL file (for usage analysis)

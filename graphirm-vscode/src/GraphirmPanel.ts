@@ -45,7 +45,7 @@ export class GraphirmPanel implements vscode.Disposable {
     const serverUrl = () =>
       vscode.workspace
         .getConfiguration('graphirm')
-        .get<string>('serverUrl', 'http://localhost:3000');
+        .get<string>('serverUrl', 'http://localhost:5555');
 
     this.sse = new SseSubscriber(serverUrl, (event) => {
       this.panel.webview.postMessage({ type: 'sse', event });

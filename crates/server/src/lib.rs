@@ -56,7 +56,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             host: "127.0.0.1".to_string(),
-            port: 3000,
+            port: 5555,
             request_log_path: None,
         }
     }
