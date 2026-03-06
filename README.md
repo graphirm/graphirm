@@ -11,6 +11,7 @@ A graph-native coding agent in Rust. Every interaction, tool call, and file read
 - **Multi-provider** — Anthropic, DeepSeek, OpenAI, Ollama, 17+ via rig-core
 - **VS Code extension** — two-pane chat + live graph visualization
 - **Single binary** — no Docker, no runtime deps
+- **Session persistence & restoration** — Sessions automatically survive server restarts; full history restored from SQLite on startup with zero manual steps
 
 ## Quick start
 
