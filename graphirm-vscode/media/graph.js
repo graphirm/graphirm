@@ -15,6 +15,36 @@ const NODE_COLORS = {
   Agent: 'var(--node-agent)',
 };
 
+// Layout mode tracking
+let _layoutMode = 'force'; // 'force' | 'timeline'
+let _currentData = null; // Cache for re-renders
+
+// Y-position by node type (base position in timeline mode)
+const TYPE_Y = {
+  Agent: 80,
+  Task: 160,
+  Interaction: 260,
+  Content: 360,
+  Knowledge: 440,
+};
+
+// Edge colors by type
+const EDGE_COLORS = {
+  RespondsTo: '#ffffff44',
+  Reads: '#3b82f688',
+  Modifies: '#f9731688',
+  Produces: '#4ade8088',
+  DependsOn: '#a855f788',
+  SpawnedBy: '#ec489988',
+};
+
+// Stroke widths by edge importance
+const EDGE_STROKE_WIDTH = {
+  DependsOn: 2.5,
+  Produces: 2.5,
+  default: 1.5,
+};
+
 export function initGraph(send) {
   _send = send;
 
@@ -63,6 +93,112 @@ export function handleGraphMessage(msg) {
   }
 }
 
+/**
+ * Group nodes into logical units (interaction + its tools + results).
+ * Returns a map: nodeId → { groupId, depth }
+ * Depth: 0=interaction, 1=tool calls, 2=results
+ */
+function computeNodeGroups(nodes, edges) {
+  const groups = new Map();
+  const processed = new Set();
+  
+  // Find Interaction nodes (root of each group)
+  const interactions = nodes.filter(n => n.node_type?.type === 'Interaction');
+  
+  interactions.forEach((interaction) => {
+    const groupId = interaction.id;
+    groups.set(interaction.id, { groupId, depth: 0 });
+    processed.add(interaction.id);
+    
+    // Find tool calls produced by this interaction (Produces edges)
+    const toolCalls = edges
+      .filter(e => e.edge_type === 'Produces' && e.from === interaction.id)
+      .map(e => nodes.find(n => n.id === e.to))
+      .filter(Boolean);
+    
+    // Find content/results produced by tool calls
+    toolCalls.forEach((tool) => {
+      groups.set(tool.id, { groupId, depth: 1 });
+      processed.add(tool.id);
+      
+      const results = edges
+        .filter(e => e.edge_type === 'Produces' && e.from === tool.id)
+        .map(e => nodes.find(n => n.id === e.to))
+        .filter(Boolean);
+      
+      results.forEach((result) => {
+        groups.set(result.id, { groupId, depth: 2 });
+        processed.add(result.id);
+      });
+    });
+  });
+  
+  // Assign orphan nodes to their own group
+  nodes.forEach(n => {
+    if (!processed.has(n.id)) {
+      groups.set(n.id, { groupId: n.id, depth: 0 });
+    }
+  });
+  
+  return groups;
+}
+
+/**
+ * Assign X, Y positions for timeline layout mode.
+ * X = time (oldest left, newest right)
+ * Y = node type + group offset
+ * Freezes node positions (sets fx, fy) and stops simulation.
+ */
+function applyTimelineLayout(nodes, edges, width, height) {
+  if (nodes.length === 0) return;
+  
+  // Parse timestamps
+  const times = nodes
+    .map(n => new Date(n.created_at).getTime())
+    .filter(t => !isNaN(t));
+  
+  if (times.length === 0) return; // No valid timestamps
+  
+  const tMin = Math.min(...times);
+  const tMax = Math.max(...times);
+  const tRange = tMax - tMin || 1;
+  const padding = 60;
+  
+  // Compute grouping
+  const groups = computeNodeGroups(nodes, edges);
+  
+  // Assign positions
+  nodes.forEach(n => {
+    const t = new Date(n.created_at).getTime();
+    if (isNaN(t)) {
+      n.fx = padding;
+      n.fy = height / 2;
+      return;
+    }
+    
+    // X: temporal position (normalized and scaled)
+    n.fx = padding + ((t - tMin) / tRange) * (width - padding * 2);
+    
+    // Y: node type base + group-based offset
+    const nodeType = n.node_type?.type || 'Content';
+    const baseY = TYPE_Y[nodeType] ?? 260;
+    const group = groups.get(n.id) || { groupId: n.id, depth: 0 };
+    const offset = group.depth * 25; // 25px vertical spacing within group
+    
+    n.fy = baseY + offset;
+  });
+}
+
+/**
+ * Release node positions (set fx, fy to null) so force simulation can move them.
+ */
+function releaseNodePositions(nodes) {
+  nodes.forEach(n => {
+    n.fx = null;
+    n.fy = null;
+  });
+}
+
 function renderGraph({ nodes, edges }) {
   const g = _svg.select('.graph-root');
   g.selectAll('*').remove();
@@ -85,8 +221,12 @@ function renderGraph({ nodes, edges }) {
   const link = g.append('g').selectAll('line')
     .data(edges)
     .join('line')
-    .attr('stroke', '#555')
-    .attr('stroke-width', 1)
+    .attr('stroke', d => {
+      const color = EDGE_COLORS[d.edge_type];
+      return color ?? '#ffffff22';
+    })
+    .attr('stroke-width', d => EDGE_STROKE_WIDTH[d.edge_type] ?? EDGE_STROKE_WIDTH.default)
+    .attr('opacity', 0.7)
     .attr('marker-end', 'url(#arrow)');
 
   const linkLabel = g.append('g').selectAll('text')
