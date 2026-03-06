@@ -633,6 +633,53 @@ impl GraphStore {
         Ok(nodes)
     }
 
+    /// Get all Agent-type nodes from the graph.
+    /// Returns tuples of (GraphNode, AgentData).
+    pub fn get_agent_nodes(&self) -> Result<Vec<(GraphNode, crate::nodes::AgentData)>, GraphError> {
+        let conn = self.pool.get()?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, data, metadata, created_at, updated_at FROM nodes WHERE node_type = 'agent' ORDER BY created_at DESC",
+        )?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let data: String = row.get(1)?;
+                let metadata: String = row.get(2)?;
+                let created_at: String = row.get(3)?;
+                let updated_at: String = row.get(4)?;
+                Ok((id, data, metadata, created_at, updated_at))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut nodes = Vec::new();
+        for (id_str, data, metadata_str, created_at_str, updated_at_str) in rows {
+            let node_type: NodeType = serde_json::from_str(&data)?;
+            let metadata: serde_json::Value = serde_json::from_str(&metadata_str)?;
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                .map_err(|e| GraphError::NodeNotFound(format!("bad timestamp: {e}")))?
+                .with_timezone(&chrono::Utc);
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at_str)
+                .map_err(|e| GraphError::NodeNotFound(format!("bad timestamp: {e}")))?
+                .with_timezone(&chrono::Utc);
+
+            let node = GraphNode {
+                id: NodeId(id_str),
+                node_type: node_type.clone(),
+                metadata,
+                created_at,
+                updated_at,
+            };
+
+            if let NodeType::Agent(agent_data) = node_type {
+                nodes.push((node, agent_data));
+            }
+        }
+
+        Ok(nodes)
+    }
+
     /// Store an embedding vector for a node. Overwrites any existing embedding.
     // Bytes are stored in native-endian order via bytemuck::cast_slice.
     // This is correct for single-machine SQLite but will silently corrupt
