@@ -21,6 +21,19 @@ struct Cli {
     command: Commands,
 }
 
+/// Export a session to a standard interchange format.
+#[derive(clap::Args, Debug)]
+struct ExportArgs {
+    /// Session ID to export.
+    session_id: String,
+    /// Output format (default: agent-trace).
+    #[arg(long, default_value = "agent-trace")]
+    format: String,
+    /// Output file path (default: stdout).
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Start an interactive chat session
@@ -60,6 +73,9 @@ enum Commands {
         #[arg(long)]
         request_log: Option<PathBuf>,
     },
+
+    /// Export a session to interchange format
+    Export(ExportArgs),
 }
 
 #[derive(Subcommand)]
@@ -154,6 +170,34 @@ async fn main() -> Result<(), GraphirmError> {
             graphirm_server::start_server(graph, llm, tools, agent_config, server_config)
                 .await
                 .map_err(|e| GraphirmError::Config(e.to_string()))?;
+        }
+        Commands::Export(args) => {
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter("error")
+                .init();
+
+            let graph = graphirm_graph::GraphStore::open(
+                db_path.to_str().unwrap_or("graph.db"),
+            )?;
+            let record = graphirm_graph::export_session(&graph, &args.session_id)?;
+            let json = serde_json::to_string_pretty(&record).map_err(|e| {
+                GraphirmError::Config(format!("Failed to serialize export: {e}"))
+            })?;
+            match args.output {
+                Some(path) => {
+                    std::fs::write(&path, json).map_err(|e| {
+                        GraphirmError::Config(format!(
+                            "Failed to write export to {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    tracing::info!("Exported session {} to {}", args.session_id, path.display());
+                }
+                None => {
+                    println!("{json}");
+                }
+            }
         }
     }
 
