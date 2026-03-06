@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Graphirm — Graph-native coding agent</title>
+  <meta name="description" content="A coding agent where the graph is the product. Every decision, tool call, and file edit is a node you can navigate, replay, and steer." />
+  <meta property="og:title" content="Graphirm" />
+  <meta property="og:description" content="Graph-native coding agent. Every interaction is a node." />
+  <meta property="og:url" content="https://graphirm.ai" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⬡</text></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <span class="logo">graph<span>irm</span></span>
+    <div class="links">
+      <a href="https://github.com/consoulhub/graphirm">GitHub</a>
+      <a href="https://github.com/consoulhub/graphirm/releases">Releases</a>
+      <a href="https://github.com/consoulhub/graphirm/blob/main/docs/plans/00-execution-strategy.md">Roadmap</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container">
+      <h1>A coding agent where<br/><em>the graph is the product</em></h1>
+      <p>Every decision, tool call, and file edit is a node you can navigate, replay, and steer. Not a chat log — a knowledge graph that grows with your project.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="https://github.com/consoulhub/graphirm">View on GitHub</a>
+        <a class="btn btn-secondary" href="#install">Install VS Code Extension ↓</a>
+      </div>
+
+      <div class="demo">
+        <div class="demo-bar">
+          <span class="r"></span><span class="y"></span><span class="g"></span>
+        </div>
+        <pre><span class="comment"># Start the Graphirm server</span>
+<span class="prompt">$</span> graphirm serve
+<span class="output">INFO graphirm_server: Starting on 127.0.0.1:3000</span>
+
+<span class="comment"># Every message, tool call, and file edit becomes a graph node</span>
+<span class="prompt">$</span> curl -s -X POST localhost:3000/api/sessions \
+    -d '{"name":"fix-auth-bug"}'
+<span class="output">{"id":"3fa85f64","name":"fix-auth-bug","status":"idle"}</span>
+
+<span class="comment"># Open VS Code → Ctrl+Shift+P → "Graphirm: Open"</span>
+<span class="comment"># Chat pane on the left, live graph explorer on the right</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="features">
+    <div class="container">
+      <h2>Why graph-native?</h2>
+      <div class="feature-grid">
+
+        <div class="feature-card">
+          <div class="icon">⬡</div>
+          <h3>Cross-session memory</h3>
+          <p>Knowledge nodes persist across sessions. PageRank surfaces what matters — not just what was said last.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="icon">↗</div>
+          <h3>Context by relevance</h3>
+          <p>Graph traversal + edge weights build the context window. Relevant history from 10 sessions ago beats verbatim recency.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="icon">⎇</div>
+          <h3>Multi-agent coordination</h3>
+          <p>Subagents write nodes into a shared graph. Any agent can traverse them. No message-passing, no shared state bugs.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="icon">◉</div>
+          <h3>Navigate your reasoning</h3>
+          <p>Chat and graph side-by-side in VS Code. Click any node to see what triggered it and what it produced.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="icon">△</div>
+          <h3>Task DAG</h3>
+          <p>Tasks form a directed acyclic graph with <code>depends_on</code> edges — visible, trackable, resumable across restarts.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="icon">▣</div>
+          <h3>Single Rust binary</h3>
+          <p>No Docker, no Python, no runtime deps. One static binary + SQLite. Runs on any server or laptop.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Architecture -->
+  <section class="architecture">
+    <div class="container">
+      <h2>Architecture</h2>
+      <div class="arch-diagram">graphirm/
+├── crates/
+│   ├── graph/    ← GraphStore (rusqlite + petgraph) — every node + edge
+│   ├── llm/      ← 17+ providers via rig-core (Anthropic, OpenAI, DeepSeek…)
+│   ├── tools/    ← bash, read, write, edit, grep, find, ls
+│   ├── agent/    ← async loop, context engine, multi-agent, knowledge extraction
+│   ├── server/   ← axum REST + SSE streaming API
+│   └── tui/      ← ratatui terminal UI
+└── graphirm-vscode/   ← VS Code/Cursor extension (chat + d3 graph explorer)</div>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section class="install" id="install">
+    <div class="container">
+      <h2>Get started</h2>
+      <div class="install-steps">
+
+        <div class="install-step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <h4>Clone and build (Rust 1.75+ required)</h4>
+            <code>git clone https://github.com/consoulhub/graphirm && cd graphirm && cargo build --release</code>
+          </div>
+        </div>
+
+        <div class="install-step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <h4>Set your LLM API key and start the server</h4>
+            <code>export ANTHROPIC_API_KEY=sk-ant-... && ./target/release/graphirm serve</code>
+            <p>Supports Anthropic, OpenAI, DeepSeek, Google, and 13 more providers via <code>GRAPHIRM_MODEL</code>.</p>
+          </div>
+        </div>
+
+        <div class="install-step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <h4>Install the VS Code extension</h4>
+            <p>Download the latest <code>.vsix</code> from <a href="https://github.com/consoulhub/graphirm/releases">Releases</a>, then in VS Code or Cursor: <strong>Extensions → ⋯ → Install from VSIX</strong></p>
+          </div>
+        </div>
+
+        <div class="install-step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <h4>Open the panel</h4>
+            <code>Ctrl+Shift+P → Graphirm: Open</code>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="container">
+    <span>Graphirm — MIT License — built with Rust</span>
+    <div style="display:flex;gap:20px">
+      <a href="https://github.com/consoulhub/graphirm">GitHub</a>
+      <a href="https://github.com/consoulhub/graphirm/blob/main/README.md">Docs</a>
+      <a href="https://github.com/consoulhub/graphirm/blob/main/docs/plans/00-execution-strategy.md">Roadmap</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

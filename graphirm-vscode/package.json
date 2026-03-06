@@ -1,0 +1,55 @@
+{
+  "name": "graphirm",
+  "displayName": "Graphirm",
+  "description": "Graph-native coding agent UI — chat + live graph explorer",
+  "version": "0.1.0",
+  "publisher": "graphirm",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/consoulhub/graphirm"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:graphirm.open"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "graphirm.open",
+        "title": "Graphirm: Open Panel"
+      }
+    ],
+    "configuration": {
+      "title": "Graphirm",
+      "properties": {
+        "graphirm.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "URL of the running graphirm server"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.22.0",
+    "esbuild": "^0.20",
+    "typescript": "^5",
+    "vsce": "^2.15.0"
+  }
+}

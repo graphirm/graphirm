@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none';
+             style-src {{cspSource}} 'unsafe-inline' https://fonts.googleapis.com;
+             font-src https://fonts.gstatic.com;
+             script-src {{cspSource}} 'unsafe-inline' https://cdn.jsdelivr.net;
+             img-src data:;" />
+  <title>Graphirm</title>
+  <link rel="stylesheet" href="{{mediaUri}}/styles.css" />
+</head>
+<body>
+  <header class="header">
+    <span class="logo">graphirm</span>
+    <div class="session-controls">
+      <select id="session-select"><option>— no sessions —</option></select>
+      <button id="new-session-btn">+ New Session</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- LEFT: Chat pane -->
+    <section class="chat-pane">
+      <div id="messages" class="messages"></div>
+      <div class="thinking-bar" id="thinking-bar" hidden>
+        <span class="thinking-dot"></span> Agent is thinking…
+      </div>
+      <div class="input-bar">
+        <textarea id="prompt-input" placeholder="Type your message…" rows="2"></textarea>
+        <div class="input-actions">
+          <button id="send-btn">Send</button>
+          <button id="abort-btn" class="danger" hidden>Abort</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT: Graph pane -->
+    <section class="graph-pane">
+      <div class="graph-toolbar">
+        <span class="graph-title">Graph</span>
+        <label>Depth <input type="range" id="depth-slider" min="1" max="5" value="3" /></label>
+        <button id="reset-zoom-btn">Reset</button>
+      </div>
+      <svg id="graph-svg"></svg>
+      <!-- Node detail panel, hidden by default -->
+      <div id="node-detail" class="node-detail" hidden>
+        <div class="node-detail-header">
+          <span id="node-detail-type"></span>
+          <button id="node-detail-close">✕</button>
+        </div>
+        <pre id="node-detail-content"></pre>
+        <div class="node-actions">
+          <button data-action="subgraph">Expand subgraph</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+<script src="{{mediaUri}}/main.js" type="module"></script>
+</html>

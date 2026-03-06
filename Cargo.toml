@@ -1,0 +1,48 @@
+[workspace]
+members = [
+    "crates/graph",
+    "crates/llm",
+    "crates/tools",
+    "crates/agent",
+    "crates/tui",
+    "crates/server",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+authors = ["Consoul <team@consoul.dev>"]
+
+[package]
+name = "graphirm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Graph-native coding agent"
+
+[[bin]]
+name = "graphirm"
+path = "src/main.rs"
+
+[dependencies]
+graphirm-graph = { path = "crates/graph" }
+graphirm-llm = { path = "crates/llm" }
+graphirm-tools = { path = "crates/tools" }
+graphirm-agent = { path = "crates/agent" }
+graphirm-tui = { path = "crates/tui" }
+graphirm-server = { path = "crates/server" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tracing-appender = "0.2.4"
+dirs-next = "2.0.0"
