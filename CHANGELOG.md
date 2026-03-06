@@ -13,6 +13,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - `graphirm export <session-id> --output trace.json` — export to file
   - Supports linking AI conversations to code changes, documentation systems, and custom tools
   - Complete tool call nesting and metadata preservation
+- **Soft Escalation in Agent Loop** — Graceful intervention when repeated tool calls detected
+  - Detects repeated tool calls within configurable sliding window
+  - Injects synthesis directive as system message instead of hard recursion limit
+  - Allows model final attempt to synthesize findings before enforcement
+  - Configurable via `soft_escalation_turn` and `soft_escalation_threshold`
+  - Emits `SoftEscalationTriggered` events for observability
+  - New metrics endpoint: `GET /api/sessions/{id}/escalations`
 - **DAG Timeline Layout** — Visual redesign of graph explorer with temporal and type-based node positioning
 - **Session Restoration** — Sessions automatically survive server restarts with full history preserved
 - **Landing Page** — graphirm.ai static site with installation and usage documentation
