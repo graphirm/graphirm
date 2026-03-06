@@ -1,5 +1,5 @@
-use graphirm_graph::{GraphNode, GraphStore, NodeId, NodeType};
 use graphirm_graph::nodes::AgentData;
+use graphirm_graph::{GraphNode, GraphStore, NodeId, NodeType};
 
 #[test]
 fn test_get_agent_nodes_returns_all_agents() {

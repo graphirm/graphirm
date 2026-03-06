@@ -145,7 +145,12 @@ async fn execute_tools_parallel(
     let mut set = JoinSet::new();
 
     for part in tool_calls {
-        let ContentPart::ToolCall { id: call_id, name, arguments } = part else {
+        let ContentPart::ToolCall {
+            id: call_id,
+            name,
+            arguments,
+        } = part
+        else {
             continue;
         };
 
@@ -158,7 +163,11 @@ async fn execute_tools_parallel(
                         cached
                     );
                     tracing::debug!(path, "read cache hit");
-                    results.push((call_id.clone(), name.clone(), Ok(graphirm_tools::ToolOutput::success(&msg))));
+                    results.push((
+                        call_id.clone(),
+                        name.clone(),
+                        Ok(graphirm_tools::ToolOutput::success(&msg)),
+                    ));
                     continue;
                 }
             }
@@ -277,7 +286,8 @@ pub async fn run_agent_loop(
     let mut all_node_ids: Vec<NodeId> = Vec::new();
     // Per-turn read cache: prevents the model from re-reading the same file.
     // Reset each time a new prompt is submitted (i.e. per run_agent_loop call).
-    let mut read_cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut read_cache: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     events.emit(AgentEvent::AgentStart {
         agent_id: session.id.clone(),

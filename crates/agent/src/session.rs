@@ -3,10 +3,10 @@
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use graphirm_graph::GraphStore;
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, NodeId, NodeType};
+use serde::{Deserialize, Serialize};
 
 use crate::config::AgentConfig;
 use crate::error::AgentError;

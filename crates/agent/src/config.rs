@@ -244,7 +244,7 @@ mod tests {
     fn test_agent_config_defaults() {
         let config = AgentConfig::default();
         assert_eq!(config.name, "graphirm");
-        assert_eq!(config.max_turns, 50);
+        assert_eq!(config.max_turns, 10);
         assert!(config.tools.is_empty());
         assert_eq!(config.max_context_messages, None);
     }

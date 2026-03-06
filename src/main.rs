@@ -1,6 +1,6 @@
 mod error;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
@@ -179,9 +179,8 @@ async fn main() -> Result<(), GraphirmError> {
 
             let graph = open_graph(&db_path)?;
             let record = graphirm_graph::export_session(&graph, &args.session_id)?;
-            let json = serde_json::to_string_pretty(&record).map_err(|e| {
-                GraphirmError::Config(format!("Failed to serialize export: {e}"))
-            })?;
+            let json = serde_json::to_string_pretty(&record)
+                .map_err(|e| GraphirmError::Config(format!("Failed to serialize export: {e}")))?;
             match args.output {
                 Some(path) => {
                     std::fs::write(&path, json).map_err(|e| {
@@ -222,12 +221,12 @@ fn resolve_db_path(override_path: Option<PathBuf>) -> Result<PathBuf, GraphirmEr
 }
 
 /// Helper to open the graph with the configured database path.
-fn open_graph(db_path: &PathBuf) -> Result<graphirm_graph::GraphStore, GraphirmError> {
+fn open_graph(db_path: &Path) -> Result<graphirm_graph::GraphStore, GraphirmError> {
     graphirm_graph::GraphStore::open(db_path.to_str().unwrap_or("graph.db"))
         .map_err(|e| GraphirmError::Config(e.to_string()))
 }
 
-fn run_graph_command(action: GraphAction, db_path: &PathBuf) -> Result<(), GraphirmError> {
+fn run_graph_command(action: GraphAction, db_path: &Path) -> Result<(), GraphirmError> {
     let graph = graphirm_graph::GraphStore::open(db_path.to_str().unwrap_or("graph.db"))?;
 
     match action {
@@ -262,7 +261,7 @@ fn run_graph_command(action: GraphAction, db_path: &PathBuf) -> Result<(), Graph
                 return Ok(());
             }
 
-            println!("{:<38}  {:<12}  {}", "ID", "TYPE", "LABEL");
+            println!("{:<38}  {:<12}  LABEL", "ID", "TYPE");
             println!("{}", "-".repeat(90));
             for node in nodes {
                 let label = node_display_label(&node);
@@ -349,7 +348,7 @@ fn api_key_for_provider(provider_name: &str) -> Result<String, GraphirmError> {
     }
 }
 
-async fn run_chat(model: String, db_path: &PathBuf) -> Result<(), GraphirmError> {
+async fn run_chat(model: String, db_path: &Path) -> Result<(), GraphirmError> {
     let (provider_name, model_name) = graphirm_llm::factory::parse_model_string(&model)
         .map_err(|e| GraphirmError::Config(e.to_string()))?;
 

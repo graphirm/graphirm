@@ -68,10 +68,7 @@ pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
             }
         }
         AgentEvent::GraphUpdate { recent_nodes, .. } => {
-            app.graph_explorer.nodes = recent_nodes
-                .into_iter()
-                .map(|n| graph_node_to_entry(n))
-                .collect();
+            app.graph_explorer.nodes = recent_nodes.into_iter().map(graph_node_to_entry).collect();
         }
     }
 }

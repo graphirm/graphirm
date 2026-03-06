@@ -99,9 +99,9 @@ async fn create_session(
     let now = Utc::now();
 
     // Use caller-supplied name or generate a timestamped default.
-    let name = body.name.unwrap_or_else(|| {
-        format!("session-{}", now.format("%H:%M"))
-    });
+    let name = body
+        .name
+        .unwrap_or_else(|| format!("session-{}", now.format("%H:%M")));
 
     let response = SessionResponse {
         id: session_id.to_string(),

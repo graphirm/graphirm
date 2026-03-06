@@ -11,9 +11,9 @@
 
 use serde::Serialize;
 
+use crate::error::GraphError;
 use crate::nodes::NodeType;
 use crate::store::GraphStore;
-use crate::error::GraphError;
 
 /// Top-level Agent Trace record for a session.
 ///
@@ -71,20 +71,23 @@ pub struct TraceToolCall {
 ///
 /// # Returns
 /// An AgentTraceRecord on success, or a GraphError if the session is not found.
-pub fn export_session(graph: &GraphStore, session_id: &str) -> Result<AgentTraceRecord, GraphError> {
+pub fn export_session(
+    graph: &GraphStore,
+    session_id: &str,
+) -> Result<AgentTraceRecord, GraphError> {
     // Fetch all Interaction nodes in the session's thread (in creation order)
     let nodes = graph.get_session_thread(session_id)?;
     let mut turns = Vec::new();
-    
+
     // Build a map of tool_call_id → result for quick lookup
-    let mut tool_results: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut tool_results: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for node in &nodes {
         if let NodeType::Interaction(ref data) = node.node_type {
             if data.role == "tool" {
                 // Store the tool result by its tool_call_id
-                if let Some(tool_call_id) = node.metadata
-                    .get("tool_call_id")
-                    .and_then(|v| v.as_str())
+                if let Some(tool_call_id) =
+                    node.metadata.get("tool_call_id").and_then(|v| v.as_str())
                 {
                     tool_results.insert(tool_call_id.to_string(), data.content.clone());
                 }
@@ -127,7 +130,7 @@ pub fn export_session(graph: &GraphStore, session_id: &str) -> Result<AgentTrace
 }
 
 /// Extract tool calls from assistant turn metadata.
-/// 
+///
 /// The metadata contains a "tool_calls" array with structure:
 /// [{"name": "ls", "id": "call_001", "arguments": {...}}, ...]
 fn extract_tool_calls_from_metadata(
@@ -135,7 +138,7 @@ fn extract_tool_calls_from_metadata(
     tool_results: &std::collections::HashMap<String, String>,
 ) -> Vec<TraceToolCall> {
     let mut calls = Vec::new();
-    
+
     if let Some(metadata_obj) = metadata.as_object() {
         if let Some(tool_calls_value) = metadata_obj.get("tool_calls") {
             if let Some(tool_calls_array) = tool_calls_value.as_array() {
@@ -155,21 +158,18 @@ fn extract_tool_calls_from_metadata(
                             .get(&id)
                             .cloned()
                             .unwrap_or_else(|| "(no result)".to_string());
-                        
-                        calls.push(TraceToolCall {
-                            id,
-                            name,
-                            result,
-                        });
+
+                        calls.push(TraceToolCall { id, name, result });
                     }
                 }
             }
         }
     }
-    
+
     calls
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
@@ -219,10 +219,19 @@ mod tests {
         let json = serde_json::to_string(&record).expect("serialization failed");
 
         // Assert all key fields are present
-        assert!(json.contains("\"version\":\"0.1\""), "version field missing");
-        assert!(json.contains("\"session_id\":\"session-abc123\""), "session_id field missing");
+        assert!(
+            json.contains("\"version\":\"0.1\""),
+            "version field missing"
+        );
+        assert!(
+            json.contains("\"session_id\":\"session-abc123\""),
+            "session_id field missing"
+        );
         assert!(json.contains("\"role\":\"user\""), "user role missing");
-        assert!(json.contains("\"role\":\"assistant\""), "assistant role missing");
+        assert!(
+            json.contains("\"role\":\"assistant\""),
+            "assistant role missing"
+        );
         assert!(json.contains("\"name\":\"bash\""), "tool name missing");
         assert!(json.contains("\"tool_calls\""), "tool_calls array missing");
 

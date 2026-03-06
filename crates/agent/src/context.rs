@@ -438,10 +438,10 @@ pub fn build_context(
     // assistant node to guaranteed_recent so it always precedes its results.
     // This prevents "insufficient tool messages" 400 errors from providers.
     loop {
-        let oldest_is_tool = guaranteed_recent.last().map_or(false, |n| {
-            matches!(&n.node_type, NodeType::Interaction(d) if d.role == "tool")
-        });
-        let newest_older_is_tool_caller = older_conversation.first().map_or(false, |n| {
+        let oldest_is_tool = guaranteed_recent
+            .last()
+            .is_some_and(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "tool"));
+        let newest_older_is_tool_caller = older_conversation.first().is_some_and(|n| {
             matches!(&n.node_type, NodeType::Interaction(d) if d.role == "assistant")
                 && n.metadata
                     .get("tool_calls")
@@ -540,9 +540,7 @@ pub fn build_context(
     }
 
     // Sort groups by descending max-score, then fit whole groups into budget.
-    group_candidates.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    group_candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let mut candidates: Vec<ScoredNode> = Vec::new();
     let mut remaining_conv = remaining_budget;
     for (group, _score) in group_candidates {

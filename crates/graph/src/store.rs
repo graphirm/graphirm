@@ -688,12 +688,12 @@ impl GraphStore {
     /// Returns an error if the session (Agent node) does not exist.
     pub fn get_session_thread(&self, session_id: &str) -> Result<Vec<GraphNode>, GraphError> {
         let session_node_id = NodeId::from(session_id);
-        
+
         // First, verify the session exists
         let _ = self.get_node(&session_node_id)?;
 
         let conn = self.pool.get()?;
-        
+
         // Query all Interaction nodes that have a "produces" edge from this session
         let mut stmt = conn.prepare(
             "SELECT n.id, n.data, n.metadata, n.created_at, n.updated_at 
@@ -745,7 +745,7 @@ impl GraphStore {
     /// These are typically tool result (Interaction with role="tool") nodes.
     pub fn get_tool_results_for(&self, node_id: &NodeId) -> Result<Vec<GraphNode>, GraphError> {
         let conn = self.pool.get()?;
-        
+
         // Query all nodes that have a "responds_to" edge from this node
         let mut stmt = conn.prepare(
             "SELECT n.id, n.data, n.metadata, n.created_at, n.updated_at 

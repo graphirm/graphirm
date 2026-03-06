@@ -1,5 +1,5 @@
-use graphirm_agent::session::{SessionMetadata, SessionStatus};
 use chrono::Utc;
+use graphirm_agent::session::{SessionMetadata, SessionStatus};
 
 #[test]
 fn test_session_metadata_creation() {
@@ -22,15 +22,15 @@ fn test_session_metadata_creation() {
 #[test]
 fn test_session_status_enum() {
     // Test all status variants exist and are comparable
-    let statuses = vec![
+    let statuses = [
         SessionStatus::Running,
         SessionStatus::Idle,
         SessionStatus::Completed,
         SessionStatus::Failed,
     ];
-    
+
     assert_eq!(statuses.len(), 4);
-    
+
     // Verify completed status
     let completed = SessionStatus::Completed;
     assert_eq!(completed, SessionStatus::Completed);
