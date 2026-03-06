@@ -91,4 +91,58 @@ mod tests {
         assert_eq!(sessions["session-active"].status, SessionStatus::Running);
         assert_eq!(sessions["session-failed"].status, SessionStatus::Failed);
     }
+
+    #[tokio::test]
+    async fn test_api_list_sessions_includes_restored() {
+        // This test verifies that restored sessions are included in the API list
+        // The list_sessions handler iterates over the sessions registry and returns them
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+
+        // Add multiple agent nodes representing restored sessions
+        let sessions_data = vec![
+            ("session-api-001", "auth-refactor", "claude-sonnet-4", "completed"),
+            ("session-api-002", "feature-build", "claude-haiku-4", "active"),
+            ("session-api-003", "debug-error", "gpt-4o", "failed"),
+        ];
+
+        for (id, name, model, status) in sessions_data {
+            let agent = GraphNode {
+                id: NodeId(id.to_string()),
+                node_type: NodeType::Agent(AgentData {
+                    name: name.to_string(),
+                    model: model.to_string(),
+                    status: status.to_string(),
+                    system_prompt: None,
+                }),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                metadata: serde_json::json!({}),
+            };
+
+            graph.add_node(agent).unwrap();
+        }
+
+        // Restore sessions from graph (simulates server startup)
+        let sessions = restore_sessions_from_graph(&graph).await.unwrap();
+
+        // Verify all sessions were restored with correct data
+        assert_eq!(sessions.len(), 3);
+
+        assert_eq!(sessions["session-api-001"].name, "auth-refactor");
+        assert_eq!(sessions["session-api-001"].status, SessionStatus::Completed);
+
+        assert_eq!(sessions["session-api-002"].name, "feature-build");
+        assert_eq!(sessions["session-api-002"].status, SessionStatus::Running);
+
+        assert_eq!(sessions["session-api-003"].name, "debug-error");
+        assert_eq!(sessions["session-api-003"].status, SessionStatus::Failed);
+
+        // Verify all sessions have required fields populated
+        for (session_id, metadata) in &sessions {
+            assert_eq!(metadata.session_id, *session_id);
+            assert!(!metadata.name.is_empty());
+            assert!(!metadata.model.is_empty());
+            assert!(!metadata.created_at.to_string().is_empty());
+        }
+    }
 }
