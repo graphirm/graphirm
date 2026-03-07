@@ -5,11 +5,16 @@
 //! graph, and stream real-time agent events.
 
 pub mod error;
+pub mod middleware;
+pub mod request_log;
 pub mod routes;
 pub mod sdk;
+pub mod session;
 pub mod sse;
 pub mod state;
 pub mod types;
+
+pub use session::restore_sessions_from_graph;
 
 // Re-export the most commonly used types at the crate root.
 pub use error::ServerError;

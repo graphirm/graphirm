@@ -15,6 +15,7 @@ use graphirm_agent::{AgentConfig, EventBus, Session, run_agent_loop};
 use graphirm_graph::{Direction, EdgeType, GraphNode, NodeId, NodeType};
 
 use crate::error::ServerError;
+use crate::middleware::request_logging;
 use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
@@ -61,6 +62,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/events", get(sse_handler))
         .route("/api/events/{session_id}", get(sse_session_handler))
         // Middleware
+        .layer(axum::middleware::from_fn(request_logging))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
