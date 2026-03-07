@@ -48,6 +48,10 @@ pub enum EdgeType {
     RelatesTo,
     /// Links a knowledge node back to the interaction it was derived from.
     DerivedFrom,
+    /// Recorded when a human approves a tool call via the HITL gate.
+    ApprovedBy,
+    /// Recorded when a human rejects a tool call via the HITL gate.
+    RejectedBy,
 }
 
 impl EdgeType {
@@ -66,6 +70,8 @@ impl EdgeType {
             EdgeType::Steers => "steers",
             EdgeType::RelatesTo => "relates_to",
             EdgeType::DerivedFrom => "derived_from",
+            EdgeType::ApprovedBy => "approved_by",
+            EdgeType::RejectedBy => "rejected_by",
         }
     }
 
@@ -84,6 +90,8 @@ impl EdgeType {
             EdgeType::Steers,
             EdgeType::RelatesTo,
             EdgeType::DerivedFrom,
+            EdgeType::ApprovedBy,
+            EdgeType::RejectedBy,
         ]
     }
 }
@@ -164,8 +172,22 @@ mod tests {
     }
 
     #[test]
-    fn edge_type_all_has_thirteen_variants() {
-        assert_eq!(EdgeType::all().len(), 13);
+    fn edge_type_all_has_fifteen_variants() {
+        assert_eq!(EdgeType::all().len(), 15);
+    }
+
+    #[test]
+    fn edge_type_approved_by_and_rejected_by_roundtrip() {
+        let approved = EdgeType::ApprovedBy;
+        let rejected = EdgeType::RejectedBy;
+
+        assert_eq!(approved.as_str(), "approved_by");
+        assert_eq!(rejected.as_str(), "rejected_by");
+
+        let j1 = serde_json::to_string(&approved).unwrap();
+        let j2 = serde_json::to_string(&rejected).unwrap();
+        assert_eq!(serde_json::from_str::<EdgeType>(&j1).unwrap(), approved);
+        assert_eq!(serde_json::from_str::<EdgeType>(&j2).unwrap(), rejected);
     }
 
     #[test]
