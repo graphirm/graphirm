@@ -1,0 +1,28 @@
+{
+  "session_id": "b0f5b603-301d-4647-9732-30fd5370fb99",
+  "session_name": "S4 - Multi-file Analysis",
+  "created_at": "2026-03-06T23:33:00.091138087Z",
+  "status": "failed",
+  "description": "Compare escalation.rs with workflow.rs. How do they work together? What are the key differences?",
+  "total_messages": 21,
+  "total_interactions": 21,
+  "tool_calls": 7,
+  "assistant_responses": 7,
+  "user_messages": 1,
+  "tool_errors": 1,
+  "escalation_metrics": {
+    "total_escalations": 0,
+    "avg_turn_triggered": 0,
+    "last_escalation_turn": null
+  },
+  "status_code": 500,
+  "failure_reason": "Session processing exceeded timeout or encountered internal error during multi-file analysis",
+  "message_flow": [
+    "User query asking to compare two Rust files",
+    "Assistant attempted to read escalation.rs (failed - file not found)",
+    "Assistant attempted to search for files",
+    "Tool returned search results",
+    "Assistant analyzed workflow.rs and other files",
+    "Session processing continued with 21 total messages before failing"
+  ]
+}

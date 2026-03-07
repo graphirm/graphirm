@@ -70,6 +70,12 @@ pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
         AgentEvent::GraphUpdate { recent_nodes, .. } => {
             app.graph_explorer.nodes = recent_nodes.into_iter().map(graph_node_to_entry).collect();
         }
+        AgentEvent::SoftEscalationTriggered(event) => {
+            app.status_bar.agent_state = format!(
+                "Soft escalation at turn {} (repeated: {})",
+                event.turn, event.repeated_tool_calls
+            );
+        }
     }
 }
 

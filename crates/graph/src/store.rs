@@ -25,7 +25,7 @@ impl GraphStore {
             Ok(())
         });
         let pool = Pool::builder()
-            .max_size(4)
+            .max_size(20)
             .build(manager)
             .map_err(GraphError::Pool)?;
 
