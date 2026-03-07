@@ -25,12 +25,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **DAG Timeline Layout** — Visual redesign of graph explorer with temporal and type-based node positioning
 - **Session Restoration** — Sessions automatically survive server restarts with full history preserved
 - **Landing Page** — graphirm.ai static site with installation and usage documentation
-- **Phase 9: Knowledge Layer** (available on `phase/9-knowledge-layer` branch)
+- **Phase 9: Knowledge Layer** ✅ INTEGRATED
   - GLiNER2 ONNX entity extraction for knowledge graphs
   - HNSW vector search for cross-session memory retrieval
   - Hybrid extraction backend (local + cloud options)
   - Cross-session context injection for improved relevance
   - 12 completed tasks with full test coverage
+  - Merged into main on 2026-03-07
 
 ### Platform Features
 

@@ -12,6 +12,7 @@ Every other coding agent stores conversations as linear message arrays. Graphirm
 
 - **Relevance-scored context** — PageRank + recency decay + edge type weights + BFS distance, not "last N messages"
 - **Cross-session memory** — Knowledge nodes persist; high-PageRank nodes surface in every future session automatically
+- **Entity extraction** — GLiNER2 ONNX extracts entities and relationships for semantic search
 - **Task DAGs** — tasks form a dependency graph, trackable and replayable
 - **Multi-agent coordination** — subagents write nodes into a shared graph; any agent can traverse them
 - **Session replay** — the graph *is* the audit trail
