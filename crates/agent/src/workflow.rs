@@ -360,61 +360,7 @@ pub async fn run_agent_loop(
 
         let tool_calls: Vec<&ContentPart> = response.tool_calls();
 
-        // Check for escalation: detect repeated tool calls and trigger synthesis directive
-        if !escalation_triggered {
-            let (should_escalate, repeated_count) = 
-                escalation_detector.should_escalate(turn as usize, &tool_calls);
-            
-            if should_escalate {
-                info!(
-                    turn = turn as usize,
-                    repeated_count = repeated_count,
-                    "Soft escalation triggered: switching to synthesis mode"
-                );
-                
-                // Emit event for observability
-                let synthesis_msg = "Based on the information you've gathered so far, \
-                    please synthesize your findings and provide your analysis. \
-                    Do not make additional tool calls. Format your response as a clear conclusion.";
-                
-                events.emit(crate::event::AgentEvent::SoftEscalationTriggered(
-                    crate::event::SoftEscalationTriggeredEvent {
-                        turn: turn as usize,
-                        repeated_tool_calls: repeated_count,
-                        synthesis_directive: synthesis_msg.to_string(),
-                    }
-                ));
-                
-                // Add synthesis directive as system message
-                session.add_user_message(synthesis_msg)?;
-                escalation_triggered = true;
-                
-                // Get fresh context and call LLM again
-                let (synthesis_response, synthesis_id) = 
-                    stream_and_record(session, llm, tools, events).await?;
-                all_node_ids.push(synthesis_id.clone());
-                
-                // If model still has tool calls after synthesis directive, hard stop
-                if synthesis_response.has_tool_calls() {
-                error!(
-                    turn = turn as usize,
-                    tool_calls = ?synthesis_response.tool_calls().len(),
-                    "Model ignored synthesis directive; hard recursion limit"
-                );
-                return Err(AgentError::RecursionLimit(turn as u32));
-                }
-                
-                // Success: model synthesized
-                events.emit(AgentEvent::TurnEnd {
-                    response_id: synthesis_id.clone(),
-                    tool_result_ids: vec![],
-                });
-                emit_graph_update(session, &synthesis_id, vec![], events);
-                break;
-            }
-        }
-
-        // Record tool calls for next iteration
+        // Record tool calls for escalation detection (do this before executing, so we can decide whether to escalate)
         for part in &tool_calls {
             if let Some(key) = crate::escalation::ToolCallKey::from_content_part(part) {
                 escalation_detector.record_tool_call(turn as usize, key);
@@ -473,6 +419,60 @@ pub async fn run_agent_loop(
             tool_result_ids: tool_result_ids.clone(),
         });
         emit_graph_update(session, &response_id, tool_result_ids, events);
+
+        // Check for escalation AFTER tool execution, so context is complete
+        if !escalation_triggered {
+            let (should_escalate, repeated_count) = 
+                escalation_detector.should_escalate(turn as usize, &tool_calls);
+            
+            if should_escalate {
+                info!(
+                    turn = turn as usize,
+                    repeated_count = repeated_count,
+                    "Soft escalation triggered: switching to synthesis mode"
+                );
+                
+                // Emit event for observability
+                let synthesis_msg = "Based on the information you've gathered so far, \
+                    please synthesize your findings and provide your analysis. \
+                    Do not make additional tool calls. Format your response as a clear conclusion.";
+                
+                events.emit(crate::event::AgentEvent::SoftEscalationTriggered(
+                    crate::event::SoftEscalationTriggeredEvent {
+                        turn: turn as usize,
+                        repeated_tool_calls: repeated_count,
+                        synthesis_directive: synthesis_msg.to_string(),
+                    }
+                ));
+                
+                // Add synthesis directive as system message
+                session.add_user_message(synthesis_msg)?;
+                escalation_triggered = true;
+                
+                // Get fresh context and call LLM again
+                let (synthesis_response, synthesis_id) = 
+                    stream_and_record(session, llm, tools, events).await?;
+                all_node_ids.push(synthesis_id.clone());
+                
+                // If model still has tool calls after synthesis directive, hard stop
+                if synthesis_response.has_tool_calls() {
+                    error!(
+                        turn = turn as usize,
+                        tool_calls = ?synthesis_response.tool_calls().len(),
+                        "Model ignored synthesis directive; hard recursion limit"
+                    );
+                    return Err(AgentError::RecursionLimit(turn as u32));
+                }
+                
+                // Success: model synthesized
+                events.emit(AgentEvent::TurnEnd {
+                    response_id: synthesis_id.clone(),
+                    tool_result_ids: vec![],
+                });
+                emit_graph_update(session, &synthesis_id, vec![], events);
+                break;
+            }
+        }
 
         // The loop runs 0..max_turns; hitting this on the last iteration with
         // outstanding tool calls means we consumed the full budget.
