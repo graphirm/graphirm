@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.0] - 2026-03-06
+## [3.0.0] - 2026-03-07
 
 ### Added
 
@@ -20,9 +20,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Configurable via `soft_escalation_turn` and `soft_escalation_threshold`
   - Emits `SoftEscalationTriggered` events for observability
   - New metrics endpoint: `GET /api/sessions/{id}/escalations`
+  - Fixed synthesis context bug for proper LLM message formatting
+  - Database pool expanded from 4 to 20 connections for concurrent sessions
 - **DAG Timeline Layout** — Visual redesign of graph explorer with temporal and type-based node positioning
 - **Session Restoration** — Sessions automatically survive server restarts with full history preserved
 - **Landing Page** — graphirm.ai static site with installation and usage documentation
+- **Phase 9: Knowledge Layer** (available on `phase/9-knowledge-layer` branch)
+  - GLiNER2 ONNX entity extraction for knowledge graphs
+  - HNSW vector search for cross-session memory retrieval
+  - Hybrid extraction backend (local + cloud options)
+  - Cross-session context injection for improved relevance
+  - 12 completed tasks with full test coverage
 
 ### Platform Features
 

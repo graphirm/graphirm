@@ -9,6 +9,7 @@ A graph-native coding agent in Rust. Every interaction, tool call, and file read
 - **Cross-session memory** — knowledge persists; high-value nodes surface automatically in future sessions
 - **Relevance-scored context** — PageRank + recency + graph distance, not "last N messages"
 - **Soft escalation in agent loop** — detects repeated tool calls and gracefully prompts synthesis before hard limits
+- **Phase 9: Knowledge layer** (beta branch) — GLiNER2 ONNX entity extraction + HNSW cross-session memory
 - **Multi-provider** — Anthropic, DeepSeek, OpenAI, Ollama, 17+ via rig-core
 - **VS Code extension** — two-pane chat + live graph visualization
 - **Agent Trace export** — Export sessions to open standard interchange format for external tool integration
