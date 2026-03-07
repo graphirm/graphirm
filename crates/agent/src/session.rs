@@ -10,6 +10,37 @@ use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, NodeId, NodeT
 use crate::config::AgentConfig;
 use crate::error::AgentError;
 
+/// Lifecycle status of a restored or active session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionStatus {
+    Idle,
+    Running,
+    Completed,
+    Failed,
+}
+
+/// Lightweight metadata for a session, used during restoration on startup.
+#[derive(Debug, Clone)]
+pub struct SessionMetadata {
+    pub session_id: String,
+    pub name: String,
+    pub model: String,
+    pub created_at: DateTime<Utc>,
+    pub status: SessionStatus,
+}
+
+impl SessionMetadata {
+    pub fn from_agent_node_id(
+        session_id: String,
+        name: String,
+        model: String,
+        created_at: DateTime<Utc>,
+        status: SessionStatus,
+    ) -> Self {
+        Self { session_id, name, model, created_at, status }
+    }
+}
+
 pub struct Session {
     pub id: NodeId,
     pub agent_config: AgentConfig,
