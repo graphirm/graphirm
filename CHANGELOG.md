@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Broken test compilation** — `cargo test --workspace` now compiles and passes cleanly across all crates
+  - Added `SessionStatus` and `SessionMetadata` types to `graphirm-agent` crate (were planned but never implemented)
+  - Added `get_agent_nodes()` query to `GraphStore` for session restoration on startup
+  - Made `session` and `request_log` modules public in `graphirm-server`
+  - Declared and wired `middleware` module — `request_logging` middleware now active in `create_router`
+  - Added `tempfile` dev-dependency to server crate for request log tests
+
+---
+
 ## [3.0.0] - 2026-03-07
 
 ### Added

@@ -1,5 +1,38 @@
 # Graphirm Development Progress Log
 
+## 2026-03-08: Fix Broken Tests - COMPLETE ✅
+
+### Summary
+
+Fixed five compile errors that prevented `cargo test --workspace` from compiling. No logic changes — purely wiring up things that were written but not connected.
+
+### Root Causes Fixed
+
+| Error | Fix |
+|-------|-----|
+| `graphirm_agent::SessionStatus` not found | Added `SessionStatus` enum to `crates/agent/src/session.rs`, re-exported from `lib.rs` |
+| `graphirm_agent::SessionMetadata` not found | Added `SessionMetadata` struct + `from_agent_node_id` constructor, re-exported from `lib.rs` |
+| `store.get_agent_nodes()` not found | Implemented method on `GraphStore` — queries `WHERE node_type = 'agent'` ordered by `created_at DESC` |
+| `graphirm_server::restore_sessions_from_graph` not found | Made `session` module `pub` in server `lib.rs`, added `pub use session::restore_sessions_from_graph` |
+| `graphirm_server::request_log::RequestLogger` not found | Made `request_log` module `pub` in server `lib.rs` |
+| `tempfile` not in scope (request_log tests) | Added `tempfile = "3"` to server dev-dependencies |
+| `request_logging` middleware never called | Declared `middleware` module in server `lib.rs`, wired `request_logging` into `create_router` via `axum::middleware::from_fn` |
+
+### Files Changed
+
+- `crates/agent/src/session.rs` — `SessionStatus`, `SessionMetadata` types
+- `crates/agent/src/lib.rs` — re-export both types
+- `crates/graph/src/store.rs` — `get_agent_nodes()` method
+- `crates/server/src/lib.rs` — `pub mod middleware`, `pub mod request_log`, `pub mod session`, `pub use session::restore_sessions_from_graph`
+- `crates/server/src/routes.rs` — wire `request_logging` middleware
+- `crates/server/Cargo.toml` — `tempfile = "3"` dev-dependency
+
+### Result
+
+`cargo test --workspace` compiles and passes cleanly. All crates green.
+
+---
+
 ## 2026-03-06: DAG Timeline Layout & Agent Trace Export - COMPLETE ✅
 
 ### Summary

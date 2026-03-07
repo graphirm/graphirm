@@ -8,12 +8,14 @@
 ✅ Extension (chat + graph visualization)  
 ✅ Server (healthy, responsive, full integration)  
 ✅ Session persistence (survives restarts)  
+✅ `cargo test --workspace` — clean, all crates compile and pass  
 
 ## 📈 Project Status Summary
 
 - **MVP (Phases 0-4+7):** ✅ Complete
 - **Soft Escalation (Phase 4 enhancement):** ✅ Complete & Integrated
 - **Knowledge Layer (Phase 9):** ✅ Complete & Integrated
+- **Test Suite:** ✅ Clean (`cargo test --workspace` passes)
 - **Web UI (Phase 10):** ⏳ Planned
 - **Production Ready:** ✅ YES — Both soft escalation + knowledge layer active
 
