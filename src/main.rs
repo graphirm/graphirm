@@ -1,6 +1,6 @@
 mod error;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
@@ -19,19 +19,6 @@ struct Cli {
 
     #[command(subcommand)]
     command: Commands,
-}
-
-/// Export a session to a standard interchange format.
-#[derive(clap::Args, Debug)]
-struct ExportArgs {
-    /// Session ID to export.
-    session_id: String,
-    /// Output format (default: agent-trace).
-    #[arg(long, default_value = "agent-trace")]
-    format: String,
-    /// Output file path (default: stdout).
-    #[arg(short, long)]
-    output: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -66,16 +53,9 @@ enum Commands {
         host: String,
 
         /// Port to listen on
-        #[arg(short, long, default_value = "5555")]
+        #[arg(short, long, default_value = "3000")]
         port: u16,
-
-        /// Path to write request log JSONL file (for usage analysis)
-        #[arg(long)]
-        request_log: Option<PathBuf>,
     },
-
-    /// Export a session to interchange format
-    Export(ExportArgs),
 }
 
 #[derive(Subcommand)]
@@ -113,11 +93,7 @@ async fn main() -> Result<(), GraphirmError> {
                 .init();
             run_graph_command(action, &db_path)?;
         }
-        Commands::Serve {
-            host,
-            port,
-            request_log,
-        } => {
+        Commands::Serve { host, port } => {
             tracing_subscriber::fmt()
                 .with_env_filter(
                     tracing_subscriber::EnvFilter::from_default_env()
@@ -129,72 +105,25 @@ async fn main() -> Result<(), GraphirmError> {
                 db_path.to_str().unwrap_or("graph.db"),
             )?);
             let tools = Arc::new(build_tool_registry());
+            let agent_config = graphirm_agent::AgentConfig::default();
 
             // LLM provider requires a model spec; default to Anthropic if env
             // var is set, otherwise print a helpful error and exit.
             let model_spec = std::env::var("GRAPHIRM_MODEL")
                 .unwrap_or_else(|_| "anthropic/claude-sonnet-4-20250514".to_string());
-            let (provider_name, model_name) =
+            let (provider_name, _model_name) =
                 graphirm_llm::factory::parse_model_string(&model_spec)
                     .map_err(|e| GraphirmError::Config(e.to_string()))?;
-
-            let agent_config = graphirm_agent::AgentConfig {
-                model: model_name.to_string(),
-                ..graphirm_agent::AgentConfig::default()
-            };
-            // Validate the provider name eagerly (fail fast on typos), but
-            // allow a missing API key — the server is useful for browsing the
-            // graph even without a live LLM key. An error will surface at
-            // prompt time rather than at startup.
-            let api_key = match api_key_for_provider(provider_name) {
-                Ok(key) => key,
-                Err(GraphirmError::Config(ref msg)) if msg.contains("not set") => {
-                    tracing::warn!(
-                        "{msg} — server starting without LLM key; \
-                         prompts will fail until the key is set"
-                    );
-                    String::new()
-                }
-                Err(e) => return Err(e),
-            };
+            let api_key = api_key_for_provider(provider_name)?;
             let llm: Arc<dyn graphirm_llm::LlmProvider> = Arc::from(
                 graphirm_llm::factory::create_provider(provider_name, &api_key)
                     .map_err(|e| GraphirmError::Config(e.to_string()))?,
             );
 
-            let server_config = graphirm_server::ServerConfig {
-                host,
-                port,
-                request_log_path: request_log,
-            };
+            let server_config = graphirm_server::ServerConfig { host, port };
             graphirm_server::start_server(graph, llm, tools, agent_config, server_config)
                 .await
                 .map_err(|e| GraphirmError::Config(e.to_string()))?;
-        }
-        Commands::Export(args) => {
-            tracing_subscriber::fmt()
-                .with_writer(std::io::stderr)
-                .with_env_filter("error")
-                .init();
-
-            let graph = open_graph(&db_path)?;
-            let record = graphirm_graph::export_session(&graph, &args.session_id)?;
-            let json = serde_json::to_string_pretty(&record)
-                .map_err(|e| GraphirmError::Config(format!("Failed to serialize export: {e}")))?;
-            match args.output {
-                Some(path) => {
-                    std::fs::write(&path, json).map_err(|e| {
-                        GraphirmError::Config(format!(
-                            "Failed to write export to {}: {e}",
-                            path.display()
-                        ))
-                    })?;
-                    tracing::info!("Exported session {} to {}", args.session_id, path.display());
-                }
-                None => {
-                    println!("{json}");
-                }
-            }
         }
     }
 
@@ -220,13 +149,7 @@ fn resolve_db_path(override_path: Option<PathBuf>) -> Result<PathBuf, GraphirmEr
     Ok(path)
 }
 
-/// Helper to open the graph with the configured database path.
-fn open_graph(db_path: &Path) -> Result<graphirm_graph::GraphStore, GraphirmError> {
-    graphirm_graph::GraphStore::open(db_path.to_str().unwrap_or("graph.db"))
-        .map_err(|e| GraphirmError::Config(e.to_string()))
-}
-
-fn run_graph_command(action: GraphAction, db_path: &Path) -> Result<(), GraphirmError> {
+fn run_graph_command(action: GraphAction, db_path: &PathBuf) -> Result<(), GraphirmError> {
     let graph = graphirm_graph::GraphStore::open(db_path.to_str().unwrap_or("graph.db"))?;
 
     match action {
@@ -261,7 +184,7 @@ fn run_graph_command(action: GraphAction, db_path: &Path) -> Result<(), Graphirm
                 return Ok(());
             }
 
-            println!("{:<38}  {:<12}  LABEL", "ID", "TYPE");
+            println!("{:<38}  {:<12}  {}", "ID", "TYPE", "LABEL");
             println!("{}", "-".repeat(90));
             for node in nodes {
                 let label = node_display_label(&node);
@@ -348,7 +271,7 @@ fn api_key_for_provider(provider_name: &str) -> Result<String, GraphirmError> {
     }
 }
 
-async fn run_chat(model: String, db_path: &Path) -> Result<(), GraphirmError> {
+async fn run_chat(model: String, db_path: &PathBuf) -> Result<(), GraphirmError> {
     let (provider_name, model_name) = graphirm_llm::factory::parse_model_string(&model)
         .map_err(|e| GraphirmError::Config(e.to_string()))?;
 

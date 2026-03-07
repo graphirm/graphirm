@@ -1,0 +1,46 @@
+---
+description: MANDATORY — invoke superpowers skills before any action. Prevents skipping process, commits, reviews, and progress tracking.
+alwaysApply: true
+---
+
+# Skills-First Protocol
+
+## Before ANY response or action
+
+1. **Read `using-superpowers` skill** — it is the gateway to all other skills
+2. **Check every applicable skill** — even 1% chance means invoke it
+3. **Follow the skill exactly** — do not rationalize skipping steps
+
+## When executing a plan from `docs/plans/`
+
+Plans contain a `> **For Claude:**` header specifying which skill to use. **Read and follow it.**
+
+Required workflow (in order):
+1. `using-superpowers` — check for applicable skills
+2. `using-git-worktrees` — create isolated branch before touching code
+3. `executing-plans` or `subagent-driven-development` — as specified by the plan
+4. `verification-before-completion` — before any success claim
+5. `finishing-a-development-branch` — when all tasks complete
+
+## Commit and progress rules
+
+- **Commit after each task or batch** (not after all tasks)
+- **Update plan checkboxes** (`- [ ]` → `- [x]`) after each task completes
+- **Update `00-execution-strategy.md`** status column as phases complete
+- **Report progress** between batches — don't wait to be asked
+
+## Review gates
+
+- Dispatch **spec reviewer** subagent after implementation (does code match plan?)
+- Dispatch **code quality reviewer** subagent after spec passes
+- Never skip reviews — even for "simple" scaffold work
+
+## Failure pattern to avoid
+
+```
+Skip using-superpowers → skip executing-plans → skip worktree →
+  dump all files at once → no incremental commits → no progress updates →
+    no reviews → single commit on main → user has to ask for everything
+```
+
+If you catch yourself doing ANY of the above, STOP and restart from step 1.

@@ -3,8 +3,8 @@ pub mod config;
 pub mod context;
 pub mod coordinator;
 pub mod delegate;
-pub mod error;
 pub mod escalation;
+pub mod error;
 pub mod event;
 pub mod knowledge;
 pub mod multi;
@@ -25,5 +25,5 @@ pub use multi::{
     AgentRegistry, LlmFactory, SubagentHandle, collect_subagent_results, spawn_subagent,
     wait_for_dependencies, wait_for_subagents,
 };
-pub use session::{Session, SessionMetadata, SessionStatus};
+pub use session::Session;
 pub use workflow::run_agent_loop;

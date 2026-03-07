@@ -15,20 +15,18 @@ use graphirm_agent::{AgentConfig, EventBus, Session, run_agent_loop};
 use graphirm_graph::{Direction, EdgeType, GraphNode, NodeId, NodeType};
 
 use crate::error::ServerError;
-use crate::middleware::request_logging;
 use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
-    CreateSessionRequest, EscalationMetrics, GraphResponse, HealthResponse, PromptRequest, SessionId, SessionResponse,
+    CreateSessionRequest, GraphResponse, HealthResponse, PromptRequest, SessionId, SessionResponse,
     SessionStatus, SseEvent, SseEventType, SubgraphQuery,
 };
 
 /// Build the axum router with all routes wired to shared [`AppState`].
 ///
-/// Middleware applied (outermost → innermost, axum stacks in reverse `.layer()` order):
-/// - [`TraceLayer`] — per-request tracing spans at INFO level.
+/// Middleware applied (outermost → innermost):
 /// - [`CorsLayer`] — permissive CORS, allows any origin/method/header.
-/// - `request_logging` — JSONL request logger; no-op if no [`RequestLogger`] Extension present.
+/// - [`TraceLayer`] — per-request tracing spans at INFO level.
 pub fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -59,12 +57,10 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/graph/{session_id}/tasks", get(get_tasks))
         .route("/api/graph/{session_id}/knowledge", get(get_knowledge))
-        .route("/api/sessions/{id}/escalations", get(get_escalation_metrics))
         // SSE event streams
         .route("/api/events", get(sse_handler))
         .route("/api/events/{session_id}", get(sse_session_handler))
-        // Middleware (outermost applied last)
-        .layer(axum::middleware::from_fn(request_logging))
+        // Middleware
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -99,14 +95,8 @@ async fn create_session(
     let session_id = SessionId(session.id.to_string());
     let now = Utc::now();
 
-    // Use caller-supplied name or generate a timestamped default.
-    let name = body
-        .name
-        .unwrap_or_else(|| format!("session-{}", now.format("%H:%M")));
-
     let response = SessionResponse {
         id: session_id.to_string(),
-        name: name.clone(),
         agent: session.agent_config.name.clone(),
         model: session.agent_config.model.clone(),
         created_at: now,
@@ -115,7 +105,6 @@ async fn create_session(
 
     let handle = SessionHandle {
         session: Arc::new(session),
-        name,
         signal: CancellationToken::new(),
         join_handle: None,
         status: SessionStatus::Idle,
@@ -246,11 +235,6 @@ async fn prompt_session(
         // into the session map happens after this task is spawned, so clearing
         // it here risks overwriting Some(handle) set by the spawner with None.
         // The handle is cleaned up when the session is deleted.
-        if let Err(ref e) = result {
-            if !matches!(e, graphirm_agent::AgentError::Cancelled) {
-                tracing::error!(session_id = %bg_key, error = %e, "Agent loop failed");
-            }
-        }
         let mut sessions = sessions.write().await;
         if let Some(h) = sessions.get_mut(&bg_key) {
             h.status = match &result {
@@ -468,66 +452,11 @@ async fn get_knowledge(
     Ok(Json(knowledge))
 }
 
-/// `GET /api/sessions/{id}/escalations` — Get soft escalation metrics for a session.
-///
-/// Queries the session's graph to count and analyze soft escalation events.
-/// Returns metrics about when escalations occurred and their effectiveness.
-async fn get_escalation_metrics(
-    State(state): State<AppState>,
-    Path(session_id): Path<String>,
-) -> Result<Json<EscalationMetrics>, ServerError> {
-    let key = SessionId::from(session_id.as_str());
-    let sessions = state.sessions.read().await;
-    let handle = sessions
-        .get(&key)
-        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
-
-    // Query for SoftEscalationTriggered events in the session
-    let neighbors = state
-        .graph
-        .neighbors(
-            &handle.session.id,
-            Some(EdgeType::Produces),
-            Direction::Outgoing,
-        )
-        .map_err(ServerError::Graph)?;
-
-    // Filter interactions that are escalation events
-    let mut escalation_turns: Vec<usize> = Vec::new();
-    for node in neighbors {
-        if let NodeType::Interaction(interaction_data) = &node.node_type {
-            // Check if this interaction contains escalation event data
-            if interaction_data.content.contains("SoftEscalationTriggered") {
-                // Try to extract turn number from the content
-                // Format: we'd need to parse structured data or use heuristics
-                // For MVP, we just count events
-                escalation_turns.push(escalation_turns.len()); // placeholder
-            }
-        }
-    }
-
-    let total_escalations = escalation_turns.len();
-    let avg_turn_triggered = if !escalation_turns.is_empty() {
-        escalation_turns.iter().sum::<usize>() as f64 / escalation_turns.len() as f64
-    } else {
-        0.0
-    };
-    let last_escalation_turn = escalation_turns.last().copied();
-
-    Ok(Json(EscalationMetrics {
-        session_id: session_id.clone(),
-        total_escalations,
-        avg_turn_triggered,
-        last_escalation_turn,
-    }))
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn session_handle_to_response(id: &str, handle: &SessionHandle) -> SessionResponse {
     SessionResponse {
         id: id.to_string(),
-        name: handle.name.clone(),
         agent: handle.session.agent_config.name.clone(),
         model: handle.session.agent_config.model.clone(),
         created_at: handle.created_at,

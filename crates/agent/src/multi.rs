@@ -78,10 +78,7 @@ impl AgentRegistry {
 
     /// List all registered agent names.
     pub fn list(&self) -> Vec<&str> {
-        self.configs
-            .keys()
-            .map(|s| s.as_str())
-            .collect::<Vec<&str>>()
+        self.configs.keys().map(|s| s.as_str()).collect()
     }
 
     /// Find the primary agent config (mode = "primary").

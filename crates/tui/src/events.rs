@@ -68,13 +68,29 @@ pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
             }
         }
         AgentEvent::GraphUpdate { recent_nodes, .. } => {
-            app.graph_explorer.nodes = recent_nodes.into_iter().map(graph_node_to_entry).collect();
+            app.graph_explorer.nodes = recent_nodes
+                .into_iter()
+                .map(|n| graph_node_to_entry(n))
+                .collect();
         }
-        AgentEvent::SoftEscalationTriggered(event) => {
-            app.status_bar.agent_state = format!(
-                "Soft escalation at turn {} (repeated: {})",
-                event.turn, event.repeated_tool_calls
-            );
+        AgentEvent::SoftEscalationTriggered {
+            turn,
+            repeated_tool_calls,
+            synthesis_directive,
+        } => {
+            app.status_bar.agent_state = "⚠ Soft Escalation".to_string();
+            app.chat.add_message(ChatMessage {
+                role: Role::Assistant,
+                content: format!(
+                    "[Soft Escalation at turn {}]\n{}\nRepeated {} calls to same tool.",
+                    turn, synthesis_directive, repeated_tool_calls
+                ),
+                timestamp: Utc::now(),
+                node_id: None,
+                is_tool_call: false,
+                tool_name: None,
+            });
+            app.chat.scroll_to_bottom();
         }
     }
 }

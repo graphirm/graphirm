@@ -144,8 +144,6 @@ impl std::fmt::Display for SseEventType {
 /// Request body for `POST /api/sessions`.
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
-    /// Human-readable display name for the session (e.g. "fix auth bug").
-    pub name: Option<String>,
     /// Optional agent profile name (defaults to `default_config.name`).
     pub agent: Option<String>,
     /// Optional model override (e.g. `"claude-opus-4-5"`).
@@ -173,8 +171,6 @@ pub struct SubgraphQuery {
 pub struct SessionResponse {
     /// Session UUID.
     pub id: String,
-    /// Human-readable display name.
-    pub name: String,
     /// Agent profile name.
     pub agent: String,
     /// LLM model identifier.
@@ -201,22 +197,6 @@ pub struct GraphResponse {
     pub nodes: Vec<GraphNode>,
     /// Edges connecting the nodes.
     pub edges: Vec<GraphEdge>,
-}
-
-/// Soft escalation metrics for a session.
-///
-/// Tracks when and how often the agent's soft escalation mechanism triggered
-/// in response to repeated tool calls.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EscalationMetrics {
-    /// The session ID these metrics belong to.
-    pub session_id: String,
-    /// Total number of times soft escalation was triggered.
-    pub total_escalations: usize,
-    /// Average turn number at which escalations occurred.
-    pub avg_turn_triggered: f64,
-    /// The turn number of the most recent escalation, if any.
-    pub last_escalation_turn: Option<usize>,
 }
 
 /// A single SSE event pushed to connected clients.
@@ -259,7 +239,6 @@ mod tests {
         let now = Utc::now();
         let session = SessionResponse {
             id: "abc-123".to_string(),
-            name: "test-session".to_string(),
             agent: "graphirm".to_string(),
             model: "claude-sonnet-4-20250514".to_string(),
             created_at: now,
@@ -268,7 +247,6 @@ mod tests {
         let json = serde_json::to_string(&session).unwrap();
         let back: SessionResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, "abc-123");
-        assert_eq!(back.name, "test-session");
         assert_eq!(back.agent, "graphirm");
         assert_eq!(back.model, "claude-sonnet-4-20250514");
         assert_eq!(back.status, SessionStatus::Idle);

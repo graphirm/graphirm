@@ -90,7 +90,7 @@ fn default_max_tokens() -> usize {
     128_000
 }
 fn default_system_prompt() -> String {
-    crate::config::DEFAULT_SYSTEM_PROMPT.to_string()
+    "You are a helpful coding assistant.".to_string()
 }
 fn default_guaranteed_recent_turns() -> usize {
     4
@@ -109,7 +109,7 @@ impl Default for ContextConfig {
     fn default() -> Self {
         Self {
             max_tokens: 128_000,
-            system_prompt: crate::config::DEFAULT_SYSTEM_PROMPT.to_string(),
+            system_prompt: "You are a helpful coding assistant.".to_string(),
             guaranteed_recent_turns: 4,
             max_content_nodes: 20,
             recency_decay: 0.1,
@@ -429,33 +429,8 @@ pub fn build_context(
 
     // Split into guaranteed recent and older messages
     let guaranteed_count = config.guaranteed_recent_turns.min(thread.len());
-    let mut guaranteed_recent: Vec<GraphNode> = thread[..guaranteed_count].to_vec();
-    let mut older_conversation: Vec<GraphNode> = thread[guaranteed_count..].to_vec();
-
-    // Pairing invariant: an assistant+tool_calls node must never be left in
-    // older_conversation while its tool result nodes sit in guaranteed_recent.
-    // If the split boundary falls inside a tool-call group, promote the
-    // assistant node to guaranteed_recent so it always precedes its results.
-    // This prevents "insufficient tool messages" 400 errors from providers.
-    loop {
-        let oldest_is_tool = guaranteed_recent
-            .last()
-            .is_some_and(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "tool"));
-        let newest_older_is_tool_caller = older_conversation.first().is_some_and(|n| {
-            matches!(&n.node_type, NodeType::Interaction(d) if d.role == "assistant")
-                && n.metadata
-                    .get("tool_calls")
-                    .and_then(|v| v.as_array())
-                    .map(|a| !a.is_empty())
-                    .unwrap_or(false)
-        });
-        if oldest_is_tool && newest_older_is_tool_caller {
-            let promoted = older_conversation.remove(0);
-            guaranteed_recent.push(promoted);
-        } else {
-            break;
-        }
-    }
+    let guaranteed_recent: Vec<GraphNode> = thread[..guaranteed_count].to_vec();
+    let older_conversation: Vec<GraphNode> = thread[guaranteed_count..].to_vec();
 
     // Token accounting
     let guaranteed_tokens: usize = guaranteed_recent.iter().map(estimate_tokens).sum();
@@ -476,80 +451,15 @@ pub fn build_context(
 
     let distances = bfs_distances(graph, &current_turn.id, BFS_MAX_DEPTH)?;
 
-    // Group older conversation nodes into atomic turn-groups.
-    //
-    // An assistant message with tool_calls and all the tool-result messages
-    // that follow it must always appear together in the context window — the
-    // OpenAI/DeepSeek API rejects any context where an assistant+tool_calls
-    // message is not immediately followed by exactly its tool results.
-    //
-    // `older_conversation` is newest-first from the thread walk; reversing
-    // gives chronological order for grouping, then we reverse again after.
-    let mut chrono_older = older_conversation.clone();
-    chrono_older.reverse(); // oldest → newest
-
-    let mut turn_groups: Vec<Vec<GraphNode>> = Vec::new();
-    let mut i = 0;
-    while i < chrono_older.len() {
-        let node = &chrono_older[i];
-        let is_tool_caller = matches!(&node.node_type, NodeType::Interaction(d)
-            if d.role == "assistant")
-            && node
-                .metadata
-                .get("tool_calls")
-                .and_then(|v| v.as_array())
-                .map(|a| !a.is_empty())
-                .unwrap_or(false);
-
-        if is_tool_caller {
-            // Collect this assistant + all immediately following tool results
-            let mut group = vec![chrono_older[i].clone()];
-            i += 1;
-            while i < chrono_older.len() {
-                let next = &chrono_older[i];
-                if matches!(&next.node_type, NodeType::Interaction(d) if d.role == "tool") {
-                    group.push(next.clone());
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            turn_groups.push(group);
-        } else {
-            turn_groups.push(vec![chrono_older[i].clone()]);
-            i += 1;
-        }
-    }
-
-    // Score each group as a unit: use the maximum individual node score so a
-    // high-scoring tool result carries its paired assistant node with it.
-    let mut group_candidates: Vec<(Vec<ScoredNode>, f64)> = Vec::new();
-    for group in turn_groups {
-        let mut group_scored = Vec::new();
-        let mut max_score: f64 = 0.0;
-        for node in group {
-            let score = score_node(&node, &pagerank_scores, &distances, config, graph)?;
-            max_score = max_score.max(score);
-            group_scored.push(ScoredNode {
-                token_estimate: estimate_tokens(&node),
-                node,
-                score,
-            });
-        }
-        group_candidates.push((group_scored, max_score));
-    }
-
-    // Sort groups by descending max-score, then fit whole groups into budget.
-    group_candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    // Score older conversation nodes
     let mut candidates: Vec<ScoredNode> = Vec::new();
-    let mut remaining_conv = remaining_budget;
-    for (group, _score) in group_candidates {
-        let group_tokens: usize = group.iter().map(|s| s.token_estimate).sum();
-        if group_tokens <= remaining_conv {
-            remaining_conv -= group_tokens;
-            candidates.extend(group);
-        }
-        // Drop the whole group if it doesn't fit — never include a partial group.
+    for node in &older_conversation {
+        let score = score_node(node, &pagerank_scores, &distances, config, graph)?;
+        candidates.push(ScoredNode {
+            node: node.clone(),
+            score,
+            token_estimate: estimate_tokens(node),
+        });
     }
 
     // Score content/knowledge nodes (capped by max_content_nodes)
@@ -568,43 +478,19 @@ pub fn build_context(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     content_scored.truncate(config.max_content_nodes);
-    // Content nodes are standalone — no pairing constraint.
-    let content_budget = remaining_conv;
-    let selected_content = fit_to_budget(content_scored, content_budget);
-    candidates.extend(selected_content);
+    candidates.extend(content_scored);
 
-    let selected = candidates;
+    // Fit into remaining budget
+    let selected = fit_to_budget(candidates, remaining_budget);
     let selected_tokens: usize = selected.iter().map(|s| s.token_estimate).sum();
 
-    // Assemble messages with a strict ordering guarantee:
-    //   1. Content/Knowledge nodes (context documents) — placed first so they
-    //      never interleave with Interaction nodes. Providers like DeepSeek and
-    //      OpenAI require that an assistant message with tool_calls is immediately
-    //      followed by the corresponding tool-result messages; inserting a Content
-    //      node chronologically between them violates this constraint and causes
-    //      a 400 "insufficient tool messages" error.
-    //   2. Older conversation Interaction nodes — in chronological order.
-    //   3. Guaranteed-recent Interaction nodes — appended last, also in
-    //      chronological order (guaranteed_recent is newest-first, so reversed).
-    let mut context_docs: Vec<GraphNode> = Vec::new();
-    let mut older_interactions: Vec<GraphNode> = Vec::new();
-
-    for sn in selected {
-        match &sn.node.node_type {
-            NodeType::Content(_) | NodeType::Knowledge(_) => context_docs.push(sn.node),
-            _ => older_interactions.push(sn.node),
-        }
-    }
-
-    context_docs.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-    older_interactions.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-
+    // Assemble messages: selected (older/context) in chronological order, then guaranteed recent
+    let mut all_nodes: Vec<GraphNode> = selected.into_iter().map(|s| s.node).collect();
+    // guaranteed_recent is newest-first from conversation_thread, reverse for chronological
     let mut recent_chrono: Vec<GraphNode> = guaranteed_recent;
     recent_chrono.reverse();
 
-    // Final order: [context docs] [older interactions] [guaranteed recent]
-    let mut all_nodes: Vec<GraphNode> = context_docs;
-    all_nodes.extend(older_interactions);
+    all_nodes.sort_by(|a, b| a.created_at.cmp(&b.created_at));
     all_nodes.extend(recent_chrono);
 
     let messages: Vec<LlmMessage> = all_nodes.iter().filter_map(node_to_message).collect();

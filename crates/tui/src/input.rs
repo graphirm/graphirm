@@ -12,9 +12,12 @@ pub enum KeyAction {
 pub fn handle_key_event(app: &mut App, key: KeyEvent) -> KeyAction {
     // Global shortcuts (work regardless of focus)
     if key.modifiers.contains(KeyModifiers::CONTROL) {
-        if let KeyCode::Char('c') = key.code {
-            app.should_quit = true;
-            return KeyAction::Quit;
+        match key.code {
+            KeyCode::Char('c') => {
+                app.should_quit = true;
+                return KeyAction::Quit;
+            }
+            _ => {}
         }
     }
 

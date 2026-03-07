@@ -1,81 +1,5 @@
 // Agent configuration: model selection, temperature, tool permissions
 
-/// Default system prompt used when no override is provided in config.
-/// Instructs the agent on tool discipline and working conventions shared
-/// across all providers. Keep phrasing explicit and imperative — models
-/// like DeepSeek respond better to direct rules than soft suggestions.
-pub(crate) const DEFAULT_SYSTEM_PROMPT: &str = "\
-You are Graphirm, a graph-native coding agent. Every message you send and \
-receive is stored as a node in a persistent knowledge graph, giving users \
-cross-session memory and visual navigation of your reasoning.
-
-## Tools
-
-You have access to:
-- bash   — run shell commands in the working directory
-- read   — read a file with line numbers
-- write  — create or overwrite a file
-- edit   — replace an exact string in a file (prefer over write for small changes)
-- grep   — search file contents by regex pattern
-- find   — find files by name pattern
-- ls     — list directory contents
-
-## When to use tools
-
-Only reach for a tool when the task genuinely requires interacting with \
-the filesystem or running a command. Before calling any tool, ask yourself: \
-\"Does answering this require reading a file, running a command, or touching \
-the filesystem?\" If the answer is no, respond directly without tools.
-
-Use tools for: reading or editing code, running tests or builds, checking \
-errors, searching for a specific symbol or string, executing commands.
-
-Do NOT use tools for: general questions, explanations, plans or documents \
-the user has not asked to save, brainstorming, answering who you are, or \
-any task that does not involve this project's files.
-
-Never search the codebase as a reflexive first step. Only search when you \
-need specific information you do not already have.
-
-## How to act
-
-- Think before acting. State your plan in one sentence, then execute it.
-- Use the minimum number of tool calls needed. Batch reads where possible.
-- Prefer edit over write when modifying an existing file.
-- If a task is ambiguous, ask one clarifying question before starting.
-- If a command fails, read the error before retrying.
-- Never truncate file content when the user asks to see it.
-
-## Search strategy
-
-For questions about what a component uses, depends on, or is built with:
-1. grep the relevant Cargo.toml first for the dependency name
-2. If not found, grep the source directory for the import statement
-3. Read a file only if grep returns insufficient context
-
-Never start with ls. Never explore directory trees to find an answer — \
-search directly for the term you need. A single targeted grep on \
-crates/graph/Cargo.toml or crates/graph/src/ beats reading five files.
-
-## File reading discipline
-
-Never read the same file twice in one turn — use what you already have. \
-Once you can answer the question, stop and respond immediately. \
-Every tool call must bring you closer to the answer; if the last \
-call did not help, synthesise an answer from what you have and stop.
-
-## Working directory
-
-All paths are relative to the project root unless the user says otherwise. \
-Verify a path exists with ls or find before assuming it is correct.
-
-## Code quality
-
-- Match the style and conventions of the file you are editing.
-- Preserve existing tests; do not delete them unless explicitly asked.
-- Prefer small, focused changes over large rewrites.\
-";
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -128,10 +52,10 @@ pub struct AgentConfig {
     /// Knowledge extraction config. `None` disables post-turn extraction.
     #[serde(default)]
     pub extraction: Option<ExtractionConfig>,
-    /// Turn at which to start checking for repeated tool calls
+    /// Turn at which soft escalation checks begin (e.g., turn 8)
     #[serde(default = "default_soft_escalation_turn")]
-    pub soft_escalation_turn: usize,
-    /// Number of repeated tool calls to trigger escalation
+    pub soft_escalation_turn: u32,
+    /// Number of repeated identical tool calls to trigger soft escalation
     #[serde(default = "default_soft_escalation_threshold")]
     pub soft_escalation_threshold: usize,
 }
@@ -140,7 +64,7 @@ fn default_working_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
-fn default_soft_escalation_turn() -> usize {
+fn default_soft_escalation_turn() -> u32 {
     8
 }
 
@@ -155,17 +79,17 @@ impl Default for AgentConfig {
             mode: AgentMode::Primary,
             model: "claude-sonnet-4-20250514".to_string(),
             description: String::new(),
-            system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
-            max_turns: 10,
-            max_tokens: Some(4096),
+            system_prompt: "You are a helpful coding assistant.".to_string(),
+            max_turns: 50,
+            max_tokens: Some(8192),
             temperature: Some(0.7),
             tools: vec![],
             working_dir: default_working_dir(),
             max_context_messages: None,
             permissions: HashMap::new(),
             extraction: None,
-            soft_escalation_turn: default_soft_escalation_turn(),
-            soft_escalation_threshold: default_soft_escalation_threshold(),
+            soft_escalation_turn: 8,
+            soft_escalation_threshold: 2,
         }
     }
 }
@@ -205,13 +129,13 @@ struct AgentConfigSection {
     #[serde(default)]
     extraction: Option<ExtractionConfig>,
     #[serde(default = "default_soft_escalation_turn")]
-    soft_escalation_turn: usize,
+    soft_escalation_turn: u32,
     #[serde(default = "default_soft_escalation_threshold")]
     soft_escalation_threshold: usize,
 }
 
 fn default_system_prompt() -> String {
-    DEFAULT_SYSTEM_PROMPT.to_string()
+    "You are a helpful coding assistant.".to_string()
 }
 
 fn default_max_turns() -> u32 {
@@ -266,7 +190,7 @@ mod tests {
     fn test_agent_config_defaults() {
         let config = AgentConfig::default();
         assert_eq!(config.name, "graphirm");
-        assert_eq!(config.max_turns, 10);
+        assert_eq!(config.max_turns, 50);
         assert!(config.tools.is_empty());
         assert_eq!(config.max_context_messages, None);
     }

@@ -6,7 +6,7 @@ use graphirm_tools::ToolContext;
 use graphirm_tools::registry::ToolRegistry;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, error, debug};
+use tracing::info;
 
 use crate::error::AgentError;
 use crate::event::{AgentEvent, EventBus};
@@ -117,10 +117,6 @@ pub async fn stream_and_record(
 /// Uses a two-phase approach: first collect all execution results, then record
 /// them to the graph. This prevents ghost executions where a tool ran but its
 /// output was lost due to a graph write failure mid-drain.
-///
-/// `read_cache` deduplicates `read` calls within a single agent turn. If the
-/// model requests the same path twice, the second call returns the cached
-/// content with a note to stop calling tools and answer immediately.
 async fn execute_tools_parallel(
     session: &Session,
     tools: &ToolRegistry,
@@ -128,10 +124,7 @@ async fn execute_tools_parallel(
     tool_calls: &[&graphirm_llm::ContentPart],
     events: &EventBus,
     cancel: &CancellationToken,
-    read_cache: &mut std::collections::HashMap<String, String>,
 ) -> Result<Vec<NodeId>, AgentError> {
-    type ToolResult = Result<graphirm_tools::ToolOutput, graphirm_tools::ToolError>;
-
     let ctx = ToolContext {
         graph: session.graph.clone(),
         agent_id: session.id.clone(),
@@ -140,10 +133,8 @@ async fn execute_tools_parallel(
         signal: cancel.clone(),
     };
 
-    // Classify calls: cache hits are resolved immediately; others are spawned.
-    let mut results: Vec<(String, String, ToolResult)> = Vec::new();
+    // Phase 1: spawn all tools in parallel and collect results
     let mut set = JoinSet::new();
-
     for part in tool_calls {
         let ContentPart::ToolCall {
             id: call_id,
@@ -153,26 +144,6 @@ async fn execute_tools_parallel(
         else {
             continue;
         };
-
-        // Deduplicate read calls within this turn.
-        if name == "read" {
-            if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
-                if let Some(cached) = read_cache.get(path).cloned() {
-                    let msg = format!(
-                        "[Already read — cached. Stop calling tools and answer now.]\n{}",
-                        cached
-                    );
-                    tracing::debug!(path, "read cache hit");
-                    results.push((
-                        call_id.clone(),
-                        name.clone(),
-                        Ok(graphirm_tools::ToolOutput::success(&msg)),
-                    ));
-                    continue;
-                }
-            }
-        }
-
         let tool = tools.get(name)?;
         let call = graphirm_tools::ToolCall {
             id: call_id.clone(),
@@ -181,31 +152,21 @@ async fn execute_tools_parallel(
         };
         let ctx_clone = ctx.clone();
         set.spawn(async move {
-            let result: ToolResult = tool.execute(call.arguments.clone(), &ctx_clone).await;
-            (call.id, call.name, call.arguments, result)
+            let result: Result<graphirm_tools::ToolOutput, graphirm_tools::ToolError> =
+                tool.execute(call.arguments.clone(), &ctx_clone).await;
+            (call.id, call.name, result)
         });
     }
 
-    // Drain parallel executions; populate read cache from successful results.
+    let mut exec_results = Vec::new();
     while let Some(join_result) = set.join_next().await {
-        let (call_id, tool_name, arguments, result) =
-            join_result.map_err(|e| AgentError::Join(e.to_string()))?;
-
-        if tool_name == "read" {
-            if let Ok(ref output) = result {
-                if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
-                    read_cache.insert(path.to_string(), output.content.clone());
-                }
-            }
-        }
-
-        results.push((call_id, tool_name, result));
+        exec_results.push(join_result.map_err(|e| AgentError::Join(e.to_string()))?);
     }
 
     // Phase 2: record all results to graph (best-effort — log failures rather
     // than dropping results for tools that already executed successfully)
     let mut node_ids = Vec::new();
-    for (call_id, tool_name, exec_result) in results {
+    for (call_id, tool_name, exec_result) in exec_results {
         let (content, is_error): (String, bool) = match exec_result {
             Ok(output) => (output.content, output.is_error),
             Err(e) => (e.to_string(), true),
@@ -242,6 +203,61 @@ async fn execute_tools_parallel(
     }
 
     Ok(node_ids)
+}
+
+/// Detect repeated tool calls and trigger soft escalation if detected.
+/// Returns true if escalation was triggered (caller should handle synthesis directive).
+fn check_soft_escalation(
+    turn: u32,
+    config: &crate::config::AgentConfig,
+    response: &graphirm_llm::LlmResponse,
+    events: &EventBus,
+) -> bool {
+    if turn < config.soft_escalation_turn {
+        return false;
+    }
+
+    // Extract tool names from current response
+    let current_tools: Vec<&str> = response
+        .tool_calls()
+        .iter()
+        .filter_map(|part| {
+            if let graphirm_llm::ContentPart::ToolCall { name, .. } = part {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if current_tools.is_empty() {
+        return false;
+    }
+
+    // Simple heuristic: if calling the same tool multiple times in a row,
+    // that's a sign of repetition. In a real implementation, this would
+    // traverse the graph to count recent identical tool calls.
+    let all_same = current_tools.iter().all(|&t| t == current_tools[0]);
+    let threshold = config.soft_escalation_threshold;
+
+    if all_same && current_tools.len() >= threshold {
+        let tool_name = current_tools[0];
+        let synthesis_directive = format!(
+            "You've called '{}' {} times. Please synthesize what you've learned so far \
+             instead of making more identical calls.",
+            tool_name, current_tools.len()
+        );
+
+        events.emit(AgentEvent::SoftEscalationTriggered {
+            turn,
+            repeated_tool_calls: current_tools.len(),
+            synthesis_directive: synthesis_directive.clone(),
+        });
+
+        return true;
+    }
+
+    false
 }
 
 /// Emit a GraphUpdate event with a fresh snapshot of the 50 most recent nodes.
@@ -284,17 +300,6 @@ pub async fn run_agent_loop(
 ) -> Result<(), AgentError> {
     let max_turns = session.agent_config.max_turns;
     let mut all_node_ids: Vec<NodeId> = Vec::new();
-    // Per-turn read cache: prevents the model from re-reading the same file.
-    // Reset each time a new prompt is submitted (i.e. per run_agent_loop call).
-    let mut read_cache: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-
-    // Initialize escalation detector to catch repeated tool calls
-    let mut escalation_detector = crate::escalation::EscalationDetector::new(
-        session.agent_config.soft_escalation_turn,
-        session.agent_config.soft_escalation_threshold,
-    );
-    let mut escalation_triggered = false;
 
     events.emit(AgentEvent::AgentStart {
         agent_id: session.id.clone(),
@@ -317,12 +322,7 @@ pub async fn run_agent_loop(
         // Race the LLM call against the cancellation token so in-flight requests
         // are interrupted promptly rather than waiting for the provider to respond.
         let (response, response_id) = tokio::select! {
-            result = stream_and_record(session, llm, tools, events) => {
-                result.map_err(|e| {
-                    tracing::error!(turn = turn, error = %e, "LLM call failed");
-                    e
-                })?
-            }
+            result = stream_and_record(session, llm, tools, events) => result?,
             _ = cancel.cancelled() => {
                 info!("Agent loop cancelled during LLM call at turn {}", turn);
                 let _ = session.set_status("cancelled");
@@ -359,14 +359,6 @@ pub async fn run_agent_loop(
         }
 
         let tool_calls: Vec<&ContentPart> = response.tool_calls();
-
-        // Record tool calls for escalation detection (do this before executing, so we can decide whether to escalate)
-        for part in &tool_calls {
-            if let Some(key) = crate::escalation::ToolCallKey::from_content_part(part) {
-                escalation_detector.record_tool_call(turn as usize, key);
-            }
-        }
-
         for part in &tool_calls {
             let ContentPart::ToolCall {
                 id: call_id, name, ..
@@ -381,26 +373,6 @@ pub async fn run_agent_loop(
             });
         }
 
-        // Log tool execution details
-        info!(
-            turn = turn as usize,
-            tool_count = tool_calls.len(),
-            "Executing {} tool calls in parallel",
-            tool_calls.len()
-        );
-
-        for (idx, tool_call) in tool_calls.iter().enumerate() {
-            if let ContentPart::ToolCall { name, arguments, .. } = tool_call {
-                debug!(
-                    turn = turn as usize,
-                    tool_index = idx,
-                    tool_name = %name,
-                    args = ?arguments,
-                    "Tool call details"
-                );
-            }
-        }
-
         let tool_result_ids = execute_tools_parallel(
             session,
             tools,
@@ -408,71 +380,23 @@ pub async fn run_agent_loop(
             tool_calls.as_slice(),
             events,
             cancel,
-            &mut read_cache,
         )
         .await?;
 
         all_node_ids.extend(tool_result_ids.iter().cloned());
+
+        // Check for soft escalation after tools execute
+        if check_soft_escalation(turn as u32, &session.agent_config, &response, events) {
+            // Agent should respond to the escalation by synthesizing findings.
+            // The synthesis directive is in the SoftEscalationTriggered event.
+            // For now, we continue the loop so the agent can respond with synthesis.
+        }
 
         events.emit(AgentEvent::TurnEnd {
             response_id: response_id.clone(),
             tool_result_ids: tool_result_ids.clone(),
         });
         emit_graph_update(session, &response_id, tool_result_ids, events);
-
-        // Check for escalation AFTER tool execution, so context is complete
-        if !escalation_triggered {
-            let (should_escalate, repeated_count) = 
-                escalation_detector.should_escalate(turn as usize, &tool_calls);
-            
-            if should_escalate {
-                info!(
-                    turn = turn as usize,
-                    repeated_count = repeated_count,
-                    "Soft escalation triggered: switching to synthesis mode"
-                );
-                
-                // Emit event for observability
-                let synthesis_msg = "Based on the information you've gathered so far, \
-                    please synthesize your findings and provide your analysis. \
-                    Do not make additional tool calls. Format your response as a clear conclusion.";
-                
-                events.emit(crate::event::AgentEvent::SoftEscalationTriggered(
-                    crate::event::SoftEscalationTriggeredEvent {
-                        turn: turn as usize,
-                        repeated_tool_calls: repeated_count,
-                        synthesis_directive: synthesis_msg.to_string(),
-                    }
-                ));
-                
-                // Add synthesis directive as system message
-                session.add_user_message(synthesis_msg)?;
-                escalation_triggered = true;
-                
-                // Get fresh context and call LLM again
-                let (synthesis_response, synthesis_id) = 
-                    stream_and_record(session, llm, tools, events).await?;
-                all_node_ids.push(synthesis_id.clone());
-                
-                // If model still has tool calls after synthesis directive, hard stop
-                if synthesis_response.has_tool_calls() {
-                    error!(
-                        turn = turn as usize,
-                        tool_calls = ?synthesis_response.tool_calls().len(),
-                        "Model ignored synthesis directive; hard recursion limit"
-                    );
-                    return Err(AgentError::RecursionLimit(turn as u32));
-                }
-                
-                // Success: model synthesized
-                events.emit(AgentEvent::TurnEnd {
-                    response_id: synthesis_id.clone(),
-                    tool_result_ids: vec![],
-                });
-                emit_graph_update(session, &synthesis_id, vec![], events);
-                break;
-            }
-        }
 
         // The loop runs 0..max_turns; hitting this on the last iteration with
         // outstanding tool calls means we consumed the full budget.
@@ -483,7 +407,7 @@ pub async fn run_agent_loop(
                 agent_id: session.id.clone(),
                 node_ids: all_node_ids,
             });
-            return Err(AgentError::RecursionLimit(max_turns as u32));
+            return Err(AgentError::RecursionLimit(max_turns));
         }
     }
 

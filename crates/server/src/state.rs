@@ -40,8 +40,6 @@ pub struct AppState {
 pub struct SessionHandle {
     /// The session object shared with the agent loop task.
     pub session: Arc<Session>,
-    /// Human-readable display name provided at creation time.
-    pub name: String,
     /// Cancellation token — drop or cancel to abort the running agent loop.
     pub signal: CancellationToken,
     /// Handle to the spawned agent loop task.

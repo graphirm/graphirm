@@ -6,66 +6,9 @@ use chrono::{DateTime, Utc};
 use graphirm_graph::GraphStore;
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, NodeId, NodeType};
-use serde::{Deserialize, Serialize};
 
 use crate::config::AgentConfig;
 use crate::error::AgentError;
-
-/// Session status for active and restored sessions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SessionStatus {
-    /// Agent actively running and processing prompts
-    Running,
-    /// Agent idle (not running but can receive prompts)
-    Idle,
-    /// Agent completed work (read-only)
-    Completed,
-    /// Agent encountered an error (read-only)
-    Failed,
-}
-
-/// Metadata for a session extracted from Agent nodes in the graph.
-/// Used for session restoration on server startup and API responses.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionMetadata {
-    /// Unique session identifier (matches Agent node ID)
-    pub session_id: String,
-    /// Human-readable session name (e.g., "auth-refactor")
-    pub name: String,
-    /// LLM model used (e.g., "claude-sonnet-4")
-    pub model: String,
-    /// When session was created
-    pub created_at: DateTime<Utc>,
-    /// Current status (Running, Idle, Completed, Failed)
-    pub status: SessionStatus,
-}
-
-impl SessionMetadata {
-    /// Construct SessionMetadata from an Agent node's persisted data.
-    /// Used during server startup to restore sessions from the graph.
-    ///
-    /// # Arguments
-    /// * `session_id` - UUID of the Agent node in the graph
-    /// * `name` - Session name from AgentData
-    /// * `model` - LLM model string from AgentData
-    /// * `created_at` - Creation timestamp from GraphNode
-    /// * `status` - Session status
-    pub fn from_agent_node_id(
-        session_id: String,
-        name: String,
-        model: String,
-        created_at: DateTime<Utc>,
-        status: SessionStatus,
-    ) -> Self {
-        Self {
-            session_id,
-            name,
-            model,
-            created_at,
-            status,
-        }
-    }
-}
 
 pub struct Session {
     pub id: NodeId,

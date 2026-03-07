@@ -2,10 +2,10 @@
 provider = "anthropic"
 name = "claude-sonnet-4-20250514"
 temperature = 0.7
-max_tokens = 4096
+max_tokens = 8192
 
 [agent]
-max_iterations = 5
+max_iterations = 50
 parallel_tool_calls = true
 timeout_seconds = 300
 # Soft escalation thresholds
@@ -74,9 +74,16 @@ otherwise. Do not assume a path — use ls or find to verify it first.
 - Prefer small, focused changes over large rewrites.
 """
 
+[knowledge]
+# Knowledge layer thresholds and settings for Phase 9
+enabled = true
+similarity_threshold = 0.7
+entity_extraction_enabled = true
+cross_session_memory = true
+
 [graph]
 database_path = "~/.graphirm/graph.db"
-max_connections = 4
+max_connections = 20
 
 [tui]
 theme = "dark"
@@ -85,4 +92,4 @@ word_wrap = true
 
 [server]
 host = "127.0.0.1"
-port = 5555
+port = 3000
