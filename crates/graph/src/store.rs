@@ -208,6 +208,63 @@ impl GraphStore {
         })
     }
 
+    /// Return all Agent nodes from the graph, ordered by creation time (newest first).
+    ///
+    /// Used during server startup to restore sessions from the persistent graph.
+    pub fn get_agent_nodes(&self) -> Result<Vec<(GraphNode, crate::nodes::AgentData)>, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, data, metadata, created_at, updated_at
+             FROM nodes
+             WHERE node_type = 'agent'
+             ORDER BY created_at DESC",
+        )?;
+
+        let rows: Vec<_> = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let data: String = row.get(1)?;
+                let metadata: String = row.get(2)?;
+                let created_at: String = row.get(3)?;
+                let updated_at: String = row.get(4)?;
+                Ok((id, data, metadata, created_at, updated_at))
+            })?
+            .collect::<Result<_, _>>()?;
+
+        let mut result = Vec::new();
+        for (id, data, metadata, created_at_str, updated_at_str) in rows {
+            let node_type: NodeType = serde_json::from_str(&data)?;
+
+            let agent_data = match &node_type {
+                NodeType::Agent(d) => d.clone(),
+                _ => continue,
+            };
+
+            let metadata: serde_json::Value = serde_json::from_str(&metadata)
+                .unwrap_or(serde_json::Value::Object(Default::default()));
+
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+
+            let node = GraphNode {
+                id: NodeId(id),
+                node_type,
+                metadata,
+                created_at,
+                updated_at,
+            };
+
+            result.push((node, agent_data));
+        }
+
+        Ok(result)
+    }
+
     pub fn update_node(&self, id: &NodeId, mut node: GraphNode) -> Result<(), GraphError> {
         node.updated_at = chrono::Utc::now();
         let conn = self.pool.get()?;
