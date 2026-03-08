@@ -92,6 +92,29 @@ pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
             });
             app.chat.scroll_to_bottom();
         }
+        AgentEvent::AwaitingApproval {
+            node_id,
+            tool_name,
+            is_pause,
+            ..
+        } => {
+            app.state = AppState::WaitingForAgent;
+            let label = if is_pause {
+                "Paused — awaiting approval".to_string()
+            } else {
+                format!("Awaiting approval for {}", tool_name)
+            };
+            app.status_bar.agent_state = label.clone();
+            app.chat.add_message(ChatMessage {
+                role: Role::Assistant,
+                content: format!("[HITL] {}", label),
+                timestamp: Utc::now(),
+                node_id: Some(node_id),
+                is_tool_call: false,
+                tool_name: Some(tool_name),
+            });
+            app.chat.scroll_to_bottom();
+        }
     }
 }
 

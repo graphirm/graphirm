@@ -58,6 +58,16 @@ pub enum AgentEvent {
         repeated_tool_calls: usize,
         synthesis_directive: String,
     },
+    /// Emitted when the agent is gated awaiting a human approval decision.
+    ///
+    /// `is_pause` is `true` when this is a manual pause (turn-start hold) rather
+    /// than an automatic gate on a destructive tool call.
+    AwaitingApproval {
+        node_id:   NodeId,
+        tool_name: String,
+        arguments: serde_json::Value,
+        is_pause:  bool,
+    },
 }
 
 pub struct EventBus {
@@ -143,6 +153,20 @@ mod tests {
         let e2 = rx2.recv().await.unwrap();
         assert!(matches!(e1, AgentEvent::AgentStart { .. }));
         assert!(matches!(e2, AgentEvent::AgentStart { .. }));
+    }
+
+    #[test]
+    fn awaiting_approval_event_contains_tool_name() {
+        use graphirm_graph::nodes::NodeId;
+        let event = AgentEvent::AwaitingApproval {
+            node_id: NodeId::from("n1"),
+            tool_name: "write".to_string(),
+            arguments: serde_json::json!({"path": "/tmp/foo.rs", "content": "fn main() {}"}),
+            is_pause: false,
+        };
+        let debug = format!("{:?}", event);
+        assert!(debug.contains("AwaitingApproval"));
+        assert!(debug.contains("write"));
     }
 
     #[test]
