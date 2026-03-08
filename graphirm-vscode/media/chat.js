@@ -123,6 +123,10 @@ export function renderApprovalCard({ node_id, tool_name, arguments: args, is_pau
     ? '&#9646;&#9646; Agent paused &mdash; waiting for resume'
     : `&#9888; Agent wants to run: <strong>${escapeHtml(tool_name)}</strong>`;
 
+  // Escape IDs used in onclick attribute strings to prevent attribute injection.
+  const eSid = escapeHtml(session_id);
+  const eNid = escapeHtml(node_id);
+
   card.innerHTML = `
     <div class="hitl-header">${title}</div>
     ${!is_pause ? `
@@ -131,22 +135,22 @@ export function renderApprovalCard({ node_id, tool_name, arguments: args, is_pau
       <pre>${escapeHtml(argsStr)}</pre>
     </details>
     ` : ''}
-    <div class="hitl-actions" id="hitl-actions-${node_id}">
+    <div class="hitl-actions" id="hitl-actions-${eNid}">
       ${is_pause ? `
-      <button class="hitl-btn hitl-resume" onclick="hitlResume('${session_id}', '${node_id}')">&#9654; Resume</button>
+      <button class="hitl-btn hitl-resume" onclick="hitlResume('${eSid}', '${eNid}')">&#9654; Resume</button>
       ` : `
-      <button class="hitl-btn hitl-approve" onclick="hitlApprove('${session_id}', '${node_id}')">&#10003; Approve</button>
-      <button class="hitl-btn hitl-modify" onclick="hitlModify('${session_id}', '${node_id}')">&#9998; Modify</button>
-      <button class="hitl-btn hitl-reject" onclick="hitlShowReject('${node_id}')">&#10005; Reject</button>
+      <button class="hitl-btn hitl-approve" onclick="hitlApprove('${eSid}', '${eNid}')">&#10003; Approve</button>
+      <button class="hitl-btn hitl-modify" onclick="hitlModify('${eSid}', '${eNid}')">&#9998; Modify</button>
+      <button class="hitl-btn hitl-reject" onclick="hitlShowReject('${eNid}')">&#10005; Reject</button>
       `}
     </div>
-    <div class="hitl-reject-form" id="hitl-reject-${node_id}" style="display:none">
-      <textarea class="hitl-reason" id="hitl-reason-${node_id}" placeholder="Reason for rejection..."></textarea>
-      <button class="hitl-btn hitl-reject-confirm" onclick="hitlReject('${session_id}', '${node_id}')">Send rejection</button>
+    <div class="hitl-reject-form" id="hitl-reject-${eNid}" style="display:none">
+      <textarea class="hitl-reason" id="hitl-reason-${eNid}" placeholder="Reason for rejection..."></textarea>
+      <button class="hitl-btn hitl-reject-confirm" onclick="hitlReject('${eSid}', '${eNid}')">Send rejection</button>
     </div>
-    <div class="hitl-modify-form" id="hitl-modify-${node_id}" style="display:none">
-      <textarea class="hitl-args-edit" id="hitl-args-edit-${node_id}">${escapeHtml(argsStr)}</textarea>
-      <button class="hitl-btn hitl-modify-confirm" onclick="hitlModifyConfirm('${session_id}', '${node_id}')">Run modified</button>
+    <div class="hitl-modify-form" id="hitl-modify-${eNid}" style="display:none">
+      <textarea class="hitl-args-edit" id="hitl-args-edit-${eNid}">${escapeHtml(argsStr)}</textarea>
+      <button class="hitl-btn hitl-modify-confirm" onclick="hitlModifyConfirm('${eSid}', '${eNid}')">Run modified</button>
     </div>
   `;
 
@@ -160,7 +164,7 @@ function postHitlAction(sessionId, nodeId, body) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  });
+  }).catch((err) => console.error('[HITL] action request failed:', err));
 }
 
 function resolveHitlCard(nodeId, summary) {
@@ -205,6 +209,7 @@ window.hitlModifyConfirm = function hitlModifyConfirm(sessionId, nodeId) {
 };
 
 window.hitlResume = function hitlResume(sessionId, nodeId) {
-  fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' });
+  fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' })
+    .catch((err) => console.error('[HITL] resume request failed:', err));
   resolveHitlCard(nodeId, '▶ Resumed');
 };
