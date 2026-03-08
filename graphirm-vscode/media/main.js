@@ -1,5 +1,5 @@
 import { initSessions, handleSessionsMessage } from './sessions.js';
-import { initChat, handleChatMessage, flushPendingPrompt } from './chat.js';
+import { initChat, handleChatMessage, flushPendingPrompt, renderApprovalCard, renderPauseButton, syncPauseButtonState } from './chat.js';
 import { initGraph, handleGraphMessage } from './graph.js';
 
 const vscode = acquireVsCodeApi();
@@ -12,17 +12,26 @@ export function send(msg) {
 window.addEventListener('message', ({ data: msg }) => {
   switch (msg.type) {
     case 'sessions':
-    case 'session_loaded':
       handleSessionsMessage(msg);
       handleChatMessage(msg);
       handleGraphMessage(msg);
       break;
-    case 'session_created':
+    case 'session_loaded': {
+      handleSessionsMessage(msg);
+      handleChatMessage(msg);
+      handleGraphMessage(msg);
+      const loadedId = getCurrentSessionId();
+      if (loadedId) renderPauseButton(loadedId);
+      break;
+    }
+    case 'session_created': {
       handleSessionsMessage(msg);
       handleChatMessage(msg);
       handleGraphMessage(msg);
       flushPendingPrompt(msg.session?.id);
+      if (msg.session?.id) renderPauseButton(msg.session.id);
       break;
+    }
     case 'refreshed':
       handleChatMessage(msg);
       handleGraphMessage(msg);
@@ -56,6 +65,10 @@ function handleSseEvent({ event, data }) {
     if (sessionId) {
       send({ type: 'refresh', session_id: sessionId });
     }
+  } else if (event === 'awaiting_approval') {
+    const sessionId = getCurrentSessionId();
+    renderApprovalCard({ ...data, session_id: sessionId });
+    if (data.is_pause) syncPauseButtonState(true);
   }
 }
 

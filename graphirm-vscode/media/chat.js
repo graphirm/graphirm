@@ -2,6 +2,7 @@ import { getCurrentSessionId } from './main.js';
 
 let _send;
 let _thinking = false;
+let hitlPaused = false;
 
 export function initChat(send) {
   _send = send;
@@ -110,6 +111,38 @@ function escapeHtml(str) {
 }
 
 // ---------------------------------------------------------------------------
+// HITL Pause / Resume button
+// ---------------------------------------------------------------------------
+
+export function renderPauseButton(sessionId) {
+  document.getElementById('hitl-pause-btn')?.remove();
+  const btn = document.createElement('button');
+  btn.id = 'hitl-pause-btn';
+  btn.className = 'hitl-pause-btn';
+  btn.textContent = '⏸ Pause';
+  btn.onclick = () => toggleHitlPause(sessionId, btn);
+  const controls = document.querySelector('.session-controls');
+  if (controls) controls.appendChild(btn);
+}
+
+export function syncPauseButtonState(isPaused) {
+  const btn = document.getElementById('hitl-pause-btn');
+  if (!btn) return;
+  hitlPaused = isPaused;
+  btn.textContent = isPaused ? '▶ Resume' : '⏸ Pause';
+  btn.classList.toggle('hitl-paused', isPaused);
+}
+
+function toggleHitlPause(sessionId, btn) {
+  hitlPaused = !hitlPaused;
+  const endpoint = hitlPaused ? 'pause' : 'resume';
+  fetch(`/api/sessions/${sessionId}/${endpoint}`, { method: 'POST' })
+    .catch((err) => console.error('[HITL] pause/resume failed:', err));
+  btn.textContent = hitlPaused ? '▶ Resume' : '⏸ Pause';
+  btn.classList.toggle('hitl-paused', hitlPaused);
+}
+
+// ---------------------------------------------------------------------------
 // HITL Approval Card
 // ---------------------------------------------------------------------------
 
@@ -212,4 +245,5 @@ window.hitlResume = function hitlResume(sessionId, nodeId) {
   fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' })
     .catch((err) => console.error('[HITL] resume request failed:', err));
   resolveHitlCard(nodeId, '▶ Resumed');
+  syncPauseButtonState(false);
 };

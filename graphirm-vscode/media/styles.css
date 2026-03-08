@@ -325,3 +325,20 @@ textarea {
 
 .hitl-resolved { color: #9ca3af; font-style: italic; padding: 4px 0; }
 .hitl-resolved-card { border-color: #374151; background: #111; }
+
+/* Pause/Resume toggle button in session header */
+.hitl-pause-btn {
+  background: #374151;
+  color: #e5e7eb;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+.hitl-pause-btn.hitl-paused {
+  background: #1d4ed8;
+  color: white;
+}
