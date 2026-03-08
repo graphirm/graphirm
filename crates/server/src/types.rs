@@ -116,6 +116,8 @@ pub enum SseEventType {
     Error,
     /// Server-sent keepalive tick.
     Heartbeat,
+    /// Agent is paused awaiting human approval on a tool call or manual hold.
+    AwaitingApproval,
 }
 
 impl std::fmt::Display for SseEventType {
@@ -134,6 +136,7 @@ impl std::fmt::Display for SseEventType {
             Self::GraphUpdate => "graph_update",
             Self::Error => "error",
             Self::Heartbeat => "heartbeat",
+            Self::AwaitingApproval => "awaiting_approval",
         };
         f.write_str(s)
     }

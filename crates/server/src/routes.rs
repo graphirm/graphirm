@@ -601,6 +601,20 @@ fn agent_event_to_sse(session_id: &str, event: &graphirm_agent::AgentEvent) -> S
                 "edge_count": edge_ids.len(),
             }),
         ),
+        AgentEvent::AwaitingApproval {
+            node_id,
+            tool_name,
+            arguments,
+            is_pause,
+        } => (
+            SseEventType::AwaitingApproval,
+            serde_json::json!({
+                "node_id": node_id.to_string(),
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "is_pause": is_pause,
+            }),
+        ),
         _ => (
             SseEventType::Heartbeat,
             serde_json::json!({ "debug": format!("{event:?}") }),
@@ -1763,5 +1777,30 @@ mod tests {
             .unwrap();
         let knowledge: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
         assert!(knowledge.is_empty());
+    }
+
+    // ── agent_event_to_sse ────────────────────────────────────────────────────
+
+    #[test]
+    fn agent_event_awaiting_approval_maps_to_sse_awaiting_approval() {
+        use graphirm_agent::AgentEvent;
+        use graphirm_graph::NodeId;
+
+        let event = AgentEvent::AwaitingApproval {
+            node_id: NodeId::from("n1"),
+            tool_name: "write".to_string(),
+            arguments: serde_json::json!({"path": "/tmp/x.rs"}),
+            is_pause: false,
+        };
+        let sse = agent_event_to_sse("session-1", &event);
+        assert!(
+            matches!(sse.event_type, crate::types::SseEventType::AwaitingApproval),
+            "expected AwaitingApproval event type"
+        );
+        assert_eq!(sse.session_id, crate::types::SessionId::from("session-1"));
+        assert_eq!(sse.data["tool_name"], "write");
+        assert_eq!(sse.data["node_id"], "n1");
+        assert_eq!(sse.data["is_pause"], false);
+        assert_eq!(sse.data["arguments"]["path"], "/tmp/x.rs");
     }
 }
