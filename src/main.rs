@@ -75,6 +75,7 @@ enum GraphAction {
 
 #[tokio::main]
 async fn main() -> Result<(), GraphirmError> {
+    dotenvy::dotenv().ok();
     let cli = Cli::parse();
     let db_path = resolve_db_path(cli.db)?;
 
