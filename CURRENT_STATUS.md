@@ -8,7 +8,7 @@
 ✅ Extension (chat + graph visualization) — new session creation fixed  
 ✅ Server (healthy, responsive, full integration)  
 ✅ Session persistence (survives restarts)  
-✅ `cargo test --workspace` — clean, all crates compile and pass  
+✅ `cargo test --lib` — 136 agent + 59 server unit tests pass in < 0.3 s each  
 
 ## 📈 Project Status Summary
 

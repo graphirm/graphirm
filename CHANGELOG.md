@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- **Workflow and multi-agent tests hang indefinitely** — root cause was a connection pool deadlock in `GraphStore::list_recent_nodes`. The method held the single r2d2 pool connection while calling `get_node()` in a loop, which tried to acquire a second connection from the same pool — deadlocking the calling thread. Fixed by rewriting the method as a single SQL query that fetches all five columns at once (matching the pattern already used in `get_agent_nodes`). This unblocked all 136 agent unit tests and all 59 server unit tests; `cargo test --lib` across the workspace now completes in under 0.3 s per crate.
+
 - **VS Code/Cursor extension panel fails on new session** — two root causes corrected:
   - **Port mismatch:** Server `--port` default was `3000` but extension expected `5555`; all API calls hit connection refused. Server default changed to `5555` to align with the extension's `graphirm.serverUrl` default.
   - **Field name mismatch:** `ApiClient.createSession` was sending `{ name }` but the server reads `body.agent`, so the user-provided session name was silently discarded. Fixed to send `{ agent: name }`. Additionally, the `Session` TypeScript interface declared `name` (undefined at runtime) instead of `agent`; fixed across `ApiClient.ts`, `GraphirmPanel.ts`, and `sessions.js`. Status type also expanded to match all server variants (`completed`, `failed`, `cancelled`).
