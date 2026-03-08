@@ -77,7 +77,7 @@ impl Default for AgentConfig {
         Self {
             name: "graphirm".to_string(),
             mode: AgentMode::Primary,
-            model: "claude-sonnet-4-20250514".to_string(),
+            model: "deepseek-chat".to_string(),
             description: String::new(),
             system_prompt: "You are a helpful coding assistant.".to_string(),
             max_turns: 50,

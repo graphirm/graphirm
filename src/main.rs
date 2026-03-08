@@ -36,7 +36,7 @@ enum Commands {
         /// Local (Ollama):  ollama/qwen2.5:72b
         ///                  ollama/qwen3:70b
         ///                  ollama/llama3.2
-        #[arg(short, long, default_value = "anthropic/claude-sonnet-4-20250514")]
+        #[arg(short, long, default_value = "deepseek/deepseek-chat")]
         model: String,
     },
 
@@ -108,11 +108,11 @@ async fn main() -> Result<(), GraphirmError> {
             let tools = Arc::new(build_tool_registry());
             let agent_config = graphirm_agent::AgentConfig::default();
 
-            // LLM provider requires a model spec; default to Anthropic if env
-            // var is set, otherwise print a helpful error and exit.
+            // LLM provider requires a model spec; reads GRAPHIRM_MODEL env var
+            // (set in .env). Defaults to DeepSeek if not configured.
             let model_spec = std::env::var("GRAPHIRM_MODEL")
-                .unwrap_or_else(|_| "anthropic/claude-sonnet-4-20250514".to_string());
-            let (provider_name, _model_name) =
+                .unwrap_or_else(|_| "deepseek/deepseek-chat".to_string());
+            let (provider_name, model_name) =
                 graphirm_llm::factory::parse_model_string(&model_spec)
                     .map_err(|e| GraphirmError::Config(e.to_string()))?;
             let api_key = api_key_for_provider(provider_name)?;
@@ -120,6 +120,14 @@ async fn main() -> Result<(), GraphirmError> {
                 graphirm_llm::factory::create_provider(provider_name, &api_key)
                     .map_err(|e| GraphirmError::Config(e.to_string()))?,
             );
+
+            // Use the model name from GRAPHIRM_MODEL so sessions use the correct
+            // model for the configured provider (not the AgentConfig default which
+            // is hardcoded to a Claude model name).
+            let agent_config = graphirm_agent::AgentConfig {
+                model: model_name.to_string(),
+                ..agent_config
+            };
 
             let server_config = graphirm_server::ServerConfig { host, port };
             graphirm_server::start_server(graph, llm, tools, agent_config, server_config)

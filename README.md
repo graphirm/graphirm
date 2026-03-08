@@ -28,15 +28,19 @@ Every other coding agent stores conversations as linear message arrays. Graphirm
 # Build
 cargo build --release
 
-# Set your API key
-export ANTHROPIC_API_KEY=sk-...
+# Set your API key (DeepSeek is the default provider)
+export DEEPSEEK_API_KEY=sk-...
 
-# Start a chat session
+# Start a chat session (defaults to deepseek/deepseek-chat)
 ./target/release/graphirm chat
 
 # Use a different provider/model
-./target/release/graphirm chat --model deepseek/deepseek-chat
+./target/release/graphirm chat --model openai/gpt-4o
 ./target/release/graphirm chat --model ollama/qwen2.5:72b
+
+# Or set via environment variable
+export GRAPHIRM_MODEL=deepseek/deepseek-chat
+./target/release/graphirm serve
 ```
 
 The graph database is stored at `~/.local/share/graphirm/graph.db` by default. Override with `--db /path/to/graph.db`.
@@ -101,8 +105,8 @@ A greedy knapsack fills the token budget with the highest-scored nodes. Knowledg
 
 ```toml
 [model]
-provider = "anthropic"
-name = "claude-sonnet-4-20250514"
+provider = "deepseek"
+name = "deepseek-chat"
 temperature = 0.7
 max_tokens = 8192
 

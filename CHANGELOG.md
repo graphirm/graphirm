@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Default LLM provider switched to DeepSeek** — all hardcoded `anthropic/claude-sonnet-4-20250514` defaults replaced with `deepseek/deepseek-chat`. Affected: `config/default.toml`, `AgentConfig::default()`, CLI `--model` flag default, and server `GRAPHIRM_MODEL` fallback. Set `DEEPSEEK_API_KEY` in your environment (or `.env`) to use the defaults out of the box. Anthropic remains a fully supported provider; pass `--model anthropic/<model>` or set `GRAPHIRM_MODEL=anthropic/<model>` to use it.
+
 ### Fixed
 
 - **Workflow and multi-agent tests hang indefinitely** — root cause was a connection pool deadlock in `GraphStore::list_recent_nodes`. The method held the single r2d2 pool connection while calling `get_node()` in a loop, which tried to acquire a second connection from the same pool — deadlocking the calling thread. Fixed by rewriting the method as a single SQL query that fetches all five columns at once (matching the pattern already used in `get_agent_nodes`). This unblocked all 136 agent unit tests and all 59 server unit tests; `cargo test --lib` across the workspace now completes in under 0.3 s per crate.

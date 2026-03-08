@@ -246,6 +246,12 @@ async fn prompt_session(
         // into the session map happens after this task is spawned, so clearing
         // it here risks overwriting Some(handle) set by the spawner with None.
         // The handle is cleaned up when the session is deleted.
+        if let Err(ref e) = result {
+            if !matches!(e, graphirm_agent::AgentError::Cancelled) {
+                tracing::error!(session_id = %bg_key, error = %e, "Agent loop failed");
+            }
+        }
+
         let mut sessions = sessions.write().await;
         if let Some(h) = sessions.get_mut(&bg_key) {
             h.status = match &result {
