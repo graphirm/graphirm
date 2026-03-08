@@ -262,3 +262,66 @@ textarea {
   background: var(--accent);
   color: var(--accent-fg);
 }
+
+/* HITL Approval Card */
+.hitl-approval-card {
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  padding: 12px;
+  margin: 8px 0;
+  background: #1c1917;
+}
+
+.hitl-header {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #fbbf24;
+}
+
+.hitl-args pre {
+  font-size: 11px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #0c0a09;
+  padding: 8px;
+  border-radius: 4px;
+}
+
+.hitl-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.hitl-btn {
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.hitl-approve  { background: #16a34a; color: white; }
+.hitl-reject   { background: #dc2626; color: white; }
+.hitl-modify   { background: #2563eb; color: white; }
+.hitl-resume   { background: #16a34a; color: white; }
+.hitl-reject-confirm,
+.hitl-modify-confirm { background: #6b7280; color: white; }
+
+.hitl-reason,
+.hitl-args-edit {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px;
+  background: #0c0a09;
+  color: #e7e5e4;
+  border: 1px solid #44403c;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: monospace;
+  min-height: 60px;
+  box-sizing: border-box;
+}
+
+.hitl-resolved { color: #9ca3af; font-style: italic; padding: 4px 0; }
+.hitl-resolved-card { border-color: #374151; background: #111; }

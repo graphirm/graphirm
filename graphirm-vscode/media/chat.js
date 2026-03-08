@@ -102,8 +102,109 @@ function appendMessage(msg, scroll = true) {
 }
 
 function escapeHtml(str) {
-  return str
+  return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
+
+// ---------------------------------------------------------------------------
+// HITL Approval Card
+// ---------------------------------------------------------------------------
+
+export function renderApprovalCard({ node_id, tool_name, arguments: args, is_pause, session_id }) {
+  const card = document.createElement('div');
+  card.className = 'hitl-approval-card';
+  card.dataset.nodeId = node_id;
+
+  const argsStr = typeof args === 'string' ? args : JSON.stringify(args, null, 2);
+  const title = is_pause
+    ? '&#9646;&#9646; Agent paused &mdash; waiting for resume'
+    : `&#9888; Agent wants to run: <strong>${escapeHtml(tool_name)}</strong>`;
+
+  card.innerHTML = `
+    <div class="hitl-header">${title}</div>
+    ${!is_pause ? `
+    <details class="hitl-args">
+      <summary>Arguments</summary>
+      <pre>${escapeHtml(argsStr)}</pre>
+    </details>
+    ` : ''}
+    <div class="hitl-actions" id="hitl-actions-${node_id}">
+      ${is_pause ? `
+      <button class="hitl-btn hitl-resume" onclick="hitlResume('${session_id}', '${node_id}')">&#9654; Resume</button>
+      ` : `
+      <button class="hitl-btn hitl-approve" onclick="hitlApprove('${session_id}', '${node_id}')">&#10003; Approve</button>
+      <button class="hitl-btn hitl-modify" onclick="hitlModify('${session_id}', '${node_id}')">&#9998; Modify</button>
+      <button class="hitl-btn hitl-reject" onclick="hitlShowReject('${node_id}')">&#10005; Reject</button>
+      `}
+    </div>
+    <div class="hitl-reject-form" id="hitl-reject-${node_id}" style="display:none">
+      <textarea class="hitl-reason" id="hitl-reason-${node_id}" placeholder="Reason for rejection..."></textarea>
+      <button class="hitl-btn hitl-reject-confirm" onclick="hitlReject('${session_id}', '${node_id}')">Send rejection</button>
+    </div>
+    <div class="hitl-modify-form" id="hitl-modify-${node_id}" style="display:none">
+      <textarea class="hitl-args-edit" id="hitl-args-edit-${node_id}">${escapeHtml(argsStr)}</textarea>
+      <button class="hitl-btn hitl-modify-confirm" onclick="hitlModifyConfirm('${session_id}', '${node_id}')">Run modified</button>
+    </div>
+  `;
+
+  const container = document.getElementById('messages');
+  container.appendChild(card);
+  card.scrollIntoView({ behavior: 'smooth' });
+}
+
+function postHitlAction(sessionId, nodeId, body) {
+  fetch(`/api/graph/${sessionId}/node/${nodeId}/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+function resolveHitlCard(nodeId, summary) {
+  const card = document.querySelector(`.hitl-approval-card[data-node-id="${nodeId}"]`);
+  if (card) {
+    card.innerHTML = `<div class="hitl-resolved">${escapeHtml(summary)}</div>`;
+    card.classList.add('hitl-resolved-card');
+  }
+}
+
+// Exposed on window so inline onclick handlers work inside the ES module.
+window.hitlApprove = function hitlApprove(sessionId, nodeId) {
+  postHitlAction(sessionId, nodeId, { action: 'approve' });
+  resolveHitlCard(nodeId, '✓ Approved');
+};
+
+window.hitlShowReject = function hitlShowReject(nodeId) {
+  document.getElementById(`hitl-reject-${nodeId}`).style.display = 'block';
+};
+
+window.hitlReject = function hitlReject(sessionId, nodeId) {
+  const reason = document.getElementById(`hitl-reason-${nodeId}`).value;
+  postHitlAction(sessionId, nodeId, { action: 'reject', reason });
+  resolveHitlCard(nodeId, `✕ Rejected: ${reason}`);
+};
+
+window.hitlModify = function hitlModify(sessionId, nodeId) {
+  document.getElementById(`hitl-modify-${nodeId}`).style.display = 'block';
+};
+
+window.hitlModifyConfirm = function hitlModifyConfirm(sessionId, nodeId) {
+  const raw = document.getElementById(`hitl-args-edit-${nodeId}`).value;
+  let args;
+  try {
+    args = JSON.parse(raw);
+  } catch (_e) {
+    alert('Invalid JSON in modified arguments');
+    return;
+  }
+  postHitlAction(sessionId, nodeId, { action: 'modify', modified_args: args });
+  resolveHitlCard(nodeId, '✎ Modified and approved');
+};
+
+window.hitlResume = function hitlResume(sessionId, nodeId) {
+  fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' });
+  resolveHitlCard(nodeId, '▶ Resumed');
+};
