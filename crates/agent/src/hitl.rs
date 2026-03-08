@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex};
 
 use graphirm_graph::nodes::NodeId;
 
 /// Decision sent through the gate to unblock the agent loop.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum HitlDecision {
     /// Run the tool call as-is.
     Approve,
@@ -35,15 +34,15 @@ impl HitlGate {
 
     /// Register a pending gate for `node_id` and return the receiver the
     /// agent loop should await.
-    pub fn gate(&self, node_id: NodeId) -> oneshot::Receiver<HitlDecision> {
+    pub async fn gate(&self, node_id: &NodeId) -> oneshot::Receiver<HitlDecision> {
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(node_id.0, tx);
+        self.pending.lock().await.insert(node_id.0.clone(), tx);
         rx
     }
 
     /// Resolve a pending gate. Returns `true` if a gate was found and sent to.
-    pub fn resolve(&self, node_id: &NodeId, decision: HitlDecision) -> bool {
-        if let Some(tx) = self.pending.lock().unwrap().remove(&node_id.0) {
+    pub async fn resolve(&self, node_id: &NodeId, decision: HitlDecision) -> bool {
+        if let Some(tx) = self.pending.lock().await.remove(&node_id.0) {
             tx.send(decision).is_ok()
         } else {
             false
@@ -51,11 +50,11 @@ impl HitlGate {
     }
 
     pub fn is_paused(&self) -> bool {
-        self.paused.load(Ordering::SeqCst)
+        self.paused.load(Ordering::Relaxed)
     }
 
     pub fn set_paused(&self, v: bool) {
-        self.paused.store(v, Ordering::SeqCst);
+        self.paused.store(v, Ordering::Relaxed);
     }
 }
 
@@ -94,8 +93,8 @@ mod tests {
     async fn gate_and_resolve_approve() {
         let gate = HitlGate::new();
         let node_id = NodeId::from("n1");
-        let rx = gate.gate(node_id.clone());
-        let resolved = gate.resolve(&node_id, HitlDecision::Approve);
+        let rx = gate.gate(&node_id).await;
+        let resolved = gate.resolve(&node_id, HitlDecision::Approve).await;
         assert!(resolved);
         let decision = rx.await.unwrap();
         assert!(matches!(decision, HitlDecision::Approve));
@@ -105,7 +104,7 @@ mod tests {
     async fn resolve_returns_false_when_no_pending_gate() {
         let gate = HitlGate::new();
         let node_id = NodeId::from("nope");
-        let resolved = gate.resolve(&node_id, HitlDecision::Approve);
+        let resolved = gate.resolve(&node_id, HitlDecision::Approve).await;
         assert!(!resolved);
     }
 
@@ -117,5 +116,19 @@ mod tests {
         assert!(gate.is_paused());
         gate.set_paused(false);
         assert!(!gate.is_paused());
+    }
+
+    #[tokio::test]
+    async fn gate_resolves_across_tasks() {
+        use std::sync::Arc;
+        let gate = Arc::new(HitlGate::new());
+        let gate2 = gate.clone();
+        let node_id = NodeId::from("concurrent");
+        let rx = gate.gate(&node_id).await;
+        let node_id2 = node_id.clone();
+        tokio::spawn(async move {
+            gate2.resolve(&node_id2, HitlDecision::Approve).await;
+        });
+        assert!(matches!(rx.await.unwrap(), HitlDecision::Approve));
     }
 }
