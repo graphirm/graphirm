@@ -9,6 +9,7 @@ use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, NodeId, NodeT
 
 use crate::config::AgentConfig;
 use crate::error::AgentError;
+use crate::hitl::HitlGate;
 
 /// Lifecycle status of a restored or active session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +47,9 @@ pub struct Session {
     pub agent_config: AgentConfig,
     pub graph: Arc<GraphStore>,
     pub created_at: DateTime<Utc>,
+    /// Optional human-in-the-loop gate. When `Some`, the agent pauses before
+    /// destructive tool calls and at manual pause points.
+    pub hitl: Option<Arc<HitlGate>>,
     /// ID of the most recent Interaction node in this session's conversation
     /// chain. Used to create `RespondsTo` edges that link messages into a
     /// traversable DAG (rather than a flat star off the agent node).
@@ -67,8 +71,15 @@ impl Session {
             agent_config: config,
             graph,
             created_at: now,
+            hitl: None,
             last_interaction_id: Mutex::new(None),
         })
+    }
+
+    /// Attach a [`HitlGate`] to this session, enabling HITL approval flow.
+    pub fn with_hitl(mut self, gate: Arc<HitlGate>) -> Self {
+        self.hitl = Some(gate);
+        self
     }
 
     /// Add a user message to this session's conversation.
@@ -129,6 +140,7 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hitl::HitlGate;
     use graphirm_graph::Direction;
 
     #[test]
@@ -199,6 +211,23 @@ mod tests {
             .unwrap();
         assert_eq!(msg3_responds.len(), 1);
         assert_eq!(msg3_responds[0].id, id2);
+    }
+
+    #[test]
+    fn session_hitl_field_is_none_by_default() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig::default();
+        let session = Session::new(graph, config).unwrap();
+        assert!(session.hitl.is_none());
+    }
+
+    #[test]
+    fn session_with_hitl_gate_stores_it() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig::default();
+        let gate = Arc::new(HitlGate::new());
+        let session = Session::new(graph, config).unwrap().with_hitl(gate.clone());
+        assert!(session.hitl.is_some());
     }
 
     #[test]
