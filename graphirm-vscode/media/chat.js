@@ -115,6 +115,7 @@ function escapeHtml(str) {
 // ---------------------------------------------------------------------------
 
 export function renderPauseButton(sessionId) {
+  hitlPaused = false; // Reset for the incoming session — avoid stale state on session switch.
   document.getElementById('hitl-pause-btn')?.remove();
   const btn = document.createElement('button');
   btn.id = 'hitl-pause-btn';
