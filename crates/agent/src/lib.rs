@@ -6,6 +6,7 @@ pub mod delegate;
 pub mod escalation;
 pub mod error;
 pub mod event;
+pub mod hitl;
 pub mod knowledge;
 pub mod multi;
 pub mod session;
@@ -21,6 +22,7 @@ pub use coordinator::Coordinator;
 pub use delegate::SubagentTool;
 pub use error::AgentError;
 pub use event::{AgentEvent, EventBus};
+pub use hitl::{is_destructive_tool, HitlDecision, HitlGate};
 pub use multi::{
     AgentRegistry, LlmFactory, SubagentHandle, collect_subagent_results, spawn_subagent,
     wait_for_dependencies, wait_for_subagents,
