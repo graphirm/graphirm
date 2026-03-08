@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- **VS Code/Cursor extension panel fails on new session** — two root causes corrected:
+  - **Port mismatch:** Server `--port` default was `3000` but extension expected `5555`; all API calls hit connection refused. Server default changed to `5555` to align with the extension's `graphirm.serverUrl` default.
+  - **Field name mismatch:** `ApiClient.createSession` was sending `{ name }` but the server reads `body.agent`, so the user-provided session name was silently discarded. Fixed to send `{ agent: name }`. Additionally, the `Session` TypeScript interface declared `name` (undefined at runtime) instead of `agent`; fixed across `ApiClient.ts`, `GraphirmPanel.ts`, and `sessions.js`. Status type also expanded to match all server variants (`completed`, `failed`, `cancelled`).
 - **Broken test compilation** — `cargo test --workspace` now compiles and passes cleanly across all crates
   - Added `SessionStatus` and `SessionMetadata` types to `graphirm-agent` crate (were planned but never implemented)
   - Added `get_agent_nodes()` query to `GraphStore` for session restoration on startup

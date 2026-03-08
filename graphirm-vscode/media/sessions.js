@@ -51,7 +51,7 @@ function renderSessionList() {
   for (const s of _sessions) {
     const opt = document.createElement('option');
     opt.value = s.id;
-    opt.textContent = `[${s.status}] ${s.name}`;
+    opt.textContent = `[${s.status}] ${s.agent}`;
     sel.appendChild(opt);
   }
 }

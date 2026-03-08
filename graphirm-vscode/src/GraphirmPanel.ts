@@ -89,14 +89,14 @@ export class GraphirmPanel implements vscode.Disposable {
           const session = await ApiClient.createSession(name);
           this.post({ type: 'session_created', session });
           this.sse.subscribe(session.id);
-          this.statusBar.setStatus('idle', session.name);
+          this.statusBar.setStatus('idle', session.agent);
           break;
         }
         case 'create_session': {
           const session = await ApiClient.createSession(msg.name as string);
           this.post({ type: 'session_created', session });
           this.sse.subscribe(session.id);
-          this.statusBar.setStatus('idle', session.name);
+          this.statusBar.setStatus('idle', session.agent);
           break;
         }
         case 'select_session': {
@@ -110,7 +110,7 @@ export class GraphirmPanel implements vscode.Disposable {
           this.post({ type: 'session_loaded', messages, graph, session });
           this.statusBar.setStatus(
             session.status === 'running' ? 'thinking' : 'idle',
-            session.name
+            session.agent
           );
           break;
         }

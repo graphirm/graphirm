@@ -2,8 +2,9 @@ import * as vscode from 'vscode';
 
 export interface Session {
   id: string;
-  name: string;
-  status: 'idle' | 'running' | 'aborted';
+  agent: string;
+  model: string;
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
   created_at: string;
 }
 
@@ -69,7 +70,7 @@ export const ApiClient = {
   createSession: (name: string) =>
     apiFetch<Session>('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ agent: name }),
     }),
 
   getSession: (id: string) => apiFetch<Session>(`/api/sessions/${id}`),

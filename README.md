@@ -22,6 +22,8 @@ Every other coding agent stores conversations as linear message arrays. Graphirm
 
 ## Quick start
 
+### Terminal UI (TUI)
+
 ```bash
 # Build
 cargo build --release
@@ -39,6 +41,21 @@ export ANTHROPIC_API_KEY=sk-...
 
 The graph database is stored at `~/.local/share/graphirm/graph.db` by default. Override with `--db /path/to/graph.db`.
 
+### VS Code / Cursor extension
+
+```bash
+# Start the server (defaults to port 5555)
+./target/release/graphirm serve
+
+# Install the extension
+cd graphirm-vscode && npm run build
+# Then install the .vsix via "Extensions: Install from VSIX..." in Cursor/VS Code
+```
+
+Open the panel: `Ctrl+Shift+P` → **Graphirm: Open Panel**
+
+The extension connects to `http://localhost:5555` by default. Change via `graphirm.serverUrl` in settings.
+
 ---
 
 ## Architecture
@@ -46,14 +63,15 @@ The graph database is stored at `~/.local/share/graphirm/graph.db` by default. O
 ```
 graphirm/
 ├── crates/
-│   ├── graph/     # GraphStore — SQLite + petgraph, node/edge CRUD, PageRank, BFS
-│   ├── llm/       # LLM provider trait — Anthropic, OpenAI, DeepSeek, Ollama, 17+ via rig-core
-│   ├── tools/     # Built-in tools — bash, read, write, edit, grep, find, ls
-│   ├── agent/     # Agent loop, context engine, compaction, multi-agent
-│   ├── tui/       # Terminal UI — ratatui chat panel
-│   └── server/    # HTTP API — axum REST + SSE
+│   ├── graph/          # GraphStore — SQLite + petgraph, node/edge CRUD, PageRank, BFS
+│   ├── llm/            # LLM provider trait — Anthropic, OpenAI, DeepSeek, Ollama, 17+ via rig-core
+│   ├── tools/          # Built-in tools — bash, read, write, edit, grep, find, ls
+│   ├── agent/          # Agent loop, context engine, compaction, multi-agent, HITL
+│   ├── tui/            # Terminal UI — ratatui chat panel + graph explorer
+│   └── server/         # HTTP API — axum REST + SSE streaming
+├── graphirm-vscode/    # VS Code / Cursor extension — chat + live graph visualization
 └── src/
-    └── main.rs    # CLI entrypoint — chat, serve subcommands
+    └── main.rs         # CLI entrypoint — chat, graph, serve subcommands
 ```
 
 ### Graph data model
@@ -100,7 +118,7 @@ soft_escalation_threshold = 2
 
 [server]
 host = "127.0.0.1"
-port = 3000
+port = 5555
 ```
 
 ---
@@ -132,7 +150,7 @@ No Docker. No runtime dependencies. Single static binary.
 | 5 — Multi-Agent | Coordinator, delegate tool, subagent spawning, TaskStatus enum | ✅ done |
 | 6 — Context Engine | Relevance scoring, token budgets, compaction | ✅ done |
 | 7 — TUI | ratatui chat panel | ✅ done |
-| 8 — HTTP Server | axum REST + SSE | 🔲 next |
+| 8 — HTTP Server | axum REST + SSE + VS Code/Cursor extension | ✅ done |
 | 9 — Knowledge Layer | Entity extraction, background consciousness loop, HNSW | ✅ done |
 | 10 — Web UI | Graph visualization | 🔲 pending |
 
@@ -140,7 +158,9 @@ No Docker. No runtime dependencies. Single static binary.
 
 **v1.0 (Phases 0–7):** ✅ complete — multi-agent coordinator with graph-based context engine. Primary agent auto-injects the `delegate` tool; subagents run isolated loops with scoped tools and cancel propagation.
 
-**v2.0 (+ Phases 8–10):** HTTP server next.
+**v2.0 (Phases 0–9):** ✅ complete — HTTP server, SSE streaming, VS Code/Cursor extension, knowledge layer with HNSW cross-session memory.
+
+**v3.0 (+ Phase 10):** Web UI pending.
 
 ---
 
