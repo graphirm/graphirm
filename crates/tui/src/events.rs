@@ -111,7 +111,7 @@ pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 timestamp: Utc::now(),
                 node_id: Some(node_id),
                 is_tool_call: false,
-                tool_name: Some(tool_name),
+                tool_name: if is_pause { None } else { Some(tool_name) },
             });
             app.chat.scroll_to_bottom();
         }
