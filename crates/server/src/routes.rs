@@ -1619,6 +1619,113 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_node_action_approve_returns_204() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        // Create a session
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        // Register a pending gate for node "n1" before the handler calls resolve().
+        let node_id = NodeId::from("n1");
+        let rx = {
+            let sessions = state.sessions.read().await;
+            let key = SessionId::from(created.id.as_str());
+            sessions.get(&key).unwrap().hitl.gate(&node_id).await
+        };
+
+        // POST approve action
+        let action_resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/graph/{}/node/n1/action", created.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"action":"approve"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(action_resp.status(), StatusCode::NO_CONTENT);
+        // Gate receiver should have been resolved with Approve.
+        assert!(matches!(rx.await.unwrap(), HitlDecision::Approve));
+    }
+
+    #[tokio::test]
+    async fn test_node_action_modify_without_args_returns_400() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        // Create a session
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        // POST modify without the required modified_args field
+        let action_resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/graph/{}/node/n1/action", created.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"action":"modify"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(action_resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_node_action_nonexistent_session_returns_404() {
+        let app = create_router(test_app_state());
+
+        let action_resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/graph/nonexistent-session/node/n1/action")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"action":"approve"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(action_resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
     async fn test_get_knowledge_empty() {
         let state = test_app_state();
         let app = create_router(state.clone());
