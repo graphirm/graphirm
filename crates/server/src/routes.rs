@@ -494,8 +494,14 @@ async fn node_action(
         }
     };
 
-    handle.hitl.resolve(&nid, decision).await;
-    Ok(StatusCode::NO_CONTENT)
+    let resolved = handle.hitl.resolve(&nid, decision).await;
+    if resolved {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ServerError::NotFound(format!(
+            "No pending gate for node {node_id}"
+        )))
+    }
 }
 
 /// `POST /api/sessions/:id/pause`
@@ -520,10 +526,13 @@ async fn resume_session(
     let handle = sessions
         .get(&session_id)
         .ok_or_else(|| ServerError::NotFound(format!("session {session_id}")))?;
-    handle.hitl.set_paused(false);
-    // Resolve any pending pause gate so the agent loop unblocks immediately.
+    // Resolve the gate first so the agent loop unblocks before it sees
+    // is_paused() == false. This prevents the TOCTOU window where set_paused(false)
+    // fires between the while-condition check and hitl.gate(), leaving an
+    // unresolvable receiver.
     let session_node_id = NodeId::from(handle.session.id.0.as_str());
     handle.hitl.resolve(&session_node_id, HitlDecision::Approve).await;
+    handle.hitl.set_paused(false);
     Ok(StatusCode::NO_CONTENT)
 }
 
