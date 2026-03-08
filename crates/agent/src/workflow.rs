@@ -1,6 +1,7 @@
 // Agent workflow: async state machine with plan -> act -> observe -> reflect loop
 
-use graphirm_graph::nodes::{GraphNode, InteractionData, NodeId, NodeType};
+use graphirm_graph::edges::{EdgeType, GraphEdge};
+use graphirm_graph::nodes::{ContentData, GraphNode, InteractionData, NodeId, NodeType};
 use graphirm_llm::{CompletionConfig, ContentPart, LlmProvider, LlmResponse};
 use graphirm_tools::ToolContext;
 use graphirm_tools::registry::ToolRegistry;
@@ -10,6 +11,7 @@ use tracing::info;
 
 use crate::error::AgentError;
 use crate::event::{AgentEvent, EventBus};
+use crate::hitl::HitlDecision;
 use crate::session::Session;
 
 /// Call the LLM with the current conversation context and record the
@@ -117,6 +119,10 @@ pub async fn stream_and_record(
 /// Uses a two-phase approach: first collect all execution results, then record
 /// them to the graph. This prevents ghost executions where a tool ran but its
 /// output was lost due to a graph write failure mid-drain.
+///
+/// When `session.hitl` is `Some`, destructive tools (`write`, `edit`, `bash`)
+/// are pulled out of the parallel set and processed sequentially, each awaiting
+/// a human approval decision before executing.
 async fn execute_tools_parallel(
     session: &Session,
     tools: &ToolRegistry,
@@ -133,9 +139,23 @@ async fn execute_tools_parallel(
         signal: cancel.clone(),
     };
 
-    // Phase 1: spawn all tools in parallel and collect results
+    // Partition tool calls: destructive ones go through sequential HITL approval,
+    // safe ones run in parallel without gating.
+    // `.copied()` turns `&&ContentPart` (from iterating `&[&ContentPart]`) into
+    // `&ContentPart` so the partition buckets are `Vec<&ContentPart>`.
+    let (safe_calls, destructive_calls): (Vec<_>, Vec<_>) = tool_calls
+        .iter()
+        .copied()
+        .partition(|part| {
+            let ContentPart::ToolCall { name, .. } = part else {
+                return true;
+            };
+            !crate::hitl::is_destructive_tool(name.as_str()) || session.hitl.is_none()
+        });
+
+    // Phase 1: spawn SAFE tools in parallel and collect results
     let mut set = JoinSet::new();
-    for part in tool_calls {
+    for part in safe_calls {
         let ContentPart::ToolCall {
             id: call_id,
             name,
@@ -163,8 +183,8 @@ async fn execute_tools_parallel(
         exec_results.push(join_result.map_err(|e| AgentError::Join(e.to_string()))?);
     }
 
-    // Phase 2: record all results to graph (best-effort — log failures rather
-    // than dropping results for tools that already executed successfully)
+    // Phase 2: record safe tool results to graph (best-effort — log failures
+    // rather than dropping results for tools that already executed successfully)
     let mut node_ids = Vec::new();
     for (call_id, tool_name, exec_result) in exec_results {
         let (content, is_error): (String, bool) = match exec_result {
@@ -198,6 +218,147 @@ async fn execute_tools_parallel(
             }
             Err(e) => {
                 tracing::error!("Failed to record tool result for call {call_id}: {e}");
+            }
+        }
+    }
+
+    // Phase 3: process destructive calls sequentially, each awaiting HITL approval.
+    // `destructive_calls` is empty when `session.hitl.is_none()` (see partition above),
+    // so this loop is a no-op in the non-HITL code path.
+    for part in destructive_calls {
+        let ContentPart::ToolCall {
+            id: call_id,
+            name,
+            arguments,
+        } = part
+        else {
+            continue;
+        };
+
+        // SAFETY: partition guarantees destructive_calls is non-empty only when hitl is Some.
+        let hitl = session.hitl.as_ref().expect("hitl must be Some for destructive calls");
+
+        let gate_key = NodeId::from(call_id.as_str());
+
+        events.emit(AgentEvent::AwaitingApproval {
+            node_id: gate_key.clone(),
+            tool_name: name.clone(),
+            arguments: arguments.clone(),
+            is_pause: false,
+        });
+
+        let rx = hitl.gate(&gate_key).await;
+
+        let decision = tokio::select! {
+            result = rx => match result {
+                Ok(d) => d,
+                // Sender dropped — treat as rejection to avoid silently executing a destructive tool.
+                Err(_) => HitlDecision::Reject("Gate sender dropped unexpectedly".to_string()),
+            },
+            _ = cancel.cancelled() => {
+                let _ = session.set_status("cancelled");
+                return Err(AgentError::Cancelled);
+            }
+        };
+
+        match decision {
+            HitlDecision::Approve | HitlDecision::Modify(_) => {
+                let exec_args = match &decision {
+                    HitlDecision::Modify(new_args) => new_args.clone(),
+                    _ => arguments.clone(),
+                };
+
+                let tool = tools.get(name)?;
+                let exec_result = tool.execute(exec_args, &ctx).await;
+
+                let (content, is_error) = match exec_result {
+                    Ok(output) => (output.content, output.is_error),
+                    Err(e) => (e.to_string(), true),
+                };
+
+                let mut tool_metadata = serde_json::Map::new();
+                tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(call_id));
+                tool_metadata.insert("is_error".to_string(), serde_json::json!(is_error));
+
+                let mut tool_node = GraphNode::new(NodeType::Interaction(InteractionData {
+                    role: "tool".to_string(),
+                    content,
+                    token_count: None,
+                }));
+                tool_node.metadata = serde_json::Value::Object(tool_metadata);
+
+                match session.graph.add_node(tool_node) {
+                    Ok(result_node_id) => {
+                        if let Err(e) = session.link_interaction(&result_node_id) {
+                            tracing::error!(
+                                "Failed to link HITL tool result node {result_node_id}: {e}"
+                            );
+                        } else {
+                            let edge = GraphEdge::new(
+                                EdgeType::ApprovedBy,
+                                result_node_id.clone(),
+                                session.id.clone(),
+                            );
+                            let _ = session.graph.add_edge(edge);
+
+                            events.emit(AgentEvent::ToolEnd {
+                                node_id: result_node_id.clone(),
+                                is_error,
+                            });
+                            info!(
+                                node_id = %result_node_id,
+                                tool = %name,
+                                is_error,
+                                "Tool execution complete (HITL approved)"
+                            );
+                            node_ids.push(result_node_id);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to record HITL tool result for call {call_id}: {e}"
+                        );
+                    }
+                }
+            }
+            HitlDecision::Reject(reason) => {
+                let rejection_node = GraphNode::new(NodeType::Content(ContentData {
+                    content_type: "tool_rejection".to_string(),
+                    path: None,
+                    body: format!("Tool call '{name}' rejected: {reason}"),
+                    language: None,
+                }));
+
+                match session.graph.add_node(rejection_node) {
+                    Ok(rejection_id) => {
+                        let _ = session.graph.add_edge(GraphEdge::new(
+                            EdgeType::Produces,
+                            response_id.clone(),
+                            rejection_id.clone(),
+                        ));
+                        let _ = session.graph.add_edge(GraphEdge::new(
+                            EdgeType::RejectedBy,
+                            rejection_id.clone(),
+                            session.id.clone(),
+                        ));
+
+                        events.emit(AgentEvent::ToolEnd {
+                            node_id: rejection_id.clone(),
+                            is_error: true,
+                        });
+                        info!(
+                            node_id = %rejection_id,
+                            tool = %name,
+                            "Tool call rejected by human"
+                        );
+                        node_ids.push(rejection_id);
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to record tool rejection for call {call_id}: {e}"
+                        );
+                    }
+                }
             }
         }
     }
@@ -315,6 +476,26 @@ pub async fn run_agent_loop(
                 node_ids: all_node_ids,
             });
             return Err(AgentError::Cancelled);
+        }
+
+        // Check manual pause flag before starting each turn.
+        if let Some(ref hitl) = session.hitl {
+            while hitl.is_paused() {
+                events.emit(AgentEvent::AwaitingApproval {
+                    node_id: session.id.clone(),
+                    tool_name: "pause".to_string(),
+                    arguments: serde_json::json!({}),
+                    is_pause: true,
+                });
+                let rx = hitl.gate(&session.id).await;
+                tokio::select! {
+                    _ = rx => { /* unblocked by resume */ }
+                    _ = cancel.cancelled() => {
+                        let _ = session.set_status("cancelled");
+                        return Err(AgentError::Cancelled);
+                    }
+                }
+            }
         }
 
         events.emit(AgentEvent::TurnStart { turn_index: turn });
@@ -750,6 +931,57 @@ mod tests {
             graphirm_graph::nodes::NodeType::Agent(d) => assert_eq!(d.status, "limit_reached"),
             _ => panic!("expected Agent node"),
         }
+    }
+
+    #[test]
+    fn test_destructive_partition_with_hitl_active() {
+        use crate::hitl::is_destructive_tool;
+        assert!(is_destructive_tool("write"));
+        assert!(is_destructive_tool("edit"));
+        assert!(is_destructive_tool("bash"));
+        assert!(!is_destructive_tool("read"));
+        assert!(!is_destructive_tool("grep"));
+        assert!(!is_destructive_tool("ls"));
+    }
+
+    #[tokio::test]
+    async fn test_agent_loop_hitl_gate_not_triggered_without_session_hitl() {
+        // When session.hitl is None, the agent loop runs normally even when the
+        // LLM requests a destructive tool call. All calls go to the safe (parallel)
+        // path because the partition predicate short-circuits on `session.hitl.is_none()`.
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            ..AgentConfig::default()
+        };
+        // No .with_hitl() — hitl is None
+        let session = Session::new(graph.clone(), config).unwrap();
+        session.add_user_message("Write a file").unwrap();
+
+        // LLM requests a destructive tool (write), then returns a text response.
+        let provider = MockProvider::new(vec![
+            tool_call_response(vec![(
+                "write",
+                "call_w1",
+                serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+            )]),
+            text_response("Done!"),
+        ]);
+
+        let mock_write = Arc::new(MockTool {
+            tool_name: "write".to_string(),
+            output: "Wrote /tmp/test.txt".to_string(),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(mock_write);
+
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        // Without HITL the loop should complete without hanging on a gate.
+        let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        assert_eq!(provider.call_count(), 2);
     }
 
     #[tokio::test]
