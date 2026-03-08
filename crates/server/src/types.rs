@@ -164,6 +164,25 @@ pub struct SubgraphQuery {
     pub depth: Option<usize>,
 }
 
+/// Action a human can take on a pending HITL gate.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeAction {
+    Approve,
+    Reject,
+    Modify,
+}
+
+/// Request body for `POST /api/graph/:session_id/node/:node_id/action`.
+#[derive(Debug, Deserialize)]
+pub struct NodeActionRequest {
+    pub action: NodeAction,
+    /// Required for Reject — injected back to the agent as a synthetic tool result.
+    pub reason: Option<String>,
+    /// Required for Modify — the new tool arguments as JSON.
+    pub modified_args: Option<serde_json::Value>,
+}
+
 // ── Response types ────────────────────────────────────────────────────────────
 
 /// Response body for session creation and retrieval endpoints.

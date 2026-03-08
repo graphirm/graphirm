@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
-use graphirm_agent::{AgentConfig, EventBus, HitlGate, Session, run_agent_loop};
+use graphirm_agent::{AgentConfig, EventBus, HitlDecision, HitlGate, Session, run_agent_loop};
 use graphirm_graph::{Direction, EdgeType, GraphNode, NodeId, NodeType};
 
 use crate::error::ServerError;
@@ -19,8 +19,8 @@ use crate::middleware::request_logging;
 use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
-    CreateSessionRequest, GraphResponse, HealthResponse, PromptRequest, SessionId, SessionResponse,
-    SessionStatus, SseEvent, SseEventType, SubgraphQuery,
+    CreateSessionRequest, GraphResponse, HealthResponse, NodeAction, NodeActionRequest,
+    PromptRequest, SessionId, SessionResponse, SessionStatus, SseEvent, SseEventType, SubgraphQuery,
 };
 
 /// Build the axum router with all routes wired to shared [`AppState`].
@@ -58,6 +58,13 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/graph/{session_id}/tasks", get(get_tasks))
         .route("/api/graph/{session_id}/knowledge", get(get_knowledge))
+        .route(
+            "/api/graph/{session_id}/node/{node_id}/action",
+            post(node_action),
+        )
+        // HITL pause / resume
+        .route("/api/sessions/{id}/pause", post(pause_session))
+        .route("/api/sessions/{id}/resume", post(resume_session))
         // SSE event streams
         .route("/api/events", get(sse_handler))
         .route("/api/events/{session_id}", get(sse_session_handler))
@@ -454,6 +461,70 @@ async fn get_knowledge(
         .collect();
 
     Ok(Json(knowledge))
+}
+
+// ── HITL endpoints ────────────────────────────────────────────────────────────
+
+/// `POST /api/graph/:session_id/node/:node_id/action`
+///
+/// Resolves a pending HITL gate for the given node. The agent loop is
+/// unblocked and proceeds according to the decision.
+async fn node_action(
+    State(state): State<AppState>,
+    Path((session_id, node_id)): Path<(SessionId, String)>,
+    Json(body): Json<NodeActionRequest>,
+) -> Result<StatusCode, ServerError> {
+    let sessions = state.sessions.read().await;
+    let handle = sessions
+        .get(&session_id)
+        .ok_or_else(|| ServerError::NotFound(format!("session {session_id}")))?;
+
+    let nid = NodeId::from(node_id.as_str());
+    let decision = match body.action {
+        NodeAction::Approve => HitlDecision::Approve,
+        NodeAction::Reject => {
+            let reason = body.reason.unwrap_or_else(|| "No reason provided".to_string());
+            HitlDecision::Reject(reason)
+        }
+        NodeAction::Modify => {
+            let args = body.modified_args.ok_or_else(|| {
+                ServerError::BadRequest("modified_args required for modify".to_string())
+            })?;
+            HitlDecision::Modify(args)
+        }
+    };
+
+    handle.hitl.resolve(&nid, decision).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/sessions/:id/pause`
+async fn pause_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<SessionId>,
+) -> Result<StatusCode, ServerError> {
+    let sessions = state.sessions.read().await;
+    let handle = sessions
+        .get(&session_id)
+        .ok_or_else(|| ServerError::NotFound(format!("session {session_id}")))?;
+    handle.hitl.set_paused(true);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/sessions/:id/resume`
+async fn resume_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<SessionId>,
+) -> Result<StatusCode, ServerError> {
+    let sessions = state.sessions.read().await;
+    let handle = sessions
+        .get(&session_id)
+        .ok_or_else(|| ServerError::NotFound(format!("session {session_id}")))?;
+    handle.hitl.set_paused(false);
+    // Resolve any pending pause gate so the agent loop unblocks immediately.
+    let session_node_id = NodeId::from(handle.session.id.0.as_str());
+    handle.hitl.resolve(&session_node_id, HitlDecision::Approve).await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1450,6 +1521,101 @@ mod tests {
             .unwrap();
         let tasks: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
         assert!(tasks.is_empty());
+    }
+
+    // ── HITL pause / resume ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_pause_endpoint_sets_paused_flag() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        // Create a session
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        // POST /api/sessions/:id/pause
+        let pause_resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/sessions/{}/pause", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(pause_resp.status(), StatusCode::NO_CONTENT);
+
+        let sessions = state.sessions.read().await;
+        let key = SessionId::from(created.id.as_str());
+        let handle = sessions.get(&key).unwrap();
+        assert!(handle.hitl.is_paused());
+    }
+
+    #[tokio::test]
+    async fn test_resume_endpoint_clears_paused_flag() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        // Create a session
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        // Set paused=true directly
+        {
+            let sessions = state.sessions.read().await;
+            let key = SessionId::from(created.id.as_str());
+            sessions.get(&key).unwrap().hitl.set_paused(true);
+        }
+
+        // POST /api/sessions/:id/resume
+        let resume_resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/sessions/{}/resume", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resume_resp.status(), StatusCode::NO_CONTENT);
+
+        let sessions = state.sessions.read().await;
+        let key = SessionId::from(created.id.as_str());
+        let handle = sessions.get(&key).unwrap();
+        assert!(!handle.hitl.is_paused());
     }
 
     #[tokio::test]
