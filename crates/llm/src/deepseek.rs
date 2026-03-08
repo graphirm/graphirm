@@ -6,7 +6,7 @@ use futures::stream;
 use rig::client::CompletionClient;
 use rig::completion::CompletionModel;
 use rig::message::{AssistantContent, Message};
-use rig::providers::deepseek;
+use rig::providers::openai::CompletionsClient;
 
 use crate::anthropic::{convert_messages_to_rig, split_system_and_chat};
 use crate::error::LlmError;
@@ -16,14 +16,22 @@ use crate::provider::{
 use crate::stream::{StreamEvent, TokenUsage};
 use crate::tool::ToolDefinition;
 
+const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
+
+/// Uses rig's OpenAI-compatible completions client pointed at DeepSeek's API.
+/// Avoids rig's native deepseek provider which cannot deserialise `"content": null`
+/// responses (returned when the model emits only tool calls).
 pub struct DeepSeekProvider {
-    client: deepseek::Client,
+    client: CompletionsClient,
 }
 
 impl DeepSeekProvider {
     pub fn new(api_key: impl Into<String>) -> Self {
-        let client =
-            deepseek::Client::new(api_key.into()).expect("Failed to build DeepSeek client");
+        let client = CompletionsClient::builder()
+            .api_key(api_key.into())
+            .base_url(DEEPSEEK_BASE_URL)
+            .build()
+            .expect("Failed to build DeepSeek client");
         Self { client }
     }
 
@@ -100,7 +108,7 @@ impl LlmProvider for DeepSeekProvider {
             (history, prompt)
         };
 
-        let model: deepseek::CompletionModel = self.client.completion_model(&config.model);
+        let model = self.client.completion_model(&config.model);
         let mut builder = model.completion_request(prompt).tools(rig_tools);
 
         if let Some(p) = preamble {
