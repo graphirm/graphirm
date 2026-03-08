@@ -605,6 +605,7 @@ pub async fn run_agent_loop(
 
 #[cfg(test)]
 mod test_helpers {
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use async_trait::async_trait;
@@ -693,6 +694,34 @@ mod test_helpers {
         }
     }
 
+    /// Mock tool that tracks how many times `execute` was called.
+    pub struct TrackingMockTool {
+        pub tool_name: String,
+        pub output: String,
+        pub call_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl graphirm_tools::Tool for TrackingMockTool {
+        fn name(&self) -> &str {
+            &self.tool_name
+        }
+        fn description(&self) -> &str {
+            "Tracking mock tool for testing"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<graphirm_tools::ToolOutput, graphirm_tools::ToolError> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            Ok(graphirm_tools::ToolOutput::success(&self.output))
+        }
+    }
+
     pub fn text_response(content: &str) -> LlmResponse {
         LlmResponse {
             content: vec![ContentPart::text(content)],
@@ -719,11 +748,14 @@ mod test_helpers {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::test_helpers::*;
     use super::*;
     use crate::config::AgentConfig;
+    use crate::hitl::{HitlDecision, HitlGate};
     use graphirm_graph::edges::EdgeType;
+    use graphirm_graph::nodes::NodeType;
     use graphirm_graph::{Direction, GraphStore};
 
     #[tokio::test]
@@ -942,6 +974,209 @@ mod tests {
         assert!(!is_destructive_tool("read"));
         assert!(!is_destructive_tool("grep"));
         assert!(!is_destructive_tool("ls"));
+    }
+
+    // ── HITL positive-path tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_hitl_approve_allows_tool_to_run() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            ..AgentConfig::default()
+        };
+        let hitl = Arc::new(HitlGate::new());
+        let session = Session::new(graph.clone(), config)
+            .unwrap()
+            .with_hitl(hitl.clone());
+        session.add_user_message("Write a file").unwrap();
+
+        let provider = MockProvider::new(vec![
+            tool_call_response(vec![(
+                "write",
+                "call_w1",
+                serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+            )]),
+            text_response("Done!"),
+        ]);
+
+        let call_counter = Arc::new(AtomicUsize::new(0));
+        let mock_write = Arc::new(TrackingMockTool {
+            tool_name: "write".to_string(),
+            output: "Wrote /tmp/test.txt".to_string(),
+            call_count: call_counter.clone(),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(mock_write);
+
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        // Poll until execute_tools_parallel registers the gate, then resolve.
+        // A fixed sleep is racy: under load the resolve can fire before the gate
+        // is registered, leaving rx permanently pending. Retry until resolve()
+        // returns true (gate found and sent to), which is guaranteed to happen
+        // only after hitl.gate() has been called by the agent loop.
+        let hitl_clone = hitl.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                if hitl_clone
+                    .resolve(&NodeId::from("call_w1"), HitlDecision::Approve)
+                    .await
+                {
+                    break;
+                }
+            }
+        });
+
+        let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        assert_eq!(provider.call_count(), 2, "LLM should be called twice (tool turn + final)");
+
+        // Tool execute() was invoked exactly once.
+        assert_eq!(call_counter.load(Ordering::SeqCst), 1, "Tool should have been called once");
+
+        // An ApprovedBy edge exists: tool-result node → session.id.
+        let approved_sources = graph
+            .neighbors(&session.id, Some(EdgeType::ApprovedBy), Direction::Incoming)
+            .unwrap();
+        assert_eq!(approved_sources.len(), 1, "Expected exactly one ApprovedBy edge into session");
+    }
+
+    #[tokio::test]
+    async fn test_hitl_reject_skips_tool_and_continues() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            ..AgentConfig::default()
+        };
+        let hitl = Arc::new(HitlGate::new());
+        let session = Session::new(graph.clone(), config)
+            .unwrap()
+            .with_hitl(hitl.clone());
+        session.add_user_message("Write a file").unwrap();
+
+        let provider = MockProvider::new(vec![
+            tool_call_response(vec![(
+                "write",
+                "call_w1",
+                serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+            )]),
+            // Loop continues after rejection and calls LLM again.
+            text_response("I was rejected, moving on."),
+        ]);
+
+        let call_counter = Arc::new(AtomicUsize::new(0));
+        let mock_write = Arc::new(TrackingMockTool {
+            tool_name: "write".to_string(),
+            output: "Wrote /tmp/test.txt".to_string(),
+            call_count: call_counter.clone(),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(mock_write);
+
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        let hitl_clone = hitl.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                if hitl_clone
+                    .resolve(
+                        &NodeId::from("call_w1"),
+                        HitlDecision::Reject("no bash".to_string()),
+                    )
+                    .await
+                {
+                    break;
+                }
+            }
+        });
+
+        let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        assert_eq!(provider.call_count(), 2, "LLM should be called twice");
+
+        // Tool execute() must never have been called.
+        assert_eq!(call_counter.load(Ordering::SeqCst), 0, "Tool should NOT have been called");
+
+        // The rejection path adds a RejectedBy edge: rejection_id → session.id.
+        // Query incoming RejectedBy neighbours of session.id to find the rejection Content node.
+        let rejection_sources = graph
+            .neighbors(&session.id, Some(EdgeType::RejectedBy), Direction::Incoming)
+            .unwrap();
+        assert!(
+            !rejection_sources.is_empty(),
+            "Expected at least one RejectedBy edge pointing to session"
+        );
+        assert!(
+            rejection_sources.iter().any(|n| {
+                matches!(&n.node_type, NodeType::Content(d) if d.content_type == "tool_rejection")
+            }),
+            "Expected a tool_rejection Content node connected via RejectedBy edge"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hitl_pause_blocks_then_resumes() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            ..AgentConfig::default()
+        };
+        let hitl = Arc::new(HitlGate::new());
+        hitl.set_paused(true);
+
+        let session = Session::new(graph.clone(), config)
+            .unwrap()
+            .with_hitl(hitl.clone());
+        session.add_user_message("Hello").unwrap();
+
+        // No tool calls — just a simple text response after the pause clears.
+        let provider = MockProvider::new(vec![text_response("All good.")]);
+        let tools = ToolRegistry::new();
+        let mut bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let token = CancellationToken::new();
+
+        // Poll until the pause gate is registered (run_agent_loop entered the while
+        // loop and called hitl.gate(&session.id)), then resolve it. Clear the pause
+        // flag AFTER a successful resolve so the while condition is false on the
+        // next iteration — if we cleared it first, the while loop might not enter
+        // at all and the gate would never be registered.
+        let hitl_clone = hitl.clone();
+        let session_id = session.id.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                if hitl_clone
+                    .resolve(&session_id, HitlDecision::Approve)
+                    .await
+                {
+                    hitl_clone.set_paused(false);
+                    break;
+                }
+            }
+        });
+
+        let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
+        assert!(result.is_ok(), "Expected loop to complete after resume, got: {:?}", result);
+        assert_eq!(provider.call_count(), 1, "LLM should be called once after pause clears");
+
+        // Verify that AwaitingApproval with is_pause=true was emitted.
+        let mut events = vec![];
+        while let Ok(e) = rx.try_recv() {
+            events.push(e);
+        }
+        let pause_event = events.iter().find(|e| {
+            matches!(e, AgentEvent::AwaitingApproval { is_pause, .. } if *is_pause)
+        });
+        assert!(
+            pause_event.is_some(),
+            "Expected an AwaitingApproval event with is_pause=true"
+        );
     }
 
     #[tokio::test]
