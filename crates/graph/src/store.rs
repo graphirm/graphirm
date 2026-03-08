@@ -674,18 +674,41 @@ impl GraphStore {
     /// Return the `limit` most recently created nodes, newest first.
     pub fn list_recent_nodes(&self, limit: usize) -> Result<Vec<GraphNode>, GraphError> {
         let conn = self.pool.get()?;
-        let mut stmt = conn.prepare("SELECT id FROM nodes ORDER BY created_at DESC LIMIT ?1")?;
+        let mut stmt = conn.prepare(
+            "SELECT id, data, metadata, created_at, updated_at \
+             FROM nodes ORDER BY created_at DESC LIMIT ?1",
+        )?;
 
-        let ids: Vec<NodeId> = stmt
+        let rows: Vec<(String, String, String, String, String)> = stmt
             .query_map([limit as i64], |row| {
-                let id: String = row.get(0)?;
-                Ok(NodeId(id))
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        let mut nodes = Vec::with_capacity(ids.len());
-        for id in ids {
-            nodes.push(self.get_node(&id)?);
+        let mut nodes = Vec::with_capacity(rows.len());
+        for (id_str, data, metadata, created_at_str, updated_at_str) in rows {
+            let node_type: NodeType = serde_json::from_str(&data)?;
+            let metadata: serde_json::Value = serde_json::from_str(&metadata)
+                .unwrap_or(serde_json::Value::Object(Default::default()));
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            nodes.push(GraphNode {
+                id: NodeId(id_str),
+                node_type,
+                metadata,
+                created_at,
+                updated_at,
+            });
         }
         Ok(nodes)
     }
