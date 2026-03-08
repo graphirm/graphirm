@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
-use graphirm_agent::{AgentConfig, EventBus, Session, run_agent_loop};
+use graphirm_agent::{AgentConfig, EventBus, HitlGate, Session, run_agent_loop};
 use graphirm_graph::{Direction, EdgeType, GraphNode, NodeId, NodeType};
 
 use crate::error::ServerError;
@@ -93,7 +93,8 @@ async fn create_session(
         ..state.default_config.clone()
     };
 
-    let session = Session::new(state.graph.clone(), config)?;
+    let hitl = Arc::new(HitlGate::new());
+    let session = Session::new(state.graph.clone(), config)?.with_hitl(hitl.clone());
     let session_id = SessionId(session.id.to_string());
     let now = Utc::now();
 
@@ -111,6 +112,7 @@ async fn create_session(
         join_handle: None,
         status: SessionStatus::Idle,
         created_at: now,
+        hitl,
     };
 
     state.sessions.write().await.insert(session_id, handle);

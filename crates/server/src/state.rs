@@ -8,7 +8,7 @@ use tokio::sync::{RwLock, broadcast};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use graphirm_agent::{AgentConfig, AgentError, Session};
+use graphirm_agent::{AgentConfig, AgentError, HitlGate, Session};
 use graphirm_graph::GraphStore;
 use graphirm_llm::LlmProvider;
 use graphirm_tools::ToolRegistry;
@@ -51,11 +51,22 @@ pub struct SessionHandle {
     pub status: SessionStatus,
     /// UTC timestamp when the session was created.
     pub created_at: DateTime<Utc>,
+    /// Shared HITL gate — the agent loop awaits on this; route handlers resolve it.
+    pub hitl: Arc<HitlGate>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_handle_has_hitl_gate() {
+        // Compile-time check: if this compiles, the field exists.
+        fn assert_has_hitl(h: &SessionHandle) -> bool {
+            !h.hitl.is_paused()
+        }
+        let _ = assert_has_hitl;
+    }
 
     #[test]
     fn session_status_display() {
