@@ -43,9 +43,15 @@ impl MistralEmbeddingProvider {
         }
     }
 
-    /// Embedding dimension for all Mistral embed models.
+    /// Embedding dimension for the configured model.
+    ///
+    /// - `mistral-embed`: 1024 dimensions
+    /// - `codestral-embed`: 1536 dimensions (not 1024 — verified by benchmark 2026-03-09)
     pub fn dim(&self) -> usize {
-        1024
+        match self.model {
+            MistralEmbedModel::MistralEmbed => 1024,
+            MistralEmbedModel::CodestralEmbed => 1536,
+        }
     }
 }
 
@@ -125,5 +131,9 @@ mod tests {
         let p = MistralEmbeddingProvider::new("dummy-key", MistralEmbedModel::MistralEmbed);
         assert_eq!(p.model.as_str(), "mistral-embed");
         assert_eq!(p.dim(), 1024);
+
+        let p2 = MistralEmbeddingProvider::new("dummy-key", MistralEmbedModel::CodestralEmbed);
+        assert_eq!(p2.model.as_str(), "codestral-embed");
+        assert_eq!(p2.dim(), 1536);
     }
 }

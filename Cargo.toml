@@ -29,6 +29,9 @@ description = "Graph-native coding agent"
 name = "graphirm"
 path = "src/main.rs"
 
+[features]
+local-embed = ["graphirm-llm/local-embed"]
+
 [dependencies]
 graphirm-graph = { path = "crates/graph" }
 graphirm-llm = { path = "crates/llm" }
