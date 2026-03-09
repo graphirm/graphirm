@@ -31,6 +31,20 @@ impl MemoryRetriever {
         }
     }
 
+    /// Convenience constructor — creates a fresh in-memory HNSW index.
+    ///
+    /// Use this for new sessions. For persistent cross-session memory,
+    /// load embeddings from the graph store and insert them into the index
+    /// before calling this (future work).
+    pub fn from_store(
+        graph: Arc<GraphStore>,
+        llm: Arc<dyn EmbeddingProvider>,
+        embedding_dimension: usize,
+    ) -> Self {
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(embedding_dimension)));
+        Self::new(graph, vector_index, llm, embedding_dimension)
+    }
+
     /// Embed a knowledge node's entity and summary, storing the vector
     /// in both SQLite and the in-memory HNSW index.
     pub async fn embed_knowledge_node(&self, node_id: &NodeId) -> Result<(), AgentError> {
@@ -295,6 +309,24 @@ mod tests {
 
         let results = retriever.retrieve_relevant("query", 100).await.unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_memory_retriever_from_store() {
+        struct DummyEmbed;
+
+        #[async_trait::async_trait]
+        impl graphirm_llm::EmbeddingProvider for DummyEmbed {
+            async fn embed(&self, _: &str) -> Result<Vec<f32>, graphirm_llm::LlmError> {
+                Ok(vec![0.0f32; 768])
+            }
+        }
+
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let retriever = MemoryRetriever::from_store(graph, Arc::new(DummyEmbed), 768);
+        // Just verify construction without panic and that basic ops work
+        let results = retriever.retrieve_relevant("anything", 5).await.unwrap();
+        assert!(results.is_empty());
     }
 
     #[tokio::test]
