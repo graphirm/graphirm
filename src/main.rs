@@ -143,13 +143,18 @@ async fn main() -> Result<(), GraphirmError> {
                 ) {
                     Ok((provider, dim)) => {
                         tracing::info!(backend = %spec, dim, "Embedding provider initialised");
-                        Some(std::sync::Arc::new(
+                        let retriever = std::sync::Arc::new(
                             graphirm_agent::knowledge::memory::MemoryRetriever::from_store(
                                 graph.clone(),
                                 std::sync::Arc::from(provider),
                                 dim,
                             ),
-                        ))
+                        );
+                        match retriever.hydrate_from_graph().await {
+                            Ok(n) => tracing::info!(count = n, "Restored embeddings from graph store"),
+                            Err(e) => tracing::warn!(error = %e, "HNSW hydration failed (non-fatal); starting fresh"),
+                        }
+                        Some(retriever)
                     }
                     Err(e) => {
                         tracing::warn!(
