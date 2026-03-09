@@ -6,6 +6,7 @@ members = [
     "crates/agent",
     "crates/tui",
     "crates/server",
+    "graphirm-eval",
 ]
 resolver = "2"
 
