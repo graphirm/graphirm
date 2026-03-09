@@ -1,215 +1,194 @@
-//! Local ONNX-based entity and relation extraction using GLiNER2.
+//! Local ONNX-based entity extraction using GLiNER2.
 //!
-//! Provides a fast, zero-cost extraction path that runs a 205M parameter
-//! model on CPU via ONNX Runtime. Used for per-turn entity/relation extraction
-//! while the LLM backend handles higher-order synthesis.
+//! Runs `lmo3/gliner2-large-v1-onnx` — a DeBERTa-v3-large model exported as
+//! four ONNX files. Inference runs on CPU via ONNX Runtime without PyTorch.
 //!
-//! Requires the `local-extraction` feature. The prebuilt ONNX Runtime binary
-//! requires glibc >= 2.38. Enable with: `cargo build --features local-extraction`
+//! # Model download
+//!
+//! On first use, call [`download_model`] to fetch the four ONNX files and
+//! tokenizer from HuggingFace Hub (~1.95 GB). Files are cached in
+//! `~/.cache/huggingface/hub/` (same location as the Python `huggingface_hub`
+//! library).
+//!
+//! # Feature flag
+//!
+//! Requires the `local-extraction` cargo feature:
+//! ```bash
+//! cargo build --features local-extraction
+//! ```
+//!
+//! Also requires glibc >= 2.38 (for the prebuilt ONNX Runtime binary).
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
-use ort::session::Session;
-use ort::value::Tensor;
-use tokenizers::Tokenizer;
-use tokio::sync::Mutex;
+use serde::Deserialize;
 
 use crate::error::AgentError;
 
-use super::extraction::{ExtractedEntity, ExtractionResponse};
+// ─── Config types ─────────────────────────────────────────────────────────────
 
-/// Raw entity output from the ONNX model before conversion to ExtractionResponse.
-#[derive(Debug, Clone)]
-pub struct RawOnnxEntity {
-    pub entity_type: String,
-    pub text: String,
-    pub confidence: f64,
+/// GLiNER2 ONNX model configuration, loaded from `gliner2_config.json`.
+#[derive(Debug, Deserialize)]
+pub struct Gliner2Config {
+    /// Maximum span width in words.
+    pub max_width: usize,
+    /// Special token IDs: "[P]", "[E]", "[L]", "[SEP_TEXT]".
+    pub special_tokens: HashMap<String, i64>,
+    /// ONNX file paths per precision level ("fp32", "fp16").
+    pub onnx_files: HashMap<String, Gliner2OnnxFiles>,
 }
 
-/// Wraps a GLiNER2 ONNX model session and tokenizer for local entity extraction.
+/// File paths for a single precision level within the ONNX model directory.
+#[derive(Debug, Deserialize)]
+pub struct Gliner2OnnxFiles {
+    pub encoder: String,
+    pub span_rep: String,
+    pub count_embed: String,
+    pub classifier: String,
+}
+
+// ─── OnnxExtractor placeholder ────────────────────────────────────────────────
+
+/// Placeholder struct — full implementation added in Task 3.
 ///
-/// The `Session` is held behind a `Mutex` because `Session::run` requires `&mut self`
-/// and `extract` is called from async contexts.
-pub struct OnnxExtractor {
-    session: Mutex<Session>,
-    tokenizer: Tokenizer,
-}
+/// Declared here so that `extraction.rs` can reference this type while
+/// `Gliner2Config`, model download, and session setup are in separate tasks.
+pub struct OnnxExtractor;
 
 impl OnnxExtractor {
-    /// Load a GLiNER2 ONNX model and its tokenizer from disk.
-    pub fn new(model_path: &Path, tokenizer_path: &Path) -> Result<Self, AgentError> {
-        let session = Session::builder()
-            .map_err(|e| {
-                AgentError::Workflow(format!("Failed to create ONNX session builder: {e}"))
-            })?
-            .with_intra_threads(4)
-            .map_err(|e| AgentError::Workflow(format!("Failed to configure intra threads: {e}")))?
-            .commit_from_file(model_path)
-            .map_err(|e| AgentError::Workflow(format!("Failed to load ONNX model: {e}")))?;
-
-        let tokenizer = Tokenizer::from_file(tokenizer_path)
-            .map_err(|e| AgentError::Workflow(format!("Failed to load tokenizer: {e}")))?;
-
-        Ok(Self {
-            session: Mutex::new(session),
-            tokenizer,
-        })
-    }
-
-    /// Run entity extraction on the given text using the configured entity types.
-    ///
-    /// Returns raw entities converted to an `ExtractionResponse`. The actual ONNX
-    /// inference tensor construction and output parsing is model-specific to
-    /// GLiNER2's architecture:
-    /// - Input: tokenized text + entity type prompts
-    /// - Output: span predictions with entity type labels and confidence scores
+    /// Stub — always returns an error until Task 3 implements ONNX inference.
     pub async fn extract(
         &self,
-        text: &str,
-        entity_types: &[String],
-        min_confidence: f64,
-    ) -> Result<ExtractionResponse, AgentError> {
-        let encoding = self
-            .tokenizer
-            .encode(text, true)
-            .map_err(|e| AgentError::Workflow(format!("Tokenization failed: {e}")))?;
-
-        let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
-        let attention_mask: Vec<i64> = encoding
-            .get_attention_mask()
-            .iter()
-            .map(|&m| m as i64)
-            .collect();
-        let seq_len = input_ids.len();
-
-        let type_prompt = build_entity_type_prompt(entity_types);
-        let type_encoding = self
-            .tokenizer
-            .encode(type_prompt.as_str(), true)
-            .map_err(|e| AgentError::Workflow(format!("Entity type tokenization failed: {e}")))?;
-
-        let _type_ids: Vec<i64> = type_encoding
-            .get_ids()
-            .iter()
-            .map(|&id| id as i64)
-            .collect();
-
-        let input_array = ndarray::Array2::from_shape_vec((1, seq_len), input_ids)
-            .map_err(|e| AgentError::Workflow(format!("Input tensor shape error: {e}")))?;
-        let mask_array = ndarray::Array2::from_shape_vec((1, seq_len), attention_mask)
-            .map_err(|e| AgentError::Workflow(format!("Mask tensor shape error: {e}")))?;
-
-        let input_tensor = Tensor::from_array(input_array)
-            .map_err(|e| AgentError::Workflow(format!("Input tensor creation failed: {e}")))?;
-        let mask_tensor = Tensor::from_array(mask_array)
-            .map_err(|e| AgentError::Workflow(format!("Mask tensor creation failed: {e}")))?;
-
-        let mut session = self.session.lock().await;
-        let outputs = session
-            .run(ort::inputs![
-                "input_ids" => input_tensor,
-                "attention_mask" => mask_tensor,
-            ])
-            .map_err(|e| AgentError::Workflow(format!("ONNX inference failed: {e}")))?;
-
-        // TODO: Implement GLiNER2-specific output parsing once the ONNX export format is
-        // validated. The model outputs span logits that need to be decoded against the
-        // tokenizer's offset mapping and matched to entity type labels.
-        let raw_entities: Vec<RawOnnxEntity> =
-            parse_onnx_outputs(&outputs, &encoding, entity_types)
-                .into_iter()
-                .filter(|e| e.confidence >= min_confidence)
-                .collect();
-
-        Ok(raw_entities_to_extraction_response(raw_entities))
+        _text: &str,
+        _entity_types: &[String],
+        _min_confidence: f64,
+    ) -> Result<super::extraction::ExtractionResponse, AgentError> {
+        Err(AgentError::Workflow(
+            "OnnxExtractor not yet implemented — coming in Task 3".into(),
+        ))
     }
 }
 
-/// Build the entity type prompt string that GLiNER2 uses to condition extraction.
-pub fn build_entity_type_prompt(entity_types: &[String]) -> String {
-    entity_types
-        .iter()
-        .map(|t| format!("<entity>{}</entity>", t))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
+// ─── Model download ───────────────────────────────────────────────────────────
 
-/// Convert raw ONNX entity outputs into the shared ExtractionResponse format.
-pub fn raw_entities_to_extraction_response(raw_entities: Vec<RawOnnxEntity>) -> ExtractionResponse {
-    let entities = raw_entities
-        .into_iter()
-        .map(|raw| ExtractedEntity {
-            entity_type: raw.entity_type,
-            name: raw.text,
-            description: String::new(),
-            confidence: raw.confidence,
-            relationships: vec![],
-        })
-        .collect();
+/// HuggingFace repository for the pre-exported ONNX model.
+const HF_MODEL_ID: &str = "lmo3/gliner2-large-v1-onnx";
 
-    ExtractionResponse { entities }
-}
-
-/// Parse ONNX session outputs into `RawOnnxEntity` values.
+/// Download the GLiNER2-large-v1 ONNX model files from HuggingFace Hub.
 ///
-/// This is a placeholder. The real implementation must decode GLiNER2's output tensor
-/// format (span start/end logits, entity type classification logits) against the
-/// tokenizer's offset mapping to recover text spans and labels.
-fn parse_onnx_outputs(
-    _outputs: &ort::session::SessionOutputs,
-    _encoding: &tokenizers::Encoding,
-    _entity_types: &[String],
-) -> Vec<RawOnnxEntity> {
-    // TODO: Implement once the ONNX export graph structure is known.
-    vec![]
+/// Files are cached in `~/.cache/huggingface/hub/` and reused on subsequent
+/// calls. Returns the local directory path containing the downloaded files.
+///
+/// # Files downloaded (~1.95 GB total)
+///
+/// - `onnx/encoder.onnx`       — DeBERTa-v3-large encoder (~1.65 GB)
+/// - `onnx/span_rep.onnx`      — Span representation MLP (~112 MB)
+/// - `onnx/count_embed.onnx`   — Unrolled GRU for label scoring (~72 MB)
+/// - `onnx/classifier.onnx`    — Classification head (~8 MB, not used for NER)
+/// - `gliner2_config.json`     — Model config (special tokens, max_width)
+/// - `tokenizer.json`          — HuggingFace tokenizer
+/// - `tokenizer_config.json`   — Tokenizer config
+/// - `added_tokens.json`       — Special token definitions
+///
+/// # Reproducibility
+///
+/// The `lmoe/gliner2-onnx` repository at <https://github.com/lmoe/gliner2-onnx>
+/// contains the export tool. To regenerate the ONNX files from the original
+/// PyTorch weights (`fastino/gliner2-large-v1`):
+///
+/// ```bash
+/// git clone https://github.com/lmoe/gliner2-onnx
+/// cd gliner2-onnx
+/// pip install -e ".[export]"
+/// make onnx-export MODEL=fastino/gliner2-large-v1
+/// # Output: model_out/gliner2-large-v1/
+/// # Upload to HuggingFace or point OnnxExtractor::new() at that directory.
+/// ```
+pub async fn download_model() -> Result<PathBuf, AgentError> {
+    use hf_hub::{api::tokio::Api, Repo, RepoType};
+
+    let api = Api::new()
+        .map_err(|e| AgentError::Workflow(format!("HuggingFace API init failed: {e}")))?;
+
+    let repo = api.repo(Repo::new(HF_MODEL_ID.to_string(), RepoType::Model));
+
+    let files = [
+        "gliner2_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "added_tokens.json",
+        "onnx/encoder.onnx",
+        "onnx/span_rep.onnx",
+        "onnx/count_embed.onnx",
+        "onnx/classifier.onnx",
+    ];
+
+    let mut model_dir: Option<PathBuf> = None;
+    for filename in &files {
+        tracing::info!(file = filename, "Downloading GLiNER2 model file");
+        let local_path = repo
+            .get(filename)
+            .await
+            .map_err(|e| AgentError::Workflow(format!("Download failed for {filename}: {e}")))?;
+
+        // All files land under the same cache directory; derive it from first file.
+        if model_dir.is_none() {
+            model_dir = local_path.parent().map(|p| {
+                // Navigate up from the file to the repo root (files may be in subdirs).
+                p.ancestors()
+                    .find(|anc| {
+                        anc.join("gliner2_config.json").exists()
+                            || anc.join("tokenizer.json").exists()
+                    })
+                    .unwrap_or(p)
+                    .to_path_buf()
+            });
+        }
+    }
+
+    model_dir.ok_or_else(|| AgentError::Workflow("Failed to determine model directory".into()))
 }
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_onnx_extractor_new_fails_with_missing_model() {
-        let result = OnnxExtractor::new(
-            Path::new("/nonexistent/model.onnx"),
-            Path::new("/nonexistent/tokenizer.json"),
-        );
-        assert!(result.is_err());
+    fn test_gliner2_config_parse() {
+        let json = r#"{
+            "max_width": 12,
+            "special_tokens": {
+                "[P]": 128003,
+                "[E]": 128005,
+                "[L]": 128007,
+                "[SEP_TEXT]": 128002
+            },
+            "onnx_files": {
+                "fp32": {
+                    "encoder": "onnx/encoder.onnx",
+                    "span_rep": "onnx/span_rep.onnx",
+                    "count_embed": "onnx/count_embed.onnx",
+                    "classifier": "onnx/classifier.onnx"
+                }
+            }
+        }"#;
+        let config: Gliner2Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_width, 12);
+        assert_eq!(config.special_tokens["[E]"], 128005);
+        assert_eq!(config.special_tokens["[SEP_TEXT]"], 128002);
     }
 
-    #[test]
-    fn test_build_entity_type_prompt() {
-        let types = vec![
-            "function".to_string(),
-            "pattern".to_string(),
-            "decision".to_string(),
-        ];
-        let prompt = build_entity_type_prompt(&types);
-        assert!(prompt.contains("function"));
-        assert!(prompt.contains("pattern"));
-        assert!(prompt.contains("decision"));
-    }
-
-    #[test]
-    fn test_parse_onnx_output_to_extraction_response() {
-        let raw_entities = vec![
-            RawOnnxEntity {
-                entity_type: "function".to_string(),
-                text: "parse_config".to_string(),
-                confidence: 0.92,
-            },
-            RawOnnxEntity {
-                entity_type: "library".to_string(),
-                text: "serde".to_string(),
-                confidence: 0.88,
-            },
-        ];
-
-        let response = raw_entities_to_extraction_response(raw_entities);
-        assert_eq!(response.entities.len(), 2);
-        assert_eq!(response.entities[0].name, "parse_config");
-        assert_eq!(response.entities[0].entity_type, "function");
-        assert!((response.entities[0].confidence - 0.92).abs() < f64::EPSILON);
-        assert_eq!(response.entities[1].name, "serde");
+    #[tokio::test]
+    #[ignore = "requires network access and ~1.95 GB download"]
+    async fn test_download_model_creates_files() {
+        let dir = download_model().await.unwrap();
+        assert!(dir.join("tokenizer.json").exists());
+        assert!(dir.join("gliner2_config.json").exists());
+        assert!(dir.join("onnx/encoder.onnx").exists());
+        assert!(dir.join("onnx/span_rep.onnx").exists());
+        assert!(dir.join("onnx/count_embed.onnx").exists());
     }
 }
