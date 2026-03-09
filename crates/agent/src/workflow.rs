@@ -25,8 +25,15 @@ pub async fn stream_and_record(
     tools: &ToolRegistry,
     events: &EventBus,
 ) -> Result<(LlmResponse, NodeId), AgentError> {
+    // Append cross-session memory context to the system prompt if available.
+    let suffix = session.memory_suffix().await;
+    let system_prompt = if suffix.is_empty() {
+        session.agent_config.system_prompt.clone()
+    } else {
+        format!("{}\n\n{}", session.agent_config.system_prompt, suffix)
+    };
     let context_config = crate::context::ContextConfig {
-        system_prompt: session.agent_config.system_prompt.clone(),
+        system_prompt,
         max_tokens: session
             .agent_config
             .max_tokens
@@ -463,6 +470,25 @@ pub async fn run_agent_loop(
         agent_id: session.id.clone(),
     });
 
+    // Pre-loop: inject relevant knowledge from past sessions into system prompt.
+    if let Some(retriever) = session.memory_retriever() {
+        let query = session.recent_user_message().unwrap_or_default();
+        match retriever.retrieve_relevant(&query, 5).await {
+            Ok(nodes) => {
+                let context =
+                    crate::knowledge::injection::format_memory_context(&nodes);
+                if !context.is_empty() {
+                    session.set_memory_suffix(context).await;
+                    tracing::info!(
+                        count = nodes.len(),
+                        "Injected memory nodes into session context"
+                    );
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "Memory retrieval failed (non-fatal)"),
+        }
+    }
+
     for turn in 0..max_turns {
         // Check cancellation before starting each turn
         if cancel.is_cancelled() {
@@ -513,9 +539,9 @@ pub async fn run_agent_loop(
         };
         all_node_ids.push(response_id.clone());
 
-        // Post-turn knowledge extraction — non-fatal; log and continue on error.
+        // Post-turn knowledge extraction + embedding — non-fatal; log and continue on error.
         if let Some(ref extraction_config) = session.agent_config.extraction {
-            if let Err(e) = crate::knowledge::extraction::post_turn_extract(
+            match crate::knowledge::extraction::post_turn_extract(
                 &session.graph,
                 llm,
                 extraction_config,
@@ -523,7 +549,23 @@ pub async fn run_agent_loop(
             )
             .await
             {
-                tracing::warn!(error = %e, "Knowledge extraction failed (non-fatal)");
+                Ok(node_ids) => {
+                    if let Some(retriever) = session.memory_retriever() {
+                        for node_id in &node_ids {
+                            if let Err(e) = retriever.embed_knowledge_node(node_id).await {
+                                tracing::warn!(
+                                    node_id = %node_id,
+                                    error = %e,
+                                    "Failed to embed knowledge node (non-fatal)"
+                                );
+                            }
+                        }
+                        tracing::debug!(count = node_ids.len(), "Embedded knowledge nodes");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Knowledge extraction failed (non-fatal)");
+                }
             }
         }
 
