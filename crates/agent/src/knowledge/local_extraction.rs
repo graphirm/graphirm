@@ -502,7 +502,6 @@ const HF_MODEL_ID: &str = "lmo3/gliner2-large-v1-onnx";
 /// - `gliner2_config.json`     — Model config (special tokens, max_width)
 /// - `tokenizer.json`          — HuggingFace tokenizer
 /// - `tokenizer_config.json`   — Tokenizer config
-/// - `added_tokens.json`       — Special token definitions
 ///
 /// # Reproducibility
 ///
@@ -530,11 +529,16 @@ pub async fn download_model() -> Result<PathBuf, AgentError> {
         "gliner2_config.json",
         "tokenizer.json",
         "tokenizer_config.json",
-        "added_tokens.json",
+        // ONNX graph files (model structure)
         "onnx/encoder.onnx",
         "onnx/span_rep.onnx",
         "onnx/count_embed.onnx",
         "onnx/classifier.onnx",
+        // ONNX external data files (model weights — split due to >2 GB size)
+        "onnx/encoder.onnx.data",
+        "onnx/span_rep.onnx.data",
+        "onnx/count_embed.onnx.data",
+        "onnx/classifier.onnx.data",
     ];
 
     let mut model_dir: Option<PathBuf> = None;
@@ -628,6 +632,7 @@ mod tests {
         assert!(dir.join("tokenizer.json").exists());
         assert!(dir.join("gliner2_config.json").exists());
         assert!(dir.join("onnx/encoder.onnx").exists());
+        assert!(dir.join("onnx/encoder.onnx.data").exists());
         assert!(dir.join("onnx/span_rep.onnx").exists());
         assert!(dir.join("onnx/count_embed.onnx").exists());
     }
