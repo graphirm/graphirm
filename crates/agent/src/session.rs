@@ -11,6 +11,7 @@ use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, NodeId, NodeT
 use crate::config::AgentConfig;
 use crate::error::AgentError;
 use crate::hitl::HitlGate;
+use crate::knowledge::memory::MemoryRetriever;
 
 /// Lifecycle status of a restored or active session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +52,12 @@ pub struct Session {
     /// Optional human-in-the-loop gate. When `Some`, the agent pauses before
     /// destructive tool calls and at manual pause points.
     pub hitl: Option<Arc<HitlGate>>,
+    /// Optional cross-session memory retriever. When `Some`, knowledge nodes
+    /// are embedded after each turn and injected into new sessions.
+    memory_retriever: Option<Arc<MemoryRetriever>>,
+    /// Runtime suffix appended to the system prompt containing relevant
+    /// knowledge retrieved from past sessions via HNSW vector search.
+    runtime_system_suffix: tokio::sync::Mutex<String>,
     /// ID of the most recent Interaction node in this session's conversation
     /// chain. Used to create `RespondsTo` edges that link messages into a
     /// traversable DAG (rather than a flat star off the agent node).
@@ -77,6 +84,8 @@ impl Session {
             graph,
             created_at: now,
             hitl: None,
+            memory_retriever: None,
+            runtime_system_suffix: tokio::sync::Mutex::new(String::new()),
             last_interaction_id: Mutex::new(None),
             turn_counter: AtomicU32::new(0),
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
@@ -87,6 +96,45 @@ impl Session {
     pub fn with_hitl(mut self, gate: Arc<HitlGate>) -> Self {
         self.hitl = Some(gate);
         self
+    }
+
+    /// Attach a memory retriever for cross-session knowledge injection.
+    pub fn with_memory_retriever(mut self, retriever: Arc<MemoryRetriever>) -> Self {
+        self.memory_retriever = Some(retriever);
+        self
+    }
+
+    pub fn memory_retriever(&self) -> Option<&Arc<MemoryRetriever>> {
+        self.memory_retriever.as_ref()
+    }
+
+    /// Read the current runtime system suffix (cross-session memory context).
+    pub async fn memory_suffix(&self) -> String {
+        self.runtime_system_suffix.lock().await.clone()
+    }
+
+    /// Replace the runtime system suffix with new memory context.
+    pub async fn set_memory_suffix(&self, suffix: String) {
+        *self.runtime_system_suffix.lock().await = suffix;
+    }
+
+    /// Return the content of the most recent user Interaction node, if any.
+    ///
+    /// Used to form the retrieval query for pre-loop memory injection.
+    pub fn recent_user_message(&self) -> Option<String> {
+        let last = self
+            .last_interaction_id
+            .lock()
+            .expect("last_interaction_id lock poisoned");
+        // Walk backwards from last interaction to find the most recent user message
+        let last_id = last.as_ref()?;
+        let node = self.graph.get_node(last_id).ok()?;
+        if let NodeType::Interaction(ref data) = node.node_type {
+            if data.role == "user" {
+                return Some(data.content.clone());
+            }
+        }
+        None
     }
 
     /// Add a user message to this session's conversation.
@@ -319,6 +367,31 @@ mod tests {
         let gate = Arc::new(HitlGate::new());
         let session = Session::new(graph, config).unwrap().with_hitl(gate.clone());
         assert!(session.hitl.is_some());
+    }
+
+    #[test]
+    fn test_session_memory_retriever_is_none_by_default() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig::default();
+        let session = Session::new(graph, config).unwrap();
+        assert!(session.memory_retriever().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_session_runtime_suffix_starts_empty() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig::default();
+        let session = Session::new(graph, config).unwrap();
+        assert_eq!(session.memory_suffix().await, "");
+    }
+
+    #[tokio::test]
+    async fn test_session_set_memory_suffix() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig::default();
+        let session = Session::new(graph, config).unwrap();
+        session.set_memory_suffix("relevant context".to_string()).await;
+        assert_eq!(session.memory_suffix().await, "relevant context");
     }
 
     #[test]
