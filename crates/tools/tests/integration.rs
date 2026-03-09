@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 
 use graphirm_graph::GraphStore;
 use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, NodeType};
@@ -45,6 +46,8 @@ fn setup() -> (TempDir, ToolRegistry, ToolContext) {
         interaction_id,
         working_dir: dir.path().to_path_buf(),
         signal: CancellationToken::new(),
+        turn: 1,
+        turn_pos_counter: Arc::new(AtomicU32::new(0)),
     };
 
     let mut registry = ToolRegistry::new();

@@ -206,6 +206,7 @@ mod tests {
     use graphirm_tools::registry::ToolRegistry;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::atomic::AtomicU32;
     use std::sync::Arc;
 
     fn make_test_context(graph: &Arc<GraphStore>) -> ToolContext {
@@ -229,6 +230,8 @@ mod tests {
             interaction_id,
             working_dir: PathBuf::from("."),
             signal: CancellationToken::new(),
+            turn: 1,
+            turn_pos_counter: Arc::new(AtomicU32::new(0)),
         }
     }
 

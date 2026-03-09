@@ -211,6 +211,9 @@ fn run_graph_command(action: GraphAction, db_path: &PathBuf) -> Result<(), Graph
 
 fn node_display_label(node: &graphirm_graph::nodes::GraphNode) -> String {
     use graphirm_graph::nodes::NodeType;
+    if let Some(label) = node.label() {
+        return label.to_string();
+    }
     match &node.node_type {
         NodeType::Interaction(d) => {
             let preview: String = d.content.chars().take(60).collect();
@@ -224,6 +227,24 @@ fn node_display_label(node: &graphirm_graph::nodes::GraphNode) -> String {
         }
         NodeType::Task(d) => format!("[task] {} — {}", d.title, d.status),
         NodeType::Knowledge(d) => format!("[{}] {}", d.entity_type, d.entity),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::node_display_label;
+    use graphirm_graph::nodes::{GraphNode, InteractionData, NodeType};
+
+    #[test]
+    fn node_display_label_prefers_metadata_label() {
+        let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "Fallback preview".to_string(),
+            token_count: None,
+        }));
+        node.set_label("interaction_1_2_1");
+
+        assert_eq!(node_display_label(&node), "interaction_1_2_1");
     }
 }
 

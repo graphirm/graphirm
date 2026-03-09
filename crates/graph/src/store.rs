@@ -267,6 +267,20 @@ impl GraphStore {
 
     pub fn update_node(&self, id: &NodeId, mut node: GraphNode) -> Result<(), GraphError> {
         node.updated_at = chrono::Utc::now();
+        if node.label().is_some() {
+            let current = node
+                .metadata
+                .get("label_ver")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(1);
+            let next = current + 1;
+            node.metadata["label_ver"] = serde_json::json!(next);
+            if let Some(label) = node.label().map(str::to_string) {
+                if let Some((prefix, _)) = label.rsplit_once('_') {
+                    node.metadata["label"] = serde_json::json!(format!("{prefix}_{next}"));
+                }
+            }
+        }
         let conn = self.pool.get()?;
         let data = serde_json::to_string(&node.node_type)?;
         let metadata = serde_json::to_string(&node.metadata)?;
@@ -287,6 +301,22 @@ impl GraphStore {
             return Err(GraphError::NodeNotFound(id.0.clone()));
         }
         Ok(())
+    }
+
+    pub fn count_session_nodes(
+        &self,
+        session_id: &NodeId,
+        node_type: &str,
+    ) -> Result<u32, GraphError> {
+        let conn = self.pool.get()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM nodes
+             WHERE node_type = ?1
+               AND json_extract(metadata, '$.session_id') = ?2",
+            params![node_type, session_id.0],
+            |row| row.get(0),
+        )?;
+        Ok(count as u32)
     }
 
     pub fn delete_node(&self, id: &NodeId) -> Result<(), GraphError> {
@@ -943,6 +973,68 @@ mod tests {
             _ => panic!("expected Task"),
         }
         assert!(fetched.updated_at > fetched.created_at);
+    }
+
+    #[test]
+    fn update_node_bumps_label_version_when_labeled() {
+        let store = GraphStore::open_memory().unwrap();
+        let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "first".to_string(),
+            token_count: None,
+        }));
+        node.set_label("interaction_1_2_1");
+        let id = node.id.clone();
+        store.add_node(node.clone()).unwrap();
+
+        let mut updated = node;
+        updated.metadata["label_ver"] = serde_json::json!(4);
+        if let NodeType::Interaction(data) = &mut updated.node_type {
+            data.content = "second".to_string();
+        }
+
+        store.update_node(&id, updated).unwrap();
+
+        let fetched = store.get_node(&id).unwrap();
+        assert_eq!(fetched.label(), Some("interaction_1_2_5"));
+        assert_eq!(fetched.metadata.get("label_ver"), Some(&serde_json::json!(5)));
+    }
+
+    #[test]
+    fn count_session_nodes_filters_by_session_and_type() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let mut session_content = GraphNode::new(NodeType::Content(crate::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: Some("src/main.rs".to_string()),
+            body: "fn main() {}".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        session_content.metadata["session_id"] = serde_json::json!("session-a");
+        store.add_node(session_content).unwrap();
+
+        let mut same_session_other_type =
+            GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "tool".to_string(),
+                content: "tool result".to_string(),
+                token_count: None,
+            }));
+        same_session_other_type.metadata["session_id"] = serde_json::json!("session-a");
+        store.add_node(same_session_other_type).unwrap();
+
+        let mut other_session_content = GraphNode::new(NodeType::Content(crate::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: Some("src/lib.rs".to_string()),
+            body: "pub fn lib() {}".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        other_session_content.metadata["session_id"] = serde_json::json!("session-b");
+        store.add_node(other_session_content).unwrap();
+
+        let count = store
+            .count_session_nodes(&NodeId::from("session-a"), "content")
+            .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[test]

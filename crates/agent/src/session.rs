@@ -1,5 +1,6 @@
 // Session management: create, resume, list, archive sessions
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
@@ -54,17 +55,21 @@ pub struct Session {
     /// chain. Used to create `RespondsTo` edges that link messages into a
     /// traversable DAG (rather than a flat star off the agent node).
     last_interaction_id: Mutex<Option<NodeId>>,
+    turn_counter: AtomicU32,
+    turn_pos_counter: Arc<AtomicU32>,
 }
 
 impl Session {
     pub fn new(graph: Arc<GraphStore>, config: AgentConfig) -> Result<Self, AgentError> {
         let now = Utc::now();
-        let agent_node = GraphNode::new(NodeType::Agent(AgentData {
+        let mut agent_node = GraphNode::new(NodeType::Agent(AgentData {
             name: config.name.clone(),
             model: config.model.clone(),
             system_prompt: Some(config.system_prompt.clone()),
             status: "active".to_string(),
         }));
+        agent_node.set_label("agent_0_1_1");
+        agent_node.metadata["session_id"] = serde_json::json!(agent_node.id.to_string());
         let id = graph.add_node(agent_node)?;
         Ok(Self {
             id,
@@ -73,6 +78,8 @@ impl Session {
             created_at: now,
             hitl: None,
             last_interaction_id: Mutex::new(None),
+            turn_counter: AtomicU32::new(0),
+            turn_pos_counter: Arc::new(AtomicU32::new(0)),
         })
     }
 
@@ -85,14 +92,42 @@ impl Session {
     /// Add a user message to this session's conversation.
     /// Returns the NodeId of the created Interaction node.
     pub fn add_user_message(&self, content: &str) -> Result<NodeId, AgentError> {
-        let interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
+        let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        self.turn_pos_counter.store(1, Ordering::SeqCst);
+        let mut interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
             role: "user".to_string(),
             content: content.to_string(),
             token_count: None,
         }));
-        let msg_id = self.graph.add_node(interaction_node)?;
-        self.link_interaction(&msg_id)?;
-        Ok(msg_id)
+        interaction_node.metadata["session_id"] = serde_json::json!(self.id.to_string());
+        interaction_node.set_label(format!("interaction_{turn}_1_1"));
+        self.persist_interaction(interaction_node)
+    }
+
+    pub fn current_turn(&self) -> u32 {
+        self.turn_counter.load(Ordering::SeqCst)
+    }
+
+    pub fn next_turn_pos(&self) -> u32 {
+        self.turn_pos_counter.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn turn_position_counter(&self) -> Arc<AtomicU32> {
+        self.turn_pos_counter.clone()
+    }
+
+    pub fn record_interaction(&self, mut node: GraphNode) -> Result<NodeId, AgentError> {
+        let turn = self.current_turn();
+        let pos = self.next_turn_pos();
+        node.metadata["session_id"] = serde_json::json!(self.id.to_string());
+        node.set_label(format!("interaction_{turn}_{pos}_1"));
+        self.persist_interaction(node)
+    }
+
+    fn persist_interaction(&self, node: GraphNode) -> Result<NodeId, AgentError> {
+        let node_id = self.graph.add_node(node)?;
+        self.link_interaction(&node_id)?;
+        Ok(node_id)
     }
 
     /// Record an Interaction node as part of this session's conversation chain.
@@ -151,7 +186,10 @@ mod tests {
 
         let node = graph.get_node(&session.id).unwrap();
         match &node.node_type {
-            NodeType::Agent(data) => assert_eq!(data.name, "graphirm"),
+            NodeType::Agent(data) => {
+                assert_eq!(data.name, "graphirm");
+                assert_eq!(node.label(), Some("agent_0_1_1"));
+            }
             _ => panic!("expected Agent node"),
         }
     }
@@ -182,9 +220,62 @@ mod tests {
             NodeType::Interaction(data) => {
                 assert_eq!(data.role, "user");
                 assert_eq!(data.content, "Hello!");
+                assert_eq!(node.label(), Some("interaction_1_1_1"));
             }
             _ => panic!("expected Interaction node"),
         }
+    }
+
+    #[test]
+    fn test_session_record_interaction_assigns_turn_position_labels() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig::default();
+        let session = Session::new(graph.clone(), config).unwrap();
+
+        let user_id = session.add_user_message("Hello!").unwrap();
+        let assistant_id = session
+            .record_interaction(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".to_string(),
+                content: "Hi there".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+        let tool_id = session
+            .record_interaction(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "tool".to_string(),
+                content: "output".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        assert_eq!(graph.get_node(&user_id).unwrap().label(), Some("interaction_1_1_1"));
+        assert_eq!(
+            graph.get_node(&assistant_id).unwrap().label(),
+            Some("interaction_1_2_1")
+        );
+        assert_eq!(graph.get_node(&tool_id).unwrap().label(), Some("interaction_1_3_1"));
+    }
+
+    #[test]
+    fn test_session_add_user_message_resets_position_for_new_turn() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig::default();
+        let session = Session::new(graph.clone(), config).unwrap();
+
+        let _ = session.add_user_message("turn 1").unwrap();
+        let _ = session
+            .record_interaction(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".to_string(),
+                content: "first reply".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let second_user_id = session.add_user_message("turn 2").unwrap();
+        assert_eq!(
+            graph.get_node(&second_user_id).unwrap().label(),
+            Some("interaction_2_1_1")
+        );
     }
 
     #[test]

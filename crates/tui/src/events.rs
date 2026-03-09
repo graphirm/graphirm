@@ -120,6 +120,9 @@ pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
 
 /// Build a short display label for a graph node.
 fn node_label(node: &GraphNode) -> String {
+    if let Some(label) = node.label() {
+        return label.to_string();
+    }
     match &node.node_type {
         NodeType::Interaction(d) => {
             let preview: String = d.content.chars().take(48).collect();
@@ -261,5 +264,17 @@ mod tests {
             },
         );
         assert_eq!(app.status_bar.agent_state, "Tool Error");
+    }
+
+    #[test]
+    fn test_node_label_prefers_metadata_label() {
+        let mut node = GraphNode::new(NodeType::Interaction(graphirm_graph::nodes::InteractionData {
+            role: "assistant".to_string(),
+            content: "This preview should not be used".to_string(),
+            token_count: None,
+        }));
+        node.set_label("interaction_1_2_1");
+
+        assert_eq!(node_label(&node), "interaction_1_2_1");
     }
 }

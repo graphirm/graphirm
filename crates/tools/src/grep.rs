@@ -107,14 +107,14 @@ impl Tool for GrepTool {
             }
         };
 
-        let content_node = ctx
-            .graph
-            .add_node(GraphNode::new(NodeType::Content(ContentData {
-                content_type: "search_results".to_string(),
-                path: Some(search_path.to_string_lossy().to_string()),
-                body: result_text.clone(),
-                language: None,
-            })))?;
+        let mut node = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "search_results".to_string(),
+            path: Some(search_path.to_string_lossy().to_string()),
+            body: result_text.clone(),
+            language: None,
+        }));
+        ctx.label_content_node(&mut node)?;
+        let content_node = ctx.graph.add_node(node)?;
 
         ctx.graph.add_edge(GraphEdge::new(
             EdgeType::Reads,
@@ -208,6 +208,27 @@ mod tests {
             .unwrap();
         assert!(!out.is_error);
         assert!(out.content.contains("foo"));
+    }
+
+    #[tokio::test]
+    async fn grep_creates_labeled_graph_node() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
+
+        let tool = GrepTool::new();
+        let ctx = make_ctx_with_dir(&dir);
+        let out = tool
+            .execute(json!({"pattern": "fn", "path": "."}), &ctx)
+            .await
+            .unwrap();
+
+        let node_id = out.node_id.expect("should create a graph node");
+        let node = ctx.graph.get_node(&node_id).unwrap();
+        assert_eq!(node.label(), Some("content_1_1_1"));
+        assert_eq!(
+            node.metadata.get("session_id"),
+            Some(&serde_json::json!(ctx.agent_id.to_string()))
+        );
     }
 
     #[tokio::test]

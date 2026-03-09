@@ -89,8 +89,7 @@ pub async fn stream_and_record(
     }));
     interaction_node.metadata = serde_json::Value::Object(metadata);
 
-    let node_id = session.graph.add_node(interaction_node)?;
-    session.link_interaction(&node_id)?;
+    let node_id = session.record_interaction(interaction_node)?;
 
     info!(node_id = %node_id, "Recorded assistant response");
 
@@ -137,6 +136,8 @@ async fn execute_tools_parallel(
         interaction_id: response_id.clone(),
         working_dir: session.agent_config.working_dir.clone(),
         signal: cancel.clone(),
+        turn: session.current_turn(),
+        turn_pos_counter: session.turn_position_counter(),
     };
 
     // Partition tool calls: destructive ones go through sequential HITL approval,
@@ -203,18 +204,14 @@ async fn execute_tools_parallel(
         }));
         tool_node.metadata = serde_json::Value::Object(tool_metadata);
 
-        match session.graph.add_node(tool_node) {
+        match session.record_interaction(tool_node) {
             Ok(node_id) => {
-                if let Err(e) = session.link_interaction(&node_id) {
-                    tracing::error!("Failed to link tool result node {node_id}: {e}");
-                } else {
-                    events.emit(AgentEvent::ToolEnd {
-                        node_id: node_id.clone(),
-                        is_error,
-                    });
-                    info!(node_id = %node_id, tool = %tool_name, is_error, "Tool execution complete");
-                    node_ids.push(node_id);
-                }
+                events.emit(AgentEvent::ToolEnd {
+                    node_id: node_id.clone(),
+                    is_error,
+                });
+                info!(node_id = %node_id, tool = %tool_name, is_error, "Tool execution complete");
+                node_ids.push(node_id);
             }
             Err(e) => {
                 tracing::error!("Failed to record tool result for call {call_id}: {e}");
@@ -287,32 +284,26 @@ async fn execute_tools_parallel(
                 }));
                 tool_node.metadata = serde_json::Value::Object(tool_metadata);
 
-                match session.graph.add_node(tool_node) {
+                match session.record_interaction(tool_node) {
                     Ok(result_node_id) => {
-                        if let Err(e) = session.link_interaction(&result_node_id) {
-                            tracing::error!(
-                                "Failed to link HITL tool result node {result_node_id}: {e}"
-                            );
-                        } else {
-                            let edge = GraphEdge::new(
-                                EdgeType::ApprovedBy,
-                                result_node_id.clone(),
-                                session.id.clone(),
-                            );
-                            let _ = session.graph.add_edge(edge);
+                        let edge = GraphEdge::new(
+                            EdgeType::ApprovedBy,
+                            result_node_id.clone(),
+                            session.id.clone(),
+                        );
+                        let _ = session.graph.add_edge(edge);
 
-                            events.emit(AgentEvent::ToolEnd {
-                                node_id: result_node_id.clone(),
-                                is_error,
-                            });
-                            info!(
-                                node_id = %result_node_id,
-                                tool = %name,
-                                is_error,
-                                "Tool execution complete (HITL approved)"
-                            );
-                            node_ids.push(result_node_id);
-                        }
+                        events.emit(AgentEvent::ToolEnd {
+                            node_id: result_node_id.clone(),
+                            is_error,
+                        });
+                        info!(
+                            node_id = %result_node_id,
+                            tool = %name,
+                            is_error,
+                            "Tool execution complete (HITL approved)"
+                        );
+                        node_ids.push(result_node_id);
                     }
                     Err(e) => {
                         tracing::error!(
@@ -322,12 +313,18 @@ async fn execute_tools_parallel(
                 }
             }
             HitlDecision::Reject(reason) => {
-                let rejection_node = GraphNode::new(NodeType::Content(ContentData {
+                let mut rejection_node = GraphNode::new(NodeType::Content(ContentData {
                     content_type: "tool_rejection".to_string(),
                     path: None,
                     body: format!("Tool call '{name}' rejected: {reason}"),
                     language: None,
                 }));
+                rejection_node.metadata["session_id"] = serde_json::json!(session.id.to_string());
+                rejection_node.set_label(format!(
+                    "content_{}_{}_1",
+                    session.current_turn(),
+                    session.next_turn_pos()
+                ));
 
                 match session.graph.add_node(rejection_node) {
                     Ok(rejection_id) => {
@@ -899,6 +896,159 @@ mod tests {
         if let NodeType::Interaction(d) = &tool_nodes[0].node_type {
             assert_eq!(d.content, "src/\nCargo.toml");
         }
+        assert_eq!(tool_nodes[0].label(), Some("interaction_1_3_1"));
+
+        let assistant_nodes: Vec<_> = neighbors
+            .iter()
+            .filter(|n| {
+                if let NodeType::Interaction(d) = &n.node_type {
+                    d.role == "assistant"
+                } else {
+                    false
+                }
+            })
+            .collect();
+        assert_eq!(assistant_nodes.len(), 2);
+        assert!(
+            assistant_nodes
+                .iter()
+                .any(|node| node.label() == Some("interaction_1_2_1"))
+        );
+        assert!(
+            assistant_nodes
+                .iter()
+                .any(|node| node.label() == Some("interaction_1_4_1"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_agent_loop_real_tool_propagates_turn_to_content_labels() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            working_dir: temp_dir.path().to_path_buf(),
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session.add_user_message("Echo a message").unwrap();
+
+        let provider = MockProvider::new(vec![
+            tool_call_response(vec![(
+                "bash",
+                "call_1",
+                serde_json::json!({"command": "printf tracked"}),
+            )]),
+            text_response("Done."),
+        ]);
+
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(graphirm_tools::bash::BashTool::new()));
+
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        run_agent_loop(&session, &provider, &tools, &bus, &token)
+            .await
+            .unwrap();
+
+        let neighbors = graph
+            .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap();
+        let tool_nodes: Vec<_> = neighbors
+            .iter()
+            .filter(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "tool"))
+            .collect();
+        assert_eq!(tool_nodes.len(), 1);
+        assert_eq!(tool_nodes[0].label(), Some("interaction_1_4_1"));
+
+        let assistant_nodes: Vec<_> = neighbors
+            .iter()
+            .filter(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "assistant"))
+            .collect();
+        let first_assistant = assistant_nodes
+            .iter()
+            .find(|node| node.label() == Some("interaction_1_2_1"))
+            .unwrap();
+
+        let content_nodes = graph
+            .neighbors(&first_assistant.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap();
+        assert_eq!(content_nodes.len(), 1);
+        assert_eq!(content_nodes[0].label(), Some("content_1_3_1"));
+        assert_eq!(
+            content_nodes[0].metadata.get("session_id"),
+            Some(&serde_json::json!(session.id.to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_agent_loop_parallel_safe_tools_keep_dense_labels() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp_dir.path().join("a.txt"), "a").unwrap();
+        std::fs::write(temp_dir.path().join("b.txt"), "b").unwrap();
+
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            working_dir: temp_dir.path().to_path_buf(),
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session.add_user_message("List and find files").unwrap();
+
+        let provider = MockProvider::new(vec![
+            tool_call_response(vec![
+                ("ls", "call_ls", serde_json::json!({"path": "."})),
+                ("find", "call_find", serde_json::json!({"pattern": "*.txt"})),
+            ]),
+            text_response("Done."),
+        ]);
+
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(graphirm_tools::ls::LsTool::new()));
+        tools.register(Arc::new(graphirm_tools::find::FindTool::new()));
+
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        run_agent_loop(&session, &provider, &tools, &bus, &token)
+            .await
+            .unwrap();
+
+        let produced = graph
+            .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap();
+        let assistant_nodes: Vec<_> = produced
+            .iter()
+            .filter(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "assistant"))
+            .collect();
+        let tool_nodes: Vec<_> = produced
+            .iter()
+            .filter(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "tool"))
+            .collect();
+
+        let first_assistant = assistant_nodes
+            .iter()
+            .find(|node| node.label() == Some("interaction_1_2_1"))
+            .unwrap();
+        let content_nodes = graph
+            .neighbors(&first_assistant.id, Some(EdgeType::Reads), Direction::Outgoing)
+            .unwrap();
+
+        let content_labels: std::collections::HashSet<_> =
+            content_nodes.iter().filter_map(|node| node.label()).collect();
+        assert_eq!(content_nodes.len(), 2);
+        assert_eq!(content_labels.len(), 2);
+        assert!(content_labels.contains("content_1_3_1"));
+        assert!(content_labels.contains("content_1_4_1"));
+
+        let tool_labels: std::collections::HashSet<_> =
+            tool_nodes.iter().filter_map(|node| node.label()).collect();
+        assert_eq!(tool_nodes.len(), 2);
+        assert_eq!(tool_labels.len(), 2);
+        assert!(tool_labels.contains("interaction_1_5_1"));
+        assert!(tool_labels.contains("interaction_1_6_1"));
     }
 
     #[tokio::test]
@@ -1116,6 +1266,15 @@ mod tests {
                 matches!(&n.node_type, NodeType::Content(d) if d.content_type == "tool_rejection")
             }),
             "Expected a tool_rejection Content node connected via RejectedBy edge"
+        );
+        let rejection_node = rejection_sources
+            .iter()
+            .find(|n| matches!(&n.node_type, NodeType::Content(d) if d.content_type == "tool_rejection"))
+            .unwrap();
+        assert_eq!(rejection_node.label(), Some("content_1_3_1"));
+        assert_eq!(
+            rejection_node.metadata.get("session_id"),
+            Some(&serde_json::json!(session.id.to_string()))
         );
     }
 

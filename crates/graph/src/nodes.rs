@@ -132,6 +132,24 @@ impl GraphNode {
             metadata: serde_json::Value::Object(serde_json::Map::new()),
         }
     }
+
+    pub fn label(&self) -> Option<&str> {
+        self.metadata.get("label")?.as_str()
+    }
+
+    pub fn set_label(&mut self, label: impl Into<String>) {
+        if !self.metadata.is_object() {
+            self.metadata = serde_json::Value::Object(serde_json::Map::new());
+        }
+        let metadata = self
+            .metadata
+            .as_object_mut()
+            .expect("graph node metadata should be an object");
+        metadata.insert("label".to_string(), serde_json::Value::String(label.into()));
+        metadata
+            .entry("label_ver".to_string())
+            .or_insert_with(|| serde_json::json!(1));
+    }
 }
 
 #[cfg(test)]
@@ -293,5 +311,46 @@ mod tests {
         let after = Utc::now();
         assert!(node.created_at >= before && node.created_at <= after);
         assert_eq!(node.created_at, node.updated_at);
+    }
+
+    #[test]
+    fn graph_node_label_is_absent_by_default() {
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "test".to_string(),
+            token_count: None,
+        }));
+        assert_eq!(node.label(), None);
+    }
+
+    #[test]
+    fn graph_node_set_label_stores_label_and_initial_version() {
+        let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "hello".to_string(),
+            token_count: None,
+        }));
+
+        node.set_label("interaction_1_2_1");
+
+        assert_eq!(node.label(), Some("interaction_1_2_1"));
+        assert_eq!(node.metadata.get("label_ver"), Some(&serde_json::json!(1)));
+    }
+
+    #[test]
+    fn graph_node_set_label_preserves_existing_version() {
+        let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "tool".to_string(),
+            content: "output".to_string(),
+            token_count: None,
+        }));
+        node.metadata = serde_json::json!({
+            "label_ver": 7
+        });
+
+        node.set_label("interaction_1_3_7");
+
+        assert_eq!(node.label(), Some("interaction_1_3_7"));
+        assert_eq!(node.metadata.get("label_ver"), Some(&serde_json::json!(7)));
     }
 }

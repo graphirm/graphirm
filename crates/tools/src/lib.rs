@@ -11,13 +11,14 @@ pub mod registry;
 pub mod write;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-pub use error::ToolError;
+pub use error::{ToolError, ToolResult};
 use graphirm_graph::GraphStore;
 use graphirm_graph::nodes::NodeId;
 pub use registry::ToolRegistry;
@@ -30,6 +31,17 @@ pub struct ToolContext {
     pub interaction_id: NodeId,
     pub working_dir: PathBuf,
     pub signal: CancellationToken,
+    pub turn: u32,
+    pub turn_pos_counter: Arc<AtomicU32>,
+}
+
+impl ToolContext {
+    pub fn label_content_node(&self, node: &mut graphirm_graph::nodes::GraphNode) -> ToolResult<()> {
+        let pos = self.turn_pos_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        node.metadata["session_id"] = serde_json::json!(self.agent_id.to_string());
+        node.set_label(format!("content_{}_{}_1", self.turn, pos));
+        Ok(())
+    }
 }
 
 /// Result of a tool execution.
@@ -108,7 +120,7 @@ pub trait Tool: Send + Sync {
 pub(crate) mod tests {
     use super::*;
     use async_trait::async_trait;
-    use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, NodeType};
+    use graphirm_graph::nodes::{AgentData, ContentData, GraphNode, InteractionData, NodeType};
     use serde_json::json;
 
     pub fn make_test_context() -> ToolContext {
@@ -132,7 +144,29 @@ pub(crate) mod tests {
             interaction_id,
             working_dir: PathBuf::from("/tmp"),
             signal: CancellationToken::new(),
+            turn: 1,
+            turn_pos_counter: Arc::new(AtomicU32::new(0)),
         }
+    }
+
+    #[test]
+    fn label_content_node_sets_session_label_and_version() {
+        let ctx = make_test_context();
+        let mut node = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".to_string(),
+            path: Some("src/main.rs".to_string()),
+            body: "fn main() {}".to_string(),
+            language: Some("rust".to_string()),
+        }));
+
+        ctx.label_content_node(&mut node).unwrap();
+
+        assert_eq!(node.label(), Some("content_1_1_1"));
+        assert_eq!(
+            node.metadata.get("session_id"),
+            Some(&serde_json::json!(ctx.agent_id.to_string()))
+        );
+        assert_eq!(node.metadata.get("label_ver"), Some(&serde_json::json!(1)));
     }
 
     struct EchoTool;

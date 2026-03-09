@@ -103,14 +103,14 @@ impl Tool for LsTool {
             entries.join("\n")
         };
 
-        let content_node = ctx
-            .graph
-            .add_node(GraphNode::new(NodeType::Content(ContentData {
-                content_type: "directory_listing".to_string(),
-                path: Some(dir_path.to_string_lossy().to_string()),
-                body: result_text.clone(),
-                language: None,
-            })))?;
+        let mut node = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "directory_listing".to_string(),
+            path: Some(dir_path.to_string_lossy().to_string()),
+            body: result_text.clone(),
+            language: None,
+        }));
+        ctx.label_content_node(&mut node)?;
+        let content_node = ctx.graph.add_node(node)?;
 
         ctx.graph.add_edge(GraphEdge::new(
             EdgeType::Reads,
@@ -229,5 +229,23 @@ mod tests {
         assert_eq!(lines[0], "a.txt");
         assert_eq!(lines[1], "m.txt");
         assert_eq!(lines[2], "z.txt");
+    }
+
+    #[tokio::test]
+    async fn ls_creates_labeled_graph_node() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "").unwrap();
+
+        let tool = LsTool::new();
+        let ctx = make_ctx_with_dir(&dir);
+        let out = tool.execute(json!({}), &ctx).await.unwrap();
+
+        let node_id = out.node_id.expect("should create a graph node");
+        let node = ctx.graph.get_node(&node_id).unwrap();
+        assert_eq!(node.label(), Some("content_1_1_1"));
+        assert_eq!(
+            node.metadata.get("session_id"),
+            Some(&serde_json::json!(ctx.agent_id.to_string()))
+        );
     }
 }

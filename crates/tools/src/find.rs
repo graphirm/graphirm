@@ -88,14 +88,14 @@ impl Tool for FindTool {
             matches.join("\n")
         };
 
-        let content_node = ctx
-            .graph
-            .add_node(GraphNode::new(NodeType::Content(ContentData {
-                content_type: "file_listing".to_string(),
-                path: Some(search_dir.to_string_lossy().to_string()),
-                body: result_text.clone(),
-                language: None,
-            })))?;
+        let mut node = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file_listing".to_string(),
+            path: Some(search_dir.to_string_lossy().to_string()),
+            body: result_text.clone(),
+            language: None,
+        }));
+        ctx.label_content_node(&mut node)?;
+        let content_node = ctx.graph.add_node(node)?;
 
         ctx.graph.add_edge(GraphEdge::new(
             EdgeType::Reads,
@@ -191,6 +191,12 @@ mod tests {
             .execute(json!({"pattern": "*.txt"}), &ctx)
             .await
             .unwrap();
-        assert!(out.node_id.is_some(), "should have created a graph node");
+        let node_id = out.node_id.expect("should have created a graph node");
+        let node = ctx.graph.get_node(&node_id).unwrap();
+        assert_eq!(node.label(), Some("content_1_1_1"));
+        assert_eq!(
+            node.metadata.get("session_id"),
+            Some(&serde_json::json!(ctx.agent_id.to_string()))
+        );
     }
 }
