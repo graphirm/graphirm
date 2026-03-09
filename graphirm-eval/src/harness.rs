@@ -27,7 +27,7 @@ impl TestHarness {
         let eval_model = std::env::var("EVAL_MODEL")
             .unwrap_or_else(|_| {
                 if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-                    "anthropic/claude-haiku-4-5-20250514".to_string()
+                    "anthropic/claude-3-5-haiku-20241022".to_string()
                 } else {
                     std::env::var("GRAPHIRM_MODEL")
                         .unwrap_or_else(|_| "deepseek/deepseek-chat".to_string())
