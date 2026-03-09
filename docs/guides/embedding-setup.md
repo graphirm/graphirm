@@ -136,12 +136,13 @@ MemoryRetriever::from_store(graph, provider, dim)
 
 ## Known limitations
 
-- **In-memory HNSW only** — the vector index is rebuilt from scratch each server start.
-  Embeddings computed in one run are lost on restart. Persistent memory (serialising the
-  index to the graph store) is Phase 9 work.
-- **Dimension must match** — `EMBEDDING_BACKEND` and the actual model output must agree on
-  dimension. Mismatches cause a panic at the first HNSW insert. If you switch backends,
-  restart with a fresh `--db` file.
+- **HNSW is restored from SQLite on startup** — embeddings are persisted to the `embeddings`
+  table in the graph DB. On the next server start, `hydrate_from_graph` loads them back into
+  the in-memory HNSW index. Memory is durable as long as the `.db` file is preserved.
+- **Dimension mismatch on backend change** — if you switch `EMBEDDING_BACKEND` between runs,
+  old embeddings will be skipped (dimension mismatch warning logged). Cross-session memory
+  will be empty until new embeddings are generated. Clear the DB or re-embed if you need
+  to migrate old embeddings.
 - **fastembed on Ubuntu 22.04** — the pre-built ONNX Runtime binary calls `__isoc23_strtoull`
   (a glibc 2.38 C23 symbol). The code compiles but the binary links fail at runtime. Either
   upgrade to Ubuntu 24.04 or use an API backend.

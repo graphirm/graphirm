@@ -23,7 +23,7 @@
 | Phase 6: Context Engine | `2026-03-03-phase-6-context-engine.md` | 12 | **done** | Phase 1 + 4 |
 | Phase 7: TUI | `2026-03-03-phase-7-tui.md` | 10 | **done** | Phase 4 |
 | Phase 8: HTTP Server | `2026-03-03-phase-8-http-server.md` | 14 | **done** | Phase 5 + 7 |
-| Phase 9: Knowledge Layer | `2026-03-03-phase-9-knowledge-layer.md` | 16 | **in progress** | Phase 8 |
+| Phase 9: Knowledge Layer | `2026-03-03-phase-9-knowledge-layer.md` | 16 | **done** | Phase 8 |
 | Phase 10: Usage Discovery | `2026-03-05-phase-10-usage-discovery.md` | 13 | **done** | Phase 8 |
 | Phase 11: VS Code Extension | `2026-03-05-phase-11-vscode-extension.md` | 11 | **done** | Phase 8 + 10 |
 | Phase 12: Landing + Polish | `2026-03-05-phase-12-landing-and-polish.md` | 5 | **done** | Phase 11 |
@@ -34,7 +34,7 @@
 
 **v1.0 (+ Phases 5-6):** Multi-agent with graph-based context engine. +23 tasks. ✅ complete.
 
-**v2.0 (+ Phases 8-10):** Full platform with HTTP server, knowledge layer, and usage discovery. +43 tasks. ⏳ in progress (Phase 9 knowledge layer: GLiNER2 ONNX inference complete, memory wiring pending).
+**v2.0 (+ Phases 8-10):** Full platform with HTTP server, knowledge layer, and usage discovery. +43 tasks. ✅ complete.
 
 **v2.1 (+ Phase 11):** VS Code/Cursor extension — two-pane chat + d3-force graph, SSE streaming, session management. +11 tasks. ✅ complete.
 
