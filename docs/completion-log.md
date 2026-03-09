@@ -1,5 +1,88 @@
 # Graphirm Development Progress Log
 
+## 2026-03-09: GLiNER2 ONNX Integration + Session State Fixes - COMPLETE ✅
+
+### Summary
+
+Two workstreams completed in this session:
+
+1. **GLiNER2 ONNX inference pipeline** — full local entity extraction using four ONNX sessions (encoder, span_rep, count_embed, classifier). End-to-end NER inference verified with real model.
+2. **Session state + system prompt fixes** — multi-turn sessions were broken due to two independent bugs. Both fixed and verified with a 15-turn programmatic session test.
+
+---
+
+### GLiNER2 ONNX Implementation
+
+**Plan:** `docs/plans/2026-03-09-gliner2-onnx.md` (7 tasks, all complete)
+
+**What was built:**
+
+- `OnnxExtractor` struct holding four `tokio::sync::Mutex<ort::Session>` (encoder, span_rep, count_embed, classifier)
+- `download_model()` async function — fetches 11 files from `lmo3/gliner2-large-v1-onnx` on HuggingFace via `hf-hub 0.5`
+- Full 7-step inference pipeline:
+  1. Schema-formatted tokenization (labels prepended with `<<ENT>>` markers)
+  2. DeBERTa-v3-large encoder → `hidden_states [batch, seq_len, 1024]`
+  3. Label embeddings extracted from encoder output at `<<ENT>>` positions
+  4. Word span generation (all spans up to `max_width=12` words)
+  5. Span representations → `span_representations [num_spans, 1024]`
+  6. Label transform via count_embed GRU → `transformed_embeddings [num_labels, 1024]`
+  7. Dot-product scoring + sigmoid → collect entities above threshold → deduplicate
+- `glibc_compat` shim for `__isoc23_strtoll` family (allows ort's glibc 2.38 binary to run on glibc 2.35 systems)
+- Setup guide: `docs/guides/gliner2-setup.md`
+
+**Key fixes during implementation:**
+
+| Bug | Fix |
+|-----|-----|
+| `hf-hub 0.3` relative redirect bug | Upgraded to `hf-hub 0.5` with `native-tls` |
+| `added_tokens.json` 404 | Removed from file list; added `.onnx.data` weight shards |
+| `span_rep` output tensor named `span_representations` | Fixed tensor name in `extract()` method |
+| Word regex on lowercased text → Unicode offset mismatch | Regex on original text, lowercase per-word |
+
+**Verified:**
+- `test_download_model_creates_files` — passed (1326s, ~3.7 GB downloaded)
+- `test_extract_entities_with_real_model` — passed (14s)
+- Snapshot: `6adb78ae8098685d239dda324cc124d948962c21`
+
+---
+
+### Session State + System Prompt Fixes
+
+**Root cause 1 — wrong system prompt:**
+`AgentConfig::default()` had `"You are a helpful coding assistant."` as its system prompt. The full Graphirm system prompt in `config/default.toml` was never loaded (the server uses `AgentConfig::default()` directly, not the TOML file). With bare context and all tools available, DeepSeek would reflexively call `bash echo "answer"` for simple factual questions, keeping sessions permanently stuck in `Running` state after each turn.
+
+**Fix:** Moved the full system prompt (including explicit `NEVER use bash to echo` guidance) into `AgentConfig::default()` in `crates/agent/src/config.rs`.
+
+**Root cause 2 — premature knowledge extraction:**
+`config/default.toml` had `[knowledge] enabled = true`, which triggered a post-turn LLM call for entity extraction. The `ExtractionConfig` defaulted to model `"gpt-4o-mini"` — wrong for DeepSeek — causing that call to hang indefinitely and keep the session in `Running`.
+
+**Fix:** Set `enabled = false` in `config/default.toml` until Phase 9 wiring is complete.
+
+**Verified with 15-turn programmatic session:**
+- All 15 turns completed with `status=completed`
+- Total time: ~70 seconds
+- Zero tool calls on factual questions
+- Graph: 31 nodes, 59 edges
+- Context maintained across turns (Paris follow-ups, Linus Torvalds follow-ups)
+
+---
+
+### Commits
+
+```
+fix(knowledge): correct span_rep output tensor name to span_representations
+fix(agent): wire real system prompt into AgentConfig::default, disable premature knowledge extraction
+fix(knowledge): correct download_model file list — remove added_tokens.json, add .onnx.data weight shards
+feat(knowledge): implement full OnnxExtractor 7-step inference pipeline
+feat(knowledge): implement build_ner_input, generate_spans, sigmoid helpers
+feat(agent): add glibc_compat shim for __isoc23_strtoll (ort on glibc 2.35)
+feat(knowledge): implement OnnxExtractor struct and 4-session constructor
+feat(knowledge): add Gliner2Config types and download_model() with hf-hub
+feat(agent): add hf-hub and regex deps for local-extraction feature
+```
+
+---
+
 ## 2026-03-08: Fix Broken Tests - COMPLETE ✅
 
 ### Summary
