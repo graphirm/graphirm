@@ -1,0 +1,145 @@
+//! Test harness — spawns a Graphirm server, runs tasks, collects results.
+
+use std::path::PathBuf;
+use std::time::Instant;
+
+use crate::client::GraphirmClient;
+use crate::task::{EvalTask, TaskResult, Verifier};
+
+pub struct TestHarness {
+    pub client: GraphirmClient,
+    /// Temp directory for the SQLite DB — kept alive for the harness lifetime.
+    _db_dir: tempfile::TempDir,
+    /// Handle to the spawned server process.
+    _server: std::process::Child,
+}
+
+impl TestHarness {
+    /// Start a Graphirm server on an available port and return a ready harness.
+    /// `binary_path` is the path to the compiled `graphirm` binary.
+    pub async fn start(binary_path: PathBuf) -> anyhow::Result<Self> {
+        let db_dir = tempfile::TempDir::new()?;
+        let db_path = db_dir.path().join("eval.db");
+        let port = 19555u16; // Fixed eval port — don't run alongside the real server
+
+        let server = std::process::Command::new(&binary_path)
+            .args(["--db", db_path.to_str().unwrap(), "serve", "--port", &port.to_string()])
+            .env("EMBEDDING_BACKEND", "") // disable memory for most tasks
+            .spawn()?;
+
+        let client = GraphirmClient::new(format!("http://127.0.0.1:{port}"));
+
+        // Wait up to 10s for the server to become healthy
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if Instant::now() > deadline {
+                anyhow::bail!("Server did not become healthy within 10s");
+            }
+            if client.health().await.unwrap_or(false) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+
+        Ok(Self { client, _db_dir: db_dir, _server: server })
+    }
+
+    /// Run a single task and return its result.
+    pub async fn run_task(&self, task: &EvalTask) -> TaskResult {
+        let start = Instant::now();
+        let mut result = match self.run_task_inner(task).await {
+            Ok(r) => r,
+            Err(e) => TaskResult::fail(&task.id, format!("harness error: {e}")),
+        };
+        result.elapsed_secs = start.elapsed().as_secs_f64();
+        result
+    }
+
+    async fn run_task_inner(&self, task: &EvalTask) -> anyhow::Result<TaskResult> {
+        let session = self.client.create_session().await?;
+        let session_id = session.id.clone();
+        let mut last_response = String::new();
+        let mut turns_used = 0u32;
+
+        for prompt in &task.prompts {
+            self.client.prompt(&session_id, prompt).await?;
+            let status = self.client.wait_for_idle(&session_id, task.timeout_secs).await?;
+
+            if status == "timeout" {
+                return Ok(TaskResult::fail(&task.id, "session timed out"));
+            }
+            if status == "failed" {
+                return Ok(TaskResult::fail(&task.id, "session failed"));
+            }
+
+            // Grab last assistant message
+            let messages = self.client.get_messages(&session_id).await?;
+            last_response = messages
+                .iter()
+                .rev()
+                .find(|m| m["role"].as_str() == Some("assistant"))
+                .and_then(|m| m["content"].as_str())
+                .unwrap_or("")
+                .to_string();
+
+            turns_used += 1;
+        }
+
+        let passed = self.check_verifier(&task.verifier, &session_id, &last_response).await?;
+        let mut r = if passed {
+            TaskResult::pass(&task.id, turns_used, 0.0)
+        } else {
+            TaskResult::fail(&task.id, "verifier returned false")
+        };
+        r.session_id = Some(session_id);
+        Ok(r)
+    }
+
+    async fn check_verifier(
+        &self,
+        verifier: &Verifier,
+        session_id: &str,
+        last_response: &str,
+    ) -> anyhow::Result<bool> {
+        match verifier {
+            Verifier::ResponseContains { substring } => {
+                Ok(last_response.to_lowercase().contains(&substring.to_lowercase()))
+            }
+            Verifier::FileContains { path, substring } => {
+                let contents = std::fs::read_to_string(path).unwrap_or_default();
+                Ok(contents.contains(substring.as_str()))
+            }
+            Verifier::CommandSucceeds { command, args } => {
+                let status = std::process::Command::new(command).args(args).status()?;
+                Ok(status.success())
+            }
+            Verifier::KnowledgeNodeCount { min_count } => {
+                let nodes = self.client.get_knowledge(session_id).await?;
+                Ok(nodes.len() >= *min_count)
+            }
+            Verifier::GraphContains { min_nodes, type_name } => {
+                let graph = self.client.get_graph(session_id).await?;
+                if graph.nodes.len() < *min_nodes {
+                    return Ok(false);
+                }
+                Ok(graph.nodes.iter().any(|n| {
+                    n["node_type"]["type"].as_str() == Some(type_name.as_str())
+                }))
+            }
+            Verifier::All(verifiers) => {
+                for v in verifiers {
+                    if !Box::pin(self.check_verifier(v, session_id, last_response)).await? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+        }
+    }
+}
+
+impl Drop for TestHarness {
+    fn drop(&mut self) {
+        let _ = self._server.kill();
+    }
+}
