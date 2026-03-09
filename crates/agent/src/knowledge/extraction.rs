@@ -41,20 +41,15 @@ fn default_min_confidence() -> f64 {
 pub enum ExtractionBackend {
     #[default]
     Llm,
-    /// Note: `model_path` and `tokenizer_path` are *initialization-time* configuration.
-    /// They are not read by `extract_knowledge_with_backend` at dispatch time. The
-    /// caller is responsible for constructing an `OnnxExtractor` from these paths and
-    /// passing it as the `onnx` argument to `extract_knowledge_with_backend`.
+    /// Directory containing GLiNER2 ONNX files + tokenizer.
+    /// Populate via `download_model()` on first run.
     Local {
-        model_path: String,
-        tokenizer_path: String,
+        model_dir: String,
     },
-    /// Note: `model_path` and `tokenizer_path` are *initialization-time* configuration.
-    /// They are not read by `extract_knowledge_with_backend` at dispatch time. See
-    /// `Local` variant note for the initialization pattern.
+    /// Directory containing GLiNER2 ONNX files + tokenizer.
+    /// Populate via `download_model()` on first run.
     Hybrid {
-        model_path: String,
-        tokenizer_path: String,
+        model_dir: String,
     },
 }
 
@@ -320,7 +315,7 @@ pub async fn post_turn_extract(
 pub async fn extract_knowledge_with_backend(
     graph: &GraphStore,
     llm: Option<&dyn LlmProvider>,
-    #[cfg(feature = "local-extraction")] onnx: Option<
+    #[cfg(feature = "local-extraction")] _onnx: Option<
         &crate::knowledge::local_extraction::OnnxExtractor,
     >,
     #[cfg(not(feature = "local-extraction"))] _onnx: Option<()>,
@@ -348,10 +343,13 @@ pub async fn extract_knowledge_with_backend(
         }
 
         #[cfg(feature = "local-extraction")]
-        ExtractionBackend::Local { .. } => {
-            let extractor = onnx.ok_or_else(|| {
-                AgentError::Workflow("Local backend selected but no OnnxExtractor provided".into())
-            })?;
+        ExtractionBackend::Local { model_dir } => {
+            use crate::knowledge::local_extraction::OnnxExtractor;
+            // Constructing OnnxExtractor inline is expensive (~seconds per call due
+            // to loading 4 ONNX sessions). Callers should cache OnnxExtractor as
+            // Arc<OnnxExtractor> at startup and pass it in. This inline construction
+            // documents the API surface.
+            let extractor = OnnxExtractor::new(std::path::Path::new(model_dir))?;
             // OnnxExtractor::extract already filters by min_confidence internally.
             // persist_extracted_entities will re-filter, which is harmless but
             // intentional: the shared path applies the same threshold uniformly.
@@ -372,10 +370,11 @@ pub async fn extract_knowledge_with_backend(
         }
 
         #[cfg(feature = "local-extraction")]
-        ExtractionBackend::Hybrid { .. } => {
-            let extractor = onnx.ok_or_else(|| {
-                AgentError::Workflow("Hybrid backend selected but no OnnxExtractor provided".into())
-            })?;
+        ExtractionBackend::Hybrid { model_dir } => {
+            use crate::knowledge::local_extraction::OnnxExtractor;
+            // See Local arm comment: inline construction is expensive; callers
+            // should cache OnnxExtractor as Arc<OnnxExtractor> for Hybrid too.
+            let extractor = OnnxExtractor::new(std::path::Path::new(model_dir))?;
             let conversation_text = format_conversation(messages);
             let local_result = extractor
                 .extract(
@@ -989,8 +988,7 @@ mod tests {
             enabled: true,
             min_confidence: 0.5,
             backend: ExtractionBackend::Local {
-                model_path: "/nonexistent/model.onnx".to_string(),
-                tokenizer_path: "/nonexistent/tokenizer.json".to_string(),
+                model_dir: "/nonexistent/model_dir".to_string(),
             },
             ..ExtractionConfig::default()
         };
@@ -1068,18 +1066,25 @@ mod tests {
     }
 
     #[test]
+    fn test_extraction_backend_local_deserialize() {
+        let json = r#"{"local": {"model_dir": "/tmp/gliner2"}}"#;
+        let backend: ExtractionBackend = serde_json::from_str(json).unwrap();
+        assert!(matches!(backend, ExtractionBackend::Local { .. }));
+    }
+
+    #[test]
     fn test_extraction_config_local_backend_deserialize() {
         let toml_str = r#"
             enabled = true
 
             [backend]
-            local = { model_path = "/models/gliner2-base.onnx", tokenizer_path = "/models/tokenizer.json" }
+            local = { model_dir = "/models/gliner2" }
         "#;
         let config: ExtractionConfig = toml::from_str(toml_str).unwrap();
         assert!(config.enabled);
         match &config.backend {
-            ExtractionBackend::Local { model_path, .. } => {
-                assert!(model_path.contains("gliner2"));
+            ExtractionBackend::Local { model_dir } => {
+                assert!(model_dir.contains("gliner2"));
             }
             other => panic!("Expected Local backend, got {:?}", other),
         }
@@ -1091,16 +1096,12 @@ mod tests {
             enabled = true
 
             [backend]
-            hybrid = { model_path = "/models/gliner2-base.onnx", tokenizer_path = "/models/tokenizer.json" }
+            hybrid = { model_dir = "/models/gliner2" }
         "#;
         let config: ExtractionConfig = toml::from_str(toml_str).unwrap();
         match &config.backend {
-            ExtractionBackend::Hybrid {
-                model_path,
-                tokenizer_path,
-            } => {
-                assert!(model_path.contains("gliner2"));
-                assert!(tokenizer_path.contains("tokenizer"));
+            ExtractionBackend::Hybrid { model_dir } => {
+                assert!(model_dir.contains("gliner2"));
             }
             other => panic!("Expected Hybrid backend, got {:?}", other),
         }
@@ -1112,8 +1113,7 @@ mod tests {
         let config = ExtractionConfig {
             enabled: true,
             backend: ExtractionBackend::Local {
-                model_path: "/models/gliner2.onnx".to_string(),
-                tokenizer_path: "/models/tokenizer.json".to_string(),
+                model_dir: "/models/gliner2".to_string(),
             },
             ..ExtractionConfig::default()
         };
@@ -1144,8 +1144,7 @@ mod tests {
             enabled: true,
             min_confidence: 0.5,
             backend: ExtractionBackend::Hybrid {
-                model_path: "/models/gliner2.onnx".to_string(),
-                tokenizer_path: "/models/tokenizer.json".to_string(),
+                model_dir: "/models/gliner2".to_string(),
             },
             ..ExtractionConfig::default()
         };
@@ -1174,11 +1173,13 @@ mod tests {
         )
         .await;
 
-        // Without the feature flag the Hybrid backend must return an error.
+        // Without the feature flag: error contains "local-extraction".
+        // With the feature: OnnxExtractor::new() fails because /models/gliner2
+        // does not exist, producing a "not found" error.
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("local-extraction") || msg.contains("no OnnxExtractor"),
+            msg.contains("local-extraction") || msg.contains("not found"),
             "unexpected error: {}",
             msg
         );

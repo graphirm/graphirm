@@ -27,8 +27,7 @@ async fn test_local_backend_without_feature_returns_error() {
         enabled: true,
         min_confidence: 0.5,
         backend: ExtractionBackend::Local {
-            model_path: "/nonexistent/model.onnx".to_string(),
-            tokenizer_path: "/nonexistent/tokenizer.json".to_string(),
+            model_dir: "/nonexistent/model_dir".to_string(),
         },
         ..ExtractionConfig::default()
     };
@@ -50,8 +49,8 @@ async fn test_local_backend_without_feature_returns_error() {
     .await;
 
     // Without `local-extraction` feature: returns a feature-not-available error.
-    // With the feature but no extractor: returns a "no OnnxExtractor provided" error.
-    // Either way, the call must not silently succeed with zero nodes.
+    // With the feature: OnnxExtractor::new() fails because /nonexistent/model_dir
+    // does not exist. Either way, the call must not silently succeed.
     assert!(result.is_err());
 }
 
@@ -62,8 +61,7 @@ async fn test_hybrid_backend_without_feature_returns_error() {
         enabled: true,
         min_confidence: 0.5,
         backend: ExtractionBackend::Hybrid {
-            model_path: "/nonexistent/model.onnx".to_string(),
-            tokenizer_path: "/nonexistent/tokenizer.json".to_string(),
+            model_dir: "/nonexistent/model_dir".to_string(),
         },
         ..ExtractionConfig::default()
     };
