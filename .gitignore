@@ -28,4 +28,6 @@ Thumbs.db
 .worktrees/
 
 # Internal docs (plans, strategy, findings — keep local only)
-docs/
+docs/*
+# Track public-facing guides (user-facing, not just internal planning)
+!docs/guides/
