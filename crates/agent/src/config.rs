@@ -3,10 +3,21 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::AgentError;
 use crate::knowledge::extraction::ExtractionConfig;
+
+/// Configuration for the embedding provider used by cross-session memory.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EmbeddingConfig {
+    /// Backend/model spec, e.g. `"mistral/codestral-embed"` or `"fastembed/nomic-embed-text-v1"`.
+    #[serde(rename = "embedding_backend")]
+    pub backend: String,
+    /// Vector dimension produced by this model. Must match the HNSW index.
+    #[serde(rename = "embedding_dim")]
+    pub dim: usize,
+}
 
 /// Whether an agent operates as the primary coordinator or a spawned subagent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -52,6 +63,9 @@ pub struct AgentConfig {
     /// Knowledge extraction config. `None` disables post-turn extraction.
     #[serde(default)]
     pub extraction: Option<ExtractionConfig>,
+    /// Embedding config for cross-session memory. `None` disables memory retrieval.
+    #[serde(default, flatten)]
+    pub embedding: Option<EmbeddingConfig>,
     /// Turn at which soft escalation checks begin (e.g., turn 8)
     #[serde(default = "default_soft_escalation_turn")]
     pub soft_escalation_turn: u32,
@@ -116,6 +130,7 @@ impl Default for AgentConfig {
             max_context_messages: None,
             permissions: HashMap::new(),
             extraction: None,
+            embedding: None,
             soft_escalation_turn: 8,
             soft_escalation_threshold: 2,
         }
@@ -156,6 +171,8 @@ struct AgentConfigSection {
     max_context_messages: Option<usize>,
     #[serde(default)]
     extraction: Option<ExtractionConfig>,
+    #[serde(default, flatten)]
+    embedding: Option<EmbeddingConfig>,
     #[serde(default = "default_soft_escalation_turn")]
     soft_escalation_turn: u32,
     #[serde(default = "default_soft_escalation_threshold")]
@@ -190,6 +207,7 @@ impl AgentConfig {
             max_context_messages: file.agent.max_context_messages,
             permissions: file.permissions,
             extraction: file.agent.extraction,
+            embedding: file.agent.embedding,
             soft_escalation_turn: file.agent.soft_escalation_turn,
             soft_escalation_threshold: file.agent.soft_escalation_threshold,
         })
@@ -351,6 +369,23 @@ mod tests {
         assert!(!config.is_tool_allowed("write"));
         assert!(config.is_tool_allowed("read")); // not listed → allowed
         assert!(config.is_tool_allowed("grep")); // not listed → allowed
+    }
+
+    #[test]
+    fn test_embedding_config_default() {
+        let config = AgentConfig::default();
+        assert!(config.embedding.is_none());
+    }
+
+    #[test]
+    fn test_embedding_config_deserialize() {
+        let toml_str = r#"
+            embedding_backend = "mistral/codestral-embed"
+            embedding_dim = 1536
+        "#;
+        let cfg: EmbeddingConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.backend, "mistral/codestral-embed");
+        assert_eq!(cfg.dim, 1536);
     }
 
     #[test]
