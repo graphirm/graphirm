@@ -22,6 +22,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use ndarray::Array2;
 use serde::Deserialize;
 
 use crate::error::AgentError;
@@ -189,6 +190,108 @@ impl OnnxExtractor {
             "OnnxExtractor::extract not yet implemented — coming in Task 5".into(),
         ))
     }
+
+    /// Build the tokenized input sequence for GLiNER2 NER.
+    ///
+    /// Output format:
+    /// `( [P] entities ( [E] label1 [E] label2 ... ) ) [SEP_TEXT] word1 word2 ...`
+    ///
+    /// Returns:
+    /// - `input_ids`: full token sequence as i64 vec
+    /// - `e_positions`: token indices of each [E] marker (one per label)
+    /// - `word_offsets`: char (start, end) of each word in original text
+    /// - `text_start_idx`: token index where text begins (after [SEP_TEXT])
+    /// - `first_token_positions`: for each word, index of its first token in `text_hidden`
+    #[allow(dead_code)] // called in Task 5 extract()
+    fn build_ner_input(
+        &self,
+        text: &str,
+        entity_types: &[String],
+    ) -> (Vec<i64>, Vec<usize>, Vec<(usize, usize)>, usize, Vec<usize>) {
+        let mut tokens: Vec<i64> = Vec::new();
+
+        // Tokenize a literal string to i64 ids via the HF tokenizer.
+        let encode_str = |s: &str| -> Vec<i64> {
+            self.tokenizer
+                .encode(s, false)
+                .map(|e| e.get_ids().iter().map(|&x| x as i64).collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+
+        let open_ids = encode_str("(");
+        let close_ids = encode_str(")");
+
+        // ( [P] entities (
+        tokens.extend_from_slice(&open_ids);
+        tokens.push(self.tok_p);
+        tokens.extend_from_slice(&encode_str("entities"));
+        tokens.extend_from_slice(&open_ids);
+
+        // [E] label1 [E] label2 ...
+        let mut e_positions: Vec<usize> = Vec::new();
+        for label in entity_types {
+            e_positions.push(tokens.len());
+            tokens.push(self.tok_e);
+            tokens.extend_from_slice(&encode_str(label.as_str()));
+        }
+
+        // ) ) [SEP_TEXT]
+        tokens.extend_from_slice(&close_ids);
+        tokens.extend_from_slice(&close_ids);
+        tokens.push(self.tok_sep_text);
+
+        let text_start_idx = tokens.len();
+
+        // Tokenize text words, tracking char offsets and first-token positions.
+        let text_lower = text.to_lowercase();
+        let mut word_offsets: Vec<(usize, usize)> = Vec::new();
+        let mut first_token_positions: Vec<usize> = Vec::new();
+        let mut token_idx: usize = 0;
+
+        for m in self.word_re.find_iter(&text_lower) {
+            word_offsets.push((m.start(), m.end()));
+            first_token_positions.push(token_idx);
+
+            let word_ids = encode_str(m.as_str());
+            token_idx += word_ids.len();
+            tokens.extend(word_ids);
+        }
+
+        (tokens, e_positions, word_offsets, text_start_idx, first_token_positions)
+    }
+}
+
+// ─── Helper functions ─────────────────────────────────────────────────────────
+
+/// Generate all valid word-span (start, end) pairs where end - start < max_width.
+///
+/// Both start and end are inclusive word indices. A single-word span has start == end.
+pub fn generate_spans(num_words: usize, max_width: usize) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    for i in 0..num_words {
+        for j in i..num_words.min(i + max_width) {
+            spans.push((i, j));
+        }
+    }
+    spans
+}
+
+/// Numerically stable sigmoid for a scalar f32.
+#[allow(dead_code)] // used in Task 5 extract()
+#[inline]
+pub(crate) fn sigmoid_f32(x: f32) -> f32 {
+    if x >= 0.0 {
+        1.0 / (1.0 + (-x).exp())
+    } else {
+        let ex = x.exp();
+        ex / (1.0 + ex)
+    }
+}
+
+/// Apply sigmoid element-wise to a 2D ndarray in place.
+#[allow(dead_code)] // used in Task 5 extract()
+pub(crate) fn sigmoid_inplace(arr: &mut Array2<f32>) {
+    arr.mapv_inplace(sigmoid_f32);
 }
 
 // ─── Model download ───────────────────────────────────────────────────────────
@@ -276,6 +379,26 @@ pub async fn download_model() -> Result<PathBuf, AgentError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_build_schema_prefix_has_e_positions() {
+        let tok_e: i64 = 128005;
+        let tokens: Vec<i64> = vec![287, 128003, 100, 287, tok_e, 101, tok_e, 102, 1263, 1263, 128002];
+        let e_positions: Vec<usize> = tokens.iter().enumerate()
+            .filter(|(_, t)| **t == tok_e)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(e_positions.len(), 2, "two [E] positions for two labels");
+    }
+
+    #[test]
+    fn test_generate_spans_max_width() {
+        // For 4 words with max_width=2: (0,0),(0,1),(1,1),(1,2),(2,2),(2,3),(3,3)
+        let spans = generate_spans(4, 2);
+        assert_eq!(spans.len(), 7);
+        assert!(spans.contains(&(0, 1)));
+        assert!(!spans.contains(&(0, 2))); // width 3 excluded
+    }
 
     #[test]
     fn test_onnx_extractor_new_fails_with_missing_dir() {
