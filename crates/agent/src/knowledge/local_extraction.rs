@@ -303,6 +303,9 @@ impl OnnxExtractor {
                         .map_err(|e| AgentError::Workflow(format!("label_emb TensorRef: {e}")))?,
                 })
                 .map_err(|e| AgentError::Workflow(format!("count_embed run: {e}")))?;
+            // count_embed.onnx has a single unnamed output; access positionally.
+            // The output name varies between export versions, so positional is
+            // more robust than keying by name.
             count_embed_outputs
                 .values()
                 .next()
@@ -409,16 +412,20 @@ impl OnnxExtractor {
         let text_start_idx = tokens.len();
 
         // Tokenize text words, tracking char offsets and first-token positions.
-        let text_lower = text.to_lowercase();
+        //
+        // Run the word regex against the *original* text to preserve byte
+        // offsets for slicing back later; pass the lowercased word to the
+        // tokenizer so casing matches GLiNER2's training-time preprocessing.
         let mut word_offsets: Vec<(usize, usize)> = Vec::new();
         let mut first_token_positions: Vec<usize> = Vec::new();
         let mut token_idx: usize = 0;
 
-        for m in self.word_re.find_iter(&text_lower) {
+        for m in self.word_re.find_iter(text) {
             word_offsets.push((m.start(), m.end()));
             first_token_positions.push(token_idx);
 
-            let word_ids = encode_str(m.as_str());
+            let word_lower = m.as_str().to_lowercase();
+            let word_ids = encode_str(&word_lower);
             token_idx += word_ids.len();
             tokens.extend(word_ids);
         }
