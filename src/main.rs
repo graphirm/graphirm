@@ -130,8 +130,42 @@ async fn main() -> Result<(), GraphirmError> {
                 ..agent_config
             };
 
+            // Optional embedding provider for cross-session memory.
+            // Set EMBEDDING_BACKEND="mistral/codestral-embed" or "fastembed/nomic-embed-text-v1"
+            let embedding_backend = std::env::var("EMBEDDING_BACKEND").ok();
+            let memory_retriever: Option<
+                std::sync::Arc<graphirm_agent::knowledge::memory::MemoryRetriever>,
+            > = if let Some(spec) = embedding_backend {
+                let mistral_key = std::env::var("MISTRAL_API_KEY").ok();
+                match graphirm_llm::factory::create_embedding_provider(
+                    &spec,
+                    mistral_key.as_deref(),
+                ) {
+                    Ok((provider, dim)) => {
+                        tracing::info!(backend = %spec, dim, "Embedding provider initialised");
+                        Some(std::sync::Arc::new(
+                            graphirm_agent::knowledge::memory::MemoryRetriever::from_store(
+                                graph.clone(),
+                                std::sync::Arc::from(provider),
+                                dim,
+                            ),
+                        ))
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Embedding provider failed to init; memory disabled"
+                        );
+                        None
+                    }
+                }
+            } else {
+                tracing::info!("EMBEDDING_BACKEND not set; cross-session memory disabled");
+                None
+            };
+
             let server_config = graphirm_server::ServerConfig { host, port };
-            graphirm_server::start_server(graph, llm, tools, agent_config, server_config)
+            graphirm_server::start_server(graph, llm, tools, agent_config, server_config, memory_retriever)
                 .await
                 .map_err(|e| GraphirmError::Config(e.to_string()))?;
         }

@@ -8,6 +8,7 @@ use tokio::sync::{RwLock, broadcast};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use graphirm_agent::knowledge::memory::MemoryRetriever;
 use graphirm_agent::{AgentConfig, AgentError, HitlGate, Session};
 use graphirm_graph::GraphStore;
 use graphirm_llm::LlmProvider;
@@ -34,6 +35,9 @@ pub struct AppState {
     pub sessions: Arc<RwLock<HashMap<SessionId, SessionHandle>>>,
     /// Default agent config used when a `POST /sessions` body omits fields.
     pub default_config: AgentConfig,
+    /// Optional embedding-based memory retriever shared across all sessions.
+    /// When `Some`, each new session has cross-session memory wired in.
+    pub memory_retriever: Option<Arc<MemoryRetriever>>,
 }
 
 /// Bookkeeping for a single active or completed session.

@@ -101,7 +101,10 @@ async fn create_session(
     };
 
     let hitl = Arc::new(HitlGate::new());
-    let session = Session::new(state.graph.clone(), config)?.with_hitl(hitl.clone());
+    let mut session = Session::new(state.graph.clone(), config)?.with_hitl(hitl.clone());
+    if let Some(ref retriever) = state.memory_retriever {
+        session = session.with_memory_retriever(retriever.clone());
+    }
     let session_id = SessionId(session.id.to_string());
     let now = Utc::now();
 
@@ -671,6 +674,7 @@ pub(crate) mod test_helpers {
             event_tx,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             default_config: AgentConfig::default(),
+            memory_retriever: None,
         }
     }
 }

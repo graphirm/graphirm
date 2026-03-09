@@ -33,6 +33,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 use tracing::info;
 
+use graphirm_agent::knowledge::memory::MemoryRetriever;
 use graphirm_agent::AgentConfig;
 use graphirm_graph::GraphStore;
 use graphirm_llm::LlmProvider;
@@ -66,6 +67,7 @@ pub async fn start_server(
     tools: Arc<ToolRegistry>,
     agent_config: AgentConfig,
     server_config: ServerConfig,
+    memory_retriever: Option<Arc<MemoryRetriever>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (event_tx, _) = broadcast::channel::<SseEvent>(1024);
 
@@ -76,6 +78,7 @@ pub async fn start_server(
         event_tx,
         sessions: Arc::new(RwLock::new(HashMap::new())),
         default_config: agent_config,
+        memory_retriever,
     };
 
     let app = create_router(state);

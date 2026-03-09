@@ -32,6 +32,7 @@ fn test_app_state() -> AppState {
         event_tx,
         sessions: Arc::new(RwLock::new(HashMap::new())),
         default_config: AgentConfig::default(),
+        memory_retriever: None,
     }
 }
 

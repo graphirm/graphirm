@@ -1,5 +1,81 @@
 # Graphirm Development Progress Log
 
+## 2026-03-09: Embedding Providers + Cross-Session Memory Wiring - COMPLETE ✅
+
+### Summary
+
+Two concrete `EmbeddingProvider` implementations built, benchmarked, and wired into the cross-session memory pipeline.
+
+### What was built
+
+1. **`MistralEmbeddingProvider`** — `mistral-embed` (1024-dim) and `codestral-embed` (1536-dim) via Mistral REST API. API key from `MISTRAL_API_KEY`.
+2. **`FastEmbedProvider`** — Local ONNX inference via `fastembed-rs` (`nomic-embed-text-v1`, 768-dim). Gated behind `local-embed` feature flag. Requires glibc ≥ 2.38 (ort pre-built binary).
+3. **`create_embedding_provider` factory** — Parses `"backend/model"` string; instantiates the correct provider.
+4. **`EmbeddingConfig` in `AgentConfig`** — `embedding_backend` + `embedding_dim` config fields.
+5. **`Session::with_memory_retriever` + `MemoryRetriever::from_store`** — Session builder method + convenience constructor.
+6. **Workflow wiring** — Post-turn: newly extracted `Knowledge` nodes are embedded into the HNSW index. Pre-loop: top-5 relevant nodes retrieved and appended to system prompt.
+7. **Server wiring** — `AppState.memory_retriever` propagated to each new session in `create_session` handler.
+8. **`main.rs` wiring** — `EMBEDDING_BACKEND` env var drives provider init at server startup.
+9. **`embed_bench` binary** — Benchmarks latency, cosine similarity, and discrimination score across providers on a 20-text software engineering corpus.
+
+### Benchmark results (2026-03-09, glibc 2.35 host)
+
+| Provider | Dim | Avg latency | Related-sim | Unrelated-sim | Discrimination |
+|---|---|---|---|---|---|
+| `mistral/mistral-embed` | 1024 | 373ms | 0.834 | 0.665 | 0.169 ← POOR |
+| `mistral/codestral-embed` | 1536 | 417ms | 0.685 | 0.381 | **0.305 ← GOOD** |
+| `fastembed/nomic-embed-text-v1` | 768 | — | — | — | not runnable on glibc 2.35 |
+
+**Decision:** `codestral-embed` adopted as primary backend (discrimination 0.305 vs 0.169).
+
+### Key fixes during implementation
+
+| Issue | Fix |
+|---|---|
+| `fastembed 5.x` required `ort = "=2.0.0-rc.10"` while agent used `rc.12` | Aligned both to `"=2.0.0-rc.11"` |
+| `Into<String>` ambiguity from `unicase` transitive dep | Removed redundant `.into()` on string literals |
+| `guard.embed()` needs `&mut` | Changed to `let mut guard = model.blocking_lock()` |
+| glibc 2.35 can't run ort pre-built binary | Documented; fastembed skipped on this host |
+| `codestral-embed` produces 1536-dim not 1024 | Corrected `dim()` and tests |
+| Server tests missing `memory_retriever: None` in `AppState` | Added field to all test helpers |
+
+### Files changed
+
+- `crates/llm/src/mistral_embed.rs` — new
+- `crates/llm/src/fastembed_provider.rs` — new (feature-gated)
+- `crates/llm/src/factory.rs` — `create_embedding_provider` added
+- `crates/llm/src/lib.rs` — modules re-exported
+- `crates/llm/Cargo.toml` — `reqwest`, `fastembed`, `local-embed` feature
+- `crates/agent/Cargo.toml` — `ort` version aligned to `rc.11`
+- `crates/agent/src/config.rs` — `EmbeddingConfig`, `embedding` field in `AgentConfig`
+- `crates/agent/src/session.rs` — `memory_retriever`, `runtime_system_suffix` fields + builder + accessors
+- `crates/agent/src/workflow.rs` — post-turn embed + pre-loop inject
+- `crates/agent/src/knowledge/memory.rs` — `MemoryRetriever::from_store`
+- `crates/server/src/state.rs` — `memory_retriever` field in `AppState`
+- `crates/server/src/lib.rs` — `start_server` accepts `Option<Arc<MemoryRetriever>>`
+- `crates/server/src/routes.rs` — wires retriever into each new session
+- `crates/server/tests/integration.rs` + `scenarios.rs` — `memory_retriever: None` in test helpers
+- `src/main.rs` — `EMBEDDING_BACKEND` init + pass to `start_server`
+- `src/bin/embed_bench.rs` — benchmark binary with recorded results
+- `Cargo.toml` (workspace) — `local-embed` feature
+- `.env` — `EMBEDDING_BACKEND` example comment added
+
+### Commits
+
+```
+feat(llm): add MistralEmbeddingProvider for mistral-embed and codestral-embed
+feat(llm): add FastEmbedProvider (fastembed-rs, local-embed feature flag)
+feat(llm): add create_embedding_provider factory
+feat(bench): add embed_bench binary with recorded benchmark results
+feat(agent): add EmbeddingConfig to AgentConfig
+feat(agent): wire memory_retriever into Session
+feat(agent): wire post-turn embed and pre-loop memory injection in workflow
+feat(agent): add MemoryRetriever::from_store convenience constructor
+feat(server,main): wire memory_retriever through AppState and start_server into create_session
+```
+
+---
+
 ## 2026-03-09: GLiNER2 ONNX Integration + Session State Fixes - COMPLETE ✅
 
 ### Summary
