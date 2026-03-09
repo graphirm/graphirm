@@ -80,9 +80,38 @@ impl TestHarness {
         let mut last_response = String::new();
         let mut turns_used = 0u32;
 
+        let task_result = self.run_task_prompts(task, &session_id, &mut last_response, &mut turns_used).await;
+
+        // Always cancel/delete the session so its agent loop stops and releases DB connections.
+        let _ = self.client.delete_session(&session_id).await;
+
+        let inner_result = task_result?;
+
+        let mut r = if !inner_result.passed {
+            // Session timed out or failed — propagate without running verifier
+            inner_result
+        } else {
+            let passed = self.check_verifier(&task.verifier, &session_id, &last_response).await?;
+            if passed {
+                TaskResult::pass(&task.id, turns_used, 0.0)
+            } else {
+                TaskResult::fail(&task.id, "verifier returned false")
+            }
+        };
+        r.session_id = Some(session_id);
+        Ok(r)
+    }
+
+    async fn run_task_prompts(
+        &self,
+        task: &EvalTask,
+        session_id: &str,
+        last_response: &mut String,
+        turns_used: &mut u32,
+    ) -> anyhow::Result<TaskResult> {
         for prompt in &task.prompts {
-            self.client.prompt(&session_id, prompt).await?;
-            let status = self.client.wait_for_idle(&session_id, task.timeout_secs).await?;
+            self.client.prompt(session_id, prompt).await?;
+            let status = self.client.wait_for_idle(session_id, task.timeout_secs).await?;
 
             if status == "timeout" {
                 return Ok(TaskResult::fail(&task.id, "session timed out"));
@@ -93,8 +122,8 @@ impl TestHarness {
 
             // Grab last assistant message.
             // GraphNode serialises as: {"node_type": {"type": "Interaction", "role": "...", "content": "..."}, ...}
-            let messages = self.client.get_messages(&session_id).await?;
-            last_response = messages
+            let messages = self.client.get_messages(session_id).await?;
+            *last_response = messages
                 .iter()
                 .rev()
                 .find(|m| m["node_type"]["role"].as_str() == Some("assistant"))
@@ -102,17 +131,9 @@ impl TestHarness {
                 .unwrap_or("")
                 .to_string();
 
-            turns_used += 1;
+            *turns_used += 1;
         }
-
-        let passed = self.check_verifier(&task.verifier, &session_id, &last_response).await?;
-        let mut r = if passed {
-            TaskResult::pass(&task.id, turns_used, 0.0)
-        } else {
-            TaskResult::fail(&task.id, "verifier returned false")
-        };
-        r.session_id = Some(session_id);
-        Ok(r)
+        Ok(TaskResult::pass(&task.id, *turns_used, 0.0))
     }
 
     async fn check_verifier(

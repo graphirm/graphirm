@@ -115,4 +115,13 @@ impl GraphirmClient {
             .json()
             .await
     }
+
+    /// Cancel and remove a session. Fires the CancellationToken, stopping any in-flight agent loop.
+    pub async fn delete_session(&self, session_id: &str) -> reqwest::Result<()> {
+        let _ = self.http
+            .delete(format!("{}/api/sessions/{}", self.base, session_id))
+            .send()
+            .await?;
+        Ok(())
+    }
 }
