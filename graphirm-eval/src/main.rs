@@ -56,8 +56,17 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Running {} tasks...\n", tasks.len());
 
+    // Delay between tasks (ms). Overridable via EVAL_INTER_TASK_DELAY_MS.
+    let inter_task_delay_ms: u64 = std::env::var("EVAL_INTER_TASK_DELAY_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3000);
+
     let mut results = vec![];
-    for task in &tasks {
+    for (i, task) in tasks.iter().enumerate() {
+        if i > 0 && inter_task_delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(inter_task_delay_ms)).await;
+        }
         print!("  [{}] {} ... ", task.id, task.name);
         let result = harness.run_task(task).await;
         let icon = if result.passed { "✅" } else { "❌" };
