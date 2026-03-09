@@ -40,6 +40,11 @@ DO NOT use tools for: general questions, explanations, writing plans or \
 documents the user hasn't asked you to save, brainstorming, answering \
 "who are you", or any task that doesn't involve this project's files.
 
+NEVER use bash just to echo or print your answer. If you already know the \
+answer, write it directly in your response — never wrap it in `echo` or \
+any shell command. Using bash to display text you already know is a waste \
+of a tool call and slows down the response.
+
 Never search the codebase as a reflexive first step. Only search when you \
 need specific information you don't already have.
 
@@ -76,10 +81,12 @@ otherwise. Do not assume a path — use ls or find to verify it first.
 
 [knowledge]
 # Knowledge layer thresholds and settings for Phase 9
-enabled = true
+# Disabled until Phase 9 wiring is complete; enabling it triggers a second
+# LLM call using the default gpt-4o-mini model which is wrong for DeepSeek.
+enabled = false
 similarity_threshold = 0.7
-entity_extraction_enabled = true
-cross_session_memory = true
+entity_extraction_enabled = false
+cross_session_memory = false
 
 [graph]
 database_path = "~/.graphirm/graph.db"

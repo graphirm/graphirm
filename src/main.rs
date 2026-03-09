@@ -106,6 +106,7 @@ async fn main() -> Result<(), GraphirmError> {
                 db_path.to_str().unwrap_or("graph.db"),
             )?);
             let tools = Arc::new(build_tool_registry());
+
             let agent_config = graphirm_agent::AgentConfig::default();
 
             // LLM provider requires a model spec; reads GRAPHIRM_MODEL env var
