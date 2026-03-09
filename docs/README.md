@@ -23,6 +23,7 @@ Welcome to the Graphirm project documentation. This folder contains planning doc
 
 **`features/`** folder documents shipped capabilities:
 - **`session-restoration.md`** — Sessions survive server restarts with full history
+- **`cross-session-memory.md`** — Embedding providers, benchmark results, and memory wiring
 - **`phase-13-planning.md`** — Early planning notes for Phase 13+
 
 ### 📦 **Advanced Topics**
@@ -74,6 +75,7 @@ Welcome to the Graphirm project documentation. This folder contains planning doc
 | session-restoration.md | Shipped ✅ | 2026-03-06 |
 | dag-timeline-layout-completion.md | Shipped ✅ | 2026-03-06 |
 | agent-trace-export task | Shipped ✅ | 2026-03-06 |
+| cross-session-memory.md | Shipped ✅ | 2026-03-09 |
 
 ---
 
