@@ -6,9 +6,8 @@
 //! Usage:
 //!   MISTRAL_API_KEY=... cargo run --bin embed_bench --features local-embed
 //!
-//! BENCHMARK RESULTS (recorded 2026-03-09, Ubuntu 22.04 glibc 2.35):
+//! BENCHMARK RESULTS — RUN 1 (2026-03-09, Ubuntu 22.04 glibc 2.35, local machine):
 //! fastembed/nomic-embed-text-v1 skipped — requires glibc >= 2.38 (ort prebuilt binary).
-//! Run on spoke VM (Ubuntu 24.04) to get fastembed results.
 //!
 //! ── mistral/mistral-embed ($0.10/1M tok) ──
 //!   Dimension:         1024
@@ -28,10 +27,40 @@
 //!   Cost (20 texts):   $0.000041
 //!   Per-pair sims: ["0.722","0.715","0.557","0.743","0.617","0.736","0.730","0.638","0.707"]
 //!
-//! DECISION: codestral-embed is the primary backend (discrimination 0.3046 vs 0.1686).
-//! mistral-embed has high absolute similarity but poor discrimination (can't separate
-//! related from unrelated). codestral-embed cleanly separates topics.
-//! EMBEDDING_BACKEND="mistral/codestral-embed" is the default (updated in .env).
+//! BENCHMARK RESULTS — RUN 2 (2026-03-09, Ubuntu 24.04 glibc 2.39, Hetzner spoke):
+//! All three providers ran including fastembed.
+//!
+//! ── mistral/mistral-embed ($0.10/1M tok) ──
+//!   Dimension:         1024
+//!   Avg latency:       170ms per call
+//!   Related-sim avg:   0.8336
+//!   Unrelated-sim:     0.6650
+//!   Discrimination:    0.1686   ← POOR (< 0.3)
+//!   Cost (20 texts):   $0.000041
+//!   Per-pair sims: ["0.849","0.827","0.809","0.844","0.837","0.826","0.868","0.798","0.843"]
+//!
+//! ── mistral/codestral-embed ($0.10/1M tok) ──
+//!   Dimension:         1536
+//!   Avg latency:       256ms per call
+//!   Related-sim avg:   0.6851
+//!   Unrelated-sim:     0.3806
+//!   Discrimination:    0.3046   ← GOOD (0.3–0.5 range)
+//!   Cost (20 texts):   $0.000041
+//!   Per-pair sims: ["0.722","0.715","0.557","0.743","0.617","0.736","0.730","0.638","0.707"]
+//!
+//! ── fastembed/nomic-embed-text-v1 (free) ──
+//!   Dimension:         768
+//!   Avg latency:       29ms per call   ← 10x faster than codestral-embed
+//!   Related-sim avg:   0.5565
+//!   Unrelated-sim:     0.3327
+//!   Discrimination:    0.2238   ← BELOW THRESHOLD (need >= 0.255 to beat codestral-embed)
+//!   Cost (20 texts):   $0.000000
+//!   Per-pair sims: ["0.501","0.599","0.554","0.566","0.561","0.453","0.663","0.517","0.594"]
+//!
+//! DECISION: codestral-embed remains the primary backend.
+//! fastembed is 10x faster and free but discrimination (0.224) is below the 0.255 cutoff.
+//! codestral-embed (0.305) cleanly separates related from unrelated; fastembed does not.
+//! EMBEDDING_BACKEND="mistral/codestral-embed" is the recommended default.
 
 use std::time::Instant;
 

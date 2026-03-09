@@ -89,14 +89,11 @@ Higher is better; ≥ 0.3 is production-grade.
 |---|---|---|---|---|
 | `mistral/codestral-embed` | 1536 | 417 ms | **0.305** | ✅ Good |
 | `mistral/mistral-embed` | 1024 | 373 ms | 0.169 | ⚠ Poor |
-| `fastembed/nomic-embed-text-v1` | 768 | ~5–30 ms† | not measured† | Expected good |
+| `fastembed/nomic-embed-text-v1` | 768 | **29 ms** | 0.224 | ⚠ Fast but below threshold |
 
-† fastembed requires glibc ≥ 2.38; benchmark host (Ubuntu 22.04) had glibc 2.35.
-Run `cargo run --bin embed_bench --features local-embed` on Ubuntu 24.04 to get results.
+† fastembed requires glibc ≥ 2.38. Run 1 was on Ubuntu 22.04 (skipped); Run 2 on Hetzner spoke (Ubuntu 24.04, glibc 2.39) — all three providers measured.
 
-**Decision rule:**
-- If fastembed discrimination ≥ 0.255 → prefer fastembed (free, faster after warmup)
-- Otherwise → use `mistral/codestral-embed`
+**Decision:** `codestral-embed` wins. fastembed scored 0.224 (below the 0.255 threshold) — it's 10x faster and free but can't cleanly separate related from unrelated text. Use fastembed only if cost is a hard constraint.
 
 ---
 
