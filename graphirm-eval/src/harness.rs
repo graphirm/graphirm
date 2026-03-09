@@ -72,13 +72,14 @@ impl TestHarness {
                 return Ok(TaskResult::fail(&task.id, "session failed"));
             }
 
-            // Grab last assistant message
+            // Grab last assistant message.
+            // GraphNode serialises as: {"node_type": {"type": "Interaction", "role": "...", "content": "..."}, ...}
             let messages = self.client.get_messages(&session_id).await?;
             last_response = messages
                 .iter()
                 .rev()
-                .find(|m| m["role"].as_str() == Some("assistant"))
-                .and_then(|m| m["content"].as_str())
+                .find(|m| m["node_type"]["role"].as_str() == Some("assistant"))
+                .and_then(|m| m["node_type"]["content"].as_str())
                 .unwrap_or("")
                 .to_string();
 

@@ -42,8 +42,10 @@ impl GraphirmClient {
     }
 
     pub async fn create_session(&self) -> reqwest::Result<SessionResponse> {
+        // The endpoint requires Content-Type: application/json even with an empty body.
         self.http
             .post(format!("{}/api/sessions", self.base))
+            .json(&serde_json::json!({}))
             .send()
             .await?
             .json()
