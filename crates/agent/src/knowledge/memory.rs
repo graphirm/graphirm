@@ -82,6 +82,46 @@ impl MemoryRetriever {
         Ok(())
     }
 
+    /// Load all embeddings persisted in the graph store into the in-memory HNSW index.
+    ///
+    /// Call this once at server startup after building the retriever to restore
+    /// cross-session memory across restarts. Returns the number of embeddings loaded.
+    ///
+    /// Embeddings whose dimension doesn't match `self.embedding_dimension` are skipped
+    /// with a warning — this happens when the embedding backend was changed between runs.
+    pub async fn hydrate_from_graph(&self) -> Result<usize, AgentError> {
+        let all_embeddings = self
+            .graph
+            .get_all_embeddings()
+            .map_err(|e| AgentError::Workflow(format!("Failed to load embeddings: {e}")))?;
+
+        let total = all_embeddings.len();
+        let mut loaded = 0usize;
+
+        {
+            let mut idx = self.vector_index.write().await;
+            for (node_id, embedding) in all_embeddings {
+                if embedding.len() != self.embedding_dimension {
+                    tracing::warn!(
+                        node_id = %node_id,
+                        stored_dim = embedding.len(),
+                        expected_dim = self.embedding_dimension,
+                        "Skipping embedding with mismatched dimension (backend changed?)"
+                    );
+                    continue;
+                }
+                idx.insert(node_id, embedding);
+                loaded += 1;
+            }
+            if loaded > 0 {
+                idx.rebuild();
+            }
+        }
+
+        tracing::info!(loaded, skipped = total - loaded, "Hydrated HNSW index from graph store");
+        Ok(loaded)
+    }
+
     /// Embed a query string and search the HNSW index for the k most
     /// similar knowledge nodes. Returns full node objects from the graph.
     pub async fn retrieve_relevant(
@@ -327,6 +367,62 @@ mod tests {
         // Just verify construction without panic and that basic ops work
         let results = retriever.retrieve_relevant("anything", 5).await.unwrap();
         assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_hydrate_from_graph_loads_existing_embeddings() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
+        let llm: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+
+        // Pre-populate SQLite embeddings directly (simulating a previous run).
+        let node_id = graph
+            .add_node(knowledge_node("Rust ownership", "Memory safety without GC"))
+            .unwrap();
+        let embedding = vec![0.1f32; 64];
+        graph.set_embedding(&node_id, &embedding).unwrap();
+
+        let retriever = MemoryRetriever::new(graph.clone(), vector_index.clone(), llm, 64);
+        let count = retriever.hydrate_from_graph().await.unwrap();
+
+        assert_eq!(count, 1);
+
+        {
+            let mut idx = vector_index.write().await;
+            idx.rebuild();
+        }
+        let idx = vector_index.read().await;
+        assert_eq!(idx.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_hydrate_from_graph_empty_store() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
+        let llm: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+
+        let retriever = MemoryRetriever::new(graph.clone(), vector_index, llm, 64);
+        let count = retriever.hydrate_from_graph().await.unwrap();
+
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_hydrate_from_graph_skips_wrong_dimension() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
+        let llm: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+
+        let node_id = graph
+            .add_node(knowledge_node("Stale node", "Embedded with old model"))
+            .unwrap();
+        // Store a 32-dim embedding but retriever expects 64-dim.
+        graph.set_embedding(&node_id, &vec![0.1f32; 32]).unwrap();
+
+        let retriever = MemoryRetriever::new(graph.clone(), vector_index, llm, 64);
+        let count = retriever.hydrate_from_graph().await.unwrap();
+
+        assert_eq!(count, 0);
     }
 
     #[tokio::test]
