@@ -19,16 +19,30 @@ pub fn tasks() -> Vec<EvalTask> {
             timeout_secs: 120,
         },
         EvalTask {
+            id: "read-line-count".to_string(),
+            name: "Count lines in workflow.rs using read tool".to_string(),
+            tags: vec!["basic".to_string(), "tool-use".to_string()],
+            prompts: vec![
+                "Read `crates/agent/src/workflow.rs` and tell me how many lines it has."
+                    .to_string(),
+            ],
+            verifier: Verifier::All(vec![
+                Verifier::ResponseContains { substring: "1483".to_string() },
+            ]),
+            max_turns: 3,
+            timeout_secs: 60,
+        },
+        EvalTask {
             id: "bash-line-count".to_string(),
             name: "Count lines in workflow.rs using bash".to_string(),
-            tags: vec!["basic".to_string(), "tool-use".to_string()],
+            tags: vec!["tool-use".to_string()],  // removed "basic" tag
             prompts: vec![
                 "How many lines are in `crates/agent/src/workflow.rs`? \
                  Use bash to count them precisely."
                     .to_string(),
             ],
             verifier: Verifier::ResponseContains {
-                substring: "lines".to_string(),
+                substring: "1483".to_string(),
             },
             max_turns: 3,
             timeout_secs: 90,
