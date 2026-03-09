@@ -22,11 +22,18 @@ impl TestHarness {
         let db_path = db_dir.path().join("eval.db");
         let port = 19555u16; // Fixed eval port — don't run alongside the real server
 
-        // The project root (where the agent works) is the binary's parent's parent.
-        // Canonicalise so relative paths work.
+        // The project root is where we run the eval from (the repo root).
         let project_root = std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."));
-        let project_root = project_root.to_string_lossy().to_string();
+        let project_root_str = project_root.to_string_lossy().to_string();
+
+        // Resolve the binary to an ABSOLUTE path before we change the server's cwd,
+        // because relative paths are resolved against the child's cwd, not the parent's.
+        let binary_path = if binary_path.is_absolute() {
+            binary_path
+        } else {
+            project_root.join(&binary_path)
+        };
 
         // Write a minimal config to the temp dir so the server picks it up instead of
         // the project's config/default.toml.  This disables knowledge extraction
@@ -38,7 +45,7 @@ impl TestHarness {
             format!(
                 r#"[agent]
 max_turns = 20
-working_dir = "{project_root}"
+working_dir = "{project_root_str}"
 
 [knowledge]
 enabled = false
