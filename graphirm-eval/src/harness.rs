@@ -22,42 +22,29 @@ impl TestHarness {
         let db_path = db_dir.path().join("eval.db");
         let port = 19555u16; // Fixed eval port — don't run alongside the real server
 
-        // The project root is where we run the eval from (the repo root).
-        let project_root = std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."));
-        let project_root_str = project_root.to_string_lossy().to_string();
+        // Use a fast model for eval — prefer Anthropic Haiku if ANTHROPIC_API_KEY is set,
+        // otherwise fall through to whatever GRAPHIRM_MODEL the caller set.
+        let eval_model = std::env::var("EVAL_MODEL")
+            .unwrap_or_else(|_| {
+                if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+                    "anthropic/claude-haiku-4-5-20250514".to_string()
+                } else {
+                    std::env::var("GRAPHIRM_MODEL")
+                        .unwrap_or_else(|_| "deepseek/deepseek-chat".to_string())
+                }
+            });
 
-        // Resolve the binary to an ABSOLUTE path before we change the server's cwd,
-        // because relative paths are resolved against the child's cwd, not the parent's.
-        let binary_path = if binary_path.is_absolute() {
-            binary_path
-        } else {
-            project_root.join(&binary_path)
-        };
-
-        // Write a minimal config to the temp dir so the server picks it up instead of
-        // the project's config/default.toml.  This disables knowledge extraction
-        // (which would fire an extra DeepSeek call per turn and balloon latency).
-        let config_dir = db_dir.path().join("config");
-        std::fs::create_dir_all(&config_dir)?;
-        std::fs::write(
-            config_dir.join("default.toml"),
-            format!(
-                r#"[agent]
-max_turns = 20
-working_dir = "{project_root_str}"
-
-[knowledge]
-enabled = false
-"#
-            ),
-        )?;
-
-        let server = std::process::Command::new(&binary_path)
-            .args(["--db", db_path.to_str().unwrap(), "serve", "--port", &port.to_string()])
-            .current_dir(db_dir.path()) // server reads config/ from temp dir
+        let mut cmd = std::process::Command::new(&binary_path);
+        cmd.args(["--db", db_path.to_str().unwrap(), "serve", "--port", &port.to_string()])
             .env("EMBEDDING_BACKEND", "") // disable memory for most tasks
-            .spawn()?;
+            .env("GRAPHIRM_MODEL", &eval_model);
+        // Forward API keys from environment
+        for key in &["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY"] {
+            if let Ok(val) = std::env::var(key) {
+                cmd.env(key, val);
+            }
+        }
+        let server = cmd.spawn()?;
 
         let client = GraphirmClient::new(format!("http://127.0.0.1:{port}"));
 
