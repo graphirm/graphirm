@@ -38,16 +38,16 @@ pub use workflow::run_agent_loop;
 // them. We provide thin wrappers that forward to the identical old-style
 // symbols so the linker is satisfied on older hosts.
 //
-// This module is a no-op on hosts with glibc >= 2.38 (the linker will prefer
-// the real dynamic symbol over our static definition because of link ordering).
+// Harmless on hosts with glibc >= 2.38 — the forwarding functions add one
+// extra indirection before reaching the real libc symbol.
 #[cfg(all(target_os = "linux", feature = "local-extraction"))]
 mod glibc_compat {
-    use std::ffi::{c_char, c_int};
+    use std::ffi::{c_char, c_int, c_long};
 
     unsafe extern "C" {
         fn strtoll(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> i64;
         fn strtoull(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> u64;
-        fn strtol(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> i64;
+        fn strtol(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_long;
     }
 
     #[unsafe(no_mangle)]
@@ -73,7 +73,7 @@ mod glibc_compat {
         nptr: *const c_char,
         endptr: *mut *mut c_char,
         base: c_int,
-    ) -> i64 {
+    ) -> c_long {
         unsafe { strtol(nptr, endptr, base) }
     }
 }
