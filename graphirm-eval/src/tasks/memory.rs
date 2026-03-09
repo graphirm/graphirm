@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::task::{CrossSessionTask, Verifier};
 
 pub fn cross_session_tasks() -> Vec<CrossSessionTask> {

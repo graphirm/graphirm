@@ -1,4 +1,5 @@
 //! Task definition types for graphirm-eval.
+#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 
