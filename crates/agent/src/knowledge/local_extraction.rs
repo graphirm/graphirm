@@ -68,8 +68,6 @@ pub struct RawOnnxEntity {
 ///
 /// Construct once at startup and reuse — loading four large ONNX sessions is
 /// expensive (several seconds). Pass as `Arc<OnnxExtractor>` across tasks.
-// Fields are used by extract() added in Task 5; suppress until then.
-#[allow(dead_code)]
 pub struct OnnxExtractor {
     /// DeBERTa-v3-large encoder: (input_ids, attention_mask) → hidden_states
     encoder: tokio::sync::Mutex<ort::session::Session>,
@@ -175,20 +173,189 @@ impl OnnxExtractor {
         })
     }
 
-    /// Stub — `extract()` implementation added in Task 5.
+    /// Run GLiNER2 NER on `text` for the given `entity_types`.
     ///
-    /// Returns an error until the inference pipeline is wired up. This stub
-    /// exists only to satisfy the call site in `extraction.rs`; it will be
-    /// replaced wholesale in Task 5.
+    /// Returns extracted entity spans with confidence scores. Non-overlapping
+    /// entities per label are selected greedily by descending score.
+    ///
+    /// # Performance
+    ///
+    /// This method loads from pre-constructed ONNX sessions but still runs
+    /// ~150–200ms per call on CPU. Construct `OnnxExtractor` once at startup
+    /// and reuse it via `Arc<OnnxExtractor>`.
     pub async fn extract(
         &self,
-        _text: &str,
-        _entity_types: &[String],
-        _min_confidence: f64,
+        text: &str,
+        entity_types: &[String],
+        min_confidence: f64,
     ) -> Result<super::extraction::ExtractionResponse, AgentError> {
-        Err(AgentError::Workflow(
-            "OnnxExtractor::extract not yet implemented — coming in Task 5".into(),
-        ))
+        if text.is_empty() || entity_types.is_empty() {
+            return Ok(super::extraction::ExtractionResponse { entities: vec![] });
+        }
+
+        let (input_ids, e_positions, word_offsets, text_start_idx, first_token_positions) =
+            self.build_ner_input(text, entity_types);
+
+        if word_offsets.is_empty() {
+            return Ok(super::extraction::ExtractionResponse { entities: vec![] });
+        }
+
+        let seq_len = input_ids.len();
+        let attn_mask: Vec<i64> = vec![1; seq_len];
+
+        // ── Step 1: Encoder ───────────────────────────────────────────────────
+        let input_ids_arr = ndarray::Array2::from_shape_vec((1, seq_len), input_ids.clone())
+            .map_err(|e| AgentError::Workflow(format!("input_ids shape error: {e}")))?;
+        let attn_mask_arr = ndarray::Array2::from_shape_vec((1, seq_len), attn_mask)
+            .map_err(|e| AgentError::Workflow(format!("attn_mask shape error: {e}")))?;
+
+        // hidden_states: [1, seq_len, 1024] → extract to owned [seq_len, 1024]
+        // before releasing the encoder lock.
+        let hs_2d: ndarray::Array2<f32> = {
+            let mut enc = self.encoder.lock().await;
+            let encoder_outputs = enc
+                .run(ort::inputs! {
+                    "input_ids"      => ort::value::TensorRef::from_array_view(input_ids_arr.view())
+                        .map_err(|e| AgentError::Workflow(format!("input_ids TensorRef: {e}")))?,
+                    "attention_mask" => ort::value::TensorRef::from_array_view(attn_mask_arr.view())
+                        .map_err(|e| AgentError::Workflow(format!("attn_mask TensorRef: {e}")))?,
+                })
+                .map_err(|e| AgentError::Workflow(format!("Encoder run: {e}")))?;
+            encoder_outputs["hidden_states"]
+                .try_extract_array::<f32>()
+                .map_err(|e| AgentError::Workflow(format!("Extract hidden_states: {e}")))?
+                .into_dimensionality::<ndarray::Ix3>()
+                .map_err(|e| AgentError::Workflow(format!("hidden_states reshape: {e}")))?
+                .index_axis(ndarray::Axis(0), 0)
+                .to_owned()
+        }; // lock released here
+
+        // ── Step 2: Label embeddings at [E] positions ─────────────────────────
+        let num_labels = entity_types.len();
+        let hidden_size = hs_2d.ncols();
+        let mut label_emb = ndarray::Array2::<f32>::zeros((num_labels, hidden_size));
+        for (li, &ep) in e_positions.iter().enumerate() {
+            if ep < hs_2d.nrows() {
+                label_emb.row_mut(li).assign(&hs_2d.row(ep));
+            }
+        }
+
+        // ── Step 3: Text hidden states (after [SEP_TEXT]) ────────────────────
+        let text_hidden = hs_2d
+            .slice(ndarray::s![text_start_idx.., ..])
+            .to_owned(); // [text_tokens, 1024]
+
+        // ── Step 4: Generate word spans ──────────────────────────────────────
+        let num_words = word_offsets.len();
+        let spans = generate_spans(num_words, self.max_width);
+        let num_spans = spans.len();
+
+        let span_starts: Vec<i64> = spans
+            .iter()
+            .map(|&(si, _)| first_token_positions[si] as i64)
+            .collect();
+        let span_ends: Vec<i64> = spans
+            .iter()
+            .map(|&(_, ei)| first_token_positions[ei] as i64)
+            .collect();
+
+        let span_start_arr = ndarray::Array2::from_shape_vec((1, num_spans), span_starts)
+            .map_err(|e| AgentError::Workflow(format!("span_start shape: {e}")))?;
+        let span_end_arr = ndarray::Array2::from_shape_vec((1, num_spans), span_ends)
+            .map_err(|e| AgentError::Workflow(format!("span_end shape: {e}")))?;
+
+        // span_rep needs hidden_states with batch dim: [1, text_tokens, 1024]
+        let text_hidden_3d = text_hidden
+            .view()
+            .insert_axis(ndarray::Axis(0))
+            .to_owned(); // [1, text_tokens, 1024]
+
+        // ── Step 5: Span representations ─────────────────────────────────────
+        // span_rep: [1, num_spans, 1024] → extract to owned [num_spans, 1024]
+        let span_rep_2d: ndarray::Array2<f32> = {
+            let mut sr = self.span_rep.lock().await;
+            let span_rep_outputs = sr
+                .run(ort::inputs! {
+                    "hidden_states"  => ort::value::TensorRef::from_array_view(text_hidden_3d.view())
+                        .map_err(|e| AgentError::Workflow(format!("text_hidden TensorRef: {e}")))?,
+                    "span_start_idx" => ort::value::TensorRef::from_array_view(span_start_arr.view())
+                        .map_err(|e| AgentError::Workflow(format!("span_start TensorRef: {e}")))?,
+                    "span_end_idx"   => ort::value::TensorRef::from_array_view(span_end_arr.view())
+                        .map_err(|e| AgentError::Workflow(format!("span_end TensorRef: {e}")))?,
+                })
+                .map_err(|e| AgentError::Workflow(format!("span_rep run: {e}")))?;
+            span_rep_outputs["span_rep"]
+                .try_extract_array::<f32>()
+                .map_err(|e| AgentError::Workflow(format!("Extract span_rep: {e}")))?
+                .into_dimensionality::<ndarray::Ix3>()
+                .map_err(|e| AgentError::Workflow(format!("span_rep reshape: {e}")))?
+                .index_axis(ndarray::Axis(0), 0)
+                .to_owned()
+        }; // lock released here
+
+        // ── Step 6: Transform label embeddings via count_embed ────────────────
+        // transformed: [num_labels, 1024]
+        let transformed: ndarray::Array2<f32> = {
+            let mut ce = self.count_embed.lock().await;
+            let count_embed_outputs = ce
+                .run(ort::inputs! {
+                    "label_embeddings" => ort::value::TensorRef::from_array_view(label_emb.view())
+                        .map_err(|e| AgentError::Workflow(format!("label_emb TensorRef: {e}")))?,
+                })
+                .map_err(|e| AgentError::Workflow(format!("count_embed run: {e}")))?;
+            count_embed_outputs
+                .values()
+                .next()
+                .ok_or_else(|| AgentError::Workflow("count_embed produced no output".into()))?
+                .try_extract_array::<f32>()
+                .map_err(|e| AgentError::Workflow(format!("Extract count_embed: {e}")))?
+                .into_dimensionality::<ndarray::Ix2>()
+                .map_err(|e| AgentError::Workflow(format!("count_embed reshape: {e}")))?
+                .to_owned()
+        }; // lock released here
+
+        // ── Step 7: Score spans against labels ───────────────────────────────
+        // scores = sigmoid(span_rep @ transformed.T) → [num_spans, num_labels]
+        let mut scores: ndarray::Array2<f32> = span_rep_2d.dot(&transformed.t());
+        sigmoid_inplace(&mut scores);
+
+        // ── Step 8: Collect entities above threshold ──────────────────────────
+        let mut raw_entities: Vec<(usize, usize, usize, f64)> = Vec::new();
+        for (span_idx, &(word_start, word_end)) in spans.iter().enumerate() {
+            for label_idx in 0..entity_types.len() {
+                let score = scores[[span_idx, label_idx]] as f64;
+                if score >= min_confidence {
+                    raw_entities.push((word_start, word_end, label_idx, score));
+                }
+            }
+        }
+
+        // Sort descending for greedy deduplication
+        raw_entities.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Deduplicate: keep highest-score non-overlapping spans per label
+        let mut kept: Vec<RawOnnxEntity> = Vec::new();
+        for (word_start, word_end, label_idx, score) in raw_entities {
+            let char_start = word_offsets[word_start].0;
+            let char_end = word_offsets[word_end].1;
+            let label = &entity_types[label_idx];
+
+            let overlaps = kept.iter().any(|k| {
+                k.entity_type == *label && k.start < char_end && k.end > char_start
+            });
+
+            if !overlaps {
+                kept.push(RawOnnxEntity {
+                    entity_type: label.clone(),
+                    text: text[char_start..char_end].to_string(),
+                    start: char_start,
+                    end: char_end,
+                    confidence: score,
+                });
+            }
+        }
+
+        Ok(raw_entities_to_extraction_response(kept))
     }
 
     /// Build the tokenized input sequence for GLiNER2 NER.
@@ -202,7 +369,6 @@ impl OnnxExtractor {
     /// - `word_offsets`: char (start, end) of each word in original text
     /// - `text_start_idx`: token index where text begins (after [SEP_TEXT])
     /// - `first_token_positions`: for each word, index of its first token in `text_hidden`
-    #[allow(dead_code)] // called in Task 5 extract()
     fn build_ner_input(
         &self,
         text: &str,
@@ -277,7 +443,6 @@ pub fn generate_spans(num_words: usize, max_width: usize) -> Vec<(usize, usize)>
 }
 
 /// Numerically stable sigmoid for a scalar f32.
-#[allow(dead_code)] // used in Task 5 extract()
 #[inline]
 pub(crate) fn sigmoid_f32(x: f32) -> f32 {
     if x >= 0.0 {
@@ -289,9 +454,26 @@ pub(crate) fn sigmoid_f32(x: f32) -> f32 {
 }
 
 /// Apply sigmoid element-wise to a 2D ndarray in place.
-#[allow(dead_code)] // used in Task 5 extract()
 pub(crate) fn sigmoid_inplace(arr: &mut Array2<f32>) {
     arr.mapv_inplace(sigmoid_f32);
+}
+
+// ─── Conversion helpers ───────────────────────────────────────────────────────
+
+/// Convert raw GLiNER2 entity spans into the shared `ExtractionResponse` format.
+pub fn raw_entities_to_extraction_response(raw: Vec<RawOnnxEntity>) -> super::extraction::ExtractionResponse {
+    use super::extraction::ExtractedEntity;
+    let entities = raw
+        .into_iter()
+        .map(|e| ExtractedEntity {
+            entity_type: e.entity_type,
+            name: e.text,
+            description: String::new(),
+            confidence: e.confidence,
+            relationships: vec![],
+        })
+        .collect();
+    super::extraction::ExtractionResponse { entities }
 }
 
 // ─── Model download ───────────────────────────────────────────────────────────
@@ -441,5 +623,66 @@ mod tests {
         assert!(dir.join("onnx/encoder.onnx").exists());
         assert!(dir.join("onnx/span_rep.onnx").exists());
         assert!(dir.join("onnx/count_embed.onnx").exists());
+    }
+
+    #[test]
+    fn test_sigmoid_inplace() {
+        let mut arr = ndarray::Array2::from_shape_vec((2, 2), vec![0.0f32, 2.0, -2.0, 100.0]).unwrap();
+        sigmoid_inplace(&mut arr);
+        assert!((arr[[0, 0]] - 0.5).abs() < 1e-5);
+        assert!(arr[[0, 1]] > 0.85);
+        assert!(arr[[1, 0]] < 0.15);
+        assert!((arr[[1, 1]] - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_generate_spans_single_word() {
+        let spans = generate_spans(1, 12);
+        assert_eq!(spans, vec![(0, 0)]);
+    }
+
+    #[test]
+    fn test_raw_entities_to_extraction_response() {
+        let raw = vec![RawOnnxEntity {
+            entity_type: "function".into(),
+            text: "parse_config".into(),
+            start: 0,
+            end: 12,
+            confidence: 0.92,
+        }];
+        let resp = raw_entities_to_extraction_response(raw);
+        assert_eq!(resp.entities.len(), 1);
+        assert_eq!(resp.entities[0].name, "parse_config");
+        assert!((resp.entities[0].confidence - 0.92).abs() < f64::EPSILON);
+    }
+
+    /// Full inference test — requires model to be downloaded first.
+    /// Run with: cargo test -p graphirm-agent --features local-extraction -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "requires downloaded GLiNER2 model (~1.95 GB). Run download_model() first."]
+    async fn test_extract_entities_with_real_model() {
+        let model_dir = std::path::PathBuf::from(
+            std::env::var("GLINER2_MODEL_DIR")
+                .expect("Set GLINER2_MODEL_DIR to the local model directory"),
+        );
+
+        let extractor = OnnxExtractor::new(&model_dir).expect("Failed to load model");
+
+        let result = extractor
+            .extract(
+                "We use serde for JSON serialization and tokio for async runtime.",
+                &["library".to_string(), "pattern".to_string()],
+                0.4,
+            )
+            .await
+            .expect("Extraction failed");
+
+        assert!(!result.entities.is_empty(), "Should detect at least one entity");
+        let names: Vec<&str> = result.entities.iter().map(|e| e.name.as_str()).collect();
+        assert!(
+            names.contains(&"serde") || names.contains(&"tokio"),
+            "Should detect serde or tokio as library. Got: {:?}",
+            names
+        );
     }
 }
