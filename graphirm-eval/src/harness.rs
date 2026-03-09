@@ -22,8 +22,33 @@ impl TestHarness {
         let db_path = db_dir.path().join("eval.db");
         let port = 19555u16; // Fixed eval port — don't run alongside the real server
 
+        // The project root (where the agent works) is the binary's parent's parent.
+        // Canonicalise so relative paths work.
+        let project_root = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."));
+        let project_root = project_root.to_string_lossy().to_string();
+
+        // Write a minimal config to the temp dir so the server picks it up instead of
+        // the project's config/default.toml.  This disables knowledge extraction
+        // (which would fire an extra DeepSeek call per turn and balloon latency).
+        let config_dir = db_dir.path().join("config");
+        std::fs::create_dir_all(&config_dir)?;
+        std::fs::write(
+            config_dir.join("default.toml"),
+            format!(
+                r#"[agent]
+max_turns = 20
+working_dir = "{project_root}"
+
+[knowledge]
+enabled = false
+"#
+            ),
+        )?;
+
         let server = std::process::Command::new(&binary_path)
             .args(["--db", db_path.to_str().unwrap(), "serve", "--port", &port.to_string()])
+            .current_dir(db_dir.path()) // server reads config/ from temp dir
             .env("EMBEDDING_BACKEND", "") // disable memory for most tasks
             .spawn()?;
 
