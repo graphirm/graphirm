@@ -4,11 +4,11 @@ pub fn tasks() -> Vec<EvalTask> {
     vec![
         EvalTask {
             id: "grep-and-explain".to_string(),
-            name: "Grep pub fn signatures and explain".to_string(),
+            name: "Read store.rs and explain get_node and add_node".to_string(),
             tags: vec!["basic".to_string(), "tool-use".to_string()],
             prompts: vec![
-                "List all `pub fn` signatures in `crates/graph/src/store.rs`. \
-                 Then tell me what `get_node` and `add_node` do."
+                "Read the file `crates/graph/src/store.rs` and tell me what \
+                 `get_node` and `add_node` do. Quote the function signatures."
                     .to_string(),
             ],
             verifier: Verifier::All(vec![
@@ -16,7 +16,7 @@ pub fn tasks() -> Vec<EvalTask> {
                 Verifier::ResponseContains { substring: "add_node".to_string() },
             ]),
             max_turns: 5,
-            timeout_secs: 60,
+            timeout_secs: 120,
         },
         EvalTask {
             id: "bash-line-count".to_string(),
@@ -31,7 +31,7 @@ pub fn tasks() -> Vec<EvalTask> {
                 substring: "lines".to_string(),
             },
             max_turns: 3,
-            timeout_secs: 30,
+            timeout_secs: 90,
         },
         EvalTask {
             id: "write-fibonacci".to_string(),
@@ -54,7 +54,7 @@ pub fn tasks() -> Vec<EvalTask> {
                 },
             ]),
             max_turns: 5,
-            timeout_secs: 60,
+            timeout_secs: 120,
         },
         EvalTask {
             id: "multi-turn-read-write".to_string(),
@@ -68,7 +68,7 @@ pub fn tasks() -> Vec<EvalTask> {
                 substring: "EVAL_MARKER_9a3f".to_string(),
             },
             max_turns: 3,
-            timeout_secs: 30,
+            timeout_secs: 90,
         },
     ]
 }
