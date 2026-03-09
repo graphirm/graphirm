@@ -284,9 +284,9 @@ impl OnnxExtractor {
                         .map_err(|e| AgentError::Workflow(format!("span_end TensorRef: {e}")))?,
                 })
                 .map_err(|e| AgentError::Workflow(format!("span_rep run: {e}")))?;
-            span_rep_outputs["span_rep"]
+            span_rep_outputs["span_representations"]
                 .try_extract_array::<f32>()
-                .map_err(|e| AgentError::Workflow(format!("Extract span_rep: {e}")))?
+                .map_err(|e| AgentError::Workflow(format!("Extract span_representations: {e}")))?
                 .into_dimensionality::<ndarray::Ix3>()
                 .map_err(|e| AgentError::Workflow(format!("span_rep reshape: {e}")))?
                 .index_axis(ndarray::Axis(0), 0)
