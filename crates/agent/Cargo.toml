@@ -21,9 +21,10 @@ toml = "0.8"
 tracing = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 # Pinned to RC until ort 2.0 stable ships. Revisit when stable is released.
-ort = { version = "2.0.0-rc.12", features = ["download-binaries", "ndarray"], optional = true }
+# Aligned with fastembed 5.x which requires ort =2.0.0-rc.11.
+ort = { version = "=2.0.0-rc.11", features = ["download-binaries", "ndarray"], optional = true }
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"], optional = true }
-# Bumped from plan-specified 0.16 to 0.17 to match ort 2.0.0-rc.12 requirements.
+# ndarray 0.17 is compatible with both ort rc.11 and rc.12.
 ndarray = { version = "0.17", optional = true }
 hf-hub = { version = "0.5", default-features = false, features = ["tokio", "native-tls"], optional = true }
 # Unicode features kept (default) — word-boundary regex uses \w which requires unicode support.

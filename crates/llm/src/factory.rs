@@ -1,9 +1,10 @@
 use crate::anthropic::AnthropicProvider;
 use crate::deepseek::DeepSeekProvider;
 use crate::error::LlmError;
+use crate::mistral_embed::{MistralEmbedModel, MistralEmbeddingProvider};
 use crate::ollama::OllamaProvider;
 use crate::openai::OpenAiProvider;
-use crate::provider::LlmProvider;
+use crate::provider::{EmbeddingProvider, LlmProvider};
 
 /// Parse a `"provider/model"` string into `(provider, model)`.
 pub fn parse_model_string(model_string: &str) -> Result<(&str, &str), LlmError> {
@@ -52,6 +53,53 @@ pub fn create_provider_from_model_string(
     let (provider_name, model_name) = parse_model_string(model_string)?;
     let provider = create_provider(provider_name, api_key)?;
     Ok((provider, model_name.to_string()))
+}
+
+/// Create an embedding provider from a `"backend/model"` string.
+///
+/// Supported:
+/// - `"mistral/mistral-embed"` — 1024-dim, API key from `MISTRAL_API_KEY`
+/// - `"mistral/codestral-embed"` — 1024-dim, code-optimised
+/// - `"fastembed/nomic-embed-text-v1"` — 768-dim, local ONNX, no key (requires `local-embed` feature)
+pub fn create_embedding_provider(
+    spec: &str,
+    mistral_key: Option<&str>,
+) -> Result<(Box<dyn EmbeddingProvider>, usize), LlmError> {
+    let (backend, model) = parse_model_string(spec)?;
+    match backend {
+        "mistral" => {
+            let key = mistral_key.unwrap_or("").to_string();
+            if key.is_empty() {
+                return Err(LlmError::provider("MISTRAL_API_KEY not set"));
+            }
+            let embed_model = match model {
+                "mistral-embed" => MistralEmbedModel::MistralEmbed,
+                "codestral-embed" => MistralEmbedModel::CodestralEmbed,
+                other => {
+                    return Err(LlmError::invalid_model(format!(
+                        "Unknown Mistral embed model '{other}'. Use mistral-embed or codestral-embed"
+                    )))
+                }
+            };
+            let provider = MistralEmbeddingProvider::new(key, embed_model);
+            let dim = provider.dim();
+            Ok((Box::new(provider), dim))
+        }
+        #[cfg(feature = "local-embed")]
+        "fastembed" => {
+            let provider = crate::fastembed_provider::FastEmbedProvider::new(model)
+                .map_err(|e| LlmError::provider(format!("fastembed init: {e}")))?;
+            let dim = provider.dim();
+            Ok((Box::new(provider), dim))
+        }
+        #[cfg(not(feature = "local-embed"))]
+        "fastembed" => Err(LlmError::provider(
+            "fastembed backend requires the 'local-embed' feature flag",
+        )),
+        other => Err(LlmError::invalid_model(format!(
+            "Unknown embedding backend '{other}'. Use mistral or fastembed"
+        ))),
+    }
 }
 
 #[cfg(test)]
