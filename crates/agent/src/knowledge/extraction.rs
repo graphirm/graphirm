@@ -293,8 +293,38 @@ pub async fn extract_knowledge_with_backend(
             let response = llm
                 .complete(vec![LlmMessage::human(prompt)], &[], &completion_config)
                 .await?;
-            serde_json::from_str::<ExtractionResponse>(&response.text_content()).map_err(|e| {
-                AgentError::Workflow(format!("Failed to parse extraction response: {e}"))
+            let raw = response.text_content();
+            // Some providers wrap JSON in markdown code fences. Strip them.
+            let json_str = {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    // Empty response — log for debugging and return no entities.
+                    tracing::debug!(
+                        model = %config.model,
+                        stop_reason = ?response.stop_reason,
+                        content_parts = response.content.len(),
+                        "Extraction LLM returned empty text content"
+                    );
+                    return Ok(vec![]);
+                }
+                // Strip ```json ... ``` or ``` ... ``` wrappers.
+                let inner = if let Some(rest) = trimmed.strip_prefix("```json") {
+                    rest.trim_end_matches("```").trim()
+                } else if let Some(rest) = trimmed.strip_prefix("```") {
+                    rest.trim_end_matches("```").trim()
+                } else {
+                    trimmed
+                };
+                // Find outermost { ... } in case there's preamble text.
+                match (inner.find('{'), inner.rfind('}')) {
+                    (Some(start), Some(end)) if end > start => &inner[start..=end],
+                    _ => inner,
+                }
+            };
+            serde_json::from_str::<ExtractionResponse>(json_str).map_err(|e| {
+                AgentError::Workflow(format!(
+                    "Failed to parse extraction response: {e}\nRaw: {json_str}"
+                ))
             })?
         }
 

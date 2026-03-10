@@ -44,6 +44,10 @@ pub enum Verifier {
     CommandSucceeds { command: String, args: Vec<String> },
     /// The file at `path` must exist and contain `substring`.
     FileContains { path: String, substring: String },
+    /// Run a shell command, trim its stdout, and check the final assistant response
+    /// contains that output (case-insensitive). Use to avoid hardcoding values that
+    /// change as source files are edited (e.g. line counts).
+    ResponseContainsCommandOutput { command: String, args: Vec<String> },
     /// GET /api/graph/{session}/knowledge — pass if count >= min_count.
     KnowledgeNodeCount { min_count: usize },
     /// GET /api/graph/{session} — pass if node count >= min_nodes and

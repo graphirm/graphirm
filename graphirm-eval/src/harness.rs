@@ -149,6 +149,11 @@ impl TestHarness {
                 let status = std::process::Command::new(command).args(args).status()?;
                 Ok(status.success())
             }
+            Verifier::ResponseContainsCommandOutput { command, args } => {
+                let out = std::process::Command::new(command).args(args).output()?;
+                let expected = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                Ok(last_response.to_lowercase().contains(&expected.to_lowercase()))
+            }
             Verifier::KnowledgeNodeCount { min_count } => {
                 let nodes = self.client.get_knowledge(session_id).await?;
                 Ok(nodes.len() >= *min_count)

@@ -552,37 +552,45 @@ pub async fn run_agent_loop(
         };
         all_node_ids.push(response_id.clone());
 
-        // Post-turn knowledge extraction + embedding — non-fatal; log and continue on error.
-        if let Some(ref extraction_config) = session.agent_config.extraction {
-            match crate::knowledge::extraction::post_turn_extract(
-                session.graph.clone(),
-                llm,
-                extraction_config,
-                &response_id,
-            )
-            .await
-            {
-                Ok(node_ids) => {
-                    if let Some(retriever) = session.memory_retriever() {
-                        for node_id in &node_ids {
-                            if let Err(e) = retriever.embed_knowledge_node(node_id).await {
-                                tracing::warn!(
-                                    node_id = %node_id,
-                                    error = %e,
-                                    "Failed to embed knowledge node (non-fatal)"
-                                );
+        if !response.has_tool_calls() {
+            // Post-turn knowledge extraction — only on final text responses (no tool calls)
+            // to avoid redundant extraction calls on intermediate planning turns.
+            // A hard 20s timeout prevents slow API calls from blocking session completion.
+            if let Some(ref extraction_config) = session.agent_config.extraction {
+                let extraction_future = crate::knowledge::extraction::post_turn_extract(
+                    session.graph.clone(),
+                    llm,
+                    extraction_config,
+                    &response_id,
+                );
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(20),
+                    extraction_future,
+                )
+                .await
+                {
+                    Ok(Ok(node_ids)) => {
+                        if let Some(retriever) = session.memory_retriever() {
+                            for node_id in &node_ids {
+                                if let Err(e) = retriever.embed_knowledge_node(node_id).await {
+                                    tracing::warn!(
+                                        node_id = %node_id,
+                                        error = %e,
+                                        "Failed to embed knowledge node (non-fatal)"
+                                    );
+                                }
                             }
                         }
-                        tracing::debug!(count = node_ids.len(), "Embedded knowledge nodes");
+                        tracing::debug!(count = node_ids.len(), "Knowledge extraction complete");
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!(error = %e, "Knowledge extraction failed (non-fatal)");
+                    }
+                    Err(_) => {
+                        tracing::warn!("Knowledge extraction timed out after 20s (non-fatal)");
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "Knowledge extraction failed (non-fatal)");
-                }
             }
-        }
-
-        if !response.has_tool_calls() {
             events.emit(AgentEvent::TurnEnd {
                 response_id: response_id.clone(),
                 tool_result_ids: vec![],

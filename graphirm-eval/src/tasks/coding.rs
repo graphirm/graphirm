@@ -26,9 +26,15 @@ pub fn tasks() -> Vec<EvalTask> {
                 "Read `crates/agent/src/workflow.rs` and tell me how many lines it has."
                     .to_string(),
             ],
-            verifier: Verifier::All(vec![
-                Verifier::ResponseContains { substring: "1496".to_string() },
-            ]),
+            // Dynamically compare against `wc -l` so the test doesn't break
+            // every time the file changes.
+            verifier: Verifier::ResponseContainsCommandOutput {
+                command: "sh".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    "wc -l crates/agent/src/workflow.rs | awk '{print $1}'".to_string(),
+                ],
+            },
             max_turns: 3,
             timeout_secs: 60,
         },
@@ -41,8 +47,12 @@ pub fn tasks() -> Vec<EvalTask> {
                  Use bash to count them precisely."
                     .to_string(),
             ],
-            verifier: Verifier::ResponseContains {
-                substring: "1496".to_string(),
+            verifier: Verifier::ResponseContainsCommandOutput {
+                command: "sh".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    "wc -l crates/agent/src/workflow.rs | awk '{print $1}'".to_string(),
+                ],
             },
             max_turns: 3,
             timeout_secs: 90,
