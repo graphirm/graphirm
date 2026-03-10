@@ -1,5 +1,58 @@
 # Graphirm Development Progress Log
 
+## 2026-03-10: OpenRouter Provider + Qwen3-Coder-Next Benchmark - COMPLETE ✅
+
+### Summary
+
+Added OpenRouter as a supported LLM provider (OpenAI-compatible, single new provider file). Benchmarked Qwen3-Coder-Next via OpenRouter against Haiku 4.5 on the full 13-task eval suite. Both pass 100%. Haiku is 20% faster; Qwen is 6.5× cheaper per output token.
+
+### New Provider
+
+`openrouter/<vendor/model>` — set `OPENROUTER_API_KEY` and `GRAPHIRM_MODEL=openrouter/qwen/qwen3-coder-next`. Model IDs use OpenRouter's slash-delimited namespace.
+
+**Files changed:**
+- `crates/llm/src/openrouter.rs` — new provider (clone of DeepSeek with `https://openrouter.ai/api/v1` base URL)
+- `crates/llm/src/lib.rs` — registered module
+- `crates/llm/src/factory.rs` — wired into `create_provider`, updated error message
+- `src/main.rs` — `api_key_for_provider` reads `OPENROUTER_API_KEY`
+- `graphirm-eval/src/harness.rs` — forwards `OPENROUTER_API_KEY` to server subprocess
+
+### Benchmark Results (v12, Qwen3-Coder-Next via OpenRouter + ONNX extraction)
+
+| Task | Haiku 4.5 | Qwen3-Coder-Next | Δ |
+|---|---|---|---|
+| grep-and-explain | 24.1s | 24.1s | = |
+| read-line-count | 18.1s | 18.1s | = |
+| bash-line-count | 7.0s | 9.1s | +2s |
+| write-fibonacci | 8.5s | 15.6s | +7s |
+| multi-turn-read-write | 13.1s | 16.6s | +4s |
+| entity-recall | 7.5s | 6.5s | -1s |
+| multi-entity | 7.5s | 5.5s | -2s |
+| graph-integrity | 29.2s | 48.2s | +19s |
+| missing-file-resilience | 6.0s | 5.5s | -0.5s |
+| precise-edit-no-collateral | 13.1s | 12.6s | -0.5s |
+| grep-exact-count | 5.5s | 6.0s | +0.5s |
+| cascading-pipeline | 18.6s | 26.6s | +8s |
+| fix-broken-script | 16.6s | 15.1s | -1.5s |
+| **Total** | **175s** | **210s** | **+20%** |
+| **Pass rate** | **13/13** | **13/13** | = |
+| **Cost (output)** | $5/MTok | **$0.75/MTok** | **6.5× cheaper** |
+
+### Analysis
+
+- **Tied on correctness** — both 13/13, 100%
+- **Haiku faster overall** — 175s vs 210s. The gap is concentrated in multi-turn reasoning tasks (`graph-integrity`, `cascading-pipeline`) where Haiku's lower latency compounds over turns
+- **Qwen faster on knowledge tasks** — entity-recall, multi-entity, missing-file-resilience — where ONNX extraction dominates timing and LLM latency is minimal
+- **First two tasks always ~identical** — ONNX cold-start (~20s) dominates, masking LLM latency differences
+- **Best value pick:** Qwen3-Coder-Next at $0.12/$0.75 per MTok — 6.5× cheaper output, passes everything, 20% slower
+- **Best speed pick:** Haiku 4.5 at $1/$5 per MTok — fastest for interactive/latency-sensitive use
+
+### Note on feat/graphirm-eval
+
+The `feat/graphirm-eval` branch was merged into `main` as part of this work, bringing all eval harness code, ONNX extraction wiring, and async fixes into the primary branch.
+
+---
+
 ## 2026-03-10: Embedding Backend Switch — bge-small-en-v1.5 is new default - COMPLETE ✅
 
 ### Summary
