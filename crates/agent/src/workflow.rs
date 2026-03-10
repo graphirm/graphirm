@@ -588,9 +588,9 @@ pub async fn run_agent_loop(
                     Ok(Err(e)) => {
                         tracing::warn!(error = %e, "Knowledge extraction failed (non-fatal)");
                     }
-                    Err(_) => {
-                        tracing::warn!("Knowledge extraction timed out after 20s (non-fatal)");
-                    }
+                        Err(_) => {
+                            tracing::warn!("Knowledge extraction timed out after 30s (non-fatal)");
+                        }
                 }
             }
             events.emit(AgentEvent::TurnEnd {
