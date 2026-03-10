@@ -131,7 +131,8 @@ async fn main() -> Result<(), GraphirmError> {
             };
 
             // Optional embedding provider for cross-session memory.
-            // Set EMBEDDING_BACKEND="mistral/codestral-embed" or "fastembed/nomic-embed-text-v1"
+            // Set EMBEDDING_BACKEND="fastembed/bge-small-en-v1.5" (recommended — free, 12ms, 0.334 discrimination)
+            // or "mistral/codestral-embed" (API, 400ms, 0.305 discrimination, requires MISTRAL_API_KEY)
             let embedding_backend = std::env::var("EMBEDDING_BACKEND").ok();
             let memory_retriever: Option<
                 std::sync::Arc<graphirm_agent::knowledge::memory::MemoryRetriever>,

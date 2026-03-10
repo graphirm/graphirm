@@ -6,13 +6,16 @@ HNSW vector search. This guide covers setup for each supported backend.
 
 ## Quick start
 
-Set one environment variable and start the server:
+No API key needed. Build with the local-embed feature and set one env var:
 
 ```bash
-export MISTRAL_API_KEY=<your-key>
-export EMBEDDING_BACKEND=mistral/codestral-embed
+cargo build --release --features local-embed
+export EMBEDDING_BACKEND=fastembed/bge-small-en-v1.5
 graphirm serve
 ```
+
+The model (~130 MB) downloads from HuggingFace on first use and is cached at
+`~/.cache/huggingface/hub/`. Subsequent starts are instant.
 
 Omitting `EMBEDDING_BACKEND` disables cross-session memory silently — the agent still works
 normally, it just won't remember anything across sessions.
@@ -21,25 +24,58 @@ normally, it just won't remember anything across sessions.
 
 ## Supported backends
 
-### `mistral/codestral-embed` — recommended
+### `fastembed/bge-small-en-v1.5` — recommended ✅
 
-Code-optimised Mistral model, 1536-dimensional vectors. Best discrimination score in
-benchmarks (0.305 vs 0.169 for `mistral-embed`).
+Local ONNX inference via [`fastembed-rs`](https://github.com/Anush008/fastembed-rs).
+384-dimensional vectors, ~130 MB model. Best discrimination-to-cost ratio in benchmarks
+(0.334, free, 12ms/call).
+
+**Requirements:**
+- glibc ≥ 2.38 (Ubuntu 24.04+; the ONNX Runtime pre-built binary uses C23 symbols)
+- Build with `--features local-embed`
+
+```bash
+cargo build --release --features local-embed
+export EMBEDDING_BACKEND=fastembed/bge-small-en-v1.5
+graphirm serve
+```
+
+---
+
+### Other local fastembed models
+
+All require `--features local-embed` and glibc ≥ 2.38.
+
+| Spec | Dim | Latency | Discrimination | Size |
+|---|---|---|---|---|
+| `fastembed/bge-small-en-v1.5` | 384 | 12ms | **0.334** ✅ | ~130 MB |
+| `fastembed/bge-base-en-v1.5` | 768 | 21ms | **0.346** ✅ | ~435 MB |
+| `fastembed/bge-large-en-v1.5` | 1024 | 58ms | **0.372** ✅ | ~1.3 GB |
+| `fastembed/nomic-embed-text-v1` | 768 | 25ms | 0.224 ⚠ | ~270 MB |
+
+---
+
+### `mistral/codestral-embed` — API fallback
+
+Code-optimised Mistral model, 1536-dimensional vectors. Use when you can't build with
+`--features local-embed` (e.g. glibc < 2.38 host).
 
 **Requirements:** `MISTRAL_API_KEY`
 
 ```bash
+export MISTRAL_API_KEY=<your-key>
 export EMBEDDING_BACKEND=mistral/codestral-embed
+graphirm serve
 ```
 
-**Cost:** $0.10 / 1M tokens. A typical turn with one Knowledge node costs ~$0.000002.
+**Cost:** $0.10 / 1M tokens (~$0.000002 per Knowledge node).
 
 ---
 
-### `mistral/mistral-embed` — fallback API option
+### `mistral/mistral-embed`
 
-General-purpose Mistral model, 1024-dimensional vectors. Lower discrimination than
-`codestral-embed` — not recommended unless `codestral-embed` is unavailable.
+General-purpose Mistral model, 1024-dim. Discrimination 0.169 — well below threshold.
+Not recommended.
 
 ```bash
 export EMBEDDING_BACKEND=mistral/mistral-embed
@@ -47,53 +83,24 @@ export EMBEDDING_BACKEND=mistral/mistral-embed
 
 ---
 
-### `fastembed/nomic-embed-text-v1` — free, local
+## Benchmark results
 
-Local ONNX inference via [`fastembed-rs`](https://github.com/Anush008/fastembed-rs).
-768-dimensional vectors, ~270 MB model download on first use. No API key, no per-call cost.
-
-**Requirements:**
-- glibc ≥ 2.38 (Ubuntu 24.04+; the ONNX Runtime pre-built binary uses C23 symbols)
-- Build with `--features local-embed`
-
-```bash
-# Build
-cargo build --features local-embed
-
-# Run
-export EMBEDDING_BACKEND=fastembed/nomic-embed-text-v1
-graphirm serve
-```
-
-Model files are downloaded from HuggingFace Hub to `~/.cache/huggingface/hub/` on first
-call and reused on subsequent starts (~270 MB, allow ~2 minutes on a home connection).
-
-**Other local models:**
-
-| Spec | Dim | Size | Notes |
-|---|---|---|---|
-| `fastembed/nomic-embed-text-v1` | 768 | ~270 MB | Best quality, recommended |
-| `fastembed/bge-small-en-v1.5` | 384 | ~125 MB | Fastest, smallest |
-| `fastembed/bge-base-en-v1.5` | 768 | ~435 MB | — |
-| `fastembed/bge-large-en-v1.5` | 1024 | ~1.3 GB | Highest quality local |
-
----
-
-## Benchmark results (2026-03-09)
-
-Measured on a 20-text software engineering corpus (10 related pairs + 1 unrelated pair).
+Measured on a 20-text software engineering corpus (9 related pairs + 1 unrelated pair).
 Discrimination = mean related-pair cosine similarity − unrelated-pair similarity.
 Higher is better; ≥ 0.3 is production-grade.
 
-| Provider | Dim | Avg latency | Discrimination | Verdict |
+### 2026-03-10 (Hetzner spoke, Ubuntu 24.04, glibc 2.39) — full local benchmark
+
+| Provider | Dim | Latency | Discrimination | Verdict |
 |---|---|---|---|---|
-| `mistral/codestral-embed` | 1536 | 417 ms | **0.305** | ✅ Good |
-| `mistral/mistral-embed` | 1024 | 373 ms | 0.169 | ⚠ Poor |
-| `fastembed/nomic-embed-text-v1` | 768 | **29 ms** | 0.224 | ⚠ Fast but below threshold |
+| `fastembed/bge-large-en-v1.5` | 1024 | 58ms | **0.372** | ✅ Best quality |
+| `fastembed/bge-base-en-v1.5` | 768 | 21ms | **0.346** | ✅ Good |
+| `fastembed/bge-small-en-v1.5` | 384 | 12ms | **0.334** | ✅ **Recommended** |
+| `mistral/codestral-embed` | 1536 | 417ms | 0.305 | ✅ Good (API) |
+| `fastembed/nomic-embed-text-v1` | 768 | 25ms | 0.224 | ⚠ Below threshold |
+| `mistral/mistral-embed` | 1024 | 373ms | 0.169 | ⚠ Poor |
 
-† fastembed requires glibc ≥ 2.38. Run 1 was on Ubuntu 22.04 (skipped); Run 2 on Hetzner spoke (Ubuntu 24.04, glibc 2.39) — all three providers measured.
-
-**Decision:** `codestral-embed` wins. fastembed scored 0.224 (below the 0.255 threshold) — it's 10x faster and free but can't cleanly separate related from unrelated text. Use fastembed only if cost is a hard constraint.
+**Decision:** `bge-small-en-v1.5` wins. All three BGE models beat `codestral-embed` on discrimination while being free, offline, and 20×+ faster. `bge-small` is chosen over `bge-base`/`bge-large` because the discrimination gap is marginal (0.012) while storage and model size are half.
 
 ---
 

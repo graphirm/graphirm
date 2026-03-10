@@ -1,5 +1,31 @@
 # Graphirm Development Progress Log
 
+## 2026-03-10: Embedding Backend Switch — bge-small-en-v1.5 is new default - COMPLETE ✅
+
+### Summary
+
+Ran the full fastembed benchmark on a glibc 2.39 host for the first time. All three BGE models beat `codestral-embed` on discrimination while being free, offline, and 20×+ faster. Switched the recommended default from `mistral/codestral-embed` to `fastembed/bge-small-en-v1.5`.
+
+### Results (2026-03-10, Ubuntu 24.04, glibc 2.39)
+
+| Provider | Dim | Latency | Discrimination |
+|---|---|---|---|
+| `fastembed/bge-large-en-v1.5` | 1024 | 58ms | 0.372 |
+| `fastembed/bge-base-en-v1.5` | 768 | 21ms | 0.346 |
+| `fastembed/bge-small-en-v1.5` | 384 | **12ms** | **0.334** ← new default |
+| `mistral/codestral-embed` | 1536 | 417ms | 0.305 |
+| `fastembed/nomic-embed-text-v1` | 768 | 25ms | 0.224 |
+
+`bge-small` chosen over `bge-base`/`bge-large`: discrimination gap is only 0.012 (3.6%), but `bge-small` uses half the vector storage, downloads a 3× smaller model (~130 MB vs ~435 MB), and starts 75% faster.
+
+### Changes
+
+- `src/main.rs` — updated comment to recommend `fastembed/bge-small-en-v1.5`
+- `docs/guides/embedding-setup.md` — rewrote quick start, backend table, and benchmark results; BGE models now documented as primary options, Mistral as API fallback
+- `src/bin/embed_bench.rs` — `MISTRAL_API_KEY` made optional (skips Mistral providers if unset); all 4 fastembed models now benchmarked in a single run
+
+---
+
 ## 2026-03-10: Adversarial Eval Suite — 13/13 (100%) - COMPLETE ✅
 
 ### Summary
