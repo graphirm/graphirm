@@ -4,7 +4,7 @@
 
 **Goal:** Discover what structure exists inside LLM responses, validate it empirically using GLiNER2, and define a schema that Graphirm can request from models and persist in the graph.
 
-**Status:** Phases 1–3 implemented (corpus export, label-explore CLI, schema-suggest CLI); Phases 4–6 not started.
+**Status:** Phases 1–4 implemented (corpus export with --limit, label-explore, schema-suggest, predict-spans, validate-agreement); Phases 5–6 not started.
 
 ---
 
@@ -137,6 +137,25 @@ Take a sample (50–100 turns) and manually annotate segments using the discover
 - Inter-annotator agreement if possible (is the schema unambiguous?)
 
 **Pass criterion:** > 75% agreement between GLiNER2 and human annotation on segment type and approximate boundary.
+
+**Human annotation format (for `validate-agreement`):** JSONL, one object per turn. Each line:
+
+```json
+{ "session_id": "<id>", "turn_index": 0, "segments": [ { "type": "code", "start": 0, "end": 20 }, { "type": "reasoning", "start": 25, "end": 100 } ] }
+```
+
+- `session_id`, `turn_index`: match corpus/predict-spans turn ids.
+- `segments`: array of `{ "type": "<label>", "start": <char>, "end": <char> }`. Offsets are UTF-8 character indices (inclusive start, exclusive end).
+
+#### Task breakdown — Phase 4 (Validate with human annotation)
+
+| Task | Summary | Verification | Done |
+|------|---------|---------------|------|
+| 4.1 | Add `--limit N` to `export-corpus` (or `sample-corpus` from JSONL) so a 50–100 turn sample can be produced | Export with --limit 10 → 10 lines; or sample-corpus on fixture → N lines | ✅ |
+| 4.2 | Add CLI `graphirm predict-spans --corpus <jsonl> --labels "..." [-o spans.jsonl]` (feature-gated): per-turn GLiNER2 spans (label, start, end, confidence) for comparison | Unit test with small fixture; manual run on sample | ✅ |
+| 4.3 | Define human annotation format: JSONL with `session_id`, `turn_index`, `segments: [{ type, start, end }]` (char offsets); document in plan or docs | Doc review | ✅ |
+| 4.4 | Add CLI `graphirm validate-agreement --human <annotations.jsonl> --gliner <spans.jsonl> [--threshold 0.75] [-o report.json]`: match by turn, compute agreement (type + boundary), report pass/fail | Unit test: synthetic human + gliner → known agreement % | ✅ |
+| 4.5 | Document Phase 4 workflow in README and plan | Doc review | ✅ |
 
 ### Phase 5: Define the Structured Output Schema
 

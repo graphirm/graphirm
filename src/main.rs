@@ -71,6 +71,9 @@ enum Commands {
         /// Output file (default: stdout)
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Maximum number of assistant turns to export (for validation samples, e.g. 100)
+        #[arg(long)]
+        limit: Option<u64>,
     },
 
     /// Run GLiNER2 over a corpus JSONL with candidate labels and output a statistics report.
@@ -97,6 +100,40 @@ enum Commands {
         #[arg(short, long)]
         report: PathBuf,
         /// Output path for recommendation JSON (default: stdout)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+
+    /// Run GLiNER2 on a corpus and output per-turn spans for Phase 4 validation.
+    #[cfg(feature = "local-extraction")]
+    PredictSpans {
+        /// Path to corpus JSONL (one CorpusTurn per line)
+        #[arg(short, long)]
+        corpus: PathBuf,
+        /// Comma-separated label names (e.g. observation,reasoning,code,answer)
+        #[arg(short, long)]
+        labels: String,
+        /// Minimum confidence threshold (default 0.3)
+        #[arg(long, default_value = "0.3")]
+        min_confidence: f64,
+        /// Output path for spans JSONL (default: stdout)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+
+    /// Compare human annotations to GLiNER2 spans and report agreement (Phase 4).
+    #[cfg(feature = "local-extraction")]
+    ValidateAgreement {
+        /// Path to human annotations JSONL (session_id, turn_index, segments: [{ type, start, end }])
+        #[arg(long)]
+        human: PathBuf,
+        /// Path to GLiNER2 spans JSONL from `graphirm predict-spans`
+        #[arg(long)]
+        gliner: PathBuf,
+        /// Pass threshold as fraction 0–100 (default 75)
+        #[arg(long, default_value = "75")]
+        threshold: f64,
+        /// Output path for report JSON (default: stdout)
         #[arg(short, long)]
         out: Option<PathBuf>,
     },
@@ -157,12 +194,12 @@ async fn main() -> Result<(), GraphirmError> {
                 .init();
             run_model_command(action).await?;
         }
-        Commands::ExportCorpus { out } => {
+        Commands::ExportCorpus { out, limit } => {
             tracing_subscriber::fmt()
                 .with_writer(std::io::stderr)
                 .with_env_filter("warn")
                 .init();
-            run_export_corpus(&db_path, out)?;
+            run_export_corpus(&db_path, out, limit)?;
         }
         #[cfg(feature = "local-extraction")]
         Commands::LabelExplore {
@@ -184,6 +221,32 @@ async fn main() -> Result<(), GraphirmError> {
                 .with_env_filter("warn")
                 .init();
             run_schema_suggest(report, out)?;
+        }
+        #[cfg(feature = "local-extraction")]
+        Commands::PredictSpans {
+            corpus,
+            labels,
+            min_confidence,
+            out,
+        } => {
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter("warn")
+                .init();
+            run_predict_spans(corpus, labels, min_confidence, out).await?;
+        }
+        #[cfg(feature = "local-extraction")]
+        Commands::ValidateAgreement {
+            human,
+            gliner,
+            threshold,
+            out,
+        } => {
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter("warn")
+                .init();
+            run_validate_agreement(human, gliner, threshold, out)?;
         }
         Commands::Serve { host, port } => {
             tracing_subscriber::fmt()
@@ -354,14 +417,18 @@ fn run_graph_command(action: GraphAction, db_path: &PathBuf) -> Result<(), Graph
     Ok(())
 }
 
-fn run_export_corpus(db_path: &PathBuf, out: Option<PathBuf>) -> Result<(), GraphirmError> {
+fn run_export_corpus(
+    db_path: &PathBuf,
+    out: Option<PathBuf>,
+    limit: Option<u64>,
+) -> Result<(), GraphirmError> {
     let graph = graphirm_graph::GraphStore::open(db_path.to_str().unwrap_or("graph.db"))?;
     let count = if let Some(path) = out {
         let mut f = std::fs::File::create(path)?;
-        graphirm_graph::export_corpus_to_jsonl(&graph, &mut f, true)?
+        graphirm_graph::export_corpus_to_jsonl(&graph, &mut f, true, limit)?
     } else {
         let mut stdout = std::io::stdout();
-        graphirm_graph::export_corpus_to_jsonl(&graph, &mut stdout, true)?
+        graphirm_graph::export_corpus_to_jsonl(&graph, &mut stdout, true, limit)?
     };
     eprintln!("Exported {} assistant turns.", count);
     Ok(())
@@ -448,6 +515,110 @@ fn run_schema_suggest(report_path: PathBuf, out: Option<PathBuf>) -> Result<(), 
         "Recommended segment types ({}): {}",
         rec.recommended_segment_types.len(),
         rec.recommended_segment_types.join(", ")
+    );
+    Ok(())
+}
+
+#[cfg(feature = "local-extraction")]
+async fn run_predict_spans(
+    corpus_path: PathBuf,
+    labels_str: String,
+    min_confidence: f64,
+    out: Option<PathBuf>,
+) -> Result<(), GraphirmError> {
+    use std::io::BufReader;
+
+    let model_dir = std::env::var("GLINER2_MODEL_DIR").map_err(|_| {
+        GraphirmError::Config(
+            "GLINER2_MODEL_DIR not set. Run `graphirm model download` and set the env var.".into(),
+        )
+    })?;
+    let model_dir = std::path::Path::new(&model_dir);
+
+    let file = std::fs::File::open(&corpus_path)
+        .map_err(|e| GraphirmError::Config(format!("open corpus {}: {}", corpus_path.display(), e)))?;
+    let turns = graphirm_agent::knowledge::label_explore::read_corpus_jsonl(BufReader::new(file))?;
+    if turns.is_empty() {
+        eprintln!("Corpus is empty.");
+        return Ok(());
+    }
+
+    let labels: Vec<String> = labels_str
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if labels.is_empty() {
+        return Err(GraphirmError::Config("At least one --labels value required".into()));
+    }
+
+    let extractor = graphirm_agent::knowledge::local_extraction::OnnxExtractor::new(model_dir)
+        .map_err(|e| GraphirmError::Config(format!("load GLiNER2 model: {}", e)))?;
+
+    let rows = graphirm_agent::knowledge::predict_spans::run_predict_spans(
+        &extractor,
+        &turns,
+        &labels,
+        min_confidence,
+    )
+    .await?;
+
+    let mut writer: Box<dyn std::io::Write> = if let Some(path) = &out {
+        Box::new(
+            std::fs::File::create(path)
+                .map_err(|e| GraphirmError::Io(e))?,
+        )
+    } else {
+        Box::new(std::io::stdout())
+    };
+    for row in &rows {
+        let line = serde_json::to_string(row).map_err(|e| GraphirmError::Config(e.to_string()))?;
+        writeln!(writer, "{line}").map_err(GraphirmError::Io)?;
+    }
+    if out.is_some() {
+        eprintln!("Wrote {} turn spans to output.", rows.len());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "local-extraction")]
+fn run_validate_agreement(
+    human_path: PathBuf,
+    gliner_path: PathBuf,
+    threshold: f64,
+    out: Option<PathBuf>,
+) -> Result<(), GraphirmError> {
+    use std::io::BufReader;
+
+    let human_file = std::fs::File::open(&human_path)
+        .map_err(|e| GraphirmError::Config(format!("open human annotations {}: {}", human_path.display(), e)))?;
+    let human = graphirm_agent::knowledge::validate_agreement::read_annotations_jsonl(BufReader::new(human_file))?;
+
+    let gliner_file = std::fs::File::open(&gliner_path)
+        .map_err(|e| GraphirmError::Config(format!("open gliner spans {}: {}", gliner_path.display(), e)))?;
+    let gliner = graphirm_agent::knowledge::predict_spans::read_spans_jsonl(BufReader::new(gliner_file))?;
+
+    const OVERLAP_RATIO_MIN: f64 = 0.5;
+    let report = graphirm_agent::knowledge::validate_agreement::validate_agreement(
+        &human,
+        &gliner,
+        threshold,
+        OVERLAP_RATIO_MIN,
+    );
+
+    let out_json = serde_json::to_string_pretty(&report).map_err(|e| GraphirmError::Config(e.to_string()))?;
+    if let Some(path) = out {
+        std::fs::write(&path, out_json).map_err(GraphirmError::Io)?;
+        eprintln!("Wrote agreement report to {}", path.display());
+    } else {
+        println!("{}", out_json);
+    }
+    eprintln!(
+        "Agreement: {:.1}% ({} / {} segments) — {}",
+        report.agreement_pct,
+        report.matched_segments,
+        report.total_human_segments,
+        if report.pass { "PASS" } else { "FAIL" }
     );
     Ok(())
 }

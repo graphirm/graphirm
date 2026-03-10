@@ -5,7 +5,11 @@ pub mod injection;
 #[cfg(feature = "local-extraction")]
 pub mod label_explore;
 #[cfg(feature = "local-extraction")]
+pub mod predict_spans;
+#[cfg(feature = "local-extraction")]
 pub mod schema_suggest;
+#[cfg(feature = "local-extraction")]
+pub mod validate_agreement;
 #[cfg(feature = "local-extraction")]
 pub mod local_extraction;
 pub mod memory;

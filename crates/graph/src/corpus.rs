@@ -24,19 +24,28 @@ pub struct CorpusTurn {
 /// Opens the graph at `db_path`, lists all sessions via Agent nodes, and for each session
 /// writes one JSON object per assistant turn (session_id, turn_index, role, text).
 /// Writes to `out` (e.g. a file or stdout).
+///
+/// If `limit` is `Some(n)`, stops after writing `n` assistant turns (for validation samples).
 pub fn export_corpus_to_jsonl(
     store: &GraphStore,
     out: &mut impl std::io::Write,
     assistant_only: bool,
+    limit: Option<u64>,
 ) -> Result<u64, GraphError> {
     let agent_nodes = store.get_agent_nodes()?;
     let mut count: u64 = 0;
 
     for (node, _) in agent_nodes {
+        if limit.map(|n| count >= n).unwrap_or(false) {
+            break;
+        }
         let session_id = node.id.0.clone();
         let interactions = store.get_session_interactions(&session_id)?;
 
         for (turn_index, interaction) in interactions.iter().enumerate() {
+            if limit.map(|n| count >= n).unwrap_or(false) {
+                break;
+            }
             let NodeType::Interaction(ref data) = interaction.node_type else {
                 continue;
             };
@@ -107,12 +116,42 @@ mod tests {
         store.add_node(a).unwrap();
 
         let mut out = Vec::new();
-        let count = export_corpus_to_jsonl(&store, &mut out, true).unwrap();
+        let count = export_corpus_to_jsonl(&store, &mut out, true, None).unwrap();
         assert_eq!(count, 1);
         let line = std::str::from_utf8(&out).unwrap().trim();
         let parsed: CorpusTurn = serde_json::from_str(line).unwrap();
         assert_eq!(parsed.role, "assistant");
         assert_eq!(parsed.text, "Hi there!");
         assert_eq!(parsed.turn_index, 1); // second interaction in session
+    }
+
+    #[test]
+    fn export_corpus_respects_limit() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let mut agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test".to_string(),
+            model: "gpt-4".to_string(),
+            system_prompt: None,
+            status: "active".to_string(),
+        }));
+        agent.metadata["session_id"] = serde_json::json!(agent.id.0);
+        let agent_id = store.add_node(agent).unwrap();
+
+        for i in 0..3 {
+            let mut a = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".to_string(),
+                content: format!("Turn {}", i),
+                token_count: None,
+            }));
+            a.metadata["session_id"] = serde_json::json!(agent_id.0);
+            store.add_node(a).unwrap();
+        }
+
+        let mut out = Vec::new();
+        let count = export_corpus_to_jsonl(&store, &mut out, true, Some(2)).unwrap();
+        assert_eq!(count, 2);
+        let lines: Vec<&str> = std::str::from_utf8(&out).unwrap().trim().lines().collect();
+        assert_eq!(lines.len(), 2);
     }
 }

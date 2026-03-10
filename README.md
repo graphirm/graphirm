@@ -160,13 +160,14 @@ entity_types = ["function", "api", "pattern", "decision"]
 min_confidence = 0.7
 ```
 
-### Structured response discovery (Phase 2 pipeline)
+### Structured response discovery (Phases 1–4 pipeline)
 
 To discover what segment types (e.g. observation, reasoning, code) exist in LLM responses using GLiNER2:
 
-1. **Export a corpus** from your graph (assistant turns only):
+1. **Export a corpus** from your graph (assistant turns only). Use `--limit` for a validation sample (e.g. 50–100 turns):
    ```bash
    graphirm export-corpus --db ~/.local/share/graphirm/graph.db -o corpus.jsonl
+   graphirm export-corpus --db ~/.local/share/graphirm/graph.db --limit 100 -o sample.jsonl  # for Phase 4
    ```
 
 2. **Run label exploration** (requires `--features local-extraction` and `GLINER2_MODEL_DIR`):
@@ -183,7 +184,15 @@ To discover what segment types (e.g. observation, reasoning, code) exist in LLM 
    ```
    Output: recommended segment types (real labels), merge suggestions (redundant pairs), and per-label verdicts (real / redundant / noise).
 
-4. Inspect the report and schema recommendation; see `docs/plans/2026-03-10-structured-llm-responses.md` for the full pipeline (Phases 1–6).
+4. **Validate with human annotation** (Phase 4): get per-turn GLiNER2 spans, annotate a sample manually, then compare:
+   ```bash
+   ./target/release/graphirm predict-spans --corpus sample.jsonl --labels "observation,reasoning,code,answer" -o gliner_spans.jsonl
+   # Annotate sample turns in human annotations JSONL (see plan for format: session_id, turn_index, segments: [{ type, start, end }]).
+   ./target/release/graphirm validate-agreement --human annotations.jsonl --gliner gliner_spans.jsonl --threshold 75 -o agreement.json
+   ```
+   Pass criterion: agreement ≥ 75% (segment type + approximate boundary overlap).
+
+5. Inspect the report and schema recommendation; see `docs/plans/2026-03-10-structured-llm-responses.md` for the full pipeline (Phases 1–6).
 
 ---
 
