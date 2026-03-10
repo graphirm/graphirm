@@ -1,10 +1,13 @@
 # graphirm-eval
 
-Automated evaluation harness for Graphirm. Drives the agent via its HTTP API and measures
-task completion, knowledge extraction, and cross-session memory recall.
+Automated evaluation harness for Graphirm. Drives the agent via its HTTP API and measures:
 
-Inspired by SWE-bench — every task has explicit, programmatically verifiable pass/fail criteria.
-No bash scripts, no manual inspection.
+- **Task completion** — agent correctly uses tools (bash, grep, read, write, edit) and produces the expected outcome
+- **Knowledge extraction** — entities from conversation turns are persisted as graph nodes and queryable
+- **Cross-session memory** — high-PageRank knowledge from a previous session is recalled in a new session (requires embedding backend)
+- **Graph structure** — node/edge counts and types match expectations after a run
+
+Inspired by SWE-bench — every task has explicit, programmatically verifiable pass/fail criteria. No bash scripts, no manual inspection.
 
 ## Quick start
 

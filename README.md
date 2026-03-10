@@ -127,6 +127,41 @@ port = 5555
 
 ---
 
+## Security model
+
+- **Tool permissions** — Per-agent config can allow or deny tools by name (`permissions` in `AgentConfig`). Tools not listed default to allowed. Use `Deny` for tools you do not want an agent to call (e.g. deny `bash` for a subagent).
+- **Destructive tools** — `write`, `edit`, and `bash` are treated as destructive (they can modify the filesystem or run arbitrary commands). Only these are subject to human-in-the-loop (HITL) when a gate is attached.
+- **HITL gate** — When a session is created with an `HitlGate`, the agent loop blocks before executing any destructive tool call and waits for a decision. The server (or caller) receives the pending tool and can `Approve`, `Reject(reason)`, or `Modify(new_args)`. Without a gate, destructive tools run without confirmation.
+- **Sandboxing** — There is no process or filesystem sandbox. The `bash` tool runs in the agent’s configured working directory. File tools (`read`, `write`, `edit`, `grep`, `find`, `ls`) operate on the host filesystem. Run Graphirm in a restricted environment (e.g. container or dedicated user) if you need isolation.
+
+---
+
+## Knowledge extraction
+
+Post-turn entity extraction can use one of three backends (see `ExtractionConfig` in `crates/agent/src/knowledge/extraction.rs`):
+
+| Backend | Cost | Latency | Accuracy | Offline |
+|---------|------|---------|----------|---------|
+| **Llm** (default) | API cost per turn | Higher | Good, flexible entity types | No |
+| **Local** (GLiNER2 ONNX) | None | Low, CPU-bound | Good for configured entity types | Yes |
+| **Hybrid** | API for descriptions only | Medium | GLiNER2 entities + LLM descriptions/relations | Partial |
+
+- **When to use Llm** — Default; no setup. Best when you want maximum flexibility in entity types and don't mind API cost.
+- **When to use Local** — Offline or zero-cost; run with `local-extraction` feature and set `backend: { local: { model_dir: "/path/to/gliner2" } }`. Populate the dir via the extraction API's model download.
+- **When to use Hybrid** — You want fast entity spans from GLiNER2 plus richer descriptions and relationships from the LLM at lower cost than full LLM extraction.
+
+Example (agent TOML) for local extraction:
+
+```toml
+[extraction]
+enabled = true
+backend = { local = { model_dir = "~/.cache/graphirm/gliner2" } }
+entity_types = ["function", "api", "pattern", "decision"]
+min_confidence = 0.7
+```
+
+---
+
 ## Tech stack
 
 | Component | Library | Version |

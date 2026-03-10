@@ -991,4 +991,103 @@ max_turns = 10
             results
         );
     }
+
+    /// Cancel token propagation: when parent cancels, subagent's run_agent_loop exits with Cancelled.
+    #[tokio::test]
+    async fn test_subagent_cancel_propagation() {
+        use crate::error::AgentError;
+
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let mut agents = HashMap::new();
+        agents.insert("worker".to_string(), worker_config());
+        let registry = AgentRegistry::from_configs(agents).unwrap();
+        let tools = Arc::new(ToolRegistry::new());
+        let events = Arc::new(EventBus::new());
+
+        let parent_agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "build".to_string(),
+            model: "claude".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let parent_id = parent_agent.id.clone();
+        graph.add_node(parent_agent).unwrap();
+
+        let cancel = CancellationToken::new();
+        let handle = spawn_subagent(
+            &graph,
+            &registry,
+            &mock_factory_text("irrelevant"),
+            &tools,
+            &events,
+            &parent_id,
+            "worker",
+            "Task to cancel",
+            vec![],
+            cancel.clone(),
+        )
+        .await
+        .unwrap();
+
+        cancel.cancel();
+        let join_result = handle.join_handle.await;
+        assert!(join_result.is_ok(), "Subagent should not panic");
+        let agent_result = join_result.unwrap();
+        assert!(
+            matches!(agent_result, Err(AgentError::Cancelled)),
+            "Subagent should exit with Cancelled when token is cancelled: {:?}",
+            agent_result
+        );
+    }
+
+    /// When a dependency task is in Failed status, wait_for_dependencies returns SubagentFailed.
+    #[tokio::test]
+    async fn test_wait_for_dependencies_returns_error_when_dep_fails() {
+        use crate::error::AgentError;
+
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+
+        let task_a = GraphNode::new(NodeType::Task(TaskData {
+            title: "Task A".to_string(),
+            description: "Will be marked failed".to_string(),
+            status: TaskStatus::Failed,
+            priority: None,
+        }));
+        let task_a_id = task_a.id.clone();
+        graph.add_node(task_a).unwrap();
+
+        let task_b = GraphNode::new(NodeType::Task(TaskData {
+            title: "Task B".to_string(),
+            description: "Depends on A".to_string(),
+            status: TaskStatus::Pending,
+            priority: None,
+        }));
+        let task_b_id = task_b.id.clone();
+        graph.add_node(task_b).unwrap();
+
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::DependsOn,
+                task_b_id.clone(),
+                task_a_id.clone(),
+            ))
+            .unwrap();
+
+        let cancel = CancellationToken::new();
+        let result = wait_for_dependencies(
+            &graph,
+            &task_b_id,
+            &cancel,
+            std::time::Duration::from_secs(1),
+        )
+        .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AgentError::SubagentFailed { .. }),
+            "Expected SubagentFailed when dependency is Failed: {:?}",
+            err
+        );
+    }
 }
