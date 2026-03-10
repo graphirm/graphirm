@@ -20,7 +20,10 @@ pub async fn restore_sessions_from_graph(
 ) -> Result<HashMap<String, SessionMetadata>, GraphError> {
     tracing::debug!("Querying graph for Agent nodes to restore sessions");
 
-    let agent_nodes = graph.get_agent_nodes()?;
+    let graph_clone = graph.clone();
+    let agent_nodes = tokio::task::spawn_blocking(move || graph_clone.get_agent_nodes())
+        .await
+        .unwrap_or(Err(GraphError::LockPoisoned))?;
 
     let mut sessions = HashMap::new();
 

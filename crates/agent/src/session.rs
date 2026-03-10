@@ -61,7 +61,8 @@ pub struct Session {
     /// ID of the most recent Interaction node in this session's conversation
     /// chain. Used to create `RespondsTo` edges that link messages into a
     /// traversable DAG (rather than a flat star off the agent node).
-    last_interaction_id: Mutex<Option<NodeId>>,
+    /// Arc-wrapped so the NodeId can be cloned into `spawn_blocking` closures.
+    last_interaction_id: Arc<Mutex<Option<NodeId>>>,
     turn_counter: AtomicU32,
     turn_pos_counter: Arc<AtomicU32>,
 }
@@ -86,7 +87,7 @@ impl Session {
             hitl: None,
             memory_retriever: None,
             runtime_system_suffix: tokio::sync::Mutex::new(String::new()),
-            last_interaction_id: Mutex::new(None),
+            last_interaction_id: Arc::new(Mutex::new(None)),
             turn_counter: AtomicU32::new(0),
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
         })
@@ -121,14 +122,20 @@ impl Session {
     /// Return the content of the most recent user Interaction node, if any.
     ///
     /// Used to form the retrieval query for pre-loop memory injection.
-    pub fn recent_user_message(&self) -> Option<String> {
-        let last = self
-            .last_interaction_id
-            .lock()
-            .expect("last_interaction_id lock poisoned");
-        // Walk backwards from last interaction to find the most recent user message
-        let last_id = last.as_ref()?;
-        let node = self.graph.get_node(last_id).ok()?;
+    /// Async because `get_node` is a blocking `GraphStore` call.
+    pub async fn recent_user_message(&self) -> Option<String> {
+        let last_id = {
+            let last = self
+                .last_interaction_id
+                .lock()
+                .expect("last_interaction_id lock poisoned");
+            last.clone()?
+        };
+        let graph = self.graph.clone();
+        let node = tokio::task::spawn_blocking(move || graph.get_node(&last_id))
+            .await
+            .ok()?
+            .ok()?;
         if let NodeType::Interaction(ref data) = node.node_type {
             if data.role == "user" {
                 return Some(data.content.clone());
@@ -139,7 +146,7 @@ impl Session {
 
     /// Add a user message to this session's conversation.
     /// Returns the NodeId of the created Interaction node.
-    pub fn add_user_message(&self, content: &str) -> Result<NodeId, AgentError> {
+    pub async fn add_user_message(&self, content: &str) -> Result<NodeId, AgentError> {
         let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst) + 1;
         self.turn_pos_counter.store(1, Ordering::SeqCst);
         let mut interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
@@ -149,7 +156,7 @@ impl Session {
         }));
         interaction_node.metadata["session_id"] = serde_json::json!(self.id.to_string());
         interaction_node.set_label(format!("interaction_{turn}_1_1"));
-        self.persist_interaction(interaction_node)
+        self.persist_interaction(interaction_node).await
     }
 
     pub fn current_turn(&self) -> u32 {
@@ -164,17 +171,20 @@ impl Session {
         self.turn_pos_counter.clone()
     }
 
-    pub fn record_interaction(&self, mut node: GraphNode) -> Result<NodeId, AgentError> {
+    pub async fn record_interaction(&self, mut node: GraphNode) -> Result<NodeId, AgentError> {
         let turn = self.current_turn();
         let pos = self.next_turn_pos();
         node.metadata["session_id"] = serde_json::json!(self.id.to_string());
         node.set_label(format!("interaction_{turn}_{pos}_1"));
-        self.persist_interaction(node)
+        self.persist_interaction(node).await
     }
 
-    fn persist_interaction(&self, node: GraphNode) -> Result<NodeId, AgentError> {
-        let node_id = self.graph.add_node(node)?;
-        self.link_interaction(&node_id)?;
+    async fn persist_interaction(&self, node: GraphNode) -> Result<NodeId, AgentError> {
+        let graph = self.graph.clone();
+        let node_id = tokio::task::spawn_blocking(move || graph.add_node(node))
+            .await
+            .map_err(|e| AgentError::Join(e.to_string()))??;
+        self.link_interaction(&node_id).await?;
         Ok(node_id)
     }
 
@@ -184,39 +194,60 @@ impl Session {
     /// - A `Produces` edge from the Agent node to the new Interaction node.
     /// - A `RespondsTo` edge from the new node to the previous Interaction node
     ///   (if any), forming a traversable conversation chain.
-    pub fn link_interaction(&self, node_id: &NodeId) -> Result<(), AgentError> {
-        // Agent → node (Produces)
-        self.graph.add_edge(GraphEdge::new(
-            EdgeType::Produces,
-            self.id.clone(),
-            node_id.clone(),
-        ))?;
+    pub async fn link_interaction(&self, node_id: &NodeId) -> Result<(), AgentError> {
+        let graph = self.graph.clone();
+        let agent_id = self.id.clone();
+        let node_id_clone = node_id.clone();
 
-        // node → previous (RespondsTo) — chains the conversation for graph traversal
-        let mut last = self
-            .last_interaction_id
-            .lock()
-            .expect("last_interaction_id lock poisoned");
-        if let Some(prev_id) = last.as_ref() {
-            self.graph.add_edge(GraphEdge::new(
-                EdgeType::RespondsTo,
-                node_id.clone(),
-                prev_id.clone(),
+        // Grab the previous ID and update the slot atomically under the mutex,
+        // then do the blocking graph writes outside the lock.
+        let prev_id = {
+            let mut last = self
+                .last_interaction_id
+                .lock()
+                .expect("last_interaction_id lock poisoned");
+            let prev = last.clone();
+            *last = Some(node_id.clone());
+            prev
+        };
+
+        tokio::task::spawn_blocking(move || -> Result<(), AgentError> {
+            // Agent → node (Produces)
+            graph.add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id,
+                node_id_clone.clone(),
             ))?;
-        }
-        *last = Some(node_id.clone());
-        Ok(())
+            // node → previous (RespondsTo) — chains the conversation for graph traversal
+            if let Some(prev) = prev_id {
+                graph.add_edge(GraphEdge::new(
+                    EdgeType::RespondsTo,
+                    node_id_clone,
+                    prev,
+                ))?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| AgentError::Join(e.to_string()))?
     }
 
     /// Update the Agent node's status field in the graph.
     /// Typical values: `"active"`, `"completed"`, `"cancelled"`, `"limit_reached"`.
-    pub fn set_status(&self, status: &str) -> Result<(), AgentError> {
-        let mut node = self.graph.get_node(&self.id)?;
-        if let NodeType::Agent(ref mut data) = node.node_type {
-            data.status = status.to_string();
-        }
-        self.graph.update_node(&self.id, node)?;
-        Ok(())
+    pub async fn set_status(&self, status: &str) -> Result<(), AgentError> {
+        let graph = self.graph.clone();
+        let agent_id = self.id.clone();
+        let status = status.to_string();
+        tokio::task::spawn_blocking(move || -> Result<(), AgentError> {
+            let mut node = graph.get_node(&agent_id)?;
+            if let NodeType::Agent(ref mut data) = node.node_type {
+                data.status = status;
+            }
+            graph.update_node(&agent_id, node)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| AgentError::Join(e.to_string()))?
     }
 }
 
@@ -256,13 +287,13 @@ mod tests {
         assert_eq!(session.agent_config.model, "gpt-4o");
     }
 
-    #[test]
-    fn test_session_add_user_message() {
+    #[tokio::test]
+    async fn test_session_add_user_message() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let config = AgentConfig::default();
         let session = Session::new(graph.clone(), config).unwrap();
 
-        let msg_id = session.add_user_message("Hello!").unwrap();
+        let msg_id = session.add_user_message("Hello!").await.unwrap();
         let node = graph.get_node(&msg_id).unwrap();
         match &node.node_type {
             NodeType::Interaction(data) => {
@@ -274,19 +305,20 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_session_record_interaction_assigns_turn_position_labels() {
+    #[tokio::test]
+    async fn test_session_record_interaction_assigns_turn_position_labels() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let config = AgentConfig::default();
         let session = Session::new(graph.clone(), config).unwrap();
 
-        let user_id = session.add_user_message("Hello!").unwrap();
+        let user_id = session.add_user_message("Hello!").await.unwrap();
         let assistant_id = session
             .record_interaction(GraphNode::new(NodeType::Interaction(InteractionData {
                 role: "assistant".to_string(),
                 content: "Hi there".to_string(),
                 token_count: None,
             })))
+            .await
             .unwrap();
         let tool_id = session
             .record_interaction(GraphNode::new(NodeType::Interaction(InteractionData {
@@ -294,6 +326,7 @@ mod tests {
                 content: "output".to_string(),
                 token_count: None,
             })))
+            .await
             .unwrap();
 
         assert_eq!(graph.get_node(&user_id).unwrap().label(), Some("interaction_1_1_1"));
@@ -304,38 +337,39 @@ mod tests {
         assert_eq!(graph.get_node(&tool_id).unwrap().label(), Some("interaction_1_3_1"));
     }
 
-    #[test]
-    fn test_session_add_user_message_resets_position_for_new_turn() {
+    #[tokio::test]
+    async fn test_session_add_user_message_resets_position_for_new_turn() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let config = AgentConfig::default();
         let session = Session::new(graph.clone(), config).unwrap();
 
-        let _ = session.add_user_message("turn 1").unwrap();
+        let _ = session.add_user_message("turn 1").await.unwrap();
         let _ = session
             .record_interaction(GraphNode::new(NodeType::Interaction(InteractionData {
                 role: "assistant".to_string(),
                 content: "first reply".to_string(),
                 token_count: None,
             })))
+            .await
             .unwrap();
 
-        let second_user_id = session.add_user_message("turn 2").unwrap();
+        let second_user_id = session.add_user_message("turn 2").await.unwrap();
         assert_eq!(
             graph.get_node(&second_user_id).unwrap().label(),
             Some("interaction_2_1_1")
         );
     }
 
-    #[test]
-    fn test_session_link_interaction_creates_responds_to_chain() {
+    #[tokio::test]
+    async fn test_session_link_interaction_creates_responds_to_chain() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let config = AgentConfig::default();
         let session = Session::new(graph.clone(), config).unwrap();
 
         // Three sequential messages
-        let id1 = session.add_user_message("msg1").unwrap();
-        let id2 = session.add_user_message("msg2").unwrap();
-        let id3 = session.add_user_message("msg3").unwrap();
+        let id1 = session.add_user_message("msg1").await.unwrap();
+        let id2 = session.add_user_message("msg2").await.unwrap();
+        let id3 = session.add_user_message("msg3").await.unwrap();
 
         // msg2 should have a RespondsTo edge pointing to msg1
         let msg2_responds: Vec<_> = graph
@@ -394,13 +428,13 @@ mod tests {
         assert_eq!(session.memory_suffix().await, "relevant context");
     }
 
-    #[test]
-    fn test_session_set_status() {
+    #[tokio::test]
+    async fn test_session_set_status() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let config = AgentConfig::default();
         let session = Session::new(graph.clone(), config).unwrap();
 
-        session.set_status("completed").unwrap();
+        session.set_status("completed").await.unwrap();
 
         let node = graph.get_node(&session.id).unwrap();
         match &node.node_type {

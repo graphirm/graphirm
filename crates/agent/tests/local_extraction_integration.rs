@@ -5,6 +5,8 @@
 //! Tests that exercise actual ONNX inference are gated on the `local-extraction`
 //! feature and require a model artifact at the configured path.
 
+use std::sync::Arc;
+
 use graphirm_agent::knowledge::extraction::{
     ExtractionBackend, ExtractionConfig, extract_knowledge_with_backend,
 };
@@ -22,7 +24,7 @@ fn make_source_node(graph: &GraphStore) -> graphirm_graph::NodeId {
 
 #[tokio::test]
 async fn test_local_backend_without_feature_returns_error() {
-    let graph = GraphStore::open_memory().unwrap();
+    let graph = Arc::new(GraphStore::open_memory().unwrap());
     let config = ExtractionConfig {
         enabled: true,
         min_confidence: 0.5,
@@ -36,7 +38,7 @@ async fn test_local_backend_without_feature_returns_error() {
     let messages = vec![("user".to_string(), "test message".to_string())];
 
     let result = extract_knowledge_with_backend(
-        &graph,
+        graph.clone(),
         None,
         #[cfg(not(feature = "local-extraction"))]
         None::<()>,
@@ -56,7 +58,7 @@ async fn test_local_backend_without_feature_returns_error() {
 
 #[tokio::test]
 async fn test_hybrid_backend_without_feature_returns_error() {
-    let graph = GraphStore::open_memory().unwrap();
+    let graph = Arc::new(GraphStore::open_memory().unwrap());
     let config = ExtractionConfig {
         enabled: true,
         min_confidence: 0.5,
@@ -70,7 +72,7 @@ async fn test_hybrid_backend_without_feature_returns_error() {
     let messages = vec![("user".to_string(), "test message".to_string())];
 
     let result = extract_knowledge_with_backend(
-        &graph,
+        graph.clone(),
         None,
         #[cfg(not(feature = "local-extraction"))]
         None::<()>,

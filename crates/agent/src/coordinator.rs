@@ -69,7 +69,7 @@ impl Coordinator {
             .clone();
 
         let session = Session::new(self.graph.clone(), primary_config.clone())?;
-        session.add_user_message(prompt)?;
+        session.add_user_message(prompt).await?;
 
         // Build primary tool registry: base tools + delegate tool with child cancel token.
         // The child token propagates cancellation: cancelling `cancel` also cancels subagents.

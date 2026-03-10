@@ -93,7 +93,15 @@ fn default_system_prompt() -> String {
     "You are a helpful coding assistant.".to_string()
 }
 fn default_guaranteed_recent_turns() -> usize {
-    4
+    // Large enough to keep an entire tool-call cluster (assistant + N parallel
+    // tool results) in the guaranteed-recent window. When tool results are
+    // split across guaranteed vs. older buckets, Content nodes created during
+    // parallel tool execution get interleaved (by created_at) between the
+    // assistant message and the tool-result Interaction nodes, which violates
+    // Anthropic's requirement that all tool_result blocks appear immediately
+    // after their tool_use message. Phase-6 compaction will handle trimming
+    // long histories once it is implemented.
+    30
 }
 fn default_max_content_nodes() -> usize {
     20
@@ -484,13 +492,33 @@ pub fn build_context(
     let selected = fit_to_budget(candidates, remaining_budget);
     let selected_tokens: usize = selected.iter().map(|s| s.token_estimate).sum();
 
-    // Assemble messages: selected (older/context) in chronological order, then guaranteed recent
-    let mut all_nodes: Vec<GraphNode> = selected.into_iter().map(|s| s.node).collect();
+    // Assemble messages: selected (older/context) in chronological order, then guaranteed recent.
+    //
+    // IMPORTANT: Content and Knowledge nodes MUST NOT be interleaved between an
+    // assistant message (with tool_use blocks) and the tool_result Interaction
+    // nodes that follow it. Anthropic requires tool_result messages to appear
+    // immediately after their corresponding tool_use message. Content nodes are
+    // created during tool execution (before Interaction nodes are recorded), so
+    // they have earlier created_at timestamps and sort ahead of tool results.
+    //
+    // Solution: partition selected into Interaction nodes (conversation) and
+    // Content/Knowledge nodes (supplemental context). Place Content/Knowledge
+    // nodes at the front (before the conversation begins) and sort conversation
+    // nodes separately to preserve logical message ordering.
+    let selected_nodes: Vec<GraphNode> = selected.into_iter().map(|s| s.node).collect();
+    let (mut conv_older, mut ctx_nodes): (Vec<GraphNode>, Vec<GraphNode>) =
+        selected_nodes.into_iter().partition(|n| matches!(n.node_type, NodeType::Interaction(_)));
+
+    conv_older.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    ctx_nodes.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+
     // guaranteed_recent is newest-first from conversation_thread, reverse for chronological
     let mut recent_chrono: Vec<GraphNode> = guaranteed_recent;
     recent_chrono.reverse();
 
-    all_nodes.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    // Layout: [content/knowledge context] [older conversation] [guaranteed recent conversation]
+    let mut all_nodes: Vec<GraphNode> = ctx_nodes;
+    all_nodes.extend(conv_older);
     all_nodes.extend(recent_chrono);
 
     let messages: Vec<LlmMessage> = all_nodes.iter().filter_map(node_to_message).collect();
