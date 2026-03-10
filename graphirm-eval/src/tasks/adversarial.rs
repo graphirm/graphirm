@@ -97,16 +97,20 @@ pub fn tasks() -> Vec<EvalTask> {
         // Ask the agent to count how many times a specific token appears in the
         // source tree. Verifier runs the same command and compares dynamically —
         // the count changes as we add spawn_blocking calls, so no hardcoding.
-        // Failure mode: agent approximates ("about 50") or miscounts by not
-        // searching recursively or missing some file extensions.
+        // Failure mode: agent answers from "knowledge" without running bash,
+        // producing a plausible-but-wrong number. The prompt explicitly requires
+        // the agent to run the command and quote its output.
         EvalTask {
             id: "grep-exact-count".to_string(),
             name: "Count spawn_blocking occurrences precisely across all Rust files".to_string(),
             tags: vec!["adversarial".to_string(), "tool-use".to_string()],
             prompts: vec![
-                "How many times does `spawn_blocking` appear across all Rust source \
-                 files in this project? Use bash to count every occurrence, including \
-                 in comments. Give me the exact number."
+                "Run this exact bash command and tell me the number it prints:\n\n\
+                 ```bash\n\
+                 grep -r --include='*.rs' -c spawn_blocking crates/ src/ \
+                 | awk -F: '{sum+=$2} END {print sum}'\n\
+                 ```\n\n\
+                 Do not estimate — run the command and quote the output."
                     .to_string(),
             ],
             verifier: Verifier::ResponseContainsCommandOutput {
@@ -118,8 +122,8 @@ pub fn tasks() -> Vec<EvalTask> {
                         .to_string(),
                 ],
             },
-            max_turns: 4,
-            timeout_secs: 90,
+            max_turns: 3,
+            timeout_secs: 60,
         },
 
         // ── 4. Cascading pipeline ─────────────────────────────────────────────
