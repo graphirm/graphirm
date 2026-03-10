@@ -77,14 +77,21 @@ Welcome to the Graphirm project documentation. This folder contains planning doc
 | agent-trace-export task | Shipped ✅ | 2026-03-06 |
 | cross-session-memory.md | Shipped ✅ | 2026-03-09 |
 | gliner2-setup.md | Updated ✅ | 2026-03-10 |
+| embedding-setup.md | Updated ✅ | 2026-03-10 |
 | graphirm-eval pipeline | Shipped ✅ | 2026-03-10 |
 
 ---
 
 ## Current Release Status
 
-- **v3.0 (Main)** — Full platform shipped with graph-native agent, VS Code extension, landing page, session restoration, DAG timeline layout, and Agent Trace export
-- **v3.1 (feat/graphirm-eval)** — Async/blocking fixes, `graphirm-eval` benchmarking pipeline (8/8 tasks, 100%), GLiNER2 ONNX extraction wired into `serve` (`graphirm model download` CLI, auto-detection)
+- **v4.0 (Main)** — All prior work merged to main. Includes:
+  - Graph-native agent, VS Code extension, TUI, HTTP API
+  - Session restoration, DAG timeline layout, Agent Trace export
+  - `graphirm-eval` benchmarking harness — **13/13 tasks, 100% pass rate** (adversarial suite included)
+  - GLiNER2 ONNX local knowledge extraction (~600ms/turn, `graphirm model download`)
+  - **OpenRouter provider** — `openrouter/<vendor/model>`, Qwen3-Coder-Next benchmarked (13/13, 210s, $0.12/$0.75/MTok)
+  - **fastembed/bge-small-en-v1.5** default embedding (0.334 discrimination, 12ms, free, offline)
+  - Proven provider stack: Haiku 4.5 (fastest, 175s), Qwen3-Coder-Next (best value, 210s), DeepSeek (186s)
 
 ---
 
