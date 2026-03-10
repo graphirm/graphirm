@@ -563,8 +563,10 @@ pub async fn run_agent_loop(
                     extraction_config,
                     &response_id,
                 );
+                // 30s timeout: generous enough for a DeepSeek API call while
+                // still capping the impact on task turn latency.
                 match tokio::time::timeout(
-                    std::time::Duration::from_secs(20),
+                    std::time::Duration::from_secs(30),
                     extraction_future,
                 )
                 .await
