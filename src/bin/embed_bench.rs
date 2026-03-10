@@ -169,7 +169,7 @@ async fn bench_provider(name: &str, provider: &dyn EmbeddingProvider, cost_per_1
 
 #[tokio::main]
 async fn main() {
-    let mistral_key = std::env::var("MISTRAL_API_KEY").expect("MISTRAL_API_KEY not set");
+    let mistral_key = std::env::var("MISTRAL_API_KEY").ok();
 
     println!("=== Embedding Provider Benchmark ===");
     println!(
@@ -178,24 +178,29 @@ async fn main() {
     );
 
     // Mistral mistral-embed
-    let mistral_embed =
-        MistralEmbeddingProvider::new(&mistral_key, MistralEmbedModel::MistralEmbed);
-    bench_provider(
-        "mistral/mistral-embed ($0.10/1M tok)",
-        &mistral_embed,
-        0.10,
-    )
-    .await;
+    if let Some(ref key) = mistral_key {
+        let mistral_embed =
+            MistralEmbeddingProvider::new(key, MistralEmbedModel::MistralEmbed);
+        bench_provider(
+            "mistral/mistral-embed ($0.10/1M tok)",
+            &mistral_embed,
+            0.10,
+        )
+        .await;
 
-    // Mistral codestral-embed
-    let codestral_embed =
-        MistralEmbeddingProvider::new(&mistral_key, MistralEmbedModel::CodestralEmbed);
-    bench_provider(
-        "mistral/codestral-embed ($0.10/1M tok)",
-        &codestral_embed,
-        0.10,
-    )
-    .await;
+        // Mistral codestral-embed
+        let codestral_embed =
+            MistralEmbeddingProvider::new(key, MistralEmbedModel::CodestralEmbed);
+        bench_provider(
+            "mistral/codestral-embed ($0.10/1M tok)",
+            &codestral_embed,
+            0.10,
+        )
+        .await;
+    } else {
+        println!("── mistral/mistral-embed ──\n  SKIP: set MISTRAL_API_KEY to benchmark");
+        println!("── mistral/codestral-embed ──\n  SKIP: set MISTRAL_API_KEY to benchmark");
+    }
 
     // fastembed nomic-embed-text-v1 (only available with --features local-embed on glibc >= 2.38)
     #[cfg(feature = "local-embed")]
