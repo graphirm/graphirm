@@ -30,13 +30,14 @@ enum Commands {
         session: Option<String>,
 
         /// Model in "provider/model" format.
-        /// Cloud examples:  anthropic/claude-sonnet-4-20250514
+        /// Cloud examples:  openrouter/qwen/qwen3-coder-next (default)
+        ///                  anthropic/claude-sonnet-4-20250514
         ///                  deepseek/deepseek-chat
         ///                  openai/gpt-4o
         /// Local (Ollama):  ollama/qwen2.5:72b
         ///                  ollama/qwen3:70b
         ///                  ollama/llama3.2
-        #[arg(short, long, default_value = "deepseek/deepseek-chat")]
+        #[arg(short, long, default_value = "openrouter/qwen/qwen3-coder-next")]
         model: String,
     },
 
@@ -264,9 +265,9 @@ async fn main() -> Result<(), GraphirmError> {
             let agent_config = graphirm_agent::AgentConfig::default();
 
             // LLM provider requires a model spec; reads GRAPHIRM_MODEL env var
-            // (set in .env). Defaults to DeepSeek if not configured.
+            // (set in .env). Defaults to Qwen Coder Next (OpenRouter) if not configured.
             let model_spec = std::env::var("GRAPHIRM_MODEL")
-                .unwrap_or_else(|_| "deepseek/deepseek-chat".to_string());
+                .unwrap_or_else(|_| "openrouter/qwen/qwen3-coder-next".to_string());
             let (provider_name, model_name) =
                 graphirm_llm::factory::parse_model_string(&model_spec)
                     .map_err(|e| GraphirmError::Config(e.to_string()))?;

@@ -164,10 +164,14 @@ min_confidence = 0.7
 
 To discover what segment types (e.g. observation, reasoning, code) exist in LLM responses using GLiNER2:
 
-1. **Export a corpus** from your graph (assistant turns only). Use `--limit` for a validation sample (e.g. 50–100 turns):
+1. **Export a corpus** from your graph (assistant turns only). Use `--limit` for a validation sample (e.g. 50–100 turns). To generate turns non-interactively, run the server and drive it via the API, then export:
    ```bash
+   # Option A: export from an existing graph
    graphirm export-corpus --db ~/.local/share/graphirm/graph.db -o corpus.jsonl
    graphirm export-corpus --db ~/.local/share/graphirm/graph.db --limit 100 -o sample.jsonl  # for Phase 4
+
+   # Option B: generate fresh corpus (requires jq, OPENROUTER_API_KEY or GRAPHIRM_MODEL + API key)
+   ./scripts/corpus_from_server.sh --db /tmp/corpus.db --out corpus.jsonl --limit 50
    ```
 
 2. **Run label exploration** (requires `--features local-extraction` and `GLINER2_MODEL_DIR`):
