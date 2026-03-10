@@ -84,7 +84,11 @@ impl TestHarness {
             Ok(_) => {
                 match self.check_verifier(&task.verifier, &session_id, &last_response).await {
                     Ok(true) => TaskResult::pass(&task.id, turns_used, 0.0),
-                    Ok(false) => TaskResult::fail(&task.id, "verifier returned false"),
+                    Ok(false) => {
+                        let mut r = TaskResult::fail(&task.id, "verifier returned false");
+                        r.turns_used = turns_used;
+                        r
+                    }
                     Err(e) => TaskResult::fail(&task.id, format!("harness error: {e}")),
                 }
             }
