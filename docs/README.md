@@ -70,19 +70,21 @@ Welcome to the Graphirm project documentation. This folder contains planning doc
 |----------|--------|--------------|
 | execution-strategy.md | Active (154/154 tasks complete) | 2026-03-06 |
 | backlog.md | Active (2 items, Phases 12+) | 2026-03-06 |
-| completion-log.md | Active | 2026-03-06 |
+| completion-log.md | Active | 2026-03-10 |
 | phase-13-advanced-features.md | Planning | 2026-03-05 |
 | session-restoration.md | Shipped ✅ | 2026-03-06 |
 | dag-timeline-layout-completion.md | Shipped ✅ | 2026-03-06 |
 | agent-trace-export task | Shipped ✅ | 2026-03-06 |
 | cross-session-memory.md | Shipped ✅ | 2026-03-09 |
+| gliner2-setup.md | Updated ✅ | 2026-03-10 |
+| graphirm-eval pipeline | Shipped ✅ | 2026-03-10 |
 
 ---
 
 ## Current Release Status
 
 - **v3.0 (Main)** — Full platform shipped with graph-native agent, VS Code extension, landing page, session restoration, DAG timeline layout, and Agent Trace export
-- **v3.1 (Next)** — Phase 13 advanced features (parallel work on multiple feature tracks)
+- **v3.1 (feat/graphirm-eval)** — Async/blocking fixes, `graphirm-eval` benchmarking pipeline (8/8 tasks, 100%), GLiNER2 ONNX extraction wired into `serve` (`graphirm model download` CLI, auto-detection)
 
 ---
 

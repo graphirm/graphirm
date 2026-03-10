@@ -3,6 +3,34 @@
 GLiNER2 is used as the zero-cost entity extraction backend. It runs a 486M-parameter
 DeBERTa-v3-large model locally via ONNX Runtime — no LLM API calls, no token cost.
 
+## Quick start (CLI — recommended)
+
+Build with the `local-extraction` feature, then run the built-in download command:
+
+```bash
+# One-time build
+cargo build --release --features local-extraction
+
+# Download ~1.95 GB from HuggingFace Hub (idempotent — safe to run again)
+./target/release/graphirm model download
+```
+
+The command prints the cached model directory and the exact export command:
+
+```
+Model directory: /home/user/.cache/huggingface/hub/models--lmo3--gliner2-large-v1-onnx/snapshots/6adb78ae8098685d239dda324cc124d948962c21
+
+To use the local ONNX extraction backend, set:
+  export GLINER2_MODEL_DIR="..."
+
+Then restart `graphirm serve`. Extraction will run at ~150-200ms per call
+instead of 25-35s via the LLM API.
+```
+
+**Auto-detection:** If `GLINER2_MODEL_DIR` is unset, `graphirm serve` will still
+auto-detect the model from the standard HuggingFace cache path and use the Local
+backend automatically when the snapshot directory is found.
+
 ## Quick start (programmatic download)
 
 The easiest way is to call `download_model()` from Rust before first use:

@@ -16,19 +16,21 @@ Items captured here are validated ideas not yet scheduled into a numbered phase.
 
 ---
 
-## Human-in-the-Loop node controls (API + agent loop)
+## ✅ Human-in-the-Loop — backend COMPLETE, VS Code UI pending
 
-**What:** Per-node user actions — Approve, Reject, Retry, Edit, Skip — surfaced in the VS Code extension UI and wired through the agent loop. Every action creates a typed edge (`ApprovedBy`, `RejectedBy`, `DerivedFrom`) so the intervention is part of the graph's permanent record.
+**Backend status (shipped 2026-03-09):**
+- `HitlGate` — approve / reject / modify decisions via oneshot channels per pending tool call
+- `is_destructive_tool` — gates `write`, `edit`, `bash`
+- Agent loop awaits the gate before executing any destructive tool
+- API routes: `POST /api/graph/:session/node/:node/action`, `POST /api/sessions/:id/pause`, `POST /api/sessions/:id/resume`
+- Full test coverage (approve/reject/modify flows, pause/resume, concurrent resolution)
 
-**API surface:**
-- `POST /api/graph/:session_id/node/:node_id/action` — body: `{ "action": "approve" | "reject" | "retry" | "edit" | "skip", "reason": "..." }`
-- Agent loop checks for steering signals between turns
+**What remains — VS Code extension UI only:**
+Per-node approve/reject/edit buttons in the node detail panel of the VS Code extension. When a tool call is pending, the node should show action buttons that POST to the existing API routes. The server wiring is complete; this is purely a UI task.
 
-**Why deferred:** The graph data model already supports this — the node/edge types are expressive enough. The UI (Phase 11) will expose nodes as clickable; the action buttons are a small addition to the node detail panel. The larger work is in the agent loop: it must poll for steering signals between turns and branch/cancel accordingly.
+**Why it matters:** Strongest Graphirm differentiator — the only coding agent where you can intercept and change a specific agent decision. Linear agents (Cline, OpenCode, Aider) cannot do this without rebuilding their data model.
 
-**Why it matters:** This is Graphirm's strongest differentiator — the only coding agent where you can point at a specific agent decision and change it. Linear agents (Cline, OpenCode, Aider) cannot do this without rebuilding their data model. Connects to `adk-graph` post-MVP (checkpointing + human-in-the-loop).
-
-**Suggested target:** Phase 12 (after Phase 11 VS Code extension ships and node detail panel exists as a UI surface).
+**Suggested target:** Phase 12 (small UI addition to the existing node detail panel).
 
 ---
 

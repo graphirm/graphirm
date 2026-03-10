@@ -1,5 +1,163 @@
 # Graphirm Development Progress Log
 
+## 2026-03-10: GLiNER2 ONNX Extraction Wired into `serve` - COMPLETE ✅
+
+### Summary
+
+GLiNER2 was fully implemented but never connected to the runtime path. Three gaps closed:
+
+1. **`graphirm model download` CLI command** — Downloads the ~1.95 GB GLiNER2-large-v1 ONNX model from HuggingFace Hub and prints the local cache path with `export GLINER2_MODEL_DIR=...` instructions.
+2. **Auto-backend detection in `graphirm serve`** — `resolve_extraction_backend()` checks `GLINER2_MODEL_DIR` env var first, then auto-detects the standard HF cache path (`~/.cache/huggingface/hub/models--lmo3--gliner2-large-v1-onnx/snapshots/`). Falls back to LLM with an informative log message.
+3. **`post_turn_extract` now routes all backends** — Removed the hard rejection of Local/Hybrid backends that caused "post_turn_extract only supports the Llm backend" errors. All three backends now route through `extract_knowledge_with_backend`.
+4. **`local-extraction` feature in root `Cargo.toml`** — Added `local-extraction = ["graphirm-agent/local-extraction"]` so the feature can be activated at the binary level: `cargo build --release --features local-extraction`.
+
+### Performance impact
+
+| Metric | LLM backend | ONNX backend |
+|---|---|---|
+| Per-call latency | 25–35s (DeepSeek API) | ~600ms (CPU, after OS page cache warm) |
+| Token cost | Yes | Zero |
+| Timeout risk | Yes (30s timeout) | No |
+
+**graphirm-eval total suite time:** 422s (v6, LLM) → **186s (v7, ONNX)** — 56% faster.
+
+### Files changed
+
+- `src/main.rs` — `ModelAction::Download`, `run_model_download()`, `resolve_extraction_backend()`
+- `Cargo.toml` (root) — `local-extraction` feature
+- `crates/agent/src/knowledge/extraction.rs` — removed `post_turn_extract` non-Llm rejection; updated test
+
+### Usage
+
+```bash
+# Build with ONNX support
+cargo build --release --features local-extraction
+
+# Download model (~1.95 GB, one-time)
+graphirm model download
+# Prints: export GLINER2_MODEL_DIR="/path/to/snapshot"
+
+# Run server with ONNX extraction
+GLINER2_MODEL_DIR="/path/to/snapshot" graphirm serve
+# Logs: INFO graphirm: Using Local ONNX extraction backend (GLINER2_MODEL_DIR)
+```
+
+### Commits
+
+```
+feat: wire GLiNER2 ONNX extraction into serve + add model download CLI
+fix: allow post_turn_extract to route Local/Hybrid ONNX backends
+fix: correct extraction timeout warning message to 30s
+```
+
+---
+
+## 2026-03-09/10: graphirm-eval Benchmarking Pipeline - COMPLETE ✅
+
+### Summary
+
+`graphirm-eval` — a programmatic evaluation harness that drives Graphirm via its HTTP API, runs a curated task suite, and produces a structured JSON report. Inspired by SWE-bench: every task has explicit pass/fail criteria checked programmatically.
+
+**Final result: 8/8 tasks passing (100%)** on the spoke VM (Hetzner ccx33, 8 vCPU, 32 GB RAM) with DeepSeek Chat + GLiNER2 ONNX extraction.
+
+### Architecture
+
+New binary crate `graphirm-eval/` in the workspace root. The harness:
+1. Starts a live `graphirm serve` subprocess against a temp DB
+2. Runs tasks sequentially via HTTP (POST `/api/sessions`, POST `/api/sessions/{id}/chat`, GET status)
+3. Polls for turn completion
+4. Applies a `Verifier` (content match, command check, graph API query)
+5. Deletes the session
+6. Writes `results/latest.json`
+
+### Task suite (8 tasks)
+
+| ID | Category | Verifier | Time (v7 ONNX) |
+|---|---|---|---|
+| `grep-and-explain` | Tool use | `ResponseContains` | 31s |
+| `read-line-count` | Tool use | `ResponseContainsCommandOutput` | 22s |
+| `bash-line-count` | Tool use | `ResponseContainsCommandOutput` | 10s |
+| `write-fibonacci` | Tool use | `FileContains` | 22s |
+| `multi-turn-read-write` | Multi-turn | `ResponseContains` | 19s |
+| `entity-recall` | Knowledge | `KnowledgeNodeCount ≥ 1` | 7s |
+| `multi-entity` | Knowledge | `KnowledgeNodeCount ≥ 3` | 10s |
+| `graph-integrity` | Graph API | `GraphContains` | 67s |
+
+### New verifier: `ResponseContainsCommandOutput`
+
+Runs a shell command, trims its stdout, and checks the agent's response contains it (case-insensitive). Used for `wc -l` line count checks so tests don't break every time source files change.
+
+```rust
+Verifier::ResponseContainsCommandOutput {
+    command: "sh".into(),
+    args: vec!["-c".into(), "wc -l crates/agent/src/workflow.rs | awk '{print $1}'".into()],
+}
+```
+
+### Key fixes during development
+
+| Problem | Fix |
+|---|---|
+| GraphStore blocking tokio runtime | `spawn_blocking` wrapping throughout all graph calls |
+| HITL gate holding destructive tool calls | `auto_approve: true` in eval `CreateSessionRequest` |
+| `get_knowledge` API returning empty | 2-hop traversal: agent→Produces→interaction→DerivedFrom←knowledge |
+| Extraction not running | Enabled by default in `serve` with `ExtractionConfig { enabled: true, model: ... }` |
+| Anthropic 400: `tool_use` without `tool_result` | Accumulate consecutive `Role::ToolResult` into single `Message::User` |
+| Anthropic 429 rate limits | Switched eval default to DeepSeek |
+| DeepSeek extraction: empty/markdown-wrapped JSON | Strip code fences; handle empty response gracefully |
+| Extraction blocking session for 47s | Moved extraction to final-turn-only; 30s timeout (non-fatal) |
+| DeepSeek making 12+ tool calls on "acknowledge this fact" | Added "no tools needed" to knowledge task prompts; `max_turns: 2` |
+| Hardcoded line counts breaking on file changes | `ResponseContainsCommandOutput` dynamic verifier |
+
+### Files created / changed
+
+- `graphirm-eval/` — new binary crate (full harness)
+- `graphirm-eval/src/{main,client,harness,task,report}.rs`
+- `graphirm-eval/src/tasks/{coding,knowledge,memory,graph}.rs`
+- `crates/agent/src/workflow.rs` — extraction only on final turns, 30s timeout
+- `crates/agent/src/knowledge/extraction.rs` — code-fence stripping, empty response handling
+- `crates/server/src/routes.rs` — corrected `get_knowledge` 2-hop traversal
+- `src/main.rs` — extraction enabled by default in `serve`
+- `Cargo.toml` (root) — `graphirm-eval` workspace member
+
+### Commits (selected)
+
+```
+feat: add graphirm-eval benchmarking harness (8 tasks, HTTP-driven)
+fix: auto-approve HITL gates in eval sessions
+fix: enable extraction by default in serve command with agent model
+fix: get_knowledge 2-hop traversal via DerivedFrom from interaction nodes
+fix: extraction timeout, code-fence stripping, dynamic line-count verifier
+fix: increase extraction timeout to 30s, add no-tools hints to knowledge tasks
+```
+
+---
+
+## 2026-03-09: Fix Blocking GraphStore Calls in Async Contexts - COMPLETE ✅
+
+### Summary
+
+All synchronous `GraphStore` calls (backed by `r2d2`/`rusqlite`) were being made directly on tokio async tasks, blocking the runtime thread pool and causing indefinite hangs under load. All call sites wrapped in `tokio::task::spawn_blocking`.
+
+### Scope
+
+| Crate/file | Changes |
+|---|---|
+| `crates/graph/src/store.rs` | r2d2 pool size → 16, `connection_timeout = 5s` |
+| `crates/tools/src/lib.rs` | `record_content_node` async helper added |
+| All 7 tools (bash, read, write, edit, grep, find, ls) | Use `record_content_node` helper |
+| `crates/agent/src/session.rs` | `record_interaction`, `set_status`, `link_interaction` all async with `spawn_blocking` |
+| `crates/agent/src/workflow.rs` | `build_context`, `emit_graph_update`, all `record_interaction` calls |
+| `crates/server/src/routes.rs` | All route handlers wrapped |
+| `crates/agent/src/multi_agent.rs` | `spawn_subagent`, `wait_for_dependencies`, `collect_subagent_results` |
+| `crates/agent/src/knowledge/{extraction,memory}.rs` | All graph reads/writes |
+
+### Result
+
+`cargo test --workspace` passes. No more runtime hangs. Eval suite able to complete tasks without timeout.
+
+---
+
 ## 2026-03-09: Embedding Providers + Cross-Session Memory Wiring - COMPLETE ✅
 
 ### Summary
