@@ -27,7 +27,7 @@ pub fn tasks() -> Vec<EvalTask> {
                     .to_string(),
             ],
             verifier: Verifier::All(vec![
-                Verifier::ResponseContains { substring: "1483".to_string() },
+                Verifier::ResponseContains { substring: "1496".to_string() },
             ]),
             max_turns: 3,
             timeout_secs: 60,
@@ -42,7 +42,7 @@ pub fn tasks() -> Vec<EvalTask> {
                     .to_string(),
             ],
             verifier: Verifier::ResponseContains {
-                substring: "1483".to_string(),
+                substring: "1496".to_string(),
             },
             max_turns: 3,
             timeout_secs: 90,
