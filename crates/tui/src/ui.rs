@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::App;
+use crate::types::{AppState, FocusPanel};
 
 pub fn render_ui(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
@@ -34,14 +35,14 @@ fn render_header(frame: &mut Frame, area: Rect, app: &mut App) {
         Span::raw("| "),
         Span::styled(
             match app.state {
-                crate::app::AppState::Idle => "Ready",
-                crate::app::AppState::WaitingForAgent => "Thinking...",
-                crate::app::AppState::Streaming => "Streaming...",
+                AppState::Idle => "Ready",
+                AppState::WaitingForAgent => "Thinking...",
+                AppState::Streaming => "Streaming...",
             },
             Style::default().fg(match app.state {
-                crate::app::AppState::Idle => Color::Green,
-                crate::app::AppState::WaitingForAgent => Color::Yellow,
-                crate::app::AppState::Streaming => Color::Cyan,
+                AppState::Idle => Color::Green,
+                AppState::WaitingForAgent => Color::Yellow,
+                AppState::Streaming => Color::Cyan,
             }),
         ),
     ]);
@@ -70,7 +71,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         .borders(Borders::ALL)
         .title(" Input ")
         .border_style(
-            Style::default().fg(if matches!(app.focus, crate::app::FocusPanel::Input) {
+            Style::default().fg(if matches!(app.focus, FocusPanel::Input) {
                 Color::Cyan
             } else {
                 Color::DarkGray
@@ -95,7 +96,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     // Set cursor position when input panel is focused.
     // Use char count (not byte index) for the display column so multi-byte
     // characters (e.g. `é`, `→`) don't offset the visible caret.
-    if matches!(app.focus, crate::app::FocusPanel::Input) {
+    if matches!(app.focus, FocusPanel::Input) {
         let display_col = app.input.content[..app.input.cursor].chars().count() as u16;
         frame.set_cursor_position((inner.x + display_col, inner.y));
     }

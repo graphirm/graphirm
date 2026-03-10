@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use graphirm_llm::Role;
 
-use crate::app::{ChatMessage, ChatView};
+use crate::types::{ChatMessage, ChatView};
 
 impl ChatView {
     pub fn add_message(&mut self, msg: ChatMessage) {
@@ -125,7 +125,7 @@ impl ChatView {
 
 #[cfg(test)]
 mod tests {
-    use crate::app::{ChatMessage, ChatView};
+    use crate::types::{ChatMessage, ChatView};
     use chrono::Utc;
     use graphirm_llm::Role;
     use ratatui::buffer::Buffer;

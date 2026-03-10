@@ -4,7 +4,8 @@ use graphirm_agent::AgentEvent;
 use graphirm_graph::nodes::{GraphNode, NodeType};
 use graphirm_llm::{Role, StreamEvent};
 
-use crate::app::{App, AppState, ChatMessage, GraphNodeEntry};
+use crate::app::App;
+use crate::types::{AppState, ChatMessage, GraphNodeEntry};
 
 pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
     match event {

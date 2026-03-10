@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{App, FocusPanel};
+use crate::app::App;
+use crate::types::FocusPanel;
 
 #[derive(Debug)]
 pub enum KeyAction {
@@ -247,7 +248,7 @@ mod tests {
     #[test]
     fn test_arrow_keys_in_chat() {
         let mut app = make_app();
-        app.focus = crate::app::FocusPanel::Chat;
+        app.focus = FocusPanel::Chat;
 
         // Down scrolls toward newer content (higher offset, step 3)
         handle_key_event(&mut app, key(KeyCode::Down));
@@ -262,29 +263,29 @@ mod tests {
     fn test_tab_cycles_focus() {
         let mut app = make_app();
         app.show_graph = true;
-        assert!(matches!(app.focus, crate::app::FocusPanel::Input));
+        assert!(matches!(app.focus, FocusPanel::Input));
 
         handle_key_event(&mut app, key(KeyCode::Tab));
-        assert!(matches!(app.focus, crate::app::FocusPanel::Chat));
+        assert!(matches!(app.focus, FocusPanel::Chat));
 
         handle_key_event(&mut app, key(KeyCode::Tab));
-        assert!(matches!(app.focus, crate::app::FocusPanel::Graph));
+        assert!(matches!(app.focus, FocusPanel::Graph));
 
         handle_key_event(&mut app, key(KeyCode::Tab));
-        assert!(matches!(app.focus, crate::app::FocusPanel::Input));
+        assert!(matches!(app.focus, FocusPanel::Input));
     }
 
     #[test]
     fn test_tab_skips_graph_when_hidden() {
         let mut app = make_app();
         app.show_graph = false;
-        assert!(matches!(app.focus, crate::app::FocusPanel::Input));
+        assert!(matches!(app.focus, FocusPanel::Input));
 
         handle_key_event(&mut app, key(KeyCode::Tab));
-        assert!(matches!(app.focus, crate::app::FocusPanel::Chat));
+        assert!(matches!(app.focus, FocusPanel::Chat));
 
         handle_key_event(&mut app, key(KeyCode::Tab));
-        assert!(matches!(app.focus, crate::app::FocusPanel::Input));
+        assert!(matches!(app.focus, FocusPanel::Input));
     }
 
     #[test]

@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Widget};
 
-use crate::app::GraphExplorer;
+use crate::types::GraphExplorer;
 
 impl GraphExplorer {
     pub fn select_next(&mut self) {
@@ -92,7 +92,7 @@ impl GraphExplorer {
 
 #[cfg(test)]
 mod tests {
-    use crate::app::{GraphExplorer, GraphNodeEntry};
+    use crate::types::{GraphExplorer, GraphNodeEntry};
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
 

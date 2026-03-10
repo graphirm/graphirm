@@ -4,7 +4,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
-use crate::app::StatusBar;
+use crate::types::StatusBar;
 
 impl StatusBar {
     pub fn update_tokens(&mut self, input: u32, output: u32) {
@@ -71,7 +71,7 @@ fn format_number(n: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::StatusBar;
+    use crate::types::StatusBar;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
 
