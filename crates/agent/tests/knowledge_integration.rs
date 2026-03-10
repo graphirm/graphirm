@@ -113,7 +113,7 @@ async fn test_full_knowledge_pipeline() {
         ),
     ];
 
-    let knowledge_ids = extract_knowledge(&graph, &llm, &messages, &assistant_id, &config)
+    let knowledge_ids = extract_knowledge(graph.clone(), &llm, &messages, &assistant_id, &config)
         .await
         .unwrap();
 

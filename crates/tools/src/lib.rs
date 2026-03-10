@@ -19,8 +19,10 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 pub use error::{ToolError, ToolResult};
+use graphirm_graph::edges::{EdgeType, GraphEdge};
+use graphirm_graph::error::GraphError;
+use graphirm_graph::nodes::{GraphNode, NodeId};
 use graphirm_graph::GraphStore;
-use graphirm_graph::nodes::NodeId;
 pub use registry::ToolRegistry;
 
 /// Context passed to every tool execution.
@@ -36,11 +38,41 @@ pub struct ToolContext {
 }
 
 impl ToolContext {
-    pub fn label_content_node(&self, node: &mut graphirm_graph::nodes::GraphNode) -> ToolResult<()> {
+    pub fn label_content_node(&self, node: &mut GraphNode) -> ToolResult<()> {
         let pos = self.turn_pos_counter.fetch_add(1, Ordering::SeqCst) + 1;
         node.metadata["session_id"] = serde_json::json!(self.agent_id.to_string());
         node.set_label(format!("content_{}_{}_1", self.turn, pos));
         Ok(())
+    }
+
+    /// Record a content node and its edge to the current interaction, using
+    /// `spawn_blocking` so that the synchronous `GraphStore` operations do not
+    /// block tokio worker threads.
+    pub async fn record_content_node(
+        &self,
+        mut node: GraphNode,
+        edge_type: EdgeType,
+    ) -> Result<NodeId, ToolError> {
+        let graph = self.graph.clone();
+        let interaction_id = self.interaction_id.clone();
+        let turn = self.turn;
+        let pos_counter = self.turn_pos_counter.clone();
+        let agent_id = self.agent_id.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let pos = pos_counter.fetch_add(1, Ordering::SeqCst) + 1;
+            node.metadata["session_id"] = serde_json::json!(agent_id.to_string());
+            node.set_label(format!("content_{}_{}_1", turn, pos));
+            let id = graph.add_node(node).map_err(|e: GraphError| {
+                ToolError::ExecutionFailed(e.to_string())
+            })?;
+            graph
+                .add_edge(GraphEdge::new(edge_type, interaction_id, id.clone()))
+                .map_err(|e: GraphError| ToolError::ExecutionFailed(e.to_string()))?;
+            Ok(id)
+        })
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?
     }
 }
 

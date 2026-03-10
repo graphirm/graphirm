@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use graphirm_graph::edges::{EdgeType, GraphEdge};
+use graphirm_graph::edges::EdgeType;
 use graphirm_graph::nodes::{ContentData, GraphNode, NodeType};
 use serde_json::json;
 
@@ -89,20 +89,13 @@ impl Tool for ReadTool {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let mut node = GraphNode::new(NodeType::Content(ContentData {
+        let node = GraphNode::new(NodeType::Content(ContentData {
             content_type: "file".to_string(),
             path: Some(full_path.to_string_lossy().to_string()),
             body: content.clone(),
             language: None,
         }));
-        ctx.label_content_node(&mut node)?;
-        let content_node = ctx.graph.add_node(node)?;
-
-        ctx.graph.add_edge(GraphEdge::new(
-            EdgeType::Reads,
-            ctx.interaction_id.clone(),
-            content_node.clone(),
-        ))?;
+        let content_node = ctx.record_content_node(node, EdgeType::Reads).await?;
 
         Ok(ToolOutput::success_with_node(formatted, content_node))
     }

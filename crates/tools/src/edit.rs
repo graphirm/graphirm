@@ -95,26 +95,40 @@ impl Tool for EditTool {
         let updated = original.replacen(old_string, new_string, 1);
         tokio::fs::write(&full_path, &updated).await?;
 
-        let mut node = GraphNode::new(NodeType::Content(ContentData {
+        let node = GraphNode::new(NodeType::Content(ContentData {
             content_type: "file".to_string(),
             path: Some(full_path.to_string_lossy().to_string()),
             body: updated,
             language: None,
         }));
-        ctx.label_content_node(&mut node)?;
-        let content_node = ctx.graph.add_node(node)?;
-
-        ctx.graph.add_edge(
-            GraphEdge::new(
-                EdgeType::Modifies,
-                ctx.interaction_id.clone(),
-                content_node.clone(),
-            )
-            .with_metadata(json!({
-                "old_string": old_string,
-                "new_string": new_string
-            })),
-        )?;
+        let old_s = old_string.to_string();
+        let new_s = new_string.to_string();
+        let graph = ctx.graph.clone();
+        let interaction_id = ctx.interaction_id.clone();
+        let content_node = {
+            let node = {
+                let mut n = node;
+                ctx.label_content_node(&mut n)?;
+                n
+            };
+            tokio::task::spawn_blocking(move || -> Result<_, ToolError> {
+                let id = graph
+                    .add_node(node)
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                graph
+                    .add_edge(
+                        GraphEdge::new(EdgeType::Modifies, interaction_id, id.clone())
+                            .with_metadata(json!({
+                                "old_string": old_s,
+                                "new_string": new_s
+                            })),
+                    )
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                Ok(id)
+            })
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))??
+        };
 
         Ok(ToolOutput::success_with_node(
             format!("Edited '{}': replaced 1 occurrence", full_path.display()),

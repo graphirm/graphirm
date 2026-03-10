@@ -101,7 +101,13 @@ async fn create_session(
     };
 
     let hitl = Arc::new(HitlGate::new());
-    let mut session = Session::new(state.graph.clone(), config)?.with_hitl(hitl.clone());
+    let graph_for_session = state.graph.clone();
+    let config_clone = config.clone();
+    let mut session = tokio::task::spawn_blocking(move || Session::new(graph_for_session, config_clone))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(ServerError::Agent)?
+        .with_hitl(hitl.clone());
     if let Some(ref retriever) = state.memory_retriever {
         session = session.with_memory_retriever(retriever.clone());
     }
@@ -197,6 +203,9 @@ async fn prompt_session(
     let key = SessionId::from(id.as_str());
 
     // Acquire write lock briefly — release before spawning tasks.
+    // `add_user_message` is async (uses spawn_blocking), so we clone the Arc
+    // and call it after the lock is released to avoid holding a write guard
+    // across an await point.
     let (session, cancel, bus) = {
         let mut sessions = state.sessions.write().await;
         let handle = sessions
@@ -209,8 +218,6 @@ async fn prompt_session(
             ));
         }
 
-        handle.session.add_user_message(&body.content)?;
-
         let cancel = CancellationToken::new();
         handle.signal = cancel.clone();
         handle.status = SessionStatus::Running;
@@ -221,6 +228,13 @@ async fn prompt_session(
 
         (session, cancel, (Arc::new(bus), rx))
     }; // write lock released here
+
+    // Record the user message outside the lock so we don't hold a write guard
+    // across the async spawn_blocking call inside add_user_message.
+    session
+        .add_user_message(&body.content)
+        .await
+        .map_err(ServerError::Agent)?;
 
     let (event_bus, mut rx) = bus;
     let event_tx = state.event_tx.clone();
@@ -315,19 +329,21 @@ async fn get_messages(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<GraphNode>>, ServerError> {
     let key = SessionId::from(id.as_str());
-    let sessions = state.sessions.read().await;
-    let handle = sessions
-        .get(&key)
-        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
+    let session_id = {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&key)
+            .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
+        handle.session.id.clone()
+    };
 
-    let neighbors = state
-        .graph
-        .neighbors(
-            &handle.session.id,
-            Some(EdgeType::Produces),
-            Direction::Outgoing,
-        )
-        .map_err(ServerError::Graph)?;
+    let graph = state.graph.clone();
+    let neighbors = tokio::task::spawn_blocking(move || {
+        graph.neighbors(&session_id, Some(EdgeType::Produces), Direction::Outgoing)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))?
+    .map_err(ServerError::Graph)?;
 
     let messages: Vec<GraphNode> = neighbors
         .into_iter()
@@ -361,14 +377,18 @@ async fn get_session_graph(
     Path(session_id): Path<String>,
 ) -> Result<Json<GraphResponse>, ServerError> {
     let key = SessionId::from(session_id.as_str());
-    let sessions = state.sessions.read().await;
-    let handle = sessions
-        .get(&key)
-        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+    let session_node_id = {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&key)
+            .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+        handle.session.id.clone()
+    };
 
-    let (nodes, edges) = state
-        .graph
-        .subgraph(&handle.session.id, 10)
+    let graph = state.graph.clone();
+    let (nodes, edges) = tokio::task::spawn_blocking(move || graph.subgraph(&session_node_id, 10))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
         .map_err(ServerError::Graph)?;
 
     Ok(Json(GraphResponse { nodes, edges }))
@@ -380,15 +400,18 @@ async fn get_graph_node(
     Path((session_id, node_id)): Path<(String, String)>,
 ) -> Result<Json<GraphNode>, ServerError> {
     let key = SessionId::from(session_id.as_str());
-    let sessions = state.sessions.read().await;
-    let _ = sessions
-        .get(&key)
-        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
-    drop(sessions);
+    {
+        let sessions = state.sessions.read().await;
+        let _ = sessions
+            .get(&key)
+            .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+    }
 
-    let node = state
-        .graph
-        .get_node(&NodeId::from(node_id.as_str()))
+    let graph = state.graph.clone();
+    let target_node_id = NodeId::from(node_id.as_str());
+    let node = tokio::task::spawn_blocking(move || graph.get_node(&target_node_id))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
         .map_err(|_| ServerError::NotFound(format!("Node not found: {node_id}")))?;
 
     Ok(Json(node))
@@ -401,17 +424,21 @@ async fn get_subgraph(
     Query(query): Query<SubgraphQuery>,
 ) -> Result<Json<GraphResponse>, ServerError> {
     let key = SessionId::from(session_id.as_str());
-    let sessions = state.sessions.read().await;
-    let _ = sessions
-        .get(&key)
-        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
-    drop(sessions);
+    {
+        let sessions = state.sessions.read().await;
+        let _ = sessions
+            .get(&key)
+            .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+    }
 
     let depth = query.depth.unwrap_or(3);
-    let (nodes, edges) = state
-        .graph
-        .subgraph(&NodeId::from(node_id.as_str()), depth)
-        .map_err(ServerError::Graph)?;
+    let graph = state.graph.clone();
+    let target_node_id = NodeId::from(node_id.as_str());
+    let (nodes, edges) =
+        tokio::task::spawn_blocking(move || graph.subgraph(&target_node_id, depth))
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?
+            .map_err(ServerError::Graph)?;
 
     Ok(Json(GraphResponse { nodes, edges }))
 }
@@ -422,19 +449,21 @@ async fn get_tasks(
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<GraphNode>>, ServerError> {
     let key = SessionId::from(session_id.as_str());
-    let sessions = state.sessions.read().await;
-    let handle = sessions
-        .get(&key)
-        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+    let session_node_id = {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&key)
+            .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+        handle.session.id.clone()
+    };
 
-    let neighbors = state
-        .graph
-        .neighbors(
-            &handle.session.id,
-            Some(EdgeType::Produces),
-            Direction::Outgoing,
-        )
-        .map_err(ServerError::Graph)?;
+    let graph = state.graph.clone();
+    let neighbors = tokio::task::spawn_blocking(move || {
+        graph.neighbors(&session_node_id, Some(EdgeType::Produces), Direction::Outgoing)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))?
+    .map_err(ServerError::Graph)?;
 
     let tasks: Vec<GraphNode> = neighbors
         .into_iter()
@@ -450,19 +479,21 @@ async fn get_knowledge(
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<GraphNode>>, ServerError> {
     let key = SessionId::from(session_id.as_str());
-    let sessions = state.sessions.read().await;
-    let handle = sessions
-        .get(&key)
-        .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+    let session_node_id = {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&key)
+            .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+        handle.session.id.clone()
+    };
 
-    let neighbors = state
-        .graph
-        .neighbors(
-            &handle.session.id,
-            Some(EdgeType::Produces),
-            Direction::Outgoing,
-        )
-        .map_err(ServerError::Graph)?;
+    let graph = state.graph.clone();
+    let neighbors = tokio::task::spawn_blocking(move || {
+        graph.neighbors(&session_node_id, Some(EdgeType::Produces), Direction::Outgoing)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))?
+    .map_err(ServerError::Graph)?;
 
     let knowledge: Vec<GraphNode> = neighbors
         .into_iter()

@@ -184,9 +184,9 @@ async fn test_multi_agent_graph_isolation() {
     // Create primary session with 3 user messages
     let primary = primary_config();
     let session = Session::new(graph.clone(), primary.clone()).unwrap();
-    session.add_user_message("Message 1").unwrap();
-    session.add_user_message("Message 2").unwrap();
-    session.add_user_message("Message 3").unwrap();
+    session.add_user_message("Message 1").await.unwrap();
+    session.add_user_message("Message 2").await.unwrap();
+    session.add_user_message("Message 3").await.unwrap();
 
     // Spawn a subagent
     let cancel = CancellationToken::new();

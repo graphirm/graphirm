@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use r2d2::Pool;
@@ -25,7 +26,8 @@ impl GraphStore {
             Ok(())
         });
         let pool = Pool::builder()
-            .max_size(4)
+            .max_size(16)
+            .connection_timeout(Duration::from_secs(5))
             .build(manager)
             .map_err(GraphError::Pool)?;
 

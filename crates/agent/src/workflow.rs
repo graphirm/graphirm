@@ -41,7 +41,13 @@ pub async fn stream_and_record(
             .unwrap_or(100_000),
         ..crate::context::ContextConfig::default()
     };
-    let window = crate::context::build_context(&session.graph, &session.id, &context_config)?;
+    let graph_ref = session.graph.clone();
+    let session_id_ref = session.id.clone();
+    let window = tokio::task::spawn_blocking(move || {
+        crate::context::build_context(&graph_ref, &session_id_ref, &context_config)
+    })
+    .await
+    .map_err(|e| AgentError::Join(e.to_string()))??;
     let mut context = Vec::with_capacity(1 + window.messages.len());
     context.push(window.system);
     context.extend(window.messages);
@@ -96,7 +102,7 @@ pub async fn stream_and_record(
     }));
     interaction_node.metadata = serde_json::Value::Object(metadata);
 
-    let node_id = session.record_interaction(interaction_node)?;
+    let node_id = session.record_interaction(interaction_node).await?;
 
     info!(node_id = %node_id, "Recorded assistant response");
 
@@ -211,7 +217,7 @@ async fn execute_tools_parallel(
         }));
         tool_node.metadata = serde_json::Value::Object(tool_metadata);
 
-        match session.record_interaction(tool_node) {
+        match session.record_interaction(tool_node).await {
             Ok(node_id) => {
                 events.emit(AgentEvent::ToolEnd {
                     node_id: node_id.clone(),
@@ -260,7 +266,7 @@ async fn execute_tools_parallel(
                 Err(_) => HitlDecision::Reject("Gate sender dropped unexpectedly".to_string()),
             },
             _ = cancel.cancelled() => {
-                let _ = session.set_status("cancelled");
+                let _ = session.set_status("cancelled").await;
                 return Err(AgentError::Cancelled);
             }
         };
@@ -291,7 +297,7 @@ async fn execute_tools_parallel(
                 }));
                 tool_node.metadata = serde_json::Value::Object(tool_metadata);
 
-                match session.record_interaction(tool_node) {
+                match session.record_interaction(tool_node).await {
                     Ok(result_node_id) => {
                         let edge = GraphEdge::new(
                             EdgeType::ApprovedBy,
@@ -428,16 +434,23 @@ fn check_soft_escalation(
 /// Emit a GraphUpdate event with a fresh snapshot of the 50 most recent nodes.
 /// Errors from querying the store are logged and silently swallowed so a
 /// display refresh failure never crashes the agent loop.
-fn emit_graph_update(
+async fn emit_graph_update(
     session: &Session,
     node_id: &NodeId,
     edge_ids: Vec<NodeId>,
     events: &EventBus,
 ) {
-    let recent_nodes = match session.graph.list_recent_nodes(50) {
-        Ok(nodes) => nodes,
-        Err(e) => {
+    let graph = session.graph.clone();
+    let recent_nodes = match tokio::task::spawn_blocking(move || graph.list_recent_nodes(50))
+        .await
+    {
+        Ok(Ok(nodes)) => nodes,
+        Ok(Err(e)) => {
             tracing::warn!("GraphUpdate: failed to fetch recent nodes: {e}");
+            return;
+        }
+        Err(e) => {
+            tracing::warn!("GraphUpdate: spawn_blocking panicked: {e}");
             return;
         }
     };
@@ -472,7 +485,7 @@ pub async fn run_agent_loop(
 
     // Pre-loop: inject relevant knowledge from past sessions into system prompt.
     if let Some(retriever) = session.memory_retriever() {
-        let query = session.recent_user_message().unwrap_or_default();
+        let query = session.recent_user_message().await.unwrap_or_default();
         match retriever.retrieve_relevant(&query, 5).await {
             Ok(nodes) => {
                 let context =
@@ -493,7 +506,7 @@ pub async fn run_agent_loop(
         // Check cancellation before starting each turn
         if cancel.is_cancelled() {
             info!("Agent loop cancelled at turn {}", turn);
-            let _ = session.set_status("cancelled");
+            let _ = session.set_status("cancelled").await;
             events.emit(AgentEvent::AgentEnd {
                 agent_id: session.id.clone(),
                 node_ids: all_node_ids,
@@ -514,7 +527,7 @@ pub async fn run_agent_loop(
                 tokio::select! {
                     _ = rx => { /* unblocked by resume */ }
                     _ = cancel.cancelled() => {
-                        let _ = session.set_status("cancelled");
+                        let _ = session.set_status("cancelled").await;
                         return Err(AgentError::Cancelled);
                     }
                 }
@@ -529,7 +542,7 @@ pub async fn run_agent_loop(
             result = stream_and_record(session, llm, tools, events) => result?,
             _ = cancel.cancelled() => {
                 info!("Agent loop cancelled during LLM call at turn {}", turn);
-                let _ = session.set_status("cancelled");
+                let _ = session.set_status("cancelled").await;
                 events.emit(AgentEvent::AgentEnd {
                     agent_id: session.id.clone(),
                     node_ids: all_node_ids,
@@ -542,7 +555,7 @@ pub async fn run_agent_loop(
         // Post-turn knowledge extraction + embedding — non-fatal; log and continue on error.
         if let Some(ref extraction_config) = session.agent_config.extraction {
             match crate::knowledge::extraction::post_turn_extract(
-                &session.graph,
+                session.graph.clone(),
                 llm,
                 extraction_config,
                 &response_id,
@@ -574,7 +587,7 @@ pub async fn run_agent_loop(
                 response_id: response_id.clone(),
                 tool_result_ids: vec![],
             });
-            emit_graph_update(session, &response_id, vec![], events);
+            emit_graph_update(session, &response_id, vec![], events).await;
             break;
         }
 
@@ -616,13 +629,13 @@ pub async fn run_agent_loop(
             response_id: response_id.clone(),
             tool_result_ids: tool_result_ids.clone(),
         });
-        emit_graph_update(session, &response_id, tool_result_ids, events);
+        emit_graph_update(session, &response_id, tool_result_ids, events).await;
 
         // The loop runs 0..max_turns; hitting this on the last iteration with
         // outstanding tool calls means we consumed the full budget.
         if turn + 1 >= max_turns {
             info!("Recursion limit reached at {} turns", max_turns);
-            let _ = session.set_status("limit_reached");
+            let _ = session.set_status("limit_reached").await;
             events.emit(AgentEvent::AgentEnd {
                 agent_id: session.id.clone(),
                 node_ids: all_node_ids,
@@ -631,7 +644,7 @@ pub async fn run_agent_loop(
         }
     }
 
-    let _ = session.set_status("completed");
+    let _ = session.set_status("completed").await;
     events.emit(AgentEvent::AgentEnd {
         agent_id: session.id.clone(),
         node_ids: all_node_ids,
@@ -803,7 +816,7 @@ mod tests {
         let config = AgentConfig::default();
         let session = Session::new(graph.clone(), config).unwrap();
 
-        session.add_user_message("What is 2+2?").unwrap();
+        session.add_user_message("What is 2+2?").await.unwrap();
 
         let provider = MockProvider::new(vec![text_response("The answer is 4.")]);
         let tools = ToolRegistry::new();
@@ -834,7 +847,7 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("What is 2+2?").unwrap();
+        session.add_user_message("What is 2+2?").await.unwrap();
 
         let provider = MockProvider::new(vec![text_response("4")]);
         let tools = ToolRegistry::new();
@@ -876,7 +889,7 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("List files").unwrap();
+        session.add_user_message("List files").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(
@@ -973,7 +986,7 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("Echo a message").unwrap();
+        session.add_user_message("Echo a message").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(
@@ -1037,7 +1050,7 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("List and find files").unwrap();
+        session.add_user_message("List and find files").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![
@@ -1101,7 +1114,7 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("Do infinite things").unwrap();
+        session.add_user_message("Do infinite things").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(
@@ -1181,7 +1194,7 @@ mod tests {
         let session = Session::new(graph.clone(), config)
             .unwrap()
             .with_hitl(hitl.clone());
-        session.add_user_message("Write a file").unwrap();
+        session.add_user_message("Write a file").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(
@@ -1247,7 +1260,7 @@ mod tests {
         let session = Session::new(graph.clone(), config)
             .unwrap()
             .with_hitl(hitl.clone());
-        session.add_user_message("Write a file").unwrap();
+        session.add_user_message("Write a file").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(
@@ -1333,7 +1346,7 @@ mod tests {
         let session = Session::new(graph.clone(), config)
             .unwrap()
             .with_hitl(hitl.clone());
-        session.add_user_message("Hello").unwrap();
+        session.add_user_message("Hello").await.unwrap();
 
         // No tool calls — just a simple text response after the pause clears.
         let provider = MockProvider::new(vec![text_response("All good.")]);
@@ -1392,7 +1405,7 @@ mod tests {
         };
         // No .with_hitl() — hitl is None
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("Write a file").unwrap();
+        session.add_user_message("Write a file").await.unwrap();
 
         // LLM requests a destructive tool (write), then returns a text response.
         let provider = MockProvider::new(vec![
@@ -1428,7 +1441,7 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("Start working").unwrap();
+        session.add_user_message("Start working").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(

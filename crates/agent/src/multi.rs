@@ -153,7 +153,7 @@ pub async fn spawn_subagent(
         .ok_or_else(|| AgentError::AgentNotFound(agent_name.to_string()))?
         .clone();
 
-    // Create Task node
+    // Create Task node and Session in a single spawn_blocking to avoid blocking the runtime.
     let task_node = GraphNode::new(NodeType::Task(TaskData {
         title: format!("Delegated to {}", agent_name),
         description: task_description.to_string(),
@@ -161,25 +161,28 @@ pub async fn spawn_subagent(
         priority: None,
     }));
     let task_id = task_node.id.clone();
-    graph.add_node(task_node)?;
-
-    // DelegatesTo edge: parent agent → task
-    graph.add_edge(GraphEdge::new(
-        EdgeType::DelegatesTo,
-        parent_agent_id.clone(),
-        task_id.clone(),
-    ))?;
-
-    // Create subagent Session (creates Agent node)
-    let session = Session::new(graph.clone(), agent_config.clone())?;
-    let agent_id = session.id.clone();
-
-    // SpawnedBy edge: task → subagent
-    graph.add_edge(GraphEdge::new(
-        EdgeType::SpawnedBy,
-        task_id.clone(),
-        agent_id.clone(),
-    ))?;
+    let graph_for_setup = graph.clone();
+    let parent_agent_id_clone = parent_agent_id.clone();
+    let agent_config_clone = agent_config.clone();
+    let task_id_clone = task_id.clone();
+    let (session, agent_id) = tokio::task::spawn_blocking(move || -> Result<_, AgentError> {
+        graph_for_setup.add_node(task_node)?;
+        graph_for_setup.add_edge(GraphEdge::new(
+            EdgeType::DelegatesTo,
+            parent_agent_id_clone,
+            task_id_clone.clone(),
+        ))?;
+        let session = Session::new(graph_for_setup.clone(), agent_config_clone)?;
+        let agent_id = session.id.clone();
+        graph_for_setup.add_edge(GraphEdge::new(
+            EdgeType::SpawnedBy,
+            task_id_clone,
+            agent_id.clone(),
+        ))?;
+        Ok((session, agent_id))
+    })
+    .await
+    .map_err(|e| AgentError::Join(e.to_string()))??;
 
     // Build scoped context: skip system message (Session handles that),
     // add user messages from task + context nodes
@@ -195,7 +198,7 @@ pub async fn spawn_subagent(
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            session.add_user_message(&content_text)?;
+            session.add_user_message(&content_text).await?;
         }
     }
 
@@ -227,18 +230,21 @@ pub async fn spawn_subagent(
         )
         .await;
 
-        // Update task status in graph
+        // Update task status in graph via spawn_blocking to avoid blocking the runtime.
         let status = if result.is_ok() {
             TaskStatus::Completed
         } else {
             TaskStatus::Failed
         };
-        if let Ok(mut task_node) = graph_for_status.get_node(&task_id_for_status) {
-            if let NodeType::Task(ref mut data) = task_node.node_type {
-                data.status = status;
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Ok(mut task_node) = graph_for_status.get_node(&task_id_for_status) {
+                if let NodeType::Task(ref mut data) = task_node.node_type {
+                    data.status = status;
+                }
+                let _ = graph_for_status.update_node(&task_id_for_status, task_node);
             }
-            let _ = graph_for_status.update_node(&task_id_for_status, task_node);
-        }
+        })
+        .await;
 
         info!(agent = %agent_name_owned, status = %status, "Subagent finished");
         result
@@ -304,14 +310,19 @@ pub async fn wait_for_subagents(
 /// Returns `Err(Cancelled)` if the cancel token fires, `Err(Workflow)` on timeout,
 /// and `Err(SubagentFailed)` if any prerequisite task reaches `Failed` status.
 pub async fn wait_for_dependencies(
-    graph: &GraphStore,
+    graph: &Arc<GraphStore>,
     task_id: &NodeId,
     cancel: &CancellationToken,
     timeout: std::time::Duration,
 ) -> Result<(), AgentError> {
-    let deps = graph
-        .neighbors(task_id, Some(EdgeType::DependsOn), Direction::Outgoing)
-        .map_err(|e| AgentError::Context(format!("Failed to read dependencies: {}", e)))?;
+    let g = graph.clone();
+    let tid = task_id.clone();
+    let deps = tokio::task::spawn_blocking(move || {
+        g.neighbors(&tid, Some(EdgeType::DependsOn), Direction::Outgoing)
+    })
+    .await
+    .map_err(|e| AgentError::Join(e.to_string()))?
+    .map_err(|e| AgentError::Context(format!("Failed to read dependencies: {}", e)))?;
 
     if deps.is_empty() {
         return Ok(());
@@ -321,11 +332,23 @@ pub async fn wait_for_dependencies(
     let deadline = tokio::time::Instant::now() + timeout;
 
     loop {
+        let g = graph.clone();
+        let dep_ids_clone = dep_ids.clone();
+        let statuses: Result<Vec<_>, AgentError> = tokio::task::spawn_blocking(move || {
+            dep_ids_clone
+                .iter()
+                .map(|dep_id| {
+                    g.get_node(dep_id)
+                        .map(|n| (dep_id.clone(), n))
+                        .map_err(|e| AgentError::Context(format!("Failed to read dep: {}", e)))
+                })
+                .collect()
+        })
+        .await
+        .map_err(|e| AgentError::Join(e.to_string()))?;
+
         let mut all_done = true;
-        for dep_id in &dep_ids {
-            let node = graph
-                .get_node(dep_id)
-                .map_err(|e| AgentError::Context(format!("Failed to read dep: {}", e)))?;
+        for (dep_id, node) in statuses? {
             if let NodeType::Task(data) = &node.node_type {
                 match data.status {
                     TaskStatus::Completed => {}

@@ -402,9 +402,12 @@ async fn run_chat(model: String, db_path: &PathBuf) -> Result<(), GraphirmError>
 
     // `App::run` is a blocking crossterm loop. Run it on the blocking thread
     // pool so it doesn't starve other tokio tasks (e.g. the agent loop).
+    // `add_user_message` is async — use Handle::block_on to call it from
+    // within the sync TUI callback running on a spawn_blocking thread.
+    let handle = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
         app.run(move |msg| {
-            if let Err(e) = session_for_submit.add_user_message(&msg) {
+            if let Err(e) = handle.block_on(session_for_submit.add_user_message(&msg)) {
                 tracing::error!("Failed to add user message: {e}");
                 return;
             }

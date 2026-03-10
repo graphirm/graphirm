@@ -48,7 +48,12 @@ impl MemoryRetriever {
     /// Embed a knowledge node's entity and summary, storing the vector
     /// in both SQLite and the in-memory HNSW index.
     pub async fn embed_knowledge_node(&self, node_id: &NodeId) -> Result<(), AgentError> {
-        let node = self.graph.get_node(node_id)?;
+        // Fetch the node in a blocking thread pool task.
+        let graph = self.graph.clone();
+        let nid = node_id.clone();
+        let node = tokio::task::spawn_blocking(move || graph.get_node(&nid))
+            .await
+            .map_err(|e| AgentError::Join(e.to_string()))??;
 
         let text = match &node.node_type {
             NodeType::Knowledge(data) => {
@@ -71,7 +76,13 @@ impl MemoryRetriever {
             )));
         }
 
-        self.graph.set_embedding(node_id, &embedding)?;
+        // Persist the embedding in a blocking thread pool task.
+        let graph = self.graph.clone();
+        let nid = node_id.clone();
+        let emb = embedding.clone();
+        tokio::task::spawn_blocking(move || graph.set_embedding(&nid, &emb))
+            .await
+            .map_err(|e| AgentError::Join(e.to_string()))??;
 
         {
             let mut idx = self.vector_index.write().await;
@@ -90,9 +101,10 @@ impl MemoryRetriever {
     /// Embeddings whose dimension doesn't match `self.embedding_dimension` are skipped
     /// with a warning — this happens when the embedding backend was changed between runs.
     pub async fn hydrate_from_graph(&self) -> Result<usize, AgentError> {
-        let all_embeddings = self
-            .graph
-            .get_all_embeddings()
+        let graph = self.graph.clone();
+        let all_embeddings = tokio::task::spawn_blocking(move || graph.get_all_embeddings())
+            .await
+            .map_err(|e| AgentError::Join(e.to_string()))?
             .map_err(|e| AgentError::Workflow(format!("Failed to load embeddings: {e}")))?;
 
         let total = all_embeddings.len();
@@ -135,13 +147,20 @@ impl MemoryRetriever {
         let candidates = index.search(&query_embedding, k);
         drop(index);
 
-        let mut nodes = Vec::with_capacity(candidates.len());
-        for (node_id, _distance) in candidates {
-            match self.graph.get_node(&node_id) {
+        // Fetch all candidate nodes from the graph in one spawn_blocking call.
+        let graph = self.graph.clone();
+        let node_ids: Vec<NodeId> = candidates.into_iter().map(|(id, _)| id).collect();
+        let fetched: Vec<Result<GraphNode, _>> =
+            tokio::task::spawn_blocking(move || node_ids.into_iter().map(|id| graph.get_node(&id)).collect())
+                .await
+                .map_err(|e| AgentError::Join(e.to_string()))?;
+
+        let mut nodes = Vec::with_capacity(fetched.len());
+        for result in fetched {
+            match result {
                 Ok(node) => nodes.push(node),
                 Err(e) => {
                     tracing::warn!(
-                        node_id = %node_id,
                         error = %e,
                         "Knowledge node in HNSW index but missing from graph"
                     );

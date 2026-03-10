@@ -89,6 +89,7 @@ async fn test_agent_loop_soft_escalation_prevents_repeated_reads() {
     // Start with a user message to initialize the conversation
     session
         .add_user_message("Analyze the file /same/file.rs")
+        .await
         .unwrap();
 
     // Mock provider: turns 0-2 return repeated read calls, response 3 is synthesis text
@@ -146,6 +147,7 @@ async fn test_agent_loop_hard_limit_if_model_ignores_synthesis() {
     // Start with a user message
     session
         .add_user_message("Analyze the file /same/file.rs")
+        .await
         .unwrap();
 
     // Mock provider: turns 0-3 all return read (ignoring synthesis directive at turn 2)
@@ -204,6 +206,7 @@ async fn test_soft_escalation_respects_turn_threshold() {
 
     session
         .add_user_message("Read a file multiple times")
+        .await
         .unwrap();
 
     // Mock provider: repeated calls for turns 0-3, then text on turn 4
