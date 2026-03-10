@@ -1,8 +1,10 @@
 # Structured LLM Response Discovery Plan
 
+> **For Claude:** When implementing, use superpowers:executing-plans (worktree, batch tasks, verification). Phase 1 task breakdown below; Phases 2–6 can be expanded similarly.
+
 **Goal:** Discover what structure exists inside LLM responses, validate it empirically using GLiNER2, and define a schema that Graphirm can request from models and persist in the graph.
 
-**Status:** Concept — no implementation yet.
+**Status:** Phase 1 implemented (corpus export); Phases 2–6 not started.
 
 ---
 
@@ -53,6 +55,21 @@ Gather real LLM responses from Graphirm usage (or generate them by running the a
 **Output:** A corpus of `(session_id, turn, role, text)` tuples, focusing on assistant turns.
 
 **Scale target:** 200–500 assistant turns across varied tasks (coding, debugging, explanation, multi-step, tool-heavy).
+
+#### Task breakdown — Phase 1 (Corpus export)
+
+| Task | Summary | Verification | Done |
+|------|---------|---------------|------|
+| 1.1 | Add `GraphStore::get_session_interactions(session_id)` returning Interaction nodes for that session, ordered by `created_at` | Unit test: add 2 sessions with interactions, call for each session, assert order and content | ✅ |
+| 1.2 | Define corpus record type (e.g. `CorpusTurn`: session_id, turn_index, role, text) and JSONL serialisation | Unit test: round-trip serialise/deserialise | ✅ |
+| 1.3 | Add corpus export: open graph at path, list session IDs (from Agent nodes), for each session call `get_session_interactions`, filter role=assistant, write JSONL to file or stdout | Integration test: in-memory graph with 1 session and 2 assistant turns, export to temp file, assert 2 lines and content | ✅ |
+| 1.4 | Add CLI: `graphirm export-corpus --db <path> [--out <file>]` (default stdout), document in README or docs | Manual: run against a real graph DB, confirm JSONL lines | ✅ |
+
+**Files (Phase 1):**
+- Modify: `crates/graph/src/store.rs` (new method)
+- Create or modify: `crates/graph/src/export.rs` or new `crates/graph/src/corpus.rs` (corpus types + export)
+- Modify: `src/main.rs` or CLI crate (export-corpus subcommand)
+- Test: `crates/graph/src/store.rs` (tests), `crates/graph/src/export.rs` or corpus tests
 
 ### Phase 2: Candidate Label Exploration
 

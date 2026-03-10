@@ -62,6 +62,16 @@ enum Commands {
         #[arg(short, long, default_value = "5555")]
         port: u16,
     },
+
+    /// Export assistant turns to JSONL for structured-response discovery (GLiNER2).
+    ///
+    /// Reads the graph at --db and writes one JSON object per assistant turn
+    /// (session_id, turn_index, role, text). Default output is stdout.
+    ExportCorpus {
+        /// Output file (default: stdout)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -118,6 +128,13 @@ async fn main() -> Result<(), GraphirmError> {
                 .with_env_filter("info")
                 .init();
             run_model_command(action).await?;
+        }
+        Commands::ExportCorpus { out } => {
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter("warn")
+                .init();
+            run_export_corpus(&db_path, out)?;
         }
         Commands::Serve { host, port } => {
             tracing_subscriber::fmt()
@@ -285,6 +302,19 @@ fn run_graph_command(action: GraphAction, db_path: &PathBuf) -> Result<(), Graph
             }
         }
     }
+    Ok(())
+}
+
+fn run_export_corpus(db_path: &PathBuf, out: Option<PathBuf>) -> Result<(), GraphirmError> {
+    let graph = graphirm_graph::GraphStore::open(db_path.to_str().unwrap_or("graph.db"))?;
+    let count = if let Some(path) = out {
+        let mut f = std::fs::File::create(path)?;
+        graphirm_graph::export_corpus_to_jsonl(&graph, &mut f, true)?
+    } else {
+        let mut stdout = std::io::stdout();
+        graphirm_graph::export_corpus_to_jsonl(&graph, &mut stdout, true)?
+    };
+    eprintln!("Exported {} assistant turns.", count);
     Ok(())
 }
 

@@ -383,6 +383,57 @@ impl GraphStore {
         Ok(edge.id)
     }
 
+    /// Return all Interaction nodes for a session, ordered by creation time (oldest first).
+    ///
+    /// Session is identified by the agent node id stored in each node's `metadata.session_id`.
+    /// Used for corpus export (assistant turns) and session thread export.
+    pub fn get_session_interactions(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<GraphNode>, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, data, metadata, created_at, updated_at
+             FROM nodes
+             WHERE node_type = 'interaction'
+               AND json_extract(metadata, '$.session_id') = ?1
+             ORDER BY created_at ASC",
+        )?;
+
+        let rows: Vec<_> = stmt
+            .query_map(params![session_id], |row| {
+                let id: String = row.get(0)?;
+                let data: String = row.get(1)?;
+                let metadata: String = row.get(2)?;
+                let created_at: String = row.get(3)?;
+                let updated_at: String = row.get(4)?;
+                Ok((id, data, metadata, created_at, updated_at))
+            })?
+            .collect::<Result<_, _>>()?;
+
+        let mut result = Vec::new();
+        for (id, data, metadata, created_at_str, updated_at_str) in rows {
+            let node_type: NodeType = serde_json::from_str(&data)?;
+            let metadata: serde_json::Value = serde_json::from_str(&metadata)
+                .unwrap_or(serde_json::Value::Object(Default::default()));
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+
+            result.push(GraphNode {
+                id: NodeId(id),
+                node_type,
+                metadata,
+                created_at,
+                updated_at,
+            });
+        }
+        Ok(result)
+    }
+
     pub fn get_edge(&self, id: &EdgeId) -> Result<GraphEdge, GraphError> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
@@ -1037,6 +1088,66 @@ mod tests {
             .count_session_nodes(&NodeId::from("session-a"), "content")
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn get_session_interactions_returns_ordered_assistant_and_user_turns() {
+        let store = GraphStore::open_memory().unwrap();
+
+        let make_interaction = |session: &str, role: &str, content: &str| {
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: role.to_string(),
+                content: content.to_string(),
+                token_count: None,
+            }));
+            node.metadata["session_id"] = serde_json::json!(session);
+            node
+        };
+
+        // Session A: user, assistant, user
+        store.add_node(make_interaction("sess-a", "user", "Hello")).unwrap();
+        store.add_node(make_interaction("sess-a", "assistant", "Hi!")).unwrap();
+        store.add_node(make_interaction("sess-a", "user", "Bye")).unwrap();
+
+        // Session B: one assistant turn
+        store.add_node(make_interaction("sess-b", "assistant", "Only reply")).unwrap();
+
+        let a_turns = store.get_session_interactions("sess-a").unwrap();
+        assert_eq!(a_turns.len(), 3);
+        let a_roles: Vec<&str> = a_turns
+            .iter()
+            .map(|n| {
+                if let NodeType::Interaction(ref d) = n.node_type {
+                    d.role.as_str()
+                } else {
+                    unreachable!()
+                }
+            })
+            .collect();
+        assert_eq!(a_roles, ["user", "assistant", "user"]);
+        let a_contents: Vec<&str> = a_turns
+            .iter()
+            .map(|n| {
+                if let NodeType::Interaction(ref d) = n.node_type {
+                    d.content.as_str()
+                } else {
+                    unreachable!()
+                }
+            })
+            .collect();
+        assert_eq!(a_contents, ["Hello", "Hi!", "Bye"]);
+
+        let b_turns = store.get_session_interactions("sess-b").unwrap();
+        assert_eq!(b_turns.len(), 1);
+        if let NodeType::Interaction(ref d) = b_turns[0].node_type {
+            assert_eq!(d.role, "assistant");
+            assert_eq!(d.content, "Only reply");
+        } else {
+            unreachable!()
+        }
+
+        let empty = store.get_session_interactions("nonexistent").unwrap();
+        assert!(empty.is_empty());
     }
 
     #[test]
