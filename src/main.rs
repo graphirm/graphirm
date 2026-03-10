@@ -125,8 +125,15 @@ async fn main() -> Result<(), GraphirmError> {
             // Use the model name from GRAPHIRM_MODEL so sessions use the correct
             // model for the configured provider (not the AgentConfig default which
             // is hardcoded to a Claude model name).
+            // Enable post-turn knowledge extraction using the same model so the
+            // /api/graph/{session_id}/knowledge endpoint returns real nodes.
             let agent_config = graphirm_agent::AgentConfig {
                 model: model_name.to_string(),
+                extraction: Some(graphirm_agent::knowledge::extraction::ExtractionConfig {
+                    enabled: true,
+                    model: model_name.to_string(),
+                    ..Default::default()
+                }),
                 ..agent_config
             };
 

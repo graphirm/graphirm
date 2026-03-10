@@ -481,6 +481,12 @@ async fn get_tasks(
 }
 
 /// `GET /api/graph/{session_id}/knowledge` — list Knowledge nodes produced by this session.
+///
+/// Knowledge nodes are not linked directly to the agent node. They are linked via
+/// `DerivedFrom` edges from the knowledge node to the interaction node that triggered
+/// extraction. So we do a 2-hop traversal:
+///   agent → (Produces, Outgoing) → interaction nodes
+///   interaction node → (DerivedFrom, Incoming) → knowledge nodes
 async fn get_knowledge(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -495,17 +501,30 @@ async fn get_knowledge(
     };
 
     let graph = state.graph.clone();
-    let neighbors = tokio::task::spawn_blocking(move || {
-        graph.neighbors(&session_node_id, Some(EdgeType::Produces), Direction::Outgoing)
+    let knowledge = tokio::task::spawn_blocking(move || {
+        // Hop 1: get all interaction nodes for this session.
+        let interaction_nodes =
+            graph.neighbors(&session_node_id, Some(EdgeType::Produces), Direction::Outgoing)?;
+
+        // Hop 2: for each interaction node, find knowledge nodes that derived from it.
+        let mut knowledge_nodes: Vec<GraphNode> = Vec::new();
+        for node in &interaction_nodes {
+            if !matches!(node.node_type, NodeType::Interaction(_)) {
+                continue;
+            }
+            let derived = graph.neighbors(&node.id, Some(EdgeType::DerivedFrom), Direction::Incoming)?;
+            for k in derived {
+                if matches!(k.node_type, NodeType::Knowledge(_)) {
+                    knowledge_nodes.push(k);
+                }
+            }
+        }
+
+        Ok::<_, graphirm_graph::GraphError>(knowledge_nodes)
     })
     .await
     .map_err(|e| ServerError::Internal(e.to_string()))?
     .map_err(ServerError::Graph)?;
-
-    let knowledge: Vec<GraphNode> = neighbors
-        .into_iter()
-        .filter(|n| matches!(n.node_type, NodeType::Knowledge(_)))
-        .collect();
 
     Ok(Json(knowledge))
 }

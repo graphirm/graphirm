@@ -22,17 +22,12 @@ impl TestHarness {
         let db_path = db_dir.path().join("eval.db");
         let port = 19555u16; // Fixed eval port — don't run alongside the real server
 
-        // Use a fast model for eval — prefer Anthropic Haiku if ANTHROPIC_API_KEY is set,
-        // otherwise fall through to whatever GRAPHIRM_MODEL the caller set.
+        // Use a fast model for eval — prefer EVAL_MODEL env var, then GRAPHIRM_MODEL,
+        // defaulting to DeepSeek Chat. Anthropic is no longer preferred by default
+        // because it hits rate limits and has stricter message ordering requirements.
         let eval_model = std::env::var("EVAL_MODEL")
-            .unwrap_or_else(|_| {
-                if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-                    "anthropic/claude-haiku-4-5-20251001".to_string()
-                } else {
-                    std::env::var("GRAPHIRM_MODEL")
-                        .unwrap_or_else(|_| "deepseek/deepseek-chat".to_string())
-                }
-            });
+            .or_else(|_| std::env::var("GRAPHIRM_MODEL"))
+            .unwrap_or_else(|_| "deepseek/deepseek-chat".to_string());
 
         let mut cmd = std::process::Command::new(&binary_path);
         cmd.args(["--db", db_path.to_str().unwrap(), "serve", "--port", &port.to_string()])
