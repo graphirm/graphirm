@@ -51,6 +51,12 @@
 <span class="comment"># Open VS Code → Ctrl+Shift+P → "Graphirm: Open"</span>
 <span class="comment"># Chat pane on the left, live graph explorer on the right</span></pre>
       </div>
+
+      <div class="stats">
+        <div class="stat"><span class="stat-num">13/13</span><span class="stat-label">eval tasks passing</span></div>
+        <div class="stat"><span class="stat-num">600ms</span><span class="stat-label">local knowledge extraction</span></div>
+        <div class="stat"><span class="stat-num">1 binary</span><span class="stat-label">no Docker, no Python</span></div>
+      </div>
     </div>
   </section>
 
@@ -73,9 +79,9 @@
         </div>
 
         <div class="feature-card">
-          <div class="icon">⎇</div>
-          <h3>Multi-agent coordination</h3>
-          <p>Subagents write nodes into a shared graph. Any agent can traverse them. No message-passing, no shared state bugs.</p>
+          <div class="icon">⊙</div>
+          <h3>Human-in-the-loop</h3>
+          <p>Intercept any tool call before it runs — approve, reject, or rewrite the argument. The decision and its outcome are edges in the graph. No other agent can do this without rebuilding its data model.</p>
         </div>
 
         <div class="feature-card">
@@ -85,9 +91,9 @@
         </div>
 
         <div class="feature-card">
-          <div class="icon">△</div>
-          <h3>Task DAG</h3>
-          <p>Tasks form a directed acyclic graph with <code>depends_on</code> edges — visible, trackable, resumable across restarts.</p>
+          <div class="icon">⚡</div>
+          <h3>Local knowledge extraction</h3>
+          <p>GLiNER2 ONNX runs on-device in ~600ms per turn. Knowledge nodes are created without an extra API call — fast, private, and offline-capable.</p>
         </div>
 
         <div class="feature-card">
@@ -107,7 +113,7 @@
       <div class="arch-diagram">graphirm/
 ├── crates/
 │   ├── graph/    ← GraphStore (rusqlite + petgraph) — every node + edge
-│   ├── llm/      ← 17+ providers via rig-core (Anthropic, OpenAI, DeepSeek…)
+│   ├── llm/      ← multi-provider via rig-core (Anthropic, OpenAI, DeepSeek, Ollama…)
 │   ├── tools/    ← bash, read, write, edit, grep, find, ls
 │   ├── agent/    ← async loop, context engine, multi-agent, knowledge extraction
 │   ├── server/   ← axum REST + SSE streaming API

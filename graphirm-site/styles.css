@@ -65,6 +65,31 @@ nav .links a:hover { color: var(--text); text-decoration: none; }
 .btn-primary { background: var(--accent); color: #fff; }
 .btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
 
+/* Stats row */
+.stats {
+  display: flex;
+  gap: 32px;
+  margin-top: 40px;
+  flex-wrap: wrap;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stat-num {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--green);
+}
+.stat-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 /* Terminal demo */
 .demo {
   background: var(--surface);
