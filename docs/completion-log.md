@@ -1,5 +1,48 @@
 # Graphirm Development Progress Log
 
+## 2026-03-10: Model Benchmarking — Haiku 4.5 Fastest for eval - COMPLETE ✅
+
+### Summary
+
+Ran `graphirm-eval` (8 tasks) across three model/extraction configurations to identify the fastest stack. **Claude Haiku 4.5 + GLiNER2 ONNX wins at 116s total (8/8, 100%).**
+
+### Results
+
+| Task | DeepSeek+LLM extraction (v6) | DeepSeek+ONNX (v7) | Haiku 4.5+ONNX (v8) |
+|---|---|---|---|
+| grep-and-explain | 47.7s | 31.1s | **24.6s** |
+| read-line-count | 38.2s | 21.6s | **18.6s** |
+| bash-line-count | 19.6s | 10.1s | **6.5s** |
+| write-fibonacci | 42.2s | 21.6s | **9.1s** |
+| multi-turn-read-write | 32.2s | 18.6s | **11.6s** |
+| entity-recall | 17.6s | 7.0s | 8.0s |
+| multi-entity | 20.1s | 9.6s | 7.5s |
+| graph-integrity | 146.7s | 67.3s | **30.7s** |
+| **Total** | **364s** | **186s** | **116s** |
+| Pass rate | 8/8 | 8/8 | 8/8 |
+
+### Analysis
+
+- **ONNX vs LLM extraction:** −49% total time. Extraction dropping from 25–35s to ~600ms per call is the dominant effect.
+- **Haiku vs DeepSeek (with ONNX):** −38% further. Haiku makes tool-use decisions faster and wastes fewer turns — especially visible in `write-fibonacci` (9s vs 22s) and `graph-integrity` (31s vs 67s).
+- **Knowledge tasks** (`entity-recall`, `multi-entity`) are roughly tied between models since they're bottlenecked by ONNX inference (~600ms), not LLM latency.
+- **Cost:** Haiku 4.5 at $1/$5 per MTok is cheaper than DeepSeek Chat for short tool-use sessions.
+
+### Model API name
+
+`claude-haiku-4-5-20251001` (alias: `claude-haiku-4-5`). Older names (`claude-3-5-haiku-20241022`) return 404 — that model was retired in February 2026.
+
+### Recommendation
+
+**Use `anthropic/claude-haiku-4-5-20251001` as the default eval model.** Set in `.env`:
+
+```bash
+export EVAL_MODEL=anthropic/claude-haiku-4-5-20251001
+export GRAPHIRM_MODEL=anthropic/claude-haiku-4-5-20251001
+```
+
+---
+
 ## 2026-03-10: GLiNER2 ONNX Extraction Wired into `serve` - COMPLETE ✅
 
 ### Summary
