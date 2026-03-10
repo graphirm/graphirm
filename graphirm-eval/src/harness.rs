@@ -33,8 +33,8 @@ impl TestHarness {
         cmd.args(["--db", db_path.to_str().unwrap(), "serve", "--port", &port.to_string()])
             .env("EMBEDDING_BACKEND", "") // disable memory for most tasks
             .env("GRAPHIRM_MODEL", &eval_model);
-        // Forward API keys from environment
-        for key in &["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY"] {
+        // Forward API keys and model config from environment
+        for key in &["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "GLINER2_MODEL_DIR"] {
             if let Ok(val) = std::env::var(key) {
                 cmd.env(key, val);
             }
@@ -140,6 +140,13 @@ impl TestHarness {
         match verifier {
             Verifier::ResponseContains { substring } => {
                 Ok(last_response.to_lowercase().contains(&substring.to_lowercase()))
+            }
+            Verifier::ResponseContainsAny { substrings } => {
+                let lower = last_response.to_lowercase();
+                Ok(substrings.iter().any(|s| lower.contains(&s.to_lowercase())))
+            }
+            Verifier::ResponseNotContains { substring } => {
+                Ok(!last_response.to_lowercase().contains(&substring.to_lowercase()))
             }
             Verifier::FileContains { path, substring } => {
                 let contents = std::fs::read_to_string(path).unwrap_or_default();

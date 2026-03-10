@@ -1,3 +1,4 @@
+mod adversarial;
 mod coding;
 pub mod graph;
 pub mod knowledge;
@@ -11,5 +12,6 @@ pub fn all_tasks() -> Vec<EvalTask> {
     tasks.extend(coding::tasks());
     tasks.extend(knowledge::tasks());
     tasks.extend(graph::tasks());
+    tasks.extend(adversarial::tasks());
     tasks
 }

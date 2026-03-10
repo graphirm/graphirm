@@ -40,6 +40,13 @@ pub struct CrossSessionTask {
 pub enum Verifier {
     /// The final assistant message must contain this substring (case-insensitive).
     ResponseContains { substring: String },
+    /// The final assistant message must contain at least one of these substrings
+    /// (case-insensitive). Useful for checking error phrases where wording varies
+    /// ("not found" vs "does not exist" vs "no such file").
+    ResponseContainsAny { substrings: Vec<String> },
+    /// The final assistant message must NOT contain this substring (case-insensitive).
+    /// Use to verify the agent didn't hallucinate content.
+    ResponseNotContains { substring: String },
     /// Run a shell command; pass if exit code == 0.
     CommandSucceeds { command: String, args: Vec<String> },
     /// The file at `path` must exist and contain `substring`.
