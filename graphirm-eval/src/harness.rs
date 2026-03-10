@@ -34,7 +34,7 @@ impl TestHarness {
             .env("EMBEDDING_BACKEND", "") // disable memory for most tasks
             .env("GRAPHIRM_MODEL", &eval_model);
         // Forward API keys and model config from environment
-        for key in &["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "GLINER2_MODEL_DIR"] {
+        for key in &["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "OPENROUTER_API_KEY", "GLINER2_MODEL_DIR"] {
             if let Ok(val) = std::env::var(key) {
                 cmd.env(key, val);
             }
