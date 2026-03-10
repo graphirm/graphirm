@@ -4,7 +4,7 @@
 
 **Goal:** Discover what structure exists inside LLM responses, validate it empirically using GLiNER2, and define a schema that Graphirm can request from models and persist in the graph.
 
-**Status:** Phase 1 and Phase 2 implemented (corpus export + label exploration CLI); Phases 3–6 not started.
+**Status:** Phases 1–3 implemented (corpus export, label-explore CLI, schema-suggest CLI); Phases 4–6 not started.
 
 ---
 
@@ -119,6 +119,15 @@ From the data collected in Phase 2, determine:
 - Granularity is "right" if: spans align with natural boundaries (code fences, paragraph breaks, sentence ends) > 70% of the time.
 
 **Output:** A final schema — a list of 4–8 segment types with definitions and boundary rules.
+
+#### Task breakdown — Phase 3 (Analyse report → schema suggestions)
+
+| Task | Summary | Verification | Done |
+|------|---------|---------------|------|
+| 3.1 | Add `total_chars` to `LabelStat` in report (from aggregation) so overlap fraction per label is computable | Unit test: report round-trip; analyser uses it | ✅ |
+| 3.2 | Implement `analyse_report(report) → SchemaRecommendation`: classify each label as real / redundant / noise using plan criteria; output recommended segment types and merge suggestions | Unit tests: synthetic report with known outcomes | ✅ |
+| 3.3 | Add CLI `graphirm schema-suggest --report <path> [-o out.json]` (feature-gated) to read report JSON and print schema recommendation | Manual: run on label-explore output | ✅ |
+| 3.4 | Document Phase 3 in README and plan; optional: write recommended schema to a markdown snippet | Doc review | ✅ |
 
 ### Phase 4: Validate with Human Annotation
 

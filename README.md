@@ -177,7 +177,13 @@ To discover what segment types (e.g. observation, reasoning, code) exist in LLM 
      --labels "observation,reasoning,code,instruction,answer" -o report.json
    ```
 
-3. Inspect `report.json` for per-label stats, coverage, and overlap. See `docs/plans/2026-03-10-structured-llm-responses.md` for the full pipeline (Phases 1–6).
+3. **Suggest a segment schema** (Phase 3) from the report:
+   ```bash
+   ./target/release/graphirm schema-suggest --report report.json -o schema.json
+   ```
+   Output: recommended segment types (real labels), merge suggestions (redundant pairs), and per-label verdicts (real / redundant / noise).
+
+4. Inspect the report and schema recommendation; see `docs/plans/2026-03-10-structured-llm-responses.md` for the full pipeline (Phases 1–6).
 
 ---
 

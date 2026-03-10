@@ -44,6 +44,8 @@ pub struct LabelStat {
     pub label: String,
     pub span_count: u32,
     pub turns_with_label: u32,
+    /// Total character count covered by this label (sum of span lengths; overlapping spans counted once per label).
+    pub total_chars: u64,
     pub avg_confidence: f64,
     pub min_confidence: f64,
     pub max_confidence: f64,
@@ -200,6 +202,7 @@ pub async fn run_label_exploration(
         .map(|label| {
             let (span_count, turns_with_label, sum_conf, min_conf, max_conf, sum_span_chars, min_span_chars, max_span_chars) =
                 per_label.get(label).copied().unwrap_or((0, 0, 0.0, 0.0, 0.0, 0, 0, 0));
+            let total_chars = label_total_chars.get(label).copied().unwrap_or(0);
             let avg_confidence = if span_count > 0 {
                 sum_conf / span_count as f64
             } else {
@@ -217,6 +220,7 @@ pub async fn run_label_exploration(
                 label: label.clone(),
                 span_count,
                 turns_with_label,
+                total_chars,
                 avg_confidence,
                 min_confidence: min_confidence_val,
                 max_confidence: max_confidence_val,
@@ -314,6 +318,7 @@ mod tests {
                     label: "observation".into(),
                     span_count: 20,
                     turns_with_label: 7,
+                    total_chars: 910,
                     avg_confidence: 0.65,
                     min_confidence: 0.31,
                     max_confidence: 0.92,
@@ -325,6 +330,7 @@ mod tests {
                     label: "code".into(),
                     span_count: 15,
                     turns_with_label: 6,
+                    total_chars: 1200,
                     avg_confidence: 0.72,
                     min_confidence: 0.4,
                     max_confidence: 0.95,

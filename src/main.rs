@@ -89,6 +89,17 @@ enum Commands {
         #[arg(short, long)]
         out: Option<PathBuf>,
     },
+
+    /// Analyse a label-exploration report and suggest segment schema (Phase 3).
+    #[cfg(feature = "local-extraction")]
+    SchemaSuggest {
+        /// Path to report JSON from `graphirm label-explore`
+        #[arg(short, long)]
+        report: PathBuf,
+        /// Output path for recommendation JSON (default: stdout)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -165,6 +176,14 @@ async fn main() -> Result<(), GraphirmError> {
                 .with_env_filter("warn")
                 .init();
             run_label_explore(corpus, labels, min_confidence, out).await?;
+        }
+        #[cfg(feature = "local-extraction")]
+        Commands::SchemaSuggest { report, out } => {
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter("warn")
+                .init();
+            run_schema_suggest(report, out)?;
         }
         Commands::Serve { host, port } => {
             tracing_subscriber::fmt()
@@ -407,6 +426,28 @@ async fn run_label_explore(
         report.corpus_stats.covered_chars,
         report.corpus_stats.total_chars,
         report.corpus_stats.turns_with_any_label
+    );
+    Ok(())
+}
+
+#[cfg(feature = "local-extraction")]
+fn run_schema_suggest(report_path: PathBuf, out: Option<PathBuf>) -> Result<(), GraphirmError> {
+    let json = std::fs::read_to_string(&report_path)
+        .map_err(|e| GraphirmError::Config(format!("read report {}: {}", report_path.display(), e)))?;
+    let report: graphirm_agent::knowledge::label_explore::LabelExplorationReport =
+        serde_json::from_str(&json).map_err(|e| GraphirmError::Config(format!("parse report JSON: {}", e)))?;
+    let rec = graphirm_agent::knowledge::schema_suggest::analyse_report(&report);
+    let out_json = serde_json::to_string_pretty(&rec).map_err(|e| GraphirmError::Config(e.to_string()))?;
+    if let Some(path) = out {
+        std::fs::write(&path, out_json).map_err(|e| GraphirmError::Io(e))?;
+        eprintln!("Wrote schema recommendation to {}", path.display());
+    } else {
+        println!("{}", out_json);
+    }
+    eprintln!(
+        "Recommended segment types ({}): {}",
+        rec.recommended_segment_types.len(),
+        rec.recommended_segment_types.join(", ")
     );
     Ok(())
 }
