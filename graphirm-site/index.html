@@ -113,7 +113,7 @@
       <div class="arch-diagram">graphirm/
 ├── crates/
 │   ├── graph/    ← GraphStore (rusqlite + petgraph) — every node + edge
-│   ├── llm/      ← multi-provider via rig-core (Anthropic, OpenAI, DeepSeek, Ollama…)
+│   ├── llm/      ← multi-provider via rig-core (Anthropic, DeepSeek, Ollama…)
 │   ├── tools/    ← bash, read, write, edit, grep, find, ls
 │   ├── agent/    ← async loop, context engine, multi-agent, knowledge extraction
 │   ├── server/   ← axum REST + SSE streaming API
@@ -141,7 +141,7 @@
           <div class="step-body">
             <h4>Set your LLM API key and start the server</h4>
             <code>export ANTHROPIC_API_KEY=sk-ant-... && ./target/release/graphirm serve</code>
-            <p>Supports Anthropic, OpenAI, DeepSeek, Google, and 13 more providers via <code>GRAPHIRM_MODEL</code>.</p>
+            <p>Supports Anthropic, DeepSeek, Ollama, and more via <code>GRAPHIRM_MODEL</code>.</p>
           </div>
         </div>
 
