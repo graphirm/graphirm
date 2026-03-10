@@ -202,18 +202,27 @@ async fn main() {
         println!("── mistral/codestral-embed ──\n  SKIP: set MISTRAL_API_KEY to benchmark");
     }
 
-    // fastembed nomic-embed-text-v1 (only available with --features local-embed on glibc >= 2.38)
+    // fastembed models (only available with --features local-embed on glibc >= 2.38)
     #[cfg(feature = "local-embed")]
     {
         use graphirm_llm::FastEmbedProvider;
-        match FastEmbedProvider::new("nomic-embed-text-v1") {
-            Ok(fe) => bench_provider("fastembed/nomic-embed-text-v1 (free)", &fe, 0.0).await,
-            Err(e) => println!("\n── fastembed/nomic-embed-text-v1 ──\n  SKIP: {e}"),
+        for model_name in &[
+            "nomic-embed-text-v1",
+            "bge-small-en-v1.5",
+            "bge-base-en-v1.5",
+            "bge-large-en-v1.5",
+        ] {
+            match FastEmbedProvider::new(model_name) {
+                Ok(fe) => {
+                    bench_provider(&format!("fastembed/{model_name} (free)"), &fe, 0.0).await
+                }
+                Err(e) => println!("\n── fastembed/{model_name} ──\n  SKIP: {e}"),
+            }
         }
     }
 
     #[cfg(not(feature = "local-embed"))]
-    println!("\n── fastembed/nomic-embed-text-v1 ──\n  SKIP: build with --features local-embed to enable");
+    println!("\n── fastembed (all models) ──\n  SKIP: build with --features local-embed to enable");
 
     println!("\n=== Summary ===");
     println!("Discrimination = related_sim_avg - unrelated_sim (higher = better)");
