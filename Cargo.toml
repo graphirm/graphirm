@@ -32,6 +32,7 @@ path = "src/main.rs"
 
 [features]
 local-embed = ["graphirm-llm/local-embed"]
+local-extraction = ["graphirm-agent/local-extraction"]
 
 [dependencies]
 graphirm-graph = { path = "crates/graph" }

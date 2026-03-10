@@ -46,6 +46,12 @@ enum Commands {
         action: GraphAction,
     },
 
+    /// Manage local models (e.g. GLiNER2 for offline knowledge extraction)
+    Model {
+        #[command(subcommand)]
+        action: ModelAction,
+    },
+
     /// Start the HTTP API server
     Serve {
         /// Host to bind to
@@ -73,6 +79,18 @@ enum GraphAction {
     },
 }
 
+#[derive(Subcommand)]
+enum ModelAction {
+    /// Download GLiNER2 ONNX model files from HuggingFace Hub (~1.95 GB).
+    ///
+    /// Files are cached in ~/.cache/huggingface/hub/ (same as Python hf_hub).
+    /// After downloading, set GLINER2_MODEL_DIR to the printed path and restart
+    /// `graphirm serve` to use the local extraction backend.
+    ///
+    /// Requires the binary to be built with: --features local-extraction
+    Download,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), GraphirmError> {
     dotenvy::dotenv().ok();
@@ -93,6 +111,13 @@ async fn main() -> Result<(), GraphirmError> {
                 .with_env_filter("error")
                 .init();
             run_graph_command(action, &db_path)?;
+        }
+        Commands::Model { action } => {
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter("info")
+                .init();
+            run_model_command(action).await?;
         }
         Commands::Serve { host, port } => {
             tracing_subscriber::fmt()
@@ -125,13 +150,19 @@ async fn main() -> Result<(), GraphirmError> {
             // Use the model name from GRAPHIRM_MODEL so sessions use the correct
             // model for the configured provider (not the AgentConfig default which
             // is hardcoded to a Claude model name).
-            // Enable post-turn knowledge extraction using the same model so the
-            // /api/graph/{session_id}/knowledge endpoint returns real nodes.
+            //
+            // Knowledge extraction backend selection:
+            // - If GLINER2_MODEL_DIR is set and the binary was built with
+            //   --features local-extraction, use the fast local ONNX backend
+            //   (150-200ms per call, no API cost, no timeouts).
+            // - Otherwise fall back to the LLM backend (25-35s per call).
+            let extraction_backend = resolve_extraction_backend();
             let agent_config = graphirm_agent::AgentConfig {
                 model: model_name.to_string(),
                 extraction: Some(graphirm_agent::knowledge::extraction::ExtractionConfig {
                     enabled: true,
                     model: model_name.to_string(),
+                    backend: extraction_backend,
                     ..Default::default()
                 }),
                 ..agent_config
@@ -317,6 +348,89 @@ fn init_file_logging() -> tracing_appender::non_blocking::WorkerGuard {
         .init();
 
     guard
+}
+
+/// Select the knowledge extraction backend.
+///
+/// If `GLINER2_MODEL_DIR` is set (or a cached model is found at the standard
+/// HuggingFace path) **and** the binary was compiled with the
+/// `local-extraction` feature, use the fast ONNX backend.
+/// Otherwise fall back to the LLM backend.
+fn resolve_extraction_backend(
+) -> graphirm_agent::knowledge::extraction::ExtractionBackend {
+    use graphirm_agent::knowledge::extraction::ExtractionBackend;
+
+    // Explicit override always wins.
+    if let Ok(dir) = std::env::var("GLINER2_MODEL_DIR") {
+        let path = std::path::PathBuf::from(&dir);
+        if path.join("gliner2_config.json").exists() {
+            tracing::info!(model_dir = %dir, "Using Local ONNX extraction backend (GLINER2_MODEL_DIR)");
+            return ExtractionBackend::Local { model_dir: dir };
+        }
+        tracing::warn!(
+            model_dir = %dir,
+            "GLINER2_MODEL_DIR is set but gliner2_config.json not found; falling back to LLM"
+        );
+    }
+
+    // Auto-detect standard HuggingFace cache location.
+    let hf_cache = dirs_next::cache_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("~/.cache"))
+        .join("huggingface")
+        .join("hub")
+        .join("models--lmo3--gliner2-large-v1-onnx")
+        .join("snapshots");
+
+    if let Ok(mut entries) = std::fs::read_dir(&hf_cache) {
+        // Take the most recent snapshot (lexicographically last hash dir).
+        if let Some(Ok(entry)) = entries.next() {
+            let snapshot_dir = entry.path();
+            if snapshot_dir.join("gliner2_config.json").exists() {
+                let dir_str = snapshot_dir.to_string_lossy().to_string();
+                tracing::info!(model_dir = %dir_str, "Auto-detected GLiNER2 model; using Local ONNX backend");
+                return ExtractionBackend::Local { model_dir: dir_str };
+            }
+        }
+    }
+
+    tracing::info!("No GLiNER2 model found; using LLM extraction backend. Run `graphirm model download` to enable fast local extraction.");
+    ExtractionBackend::Llm
+}
+
+/// Handle `graphirm model <action>` subcommands.
+async fn run_model_command(action: ModelAction) -> Result<(), GraphirmError> {
+    match action {
+        ModelAction::Download => run_model_download().await,
+    }
+}
+
+#[cfg(feature = "local-extraction")]
+async fn run_model_download() -> Result<(), GraphirmError> {
+    println!("Downloading GLiNER2-large-v1 ONNX model (~1.95 GB)...");
+    println!("Files will be cached in ~/.cache/huggingface/hub/");
+    println!();
+    let model_dir = graphirm_agent::knowledge::local_extraction::download_model()
+        .await
+        .map_err(|e| GraphirmError::Config(e.to_string()))?;
+    println!("Download complete.");
+    println!();
+    println!("Model directory: {}", model_dir.display());
+    println!();
+    println!("To use the local ONNX extraction backend, set:");
+    println!("  export GLINER2_MODEL_DIR=\"{}\"", model_dir.display());
+    println!();
+    println!("Then restart `graphirm serve`. Extraction will run at");
+    println!("~150-200ms per call instead of 25-35s via the LLM API.");
+    Ok(())
+}
+
+#[cfg(not(feature = "local-extraction"))]
+async fn run_model_download() -> Result<(), GraphirmError> {
+    eprintln!("Error: this binary was not built with local extraction support.");
+    eprintln!();
+    eprintln!("Rebuild with:");
+    eprintln!("  cargo build --release --features local-extraction");
+    std::process::exit(1);
 }
 
 fn build_tool_registry() -> ToolRegistry {
