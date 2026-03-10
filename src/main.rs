@@ -336,8 +336,10 @@ fn api_key_for_provider(provider_name: &str) -> Result<String, GraphirmError> {
         "deepseek" => std::env::var("DEEPSEEK_API_KEY")
             .map_err(|_| GraphirmError::Config("DEEPSEEK_API_KEY not set".into())),
         "ollama" => Ok(String::new()),
+        "openrouter" => std::env::var("OPENROUTER_API_KEY")
+            .map_err(|_| GraphirmError::Config("OPENROUTER_API_KEY not set".into())),
         unknown => Err(GraphirmError::Config(format!(
-            "Unknown provider '{unknown}'. Supported: anthropic, openai, deepseek, ollama"
+            "Unknown provider '{unknown}'. Supported: anthropic, deepseek, ollama, openrouter"
         ))),
     }
 }

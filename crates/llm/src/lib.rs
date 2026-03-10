@@ -6,6 +6,7 @@ pub mod mistral_embed;
 pub mod mock;
 pub mod ollama;
 pub mod openai;
+pub mod openrouter;
 pub mod provider;
 pub mod stream;
 pub mod tool;

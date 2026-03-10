@@ -4,6 +4,7 @@ use crate::error::LlmError;
 use crate::mistral_embed::{MistralEmbedModel, MistralEmbeddingProvider};
 use crate::ollama::OllamaProvider;
 use crate::openai::OpenAiProvider;
+use crate::openrouter::OpenRouterProvider;
 use crate::provider::{EmbeddingProvider, LlmProvider};
 
 /// Parse a `"provider/model"` string into `(provider, model)`.
@@ -36,8 +37,9 @@ pub fn create_provider(
         "openai" => Ok(Box::new(OpenAiProvider::new(api_key))),
         "deepseek" => Ok(Box::new(DeepSeekProvider::new(api_key))),
         "ollama" => Ok(Box::new(OllamaProvider::from_env()?)),
+        "openrouter" => Ok(Box::new(OpenRouterProvider::new(api_key))),
         _ => Err(LlmError::invalid_model(format!(
-            "Unknown provider: '{provider_name}'. Supported: anthropic, openai, deepseek, ollama"
+            "Unknown provider: '{provider_name}'. Supported: anthropic, deepseek, ollama, openrouter"
         ))),
     }
 }
