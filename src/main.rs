@@ -72,6 +72,23 @@ enum Commands {
         #[arg(short, long)]
         out: Option<PathBuf>,
     },
+
+    /// Run GLiNER2 over a corpus JSONL with candidate labels and output a statistics report.
+    #[cfg(feature = "local-extraction")]
+    LabelExplore {
+        /// Path to corpus JSONL (one CorpusTurn per line)
+        #[arg(short, long)]
+        corpus: PathBuf,
+        /// Comma-separated label names (e.g. observation,reasoning,code,answer)
+        #[arg(short, long)]
+        labels: String,
+        /// Minimum confidence threshold for GLiNER2 (default 0.3)
+        #[arg(long, default_value = "0.3")]
+        min_confidence: f64,
+        /// Output path for JSON report (default: stdout)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -135,6 +152,19 @@ async fn main() -> Result<(), GraphirmError> {
                 .with_env_filter("warn")
                 .init();
             run_export_corpus(&db_path, out)?;
+        }
+        #[cfg(feature = "local-extraction")]
+        Commands::LabelExplore {
+            corpus,
+            labels,
+            min_confidence,
+            out,
+        } => {
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter("warn")
+                .init();
+            run_label_explore(corpus, labels, min_confidence, out).await?;
         }
         Commands::Serve { host, port } => {
             tracing_subscriber::fmt()
@@ -315,6 +345,69 @@ fn run_export_corpus(db_path: &PathBuf, out: Option<PathBuf>) -> Result<(), Grap
         graphirm_graph::export_corpus_to_jsonl(&graph, &mut stdout, true)?
     };
     eprintln!("Exported {} assistant turns.", count);
+    Ok(())
+}
+
+#[cfg(feature = "local-extraction")]
+async fn run_label_explore(
+    corpus_path: PathBuf,
+    labels_str: String,
+    min_confidence: f64,
+    out: Option<PathBuf>,
+) -> Result<(), GraphirmError> {
+    use std::io::BufReader;
+
+    let model_dir = std::env::var("GLINER2_MODEL_DIR").map_err(|_| {
+        GraphirmError::Config(
+            "GLINER2_MODEL_DIR not set. Run `graphirm model download` and set the env var.".into(),
+        )
+    })?;
+    let model_dir = std::path::Path::new(&model_dir);
+
+    let file = std::fs::File::open(&corpus_path)
+        .map_err(|e| GraphirmError::Config(format!("open corpus {}: {}", corpus_path.display(), e)))?;
+    let turns = graphirm_agent::knowledge::label_explore::read_corpus_jsonl(BufReader::new(file))?;
+    let total = turns.len();
+    if total == 0 {
+        eprintln!("Corpus is empty.");
+        return Ok(());
+    }
+
+    let labels: Vec<String> = labels_str
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if labels.is_empty() {
+        return Err(GraphirmError::Config("At least one --labels value required".into()));
+    }
+
+    let extractor = graphirm_agent::knowledge::local_extraction::OnnxExtractor::new(model_dir)
+        .map_err(|e| GraphirmError::Config(format!("load GLiNER2 model: {}", e)))?;
+
+    eprintln!("Running GLiNER2 on {} turns with {} labels...", total, labels.len());
+    let report = graphirm_agent::knowledge::label_explore::run_label_exploration(
+        &extractor,
+        &turns,
+        &labels,
+        min_confidence,
+    )
+    .await?;
+
+    let json = serde_json::to_string_pretty(&report).map_err(|e| GraphirmError::Config(e.to_string()))?;
+    if let Some(path) = out {
+        std::fs::write(&path, json).map_err(|e| GraphirmError::Io(e))?;
+        eprintln!("Wrote report to {}", path.display());
+    } else {
+        println!("{}", json);
+    }
+    eprintln!(
+        "Coverage: {:.1}% ({} / {} chars in {} turns)",
+        report.corpus_stats.coverage_pct,
+        report.corpus_stats.covered_chars,
+        report.corpus_stats.total_chars,
+        report.corpus_stats.turns_with_any_label
+    );
     Ok(())
 }
 

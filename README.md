@@ -160,6 +160,25 @@ entity_types = ["function", "api", "pattern", "decision"]
 min_confidence = 0.7
 ```
 
+### Structured response discovery (Phase 2 pipeline)
+
+To discover what segment types (e.g. observation, reasoning, code) exist in LLM responses using GLiNER2:
+
+1. **Export a corpus** from your graph (assistant turns only):
+   ```bash
+   graphirm export-corpus --db ~/.local/share/graphirm/graph.db -o corpus.jsonl
+   ```
+
+2. **Run label exploration** (requires `--features local-extraction` and `GLINER2_MODEL_DIR`):
+   ```bash
+   cargo build --release --features local-extraction
+   export GLINER2_MODEL_DIR=/path/to/gliner2-large-v1-onnx  # or after `graphirm model download`
+   ./target/release/graphirm label-explore --corpus corpus.jsonl \
+     --labels "observation,reasoning,code,instruction,answer" -o report.json
+   ```
+
+3. Inspect `report.json` for per-label stats, coverage, and overlap. See `docs/plans/2026-03-10-structured-llm-responses.md` for the full pipeline (Phases 1–6).
+
 ---
 
 ## Tech stack

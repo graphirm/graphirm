@@ -175,29 +175,29 @@ impl OnnxExtractor {
 
     /// Run GLiNER2 NER on `text` for the given `entity_types`.
     ///
-    /// Returns extracted entity spans with confidence scores. Non-overlapping
-    /// entities per label are selected greedily by descending score.
+    /// Returns raw entity spans with character offsets and confidence. Use this
+    /// when you need offsets for overlap or coverage analysis. For the standard
+    /// knowledge-extraction response format, use [`extract`](Self::extract).
     ///
     /// # Performance
     ///
-    /// This method loads from pre-constructed ONNX sessions but still runs
     /// ~150–200ms per call on CPU. Construct `OnnxExtractor` once at startup
     /// and reuse it via `Arc<OnnxExtractor>`.
-    pub async fn extract(
+    pub async fn extract_raw(
         &self,
         text: &str,
         entity_types: &[String],
         min_confidence: f64,
-    ) -> Result<super::extraction::ExtractionResponse, AgentError> {
+    ) -> Result<Vec<RawOnnxEntity>, AgentError> {
         if text.is_empty() || entity_types.is_empty() {
-            return Ok(super::extraction::ExtractionResponse { entities: vec![] });
+            return Ok(vec![]);
         }
 
         let (input_ids, e_positions, word_offsets, text_start_idx, first_token_positions) =
             self.build_ner_input(text, entity_types);
 
         if word_offsets.is_empty() {
-            return Ok(super::extraction::ExtractionResponse { entities: vec![] });
+            return Ok(vec![]);
         }
 
         let seq_len = input_ids.len();
@@ -358,7 +358,20 @@ impl OnnxExtractor {
             }
         }
 
-        Ok(raw_entities_to_extraction_response(kept))
+        Ok(kept)
+    }
+
+    /// Run NER and return the standard extraction response (entities with name, type, confidence).
+    ///
+    /// Use [`extract_raw`](Self::extract_raw) when you need character offsets (e.g. for overlap or coverage).
+    pub async fn extract(
+        &self,
+        text: &str,
+        entity_types: &[String],
+        min_confidence: f64,
+    ) -> Result<super::extraction::ExtractionResponse, AgentError> {
+        let raw = self.extract_raw(text, entity_types, min_confidence).await?;
+        Ok(raw_entities_to_extraction_response(raw))
     }
 
     /// Build the tokenized input sequence for GLiNER2 NER.

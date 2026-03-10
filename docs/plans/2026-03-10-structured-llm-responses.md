@@ -4,7 +4,7 @@
 
 **Goal:** Discover what structure exists inside LLM responses, validate it empirically using GLiNER2, and define a schema that Graphirm can request from models and persist in the graph.
 
-**Status:** Phase 1 implemented (corpus export); Phases 2–6 not started.
+**Status:** Phase 1 and Phase 2 implemented (corpus export + label exploration CLI); Phases 3–6 not started.
 
 ---
 
@@ -74,6 +74,8 @@ Gather real LLM responses from Graphirm usage (or generate them by running the a
 ### Phase 2: Candidate Label Exploration
 
 Run GLiNER2 over the corpus with a broad set of candidate labels to see what it finds.
+
+**Implemented:** `graphirm label-explore --corpus <jsonl> --labels "label1,label2,..." [-o report.json]` (requires `--features local-extraction` and `GLINER2_MODEL_DIR`). Produces a JSON report with `corpus_stats`, `label_stats`, and `overlap_matrix`. Synthetic fixture: `crates/agent/tests/fixtures/corpus_synthetic.jsonl`.
 
 **Candidate label sets to try (iteratively):**
 

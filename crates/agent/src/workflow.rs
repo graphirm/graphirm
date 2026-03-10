@@ -826,7 +826,7 @@ mod tests {
         let config = AgentConfig::default();
         let session = Session::new(graph.clone(), config).unwrap();
 
-        session.add_user_message("What is 2+2?").unwrap();
+        session.add_user_message("What is 2+2?").await.unwrap();
 
         let provider = MockProvider::new(vec![text_response("The answer is 4.")]);
         let tools = ToolRegistry::new();
@@ -857,7 +857,7 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("What is 2+2?").unwrap();
+        session.add_user_message("What is 2+2?").await.unwrap();
 
         let provider = MockProvider::new(vec![text_response("4")]);
         let tools = ToolRegistry::new();
@@ -899,7 +899,7 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("List files").unwrap();
+        session.add_user_message("List files").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(
@@ -996,7 +996,7 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("Echo a message").unwrap();
+        session.add_user_message("Echo a message").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(
@@ -1060,7 +1060,7 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("List and find files").unwrap();
+        session.add_user_message("List and find files").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![
@@ -1124,7 +1124,7 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("Do infinite things").unwrap();
+        session.add_user_message("Do infinite things").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(
@@ -1204,7 +1204,7 @@ mod tests {
         let session = Session::new(graph.clone(), config)
             .unwrap()
             .with_hitl(hitl.clone());
-        session.add_user_message("Write a file").unwrap();
+        session.add_user_message("Write a file").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(
@@ -1270,7 +1270,7 @@ mod tests {
         let session = Session::new(graph.clone(), config)
             .unwrap()
             .with_hitl(hitl.clone());
-        session.add_user_message("Write a file").unwrap();
+        session.add_user_message("Write a file").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(
@@ -1356,7 +1356,7 @@ mod tests {
         let session = Session::new(graph.clone(), config)
             .unwrap()
             .with_hitl(hitl.clone());
-        session.add_user_message("Hello").unwrap();
+        session.add_user_message("Hello").await.unwrap();
 
         // No tool calls — just a simple text response after the pause clears.
         let provider = MockProvider::new(vec![text_response("All good.")]);
@@ -1415,7 +1415,7 @@ mod tests {
         };
         // No .with_hitl() — hitl is None
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("Write a file").unwrap();
+        session.add_user_message("Write a file").await.unwrap();
 
         // LLM requests a destructive tool (write), then returns a text response.
         let provider = MockProvider::new(vec![
@@ -1451,7 +1451,7 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("Start working").unwrap();
+        session.add_user_message("Start working").await.unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(
