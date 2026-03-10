@@ -106,8 +106,15 @@ async fn create_session(
     let mut session = tokio::task::spawn_blocking(move || Session::new(graph_for_session, config_clone))
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?
-        .map_err(ServerError::Agent)?
-        .with_hitl(hitl.clone());
+        .map_err(ServerError::Agent)?;
+
+    // Only wire up the HITL gate when the caller hasn't opted into auto-approve.
+    // Programmatic clients (eval harnesses, tests) pass `auto_approve: true` to
+    // bypass human confirmation for destructive tools (bash, write, edit).
+    if !body.auto_approve.unwrap_or(false) {
+        session = session.with_hitl(hitl.clone());
+    }
+
     if let Some(ref retriever) = state.memory_retriever {
         session = session.with_memory_retriever(retriever.clone());
     }

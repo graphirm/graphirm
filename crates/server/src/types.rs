@@ -151,6 +151,9 @@ pub struct CreateSessionRequest {
     pub agent: Option<String>,
     /// Optional model override (e.g. `"claude-opus-4-5"`).
     pub model: Option<String>,
+    /// When true, skip the HITL approval gate so bash/write/edit run without
+    /// human confirmation. Intended for programmatic clients and eval harnesses.
+    pub auto_approve: Option<bool>,
 }
 
 /// Request body for `POST /api/sessions/:id/prompt`.

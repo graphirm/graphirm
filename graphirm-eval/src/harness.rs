@@ -80,24 +80,24 @@ impl TestHarness {
         let mut last_response = String::new();
         let mut turns_used = 0u32;
 
-        let task_result = self.run_task_prompts(task, &session_id, &mut last_response, &mut turns_used).await;
+        let prompts_result = self.run_task_prompts(task, &session_id, &mut last_response, &mut turns_used).await;
 
-        // Always cancel/delete the session so its agent loop stops and releases DB connections.
-        let _ = self.client.delete_session(&session_id).await;
-
-        let inner_result = task_result?;
-
-        let mut r = if !inner_result.passed {
-            // Session timed out or failed — propagate without running verifier
-            inner_result
-        } else {
-            let passed = self.check_verifier(&task.verifier, &session_id, &last_response).await?;
-            if passed {
-                TaskResult::pass(&task.id, turns_used, 0.0)
-            } else {
-                TaskResult::fail(&task.id, "verifier returned false")
+        // Run the verifier BEFORE deleting the session so graph endpoints still work.
+        let mut r = match prompts_result {
+            Err(e) => TaskResult::fail(&task.id, format!("harness error: {e}")),
+            Ok(inner) if !inner.passed => inner,
+            Ok(_) => {
+                match self.check_verifier(&task.verifier, &session_id, &last_response).await {
+                    Ok(true) => TaskResult::pass(&task.id, turns_used, 0.0),
+                    Ok(false) => TaskResult::fail(&task.id, "verifier returned false"),
+                    Err(e) => TaskResult::fail(&task.id, format!("harness error: {e}")),
+                }
             }
         };
+
+        // Delete session after verifier so agent loop stops and DB connections are released.
+        let _ = self.client.delete_session(&session_id).await;
+
         r.session_id = Some(session_id);
         Ok(r)
     }

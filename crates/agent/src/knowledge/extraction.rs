@@ -511,7 +511,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_knowledge_creates_nodes() {
-        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let graph = GraphStore::open_memory().unwrap();
         let config = ExtractionConfig {
             enabled: true,
             min_confidence: 0.5,
@@ -554,7 +554,7 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids = extract_knowledge(graph.clone(), &llm, &messages, &source_node_id, &config)
+        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_node_id, &config)
             .await
             .unwrap();
 
@@ -567,7 +567,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_knowledge_creates_derived_from_edges() {
-        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let graph = GraphStore::open_memory().unwrap();
         let config = ExtractionConfig {
             enabled: true,
             min_confidence: 0.5,
@@ -597,7 +597,7 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids = extract_knowledge(graph.clone(), &llm, &messages, &source_id, &config)
+        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_id, &config)
             .await
             .unwrap();
 
@@ -614,7 +614,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_knowledge_filters_by_confidence() {
-        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let graph = GraphStore::open_memory().unwrap();
         let config = ExtractionConfig {
             enabled: true,
             min_confidence: 0.9,
@@ -651,7 +651,7 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids = extract_knowledge(graph.clone(), &llm, &messages, &source_id, &config)
+        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_id, &config)
             .await
             .unwrap();
 
@@ -660,7 +660,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_knowledge_creates_relates_to_edges() {
-        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let graph = GraphStore::open_memory().unwrap();
         let config = ExtractionConfig {
             enabled: true,
             min_confidence: 0.5,
@@ -699,7 +699,7 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids = extract_knowledge(graph.clone(), &llm, &messages, &source_id, &config)
+        let node_ids = extract_knowledge(&graph, &llm, &messages, &source_id, &config)
             .await
             .unwrap();
 
@@ -858,7 +858,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_post_turn_extraction_hook() {
-        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let graph = GraphStore::open_memory().unwrap();
         let config = ExtractionConfig {
             enabled: true,
             min_confidence: 0.5,
@@ -903,7 +903,7 @@ mod tests {
             ))
             .unwrap();
 
-        let result = post_turn_extract(graph.clone(), &llm, &config, &assistant_id).await;
+        let result = post_turn_extract(&graph, &llm, &config, &assistant_id).await;
 
         assert!(result.is_ok());
         let node_ids = result.unwrap();
@@ -921,7 +921,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_post_turn_extraction_disabled() {
-        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let graph = GraphStore::open_memory().unwrap();
         let config = ExtractionConfig {
             enabled: false,
             ..ExtractionConfig::default()
@@ -938,14 +938,14 @@ mod tests {
             })))
             .unwrap();
 
-        let result = post_turn_extract(graph.clone(), &llm, &config, &node_id).await;
+        let result = post_turn_extract(&graph, &llm, &config, &node_id).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn test_extract_knowledge_with_backend_local_returns_error_without_feature() {
-        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let graph = GraphStore::open_memory().unwrap();
         let config = ExtractionConfig {
             enabled: true,
             min_confidence: 0.5,
@@ -965,7 +965,7 @@ mod tests {
             .unwrap();
 
         let result = extract_knowledge_with_backend(
-            graph.clone(),
+            &graph,
             None,
             #[cfg(not(feature = "local-extraction"))]
             None::<()>,
@@ -984,7 +984,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_knowledge_with_backend_llm_creates_nodes() {
-        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let graph = GraphStore::open_memory().unwrap();
         let config = ExtractionConfig {
             enabled: true,
             min_confidence: 0.5,
@@ -1005,7 +1005,7 @@ mod tests {
             .unwrap();
 
         let result = extract_knowledge_with_backend(
-            graph.clone(),
+            &graph,
             Some(&llm as &dyn LlmProvider),
             #[cfg(not(feature = "local-extraction"))]
             None::<()>,
@@ -1071,7 +1071,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_post_turn_extract_rejects_non_llm_backend() {
-        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let graph = GraphStore::open_memory().unwrap();
         let config = ExtractionConfig {
             enabled: true,
             backend: ExtractionBackend::Local {
@@ -1090,7 +1090,7 @@ mod tests {
             })))
             .unwrap();
 
-        let result = post_turn_extract(graph.clone(), &llm, &config, &node_id).await;
+        let result = post_turn_extract(&graph, &llm, &config, &node_id).await;
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("post_turn_extract only supports the Llm backend"));
@@ -1101,7 +1101,7 @@ mod tests {
         // Validates the Hybrid code path: when ONNX returns no entities (as the
         // placeholder parse_onnx_outputs stub does), LLM enrichment is called and
         // its response becomes the final extraction result.
-        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let graph = GraphStore::open_memory().unwrap();
         let config = ExtractionConfig {
             enabled: true,
             min_confidence: 0.5,
@@ -1123,7 +1123,7 @@ mod tests {
         let messages = vec![("user".to_string(), "test".to_string())];
 
         let result = extract_knowledge_with_backend(
-            graph.clone(),
+            &graph,
             None,
             #[cfg(not(feature = "local-extraction"))]
             None::<()>,

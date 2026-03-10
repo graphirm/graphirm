@@ -5,7 +5,7 @@ use futures::Stream;
 use futures::stream;
 use rig::client::CompletionClient;
 use rig::completion::CompletionModel;
-use rig::message::{AssistantContent, Message};
+use rig::message::{AssistantContent, Message, ToolResultContent, UserContent};
 use rig::providers::anthropic;
 
 use crate::error::LlmError;
@@ -63,37 +63,74 @@ pub fn split_system_and_chat(messages: Vec<LlmMessage>) -> (Option<String>, Vec<
 }
 
 /// Convert our LlmMessages (non-system) to rig-core Messages.
+///
+/// Anthropic requires that all tool_result blocks for a single assistant turn
+/// appear in ONE user message with multiple content parts. If we emit them as
+/// separate messages the API rejects with "tool_use ids found without tool_result
+/// blocks immediately after". So we accumulate consecutive ToolResult messages
+/// into a buffer and flush them as a single merged user Message before emitting
+/// any non-tool-result content.
 pub fn convert_messages_to_rig(messages: Vec<LlmMessage>) -> Vec<Message> {
+    use rig::OneOrMany;
+    use rig::completion::message::{Text, ToolCall, ToolFunction};
+
     let mut rig_messages: Vec<Message> = Vec::new();
+    // Buffer for consecutive tool results — flushed as a single user Message.
+    let mut pending_tool_results: Vec<UserContent> = Vec::new();
+
+    let flush_tool_results = |pending: &mut Vec<UserContent>, out: &mut Vec<Message>| {
+        if pending.is_empty() {
+            return;
+        }
+        let parts = std::mem::take(pending);
+        match parts.len() {
+            1 => out.push(Message::User { content: OneOrMany::one(parts.into_iter().next().unwrap()) }),
+            _ => {
+                if let Ok(content) = OneOrMany::many(parts) {
+                    out.push(Message::User { content });
+                }
+            }
+        }
+    };
 
     for msg in messages {
         match msg.role {
             Role::System => {
                 // System messages are handled via preamble; skip here
             }
+            Role::ToolResult => {
+                // Accumulate; do NOT flush yet — more tool results may follow.
+                for part in msg.content {
+                    if let ContentPart::ToolResult { id, content, .. } = part {
+                        pending_tool_results.push(UserContent::tool_result(
+                            id,
+                            OneOrMany::one(ToolResultContent::text(content)),
+                        ));
+                    }
+                }
+            }
             Role::Human => {
+                // A human text message ends the tool-result run; flush first.
+                flush_tool_results(&mut pending_tool_results, &mut rig_messages);
                 for part in msg.content {
                     match part {
                         ContentPart::Text { text } => {
                             rig_messages.push(Message::user(text));
                         }
                         ContentPart::ToolResult { id, content, .. } => {
-                            rig_messages.push(Message::tool_result(id, content));
+                            // Inline tool results inside a Human message also get buffered.
+                            pending_tool_results.push(UserContent::tool_result(
+                                id,
+                                OneOrMany::one(ToolResultContent::text(content)),
+                            ));
                         }
                         _ => {}
                     }
                 }
             }
-            Role::ToolResult => {
-                for part in msg.content {
-                    if let ContentPart::ToolResult { id, content, .. } = part {
-                        rig_messages.push(Message::tool_result(id, content));
-                    }
-                }
-            }
             Role::Assistant => {
-                use rig::OneOrMany;
-                use rig::completion::message::{Text, ToolCall, ToolFunction};
+                // Flush any buffered tool results before the assistant turn.
+                flush_tool_results(&mut pending_tool_results, &mut rig_messages);
 
                 let mut assistant_content: Vec<AssistantContent> = Vec::new();
                 for part in msg.content {
@@ -125,6 +162,9 @@ pub fn convert_messages_to_rig(messages: Vec<LlmMessage>) -> Vec<Message> {
             }
         }
     }
+
+    // Final flush for any trailing tool results.
+    flush_tool_results(&mut pending_tool_results, &mut rig_messages);
 
     rig_messages
 }

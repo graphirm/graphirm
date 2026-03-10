@@ -42,10 +42,11 @@ impl GraphirmClient {
     }
 
     pub async fn create_session(&self) -> reqwest::Result<SessionResponse> {
-        // The endpoint requires Content-Type: application/json even with an empty body.
+        // auto_approve: true bypasses the HITL gate so bash/write/edit run
+        // without human confirmation — required for programmatic eval runs.
         self.http
             .post(format!("{}/api/sessions", self.base))
-            .json(&serde_json::json!({}))
+            .json(&serde_json::json!({ "auto_approve": true }))
             .send()
             .await?
             .json()
