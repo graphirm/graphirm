@@ -89,6 +89,34 @@ pub fn read_corpus_jsonl<R: BufRead>(reader: R) -> Result<Vec<CorpusTurn>, Agent
     Ok(turns)
 }
 
+/// Read up to `limit` corpus turns from a reader (for batched processing to limit memory).
+pub fn read_corpus_jsonl_batch<R: BufRead>(
+    reader: &mut R,
+    limit: usize,
+) -> Result<Vec<CorpusTurn>, AgentError> {
+    let mut turns = Vec::with_capacity(limit.min(1024));
+    let mut line = String::new();
+    let mut line_num = 0usize;
+    while turns.len() < limit {
+        line.clear();
+        let n = reader
+            .read_line(&mut line)
+            .map_err(|e| AgentError::Workflow(format!("read line: {}", e)))?;
+        if n == 0 {
+            break;
+        }
+        line_num += 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let turn: CorpusTurn = serde_json::from_str(trimmed)
+            .map_err(|e| AgentError::Workflow(format!("parse line {}: {}", line_num, e)))?;
+        turns.push(turn);
+    }
+    Ok(turns)
+}
+
 /// Run GLiNER2 over each turn and aggregate statistics.
 pub async fn run_label_exploration(
     extractor: &OnnxExtractor,

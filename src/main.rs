@@ -64,17 +64,20 @@ enum Commands {
         port: u16,
     },
 
-    /// Export assistant turns to JSONL for structured-response discovery (GLiNER2).
+    /// Export turns to JSONL for structured-response discovery (GLiNER2).
     ///
-    /// Reads the graph at --db and writes one JSON object per assistant turn
-    /// (session_id, turn_index, role, text). Default output is stdout.
+    /// Reads the graph at --db and writes one JSON object per turn
+    /// (session_id, turn_index, role, text). Default: assistant turns only.
     ExportCorpus {
         /// Output file (default: stdout)
         #[arg(short, long)]
         out: Option<PathBuf>,
-        /// Maximum number of assistant turns to export (for validation samples, e.g. 100)
+        /// Maximum number of turns to export (for validation samples, e.g. 100)
         #[arg(long)]
         limit: Option<u64>,
+        /// Include user prompts as well as assistant turns (limit then applies to total turns)
+        #[arg(long)]
+        all_roles: bool,
     },
 
     /// Run GLiNER2 over a corpus JSONL with candidate labels and output a statistics report.
@@ -120,6 +123,9 @@ enum Commands {
         /// Output path for spans JSONL (default: stdout)
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Process corpus in batches of N turns to limit memory (default: all at once)
+        #[arg(long)]
+        batch_size: Option<u64>,
     },
 
     /// Compare human annotations to GLiNER2 spans and report agreement (Phase 4).
@@ -195,12 +201,12 @@ async fn main() -> Result<(), GraphirmError> {
                 .init();
             run_model_command(action).await?;
         }
-        Commands::ExportCorpus { out, limit } => {
+        Commands::ExportCorpus { out, limit, all_roles } => {
             tracing_subscriber::fmt()
                 .with_writer(std::io::stderr)
                 .with_env_filter("warn")
                 .init();
-            run_export_corpus(&db_path, out, limit)?;
+            run_export_corpus(&db_path, out, limit, all_roles)?;
         }
         #[cfg(feature = "local-extraction")]
         Commands::LabelExplore {
@@ -229,12 +235,13 @@ async fn main() -> Result<(), GraphirmError> {
             labels,
             min_confidence,
             out,
+            batch_size,
         } => {
             tracing_subscriber::fmt()
                 .with_writer(std::io::stderr)
                 .with_env_filter("warn")
                 .init();
-            run_predict_spans(corpus, labels, min_confidence, out).await?;
+            run_predict_spans(corpus, labels, min_confidence, out, batch_size).await?;
         }
         #[cfg(feature = "local-extraction")]
         Commands::ValidateAgreement {
@@ -250,98 +257,7 @@ async fn main() -> Result<(), GraphirmError> {
             run_validate_agreement(human, gliner, threshold, out)?;
         }
         Commands::Serve { host, port } => {
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::from_default_env()
-                        .add_directive(tracing::Level::INFO.into()),
-                )
-                .init();
-
-            let graph = Arc::new(graphirm_graph::GraphStore::open(
-                db_path.to_str().unwrap_or("graph.db"),
-            )?);
-            let tools = Arc::new(build_tool_registry());
-
-            let agent_config = graphirm_agent::AgentConfig::default();
-
-            // LLM provider requires a model spec; reads GRAPHIRM_MODEL env var
-            // (set in .env). Defaults to Qwen Coder Next (OpenRouter) if not configured.
-            let model_spec = std::env::var("GRAPHIRM_MODEL")
-                .unwrap_or_else(|_| "openrouter/qwen/qwen3-coder-next".to_string());
-            let (provider_name, model_name) =
-                graphirm_llm::factory::parse_model_string(&model_spec)
-                    .map_err(|e| GraphirmError::Config(e.to_string()))?;
-            let api_key = api_key_for_provider(provider_name)?;
-            let llm: Arc<dyn graphirm_llm::LlmProvider> = Arc::from(
-                graphirm_llm::factory::create_provider(provider_name, &api_key)
-                    .map_err(|e| GraphirmError::Config(e.to_string()))?,
-            );
-
-            // Use the model name from GRAPHIRM_MODEL so sessions use the correct
-            // model for the configured provider (not the AgentConfig default which
-            // is hardcoded to a Claude model name).
-            //
-            // Knowledge extraction backend selection:
-            // - If GLINER2_MODEL_DIR is set and the binary was built with
-            //   --features local-extraction, use the fast local ONNX backend
-            //   (150-200ms per call, no API cost, no timeouts).
-            // - Otherwise fall back to the LLM backend (25-35s per call).
-            let extraction_backend = resolve_extraction_backend();
-            let agent_config = graphirm_agent::AgentConfig {
-                model: model_name.to_string(),
-                extraction: Some(graphirm_agent::knowledge::extraction::ExtractionConfig {
-                    enabled: true,
-                    model: model_name.to_string(),
-                    backend: extraction_backend,
-                    ..Default::default()
-                }),
-                ..agent_config
-            };
-
-            // Optional embedding provider for cross-session memory.
-            // Set EMBEDDING_BACKEND="fastembed/bge-small-en-v1.5" (recommended — free, 12ms, 0.334 discrimination)
-            // or "mistral/codestral-embed" (API, 400ms, 0.305 discrimination, requires MISTRAL_API_KEY)
-            let embedding_backend = std::env::var("EMBEDDING_BACKEND").ok();
-            let memory_retriever: Option<
-                std::sync::Arc<graphirm_agent::knowledge::memory::MemoryRetriever>,
-            > = if let Some(spec) = embedding_backend {
-                let mistral_key = std::env::var("MISTRAL_API_KEY").ok();
-                match graphirm_llm::factory::create_embedding_provider(
-                    &spec,
-                    mistral_key.as_deref(),
-                ) {
-                    Ok((provider, dim)) => {
-                        tracing::info!(backend = %spec, dim, "Embedding provider initialised");
-                        let retriever = std::sync::Arc::new(
-                            graphirm_agent::knowledge::memory::MemoryRetriever::from_store(
-                                graph.clone(),
-                                std::sync::Arc::from(provider),
-                                dim,
-                            ),
-                        );
-                        match retriever.hydrate_from_graph().await {
-                            Ok(n) => tracing::info!(count = n, "Restored embeddings from graph store"),
-                            Err(e) => tracing::warn!(error = %e, "HNSW hydration failed (non-fatal); starting fresh"),
-                        }
-                        Some(retriever)
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "Embedding provider failed to init; memory disabled"
-                        );
-                        None
-                    }
-                }
-            } else {
-                tracing::info!("EMBEDDING_BACKEND not set; cross-session memory disabled");
-                None
-            };
-
-            let server_config = graphirm_server::ServerConfig { host, port };
-            graphirm_server::start_server(graph, llm, tools, agent_config, server_config, memory_retriever)
-                .await
-                .map_err(|e| GraphirmError::Config(e.to_string()))?;
+            run_serve(&db_path, host, port).await?;
         }
     }
 
@@ -422,16 +338,22 @@ fn run_export_corpus(
     db_path: &PathBuf,
     out: Option<PathBuf>,
     limit: Option<u64>,
+    all_roles: bool,
 ) -> Result<(), GraphirmError> {
     let graph = graphirm_graph::GraphStore::open(db_path.to_str().unwrap_or("graph.db"))?;
+    let assistant_only = !all_roles;
     let count = if let Some(path) = out {
         let mut f = std::fs::File::create(path)?;
-        graphirm_graph::export_corpus_to_jsonl(&graph, &mut f, true, limit)?
+        graphirm_graph::export_corpus_to_jsonl(&graph, &mut f, assistant_only, limit)?
     } else {
         let mut stdout = std::io::stdout();
-        graphirm_graph::export_corpus_to_jsonl(&graph, &mut stdout, true, limit)?
+        graphirm_graph::export_corpus_to_jsonl(&graph, &mut stdout, assistant_only, limit)?
     };
-    eprintln!("Exported {} assistant turns.", count);
+    if all_roles {
+        eprintln!("Exported {} turns (user + assistant).", count);
+    } else {
+        eprintln!("Exported {} assistant turns.", count);
+    }
     Ok(())
 }
 
@@ -526,6 +448,7 @@ async fn run_predict_spans(
     labels_str: String,
     min_confidence: f64,
     out: Option<PathBuf>,
+    batch_size: Option<u64>,
 ) -> Result<(), GraphirmError> {
     use std::io::BufReader;
 
@@ -535,14 +458,6 @@ async fn run_predict_spans(
         )
     })?;
     let model_dir = std::path::Path::new(&model_dir);
-
-    let file = std::fs::File::open(&corpus_path)
-        .map_err(|e| GraphirmError::Config(format!("open corpus {}: {}", corpus_path.display(), e)))?;
-    let turns = graphirm_agent::knowledge::label_explore::read_corpus_jsonl(BufReader::new(file))?;
-    if turns.is_empty() {
-        eprintln!("Corpus is empty.");
-        return Ok(());
-    }
 
     let labels: Vec<String> = labels_str
         .split(',')
@@ -556,13 +471,7 @@ async fn run_predict_spans(
     let extractor = graphirm_agent::knowledge::local_extraction::OnnxExtractor::new(model_dir)
         .map_err(|e| GraphirmError::Config(format!("load GLiNER2 model: {}", e)))?;
 
-    let rows = graphirm_agent::knowledge::predict_spans::run_predict_spans(
-        &extractor,
-        &turns,
-        &labels,
-        min_confidence,
-    )
-    .await?;
+    let batch_size_usize = batch_size.map(|n| n as usize);
 
     let mut writer: Box<dyn std::io::Write> = if let Some(path) = &out {
         Box::new(
@@ -572,12 +481,61 @@ async fn run_predict_spans(
     } else {
         Box::new(std::io::stdout())
     };
-    for row in &rows {
-        let line = serde_json::to_string(row).map_err(|e| GraphirmError::Config(e.to_string()))?;
-        writeln!(writer, "{line}").map_err(GraphirmError::Io)?;
+
+    let mut total_written = 0usize;
+
+    if let Some(batch_size_n) = batch_size_usize {
+        let file = std::fs::File::open(&corpus_path)
+            .map_err(|e| GraphirmError::Config(format!("open corpus {}: {}", corpus_path.display(), e)))?;
+        let mut reader = BufReader::new(file);
+        loop {
+            let turns = graphirm_agent::knowledge::label_explore::read_corpus_jsonl_batch(
+                &mut reader,
+                batch_size_n,
+            )?;
+            if turns.is_empty() {
+                break;
+            }
+            let rows = graphirm_agent::knowledge::predict_spans::run_predict_spans(
+                &extractor,
+                &turns,
+                &labels,
+                min_confidence,
+            )
+            .await?;
+            for row in &rows {
+                let line = serde_json::to_string(row).map_err(|e| GraphirmError::Config(e.to_string()))?;
+                writeln!(writer, "{line}").map_err(GraphirmError::Io)?;
+            }
+            total_written += rows.len();
+            if out.is_some() {
+                eprintln!("  processed batch: {} turns (total {} so far)", rows.len(), total_written);
+            }
+        }
+    } else {
+        let file = std::fs::File::open(&corpus_path)
+            .map_err(|e| GraphirmError::Config(format!("open corpus {}: {}", corpus_path.display(), e)))?;
+        let turns = graphirm_agent::knowledge::label_explore::read_corpus_jsonl(BufReader::new(file))?;
+        if turns.is_empty() {
+            eprintln!("Corpus is empty.");
+            return Ok(());
+        }
+        let rows = graphirm_agent::knowledge::predict_spans::run_predict_spans(
+            &extractor,
+            &turns,
+            &labels,
+            min_confidence,
+        )
+        .await?;
+        for row in &rows {
+            let line = serde_json::to_string(row).map_err(|e| GraphirmError::Config(e.to_string()))?;
+            writeln!(writer, "{line}").map_err(GraphirmError::Io)?;
+        }
+        total_written = rows.len();
     }
-    if out.is_some() {
-        eprintln!("Wrote {} turn spans to output.", rows.len());
+
+    if out.is_some() && total_written > 0 {
+        eprintln!("Wrote {} turn spans to output.", total_written);
     }
     Ok(())
 }
@@ -882,4 +840,122 @@ async fn run_chat(model: String, db_path: &PathBuf) -> Result<(), GraphirmError>
     cancel.cancel();
 
     Ok(())
+}
+
+/// Start the HTTP API server with configured providers and backends.
+async fn run_serve(db_path: &PathBuf, host: String, port: u16) -> Result<(), GraphirmError> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(tracing::Level::INFO.into()),
+        )
+        .init();
+
+    let graph = Arc::new(graphirm_graph::GraphStore::open(
+        db_path.to_str().unwrap_or("graph.db"),
+    )?);
+    let tools = Arc::new(build_tool_registry());
+
+    let agent_config = graphirm_agent::AgentConfig::default();
+
+    // LLM provider requires a model spec; reads GRAPHIRM_MODEL env var
+    // (set in .env). Defaults to Qwen Coder Next (OpenRouter) if not configured.
+    let model_spec = std::env::var("GRAPHIRM_MODEL")
+        .unwrap_or_else(|_| "openrouter/qwen/qwen3-coder-next".to_string());
+    let (provider_name, model_name) =
+        graphirm_llm::factory::parse_model_string(&model_spec)
+            .map_err(|e| GraphirmError::Config(e.to_string()))?;
+    let api_key = api_key_for_provider(provider_name)?;
+    let llm: Arc<dyn graphirm_llm::LlmProvider> = Arc::from(
+        graphirm_llm::factory::create_provider(provider_name, &api_key)
+            .map_err(|e| GraphirmError::Config(e.to_string()))?,
+    );
+
+    // Use the model name from GRAPHIRM_MODEL so sessions use the correct
+    // model for the configured provider (not the AgentConfig default which
+    // is hardcoded to a Claude model name).
+    //
+    // Knowledge extraction backend selection:
+    // - If GLINER2_MODEL_DIR is set and the binary was built with
+    //   --features local-extraction, use the fast local ONNX backend
+    //   (150-200ms per call, no API cost, no timeouts).
+    // - Otherwise fall back to the LLM backend (25-35s per call).
+    let extraction_enabled = std::env::var("GRAPHIRM_EXTRACTION")
+        .map(|v| v != "0" && v != "false")
+        .unwrap_or(true);
+    let extraction_backend = resolve_extraction_backend();
+    let agent_config = graphirm_agent::AgentConfig {
+        model: model_name.to_string(),
+        extraction: Some(graphirm_agent::knowledge::extraction::ExtractionConfig {
+            enabled: extraction_enabled,
+            model: model_name.to_string(),
+            backend: extraction_backend,
+            ..Default::default()
+        }),
+        ..agent_config
+    };
+    if !extraction_enabled {
+        tracing::info!("Knowledge extraction disabled (GRAPHIRM_EXTRACTION=false)");
+    }
+
+    // Optional embedding provider for cross-session memory.
+    // Set EMBEDDING_BACKEND="fastembed/bge-small-en-v1.5" (recommended — free, 12ms, 0.334 discrimination)
+    // or "mistral/codestral-embed" (API, 400ms, 0.305 discrimination, requires MISTRAL_API_KEY)
+    let memory_retriever = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        setup_memory_retriever(&graph),
+    )
+    .await
+    .map_err(|_| GraphirmError::Config("Embedding provider initialization timed out after 30s".into()))?;
+
+    let server_config = graphirm_server::ServerConfig { host, port };
+    graphirm_server::start_server(graph, llm, tools, agent_config, server_config, memory_retriever?)
+        .await
+        .map_err(|e| GraphirmError::Config(e.to_string()))?;
+
+    Ok(())
+}
+
+/// Initialize the optional embedding provider for cross-session memory.
+async fn setup_memory_retriever(
+    graph: &Arc<graphirm_graph::GraphStore>,
+) -> Result<Option<std::sync::Arc<graphirm_agent::knowledge::memory::MemoryRetriever>>, GraphirmError> {
+    let embedding_backend = std::env::var("EMBEDDING_BACKEND").ok();
+    if let Some(spec) = embedding_backend {
+        let mistral_key = std::env::var("MISTRAL_API_KEY").ok();
+        match graphirm_llm::factory::create_embedding_provider(&spec, mistral_key.as_deref()) {
+            Ok((provider, dim)) => {
+                tracing::info!(backend = %spec, dim, "Embedding provider initialised");
+                let retriever = std::sync::Arc::new(
+                    graphirm_agent::knowledge::memory::MemoryRetriever::from_store(
+                        graph.clone(),
+                        std::sync::Arc::from(provider),
+                        dim,
+                    ),
+                );
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    retriever.hydrate_from_graph(),
+                )
+                .await
+                {
+                    Ok(Ok(n)) => tracing::info!(count = n, "Restored embeddings from graph store"),
+                    Ok(Err(e)) => tracing::warn!(error = %e, "HNSW hydration failed (non-fatal); starting fresh"),
+                    Err(_) => tracing::warn!("HNSW hydration timed out after 60s (non-fatal); starting fresh"),
+                }
+                Ok(Some(retriever))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Embedding provider failed to init; memory disabled"
+                );
+                Ok(None)
+            }
+        }
+    } else {
+        tracing::info!("EMBEDDING_BACKEND not set; cross-session memory disabled");
+        // TODO: Cache the MemoryRetriever for reuse across calls to avoid reinitialization
+        Ok(None)
+    }
 }
