@@ -114,7 +114,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 0–9 | Scaffold → Knowledge layer (graph, LLM, tools, agent, multi-agent, context engine, TUI, HTTP, knowledge/HNSW) | ✅ done |
 | 10 | Web UI — graph visualization | 🔲 pending |
 
-**Active work:** Structured LLM response discovery pipeline (GLiNER2 span prediction → schema suggestion → human annotation validation). See `docs/plans/2026-03-10-structured-llm-responses.md`.
+**Active work:** Structured LLM response discovery pipeline — Phases 5–6 complete (segment parsing, graph persistence, integration tests). See `docs/plans/2026-03-10-structured-llm-responses.md`.
 
 **Risk areas:**
 - `Arc<RwLock<StableGraph>>` — no deadlocks; acquire briefly, never across await

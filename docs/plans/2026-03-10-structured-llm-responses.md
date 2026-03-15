@@ -4,7 +4,7 @@
 
 **Goal:** Discover what structure exists inside LLM responses, validate it empirically using GLiNER2, and define a schema that Graphirm can request from models and persist in the graph.
 
-**Status:** Phases 1–4 implemented (corpus export with --limit, label-explore, schema-suggest, predict-spans, validate-agreement); Phases 5–6 not started.
+**Status:** Phases 1–6 implemented.
 
 ---
 
