@@ -13,7 +13,7 @@ alwaysApply: true
 
 ## Development Environment
 
-Two environments share the same GitHub remote (`github.com/consoulhub/graphirm`).
+Two environments share the same GitHub remote (`github.com/graphirm/graphirm`).
 
 ### Local (this workspace)
 
