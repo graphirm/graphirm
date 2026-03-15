@@ -105,6 +105,9 @@ async fn create_session(
             ..graphirm_agent::config::SegmentConfig::default()
         });
     }
+    if let Some(filter) = body.segment_filter {
+        config.segment_filter = Some(filter);
+    }
 
     let hitl = Arc::new(HitlGate::new());
     let graph_for_session = state.graph.clone();

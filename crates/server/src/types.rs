@@ -159,6 +159,11 @@ pub struct CreateSessionRequest {
     /// persist each segment as a child Content node in the graph.
     #[serde(default)]
     pub enable_segments: Option<bool>,
+    /// When set, restricts context window to only the listed segment types.
+    /// Only takes effect when the session has segmented assistant responses.
+    /// Example: `["reasoning", "code"]`
+    #[serde(default)]
+    pub segment_filter: Option<Vec<String>>,
 }
 
 /// Request body for `POST /api/sessions/:id/prompt`.
@@ -322,6 +327,17 @@ mod tests {
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.auto_approve, Some(true));
         assert_eq!(req.enable_segments, Some(true));
+    }
+
+    #[test]
+    fn test_create_session_request_segment_filter_deserialization() {
+        let json = r#"{"segment_filter": ["code", "reasoning"]}"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.segment_filter, Some(vec!["code".to_string(), "reasoning".to_string()]));
+
+        let json_missing = r#"{}"#;
+        let req2: CreateSessionRequest = serde_json::from_str(json_missing).unwrap();
+        assert!(req2.segment_filter.is_none());
     }
 
     #[test]
