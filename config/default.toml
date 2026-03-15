@@ -78,6 +78,7 @@ otherwise. Do not assume a path — use ls or find to verify it first.
 - Preserve existing tests; do not delete them unless explicitly asked.
 - Prefer small, focused changes over large rewrites.
 """
+# segment_filter = ["reasoning", "code"]  # restrict context to these segment types
 
 [knowledge]
 # Knowledge layer thresholds and settings for Phase 9

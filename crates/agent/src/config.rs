@@ -536,4 +536,21 @@ mod tests {
         assert!(!seg.gliner2_fallback);
         assert!((seg.min_confidence - 0.7).abs() < f64::EPSILON);
     }
+
+    #[test]
+    fn test_agent_config_from_toml_segment_filter_roundtrip() {
+        let toml = r#"
+[agent]
+name = "test"
+model = "claude-opus-4-5"
+system_prompt = "test"
+max_turns = 5
+segment_filter = ["reasoning", "code"]
+"#;
+        let config = AgentConfig::from_toml(toml).expect("TOML parse failed");
+        assert_eq!(
+            config.segment_filter,
+            Some(vec!["reasoning".to_string(), "code".to_string()])
+        );
+    }
 }
