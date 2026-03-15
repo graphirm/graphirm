@@ -3,6 +3,7 @@ mod coding;
 pub mod graph;
 pub mod knowledge;
 pub mod memory;
+pub mod segments;
 
 use crate::task::EvalTask;
 
@@ -13,5 +14,6 @@ pub fn all_tasks() -> Vec<EvalTask> {
     tasks.extend(knowledge::tasks());
     tasks.extend(graph::tasks());
     tasks.extend(adversarial::tasks());
+    tasks.extend(segments::tasks());
     tasks
 }

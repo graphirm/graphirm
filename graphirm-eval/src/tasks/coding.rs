@@ -17,6 +17,7 @@ pub fn tasks() -> Vec<EvalTask> {
             ]),
             max_turns: 5,
             timeout_secs: 120,
+            enable_segments: false,
         },
         EvalTask {
             id: "read-line-count".to_string(),
@@ -37,6 +38,7 @@ pub fn tasks() -> Vec<EvalTask> {
             },
             max_turns: 3,
             timeout_secs: 60,
+            enable_segments: false,
         },
         EvalTask {
             id: "bash-line-count".to_string(),
@@ -56,6 +58,7 @@ pub fn tasks() -> Vec<EvalTask> {
             },
             max_turns: 3,
             timeout_secs: 90,
+            enable_segments: false,
         },
         EvalTask {
             id: "write-fibonacci".to_string(),
@@ -79,6 +82,7 @@ pub fn tasks() -> Vec<EvalTask> {
             ]),
             max_turns: 5,
             timeout_secs: 120,
+            enable_segments: false,
         },
         EvalTask {
             id: "multi-turn-read-write".to_string(),
@@ -93,6 +97,7 @@ pub fn tasks() -> Vec<EvalTask> {
             },
             max_turns: 3,
             timeout_secs: 90,
+            enable_segments: false,
         },
     ]
 }

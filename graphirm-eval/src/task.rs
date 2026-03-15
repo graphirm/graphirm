@@ -20,6 +20,8 @@ pub struct EvalTask {
     pub max_turns: u32,
     /// Seconds to wait for the session to go idle after each prompt
     pub timeout_secs: u64,
+    /// Whether to enable structured response segmentation for this task's session.
+    pub enable_segments: bool,
 }
 
 /// A cross-session task that requires two separate sessions (used for memory recall).
@@ -60,6 +62,9 @@ pub enum Verifier {
     /// GET /api/graph/{session} — pass if node count >= min_nodes and
     /// at least one node has node_type matching type_name.
     GraphContains { min_nodes: usize, type_name: String },
+    /// GET /api/graph/{session} — pass if at least one Content node exists
+    /// with `node_type.content_type` matching the given string.
+    GraphContainsContentType { content_type: String },
     /// All verifiers must pass.
     All(Vec<Verifier>),
 }
@@ -113,9 +118,11 @@ mod tests {
             verifier: Verifier::ResponseContains { substring: "world".to_string() },
             max_turns: 5,
             timeout_secs: 30,
+            enable_segments: false,
         };
         assert_eq!(t.id, "test-task");
         assert!(matches!(t.verifier, Verifier::ResponseContains { .. }));
+        assert!(!t.enable_segments);
     }
 
     #[test]
