@@ -129,4 +129,4 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 **Risk areas:**
 - `Arc<RwLock<StableGraph>>` — no deadlocks; acquire briefly, never across await
 - Rust version must match spoke/CI (stable, currently 1.85)
-- `OnnxExtractor::new` is expensive (~seconds); GLiNER2 fallback constructs it per-turn — cache if latency matters
+- `OnnxExtractor` is cached process-wide via `get_or_init_onnx_extractor(model_dir)` — call this instead of `OnnxExtractor::new` directly; sessions load once per unique directory

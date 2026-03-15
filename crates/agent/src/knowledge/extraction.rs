@@ -319,15 +319,10 @@ pub async fn extract_knowledge_with_backend(
 
         #[cfg(feature = "local-extraction")]
         ExtractionBackend::Local { model_dir } => {
-            use crate::knowledge::local_extraction::OnnxExtractor;
-            // Constructing OnnxExtractor inline is expensive (~seconds per call due
-            // to loading 4 ONNX sessions). Callers should cache OnnxExtractor as
-            // Arc<OnnxExtractor> at startup and pass it in. This inline construction
-            // documents the API surface.
-            let extractor = OnnxExtractor::new(std::path::Path::new(model_dir))?;
+            // Returns the process-wide cached Arc<OnnxExtractor> for this model_dir.
             // OnnxExtractor::extract already filters by min_confidence internally.
-            // persist_extracted_entities will re-filter, which is harmless but
-            // intentional: the shared path applies the same threshold uniformly.
+            let extractor =
+                crate::knowledge::local_extraction::get_or_init_onnx_extractor(model_dir).await?;
             extractor
                 .extract(
                     &format_conversation(messages),
@@ -346,10 +341,9 @@ pub async fn extract_knowledge_with_backend(
 
         #[cfg(feature = "local-extraction")]
         ExtractionBackend::Hybrid { model_dir } => {
-            use crate::knowledge::local_extraction::OnnxExtractor;
-            // See Local arm comment: inline construction is expensive; callers
-            // should cache OnnxExtractor as Arc<OnnxExtractor> for Hybrid too.
-            let extractor = OnnxExtractor::new(std::path::Path::new(model_dir))?;
+            // Returns the process-wide cached Arc<OnnxExtractor> for this model_dir.
+            let extractor =
+                crate::knowledge::local_extraction::get_or_init_onnx_extractor(model_dir).await?;
             let conversation_text = format_conversation(messages);
             let local_result = extractor
                 .extract(
