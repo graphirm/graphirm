@@ -104,6 +104,62 @@ pub async fn stream_and_record(
 
     let node_id = session.record_interaction(interaction_node).await?;
 
+    // Structured response segmentation — opt-in, non-fatal.
+    // Only runs on final text turns (no tool calls).
+    // GLiNER2 fallback is not yet wired — Session has no onnx_extractor field.
+    // TODO(task-5b): wire GLiNER2 fallback once Session exposes OnnxExtractor.
+    if let Some(ref seg_config) = session.agent_config.segments {
+        if seg_config.enabled && !response.has_tool_calls() {
+            let raw_text = response.text_content();
+
+            let segments_opt =
+                match crate::knowledge::segments::parse_structured_segments(&raw_text) {
+                    Ok(segs) if !segs.is_empty() => {
+                        tracing::info!(
+                            count = segs.len(),
+                            "Parsed structured segments from LLM response"
+                        );
+                        Some((segs, "structured"))
+                    }
+                    Ok(_) => {
+                        tracing::debug!("Structured segment parse returned empty — no segments");
+                        None
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            error = %e,
+                            "Structured segment parse failed — response is plain text"
+                        );
+                        None
+                    }
+                };
+
+            if let Some((segments, source)) = segments_opt {
+                let nesting = crate::knowledge::segments::detect_nesting(&segments);
+                match crate::knowledge::segments::persist_segments(
+                    &session.graph,
+                    &node_id,
+                    &segments,
+                    &nesting,
+                )
+                .await
+                {
+                    Ok(seg_ids) => {
+                        tracing::info!(
+                            count = seg_ids.len(),
+                            source = source,
+                            nesting_pairs = nesting.len(),
+                            "Persisted response segments"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to persist response segments (non-fatal)");
+                    }
+                }
+            }
+        }
+    }
+
     info!(node_id = %node_id, "Recorded assistant response");
 
     // Emit the full response as a stream of events so the TUI can render it.
