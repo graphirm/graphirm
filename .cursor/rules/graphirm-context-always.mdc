@@ -1,0 +1,49 @@
+---
+description: Cursor-specific workspace context — supplements AGENTS.md
+alwaysApply: true
+---
+
+# Cursor Workspace Context
+
+> **Architecture, graph model, conventions, and build commands live in `AGENTS.md` (root) and
+> per-crate `AGENTS.md` files.** Read AGENTS.md first. This rule covers Cursor-specific context only.
+> If this rule conflicts with AGENTS.md, AGENTS.md is the source of truth — update this rule to match.
+
+---
+
+## Development Environment
+
+Two environments share the same GitHub remote (`github.com/consoulhub/graphirm`).
+
+### Local (this workspace)
+
+- **Path:** `~/graphirm-repo/`
+- **IDE:** Cursor
+- **Role:** Primary development, planning, code review
+
+### Remote Spoke
+
+- **What:** Ephemeral Hetzner VM managed by Consoul (`ccx33`, 8 vCPU, 32GB RAM)
+- **Project at:** `/root/project` (same repo, cloned via cloud-init)
+- **IDE on spoke:** code-server + OpenCode (DeepSeek)
+- **Lifespan:** Auto-deleted after 24 hours — push before teardown
+
+### Connecting
+
+- **Dashboard:** `https://terminimal.space` (HTTP basic auth, user: `admin`)
+- **SSH:** `ssh root@<spoke-ip>` (hub SSH keys are pre-installed)
+- **code-server:** SSH tunnel or spoke IP on port 8443
+
+### Sync
+
+```bash
+git push origin main   # after working locally — spoke can then pull
+git pull origin main   # after spoke work — pull changes back here
+```
+
+---
+
+## Risk Reminders
+
+- `Arc<RwLock<StableGraph>>` — acquire locks briefly, never hold across an await point
+- Rust version must match spoke/CI (stable, currently 1.85)
