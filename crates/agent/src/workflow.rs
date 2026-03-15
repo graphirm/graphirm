@@ -117,14 +117,17 @@ pub async fn stream_and_record(
 
     // Structured response segmentation — opt-in, non-fatal.
     // Only runs on final text turns (no tool calls).
-    // GLiNER2 fallback is not yet wired — Session has no onnx_extractor field.
-    // TODO(task-5b): wire GLiNER2 fallback once Session exposes OnnxExtractor.
+    // Primary path: parse JSON envelope emitted by LLM when structured_output is true.
+    // Fallback path: GLiNER2 ONNX span detection (requires local-extraction feature +
+    //   ExtractionConfig with a Local or Hybrid backend pointing at a downloaded model).
     if let Some(ref seg_config) = session.agent_config.segments {
         if seg_config.enabled && !response.has_tool_calls() {
             let raw_text = response.text_content();
 
-            let segments_opt =
-                match crate::knowledge::segments::parse_structured_segments(&raw_text) {
+            // Try structured JSON first, fall back to GLiNER2 if that fails or is empty.
+            let structured = crate::knowledge::segments::parse_structured_segments(&raw_text);
+            let segments_opt: Option<(Vec<crate::knowledge::segments::Segment>, &str)> =
+                match structured {
                     Ok(segs) if !segs.is_empty() => {
                         tracing::info!(
                             count = segs.len(),
@@ -133,14 +136,66 @@ pub async fn stream_and_record(
                         Some((segs, "structured"))
                     }
                     Ok(_) => {
-                        tracing::debug!("Structured segment parse returned empty — no segments");
+                        tracing::debug!("Structured segment parse returned empty — trying GLiNER2 fallback");
+                        // GLiNER2 fallback
+                        #[cfg(feature = "local-extraction")]
+                        {
+                            let model_dir = session.agent_config.extraction.as_ref()
+                                .filter(|_| seg_config.gliner2_fallback)
+                                .and_then(|e| {
+                                    use crate::knowledge::extraction::ExtractionBackend;
+                                    match &e.backend {
+                                        ExtractionBackend::Local { model_dir }
+                                        | ExtractionBackend::Hybrid { model_dir } => {
+                                            Some(model_dir.clone())
+                                        }
+                                        _ => None,
+                                    }
+                                });
+                            if let Some(dir) = model_dir {
+                                crate::knowledge::segments::try_gliner2_fallback(
+                                    &dir, &raw_text, &seg_config.labels, seg_config.min_confidence,
+                                )
+                                .await
+                                .map(|s| (s, "gliner2"))
+                            } else {
+                                None
+                            }
+                        }
+                        #[cfg(not(feature = "local-extraction"))]
                         None
                     }
                     Err(e) => {
                         tracing::debug!(
                             error = %e,
-                            "Structured segment parse failed — response is plain text"
+                            "Structured segment parse failed — trying GLiNER2 fallback"
                         );
+                        // GLiNER2 fallback
+                        #[cfg(feature = "local-extraction")]
+                        {
+                            let model_dir = session.agent_config.extraction.as_ref()
+                                .filter(|_| seg_config.gliner2_fallback)
+                                .and_then(|e| {
+                                    use crate::knowledge::extraction::ExtractionBackend;
+                                    match &e.backend {
+                                        ExtractionBackend::Local { model_dir }
+                                        | ExtractionBackend::Hybrid { model_dir } => {
+                                            Some(model_dir.clone())
+                                        }
+                                        _ => None,
+                                    }
+                                });
+                            if let Some(dir) = model_dir {
+                                crate::knowledge::segments::try_gliner2_fallback(
+                                    &dir, &raw_text, &seg_config.labels, seg_config.min_confidence,
+                                )
+                                .await
+                                .map(|s| (s, "gliner2"))
+                            } else {
+                                None
+                            }
+                        }
+                        #[cfg(not(feature = "local-extraction"))]
                         None
                     }
                 };
