@@ -118,13 +118,12 @@ async fn test_segment_filter_excludes_non_matching_types() {
         .add_edge(GraphEdge::new(EdgeType::Produces, agent_id.clone(), user_id.clone()))
         .unwrap();
 
-    // Create a segmented assistant Interaction node with metadata["segmented"] = true
-    let mut assistant_node = GraphNode::new(NodeType::Interaction(InteractionData {
+    // Create an assistant Interaction node (metadata["segmented"] will be stamped after persist)
+    let assistant_node = GraphNode::new(NodeType::Interaction(InteractionData {
         role: "assistant".to_string(),
         content: "raw json placeholder".to_string(),
         token_count: Some(10),
     }));
-    assistant_node.metadata = serde_json::json!({ "segmented": true });
     let assistant_id = assistant_node.id.clone();
     store.add_node(assistant_node).unwrap();
 
@@ -144,6 +143,11 @@ async fn test_segment_filter_excludes_non_matching_types() {
     ];
     let nesting = detect_nesting(&segments);
     persist_segments(&store, &assistant_id, &segments, &nesting).await.unwrap();
+
+    // Stamp "segmented": true on the parent node, mirroring the production path in workflow.rs.
+    let mut stamped = store.get_node(&assistant_id).unwrap();
+    stamped.metadata["segmented"] = serde_json::json!(true);
+    store.update_node(&assistant_id, stamped).unwrap();
 
     // Build context filtering to "code" segments only
     let config = ContextConfig {
