@@ -129,6 +129,11 @@ pub struct AgentConfig {
     /// Segment extraction config. `None` disables response segmentation.
     #[serde(default)]
     pub segments: Option<SegmentConfig>,
+    /// When segments are enabled, restrict context window reconstruction to
+    /// only these segment types. `None` includes all content (default).
+    /// Example: `["reasoning", "code"]`
+    #[serde(default)]
+    pub segment_filter: Option<Vec<String>>,
 }
 
 fn default_working_dir() -> PathBuf {
@@ -191,6 +196,7 @@ impl Default for AgentConfig {
             soft_escalation_turn: 8,
             soft_escalation_threshold: 2,
             segments: None,
+            segment_filter: None,
         }
     }
 }
@@ -237,6 +243,8 @@ struct AgentConfigSection {
     soft_escalation_threshold: usize,
     #[serde(default)]
     segments: Option<SegmentConfig>,
+    #[serde(default)]
+    segment_filter: Option<Vec<String>>,
 }
 
 fn default_system_prompt() -> String {
@@ -271,6 +279,7 @@ impl AgentConfig {
             soft_escalation_turn: file.agent.soft_escalation_turn,
             soft_escalation_threshold: file.agent.soft_escalation_threshold,
             segments: file.agent.segments,
+            segment_filter: file.agent.segment_filter,
         })
     }
 
@@ -479,6 +488,12 @@ mod tests {
     fn test_agent_config_segments_default_is_none() {
         let config = AgentConfig::default();
         assert!(config.segments.is_none());
+    }
+
+    #[test]
+    fn test_agent_config_segment_filter_default_is_none() {
+        let config = AgentConfig::default();
+        assert!(config.segment_filter.is_none());
     }
 
     #[test]
