@@ -159,6 +159,42 @@ pub async fn persist_segments(
     .map_err(|e| AgentError::Join(e.to_string()))?
 }
 
+/// Build the system prompt suffix that instructs the LLM to produce structured
+/// segment JSON output.
+///
+/// The suffix is appended to the agent's system prompt when
+/// `SegmentConfig.structured_output` is enabled. It tells the model to emit a
+/// `{"segments": [...]}` JSON envelope instead of plain text.
+pub fn build_segment_prompt(labels: &[String]) -> String {
+    let labels_str = labels
+        .iter()
+        .map(|l| format!(r#""{l}""#))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!(
+        r#"
+
+## Response Format
+
+Structure your entire response as a JSON object with a "segments" array. Each segment has:
+- "type": one of {labels_str}
+- "content": the text for that segment
+
+Example:
+```json
+{{"segments": [{{"type": "reasoning", "content": "The issue is..."}}, {{"type": "code", "content": "fn fix() {{}}"}}]}}
+```
+
+Rules:
+- Every part of your response must be in a segment.
+- Use the most specific type that fits.
+- Segments are sequential and non-overlapping.
+- Output ONLY the JSON object — no text outside it.
+"#
+    )
+}
+
 /// Run GLiNER2 over the raw response text with segment labels and return
 /// `Segment`s with character offsets from the model.
 ///
@@ -355,6 +391,18 @@ mod tests {
             .filter(|e| e.edge_type == EdgeType::Contains && e.source == parent_id)
             .collect();
         assert_eq!(contains.len(), 2);
+    }
+
+    #[test]
+    fn test_build_segment_prompt_contains_labels() {
+        let labels = vec!["code".into(), "reasoning".into(), "answer".into()];
+        let prompt = build_segment_prompt(&labels);
+        assert!(prompt.contains(r#""code""#));
+        assert!(prompt.contains(r#""reasoning""#));
+        assert!(prompt.contains(r#""answer""#));
+        assert!(prompt.contains("segments"));
+        assert!(prompt.contains("type"));
+        assert!(prompt.contains("content"));
     }
 
     /// Verify `segment_extract_gliner2` exists and the module compiles with the feature enabled.

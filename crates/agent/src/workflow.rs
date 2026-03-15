@@ -32,6 +32,17 @@ pub async fn stream_and_record(
     } else {
         format!("{}\n\n{}", session.agent_config.system_prompt, suffix)
     };
+    // Append segment format instructions when structured output is requested.
+    let system_prompt = if let Some(ref seg_config) = session.agent_config.segments {
+        if seg_config.enabled && seg_config.structured_output {
+            let seg_prompt = crate::knowledge::segments::build_segment_prompt(&seg_config.labels);
+            format!("{system_prompt}{seg_prompt}")
+        } else {
+            system_prompt
+        }
+    } else {
+        system_prompt
+    };
     let context_config = crate::context::ContextConfig {
         system_prompt,
         max_tokens: session
