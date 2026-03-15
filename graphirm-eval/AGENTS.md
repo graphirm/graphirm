@@ -22,7 +22,7 @@ structure, adversarial robustness, and structured response segments.
 | `tasks/memory.rs` | Cross-session memory tasks — knowledge persists across sessions |
 | `tasks/graph.rs` | Graph structure tasks — node/edge counts, traversal correctness |
 | `tasks/adversarial.rs` | Adversarial tasks — injection attempts, tool misuse |
-| `tasks/segments.rs` | Segment extraction tasks — verifies Content nodes with typed segments |
+| `tasks/segments.rs` | Segment tasks — `segment-extraction` verifies Content nodes; `segment-filter-context` smoke-tests the `segment_filter` request plumbing |
 
 ---
 
@@ -45,9 +45,13 @@ structure, adversarial robustness, and structured response segments.
 
 ## Session Options
 
-`EvalTask.enable_segments: bool` — when `true`, the harness creates the session with
-`{"enable_segments": true}`, which activates `SegmentConfig` for that session. Segment tasks
-use `GraphContainsContentType` to verify Content nodes were persisted.
+| Field | Type | Effect |
+|-------|------|--------|
+| `EvalTask.enable_segments` | `bool` | When `true`, creates the session with `enable_segments: true`, activating segment parsing |
+| `EvalTask.segment_filter` | `Option<Vec<String>>` | When set, passes `segment_filter` to the session; restricts context window to those segment types |
+
+Segment tasks use `GraphContainsContentType` to verify Content nodes were persisted,
+and `ResponseContains` as a smoke check that the agent's output is intact.
 
 ---
 

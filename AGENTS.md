@@ -115,6 +115,8 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 10 | Structured LLM response segments (parse → persist → GLiNER2 fallback → context filter → eval) | ✅ done |
 | 11 | Web UI — graph visualization | 🔲 pending |
 
+**Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
+
 **Segment feature summary (Phase 10):**
 - `SegmentConfig` in `AgentConfig` — enable per-session via `POST /api/sessions` with `enable_segments: true`
 - LLM responses parsed into typed `Content` nodes (`code`, `reasoning`, `observation`, `plan`, `answer`) linked via `Contains` edges

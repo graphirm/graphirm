@@ -18,7 +18,7 @@ and session management. Everything in graphirm that involves deciding what to do
 | `multi.rs` | `spawn_subagent`, `collect_subagent_results`, `wait_for_subagents` |
 | `escalation.rs` | Soft escalation — detects repeated identical tool calls, prompts synthesis |
 | `hitl.rs` | `HitlGate`, `HitlDecision` — blocks on destructive tools for human approval |
-| `config.rs` | `AgentConfig`, `AgentMode`, `Permission` — loaded from `config/default.toml` |
+| `config.rs` | `AgentConfig`, `AgentMode`, `Permission` — loaded from `config/default.toml`; includes `segment_filter: Option<Vec<String>>` to restrict context to specific segment types |
 | `event.rs` | `AgentEvent`, `EventBus` — SSE streaming from agent loop to server/TUI |
 | `error.rs` | `AgentError` enum |
 | `knowledge/extraction.rs` | Entity extraction — LLM, GLiNER2 ONNX, or hybrid; `ExtractionBackend` enum |

@@ -1137,4 +1137,6 @@ git commit -m "docs: mark structured LLM response segments (Phases 5-6) complete
 **Verified:** `cargo run -p graphirm-eval -- --filter segments` → 1/1 ✅  
 Live test confirmed both paths: structured JSON (DeepSeek follows format prompt) and GLiNER2 fallback (when LLM responds in plain text).
 
+**Segment filter wiring:** ✅ Resolved in `docs/plans/2026-03-15-segment-context-filter-wiring.md`
+
 **Known trade-off:** `OnnxExtractor::new` is constructed per-turn in the GLiNER2 fallback path (~seconds). Acceptable for current usage; cache as `Arc<OnnxExtractor>` in `AppState` if latency becomes a concern.

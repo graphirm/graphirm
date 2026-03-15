@@ -13,7 +13,7 @@ Powers the VS Code/Cursor extension and the `graphirm-eval` harness. Built on `a
 | `sse.rs` | SSE streaming — converts `AgentEvent` stream to `text/event-stream` response |
 | `state.rs` | `AppState` — shared server state (graph store, active sessions, config) |
 | `session.rs` | `SessionHandle` — per-session state (agent config, event bus, HITL gate) |
-| `types.rs` | Request/response types: `CreateSessionRequest`, `PromptRequest`, `SessionResponse`, `GraphResponse`, `SseEvent`, `SubgraphQuery` |
+| `types.rs` | Request/response types: `CreateSessionRequest` (supports `enable_segments`, `segment_filter`), `PromptRequest`, `SessionResponse`, `GraphResponse`, `SseEvent`, `SubgraphQuery` |
 | `sdk.rs` | `GraphirmClient` — HTTP client SDK for programmatic access |
 | `middleware.rs` | Request logging, CORS headers |
 | `request_log.rs` | Structured request log for analysis |
@@ -21,6 +21,25 @@ Powers the VS Code/Cursor extension and the `graphirm-eval` harness. Built on `a
 
 **Key endpoints:** `POST /sessions`, `POST /sessions/{id}/prompt` (SSE), `GET /sessions/{id}/graph`,
 `GET /graph/nodes`, `POST /sessions/{id}/hitl` (approve/reject/modify tool call)
+
+---
+
+## Session Options
+
+`CreateSessionRequest` supports two segment-related fields:
+
+| Field | Type | Effect |
+|-------|------|--------|
+| `enable_segments` | `bool` (default false) | Activates structured response segmentation for the session |
+| `segment_filter` | `Option<Vec<String>>` (default null) | Restricts context window reconstruction to matching segment types only; no-op if segments were not generated |
+
+Example:
+```json
+{
+  "enable_segments": true,
+  "segment_filter": ["reasoning", "code"]
+}
+```
 
 ---
 
