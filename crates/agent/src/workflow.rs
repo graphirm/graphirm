@@ -222,14 +222,20 @@ pub async fn stream_and_record(
                         // that segment children exist and apply the segment_filter correctly.
                         let graph_clone = session.graph.clone();
                         let stamp_id = node_id.clone();
-                        if let Err(e) = tokio::task::spawn_blocking(move || {
+                        match tokio::task::spawn_blocking(move || {
                             let mut node = graph_clone.get_node(&stamp_id)?;
                             node.metadata["segmented"] = serde_json::json!(true);
                             graph_clone.update_node(&stamp_id, node)
                         })
                         .await
                         {
-                            tracing::warn!(error = %e, "Failed to stamp segmented metadata on interaction node (non-fatal)");
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                tracing::warn!(error = %e, "Failed to stamp segmented metadata on interaction node (non-fatal)");
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "spawn_blocking panicked while stamping segmented metadata (non-fatal)");
+                            }
                         }
                     }
                     Err(e) => {
