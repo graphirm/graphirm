@@ -104,3 +104,10 @@ word_wrap = true
 [server]
 host = "127.0.0.1"
 port = 3000
+
+[agent.segments]
+enabled = false
+labels = ["observation", "reasoning", "code", "plan", "answer"]
+structured_output = true
+gliner2_fallback = true
+min_confidence = 0.5

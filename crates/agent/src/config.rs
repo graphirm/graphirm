@@ -37,6 +37,60 @@ pub enum Permission {
     Deny,
 }
 
+/// Configuration for structured LLM response segmentation.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SegmentConfig {
+    /// Whether segmentation is active for this agent.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Segment type labels to detect (e.g. "code", "reasoning").
+    #[serde(default = "default_segment_labels")]
+    pub labels: Vec<String>,
+    /// If true, append segment format instructions to the system prompt and expect structured JSON output.
+    #[serde(default = "default_structured_output")]
+    pub structured_output: bool,
+    /// If true, fall back to GLiNER2 ONNX span extraction when structured output parsing fails.
+    #[serde(default = "default_gliner2_fallback")]
+    pub gliner2_fallback: bool,
+    /// Minimum confidence threshold for GLiNER2 spans (0.0–1.0).
+    #[serde(default = "default_segment_min_confidence")]
+    pub min_confidence: f64,
+}
+
+fn default_segment_labels() -> Vec<String> {
+    vec![
+        "observation".into(),
+        "reasoning".into(),
+        "code".into(),
+        "plan".into(),
+        "answer".into(),
+    ]
+}
+
+fn default_structured_output() -> bool {
+    true
+}
+
+fn default_gliner2_fallback() -> bool {
+    true
+}
+
+fn default_segment_min_confidence() -> f64 {
+    0.5
+}
+
+impl Default for SegmentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            labels: default_segment_labels(),
+            structured_output: default_structured_output(),
+            gliner2_fallback: default_gliner2_fallback(),
+            min_confidence: default_segment_min_confidence(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
     pub name: String,
@@ -72,6 +126,9 @@ pub struct AgentConfig {
     /// Number of repeated identical tool calls to trigger soft escalation
     #[serde(default = "default_soft_escalation_threshold")]
     pub soft_escalation_threshold: usize,
+    /// Segment extraction config. `None` disables response segmentation.
+    #[serde(default)]
+    pub segments: Option<SegmentConfig>,
 }
 
 fn default_working_dir() -> PathBuf {
@@ -133,6 +190,7 @@ impl Default for AgentConfig {
             embedding: None,
             soft_escalation_turn: 8,
             soft_escalation_threshold: 2,
+            segments: None,
         }
     }
 }
@@ -177,6 +235,8 @@ struct AgentConfigSection {
     soft_escalation_turn: u32,
     #[serde(default = "default_soft_escalation_threshold")]
     soft_escalation_threshold: usize,
+    #[serde(default)]
+    segments: Option<SegmentConfig>,
 }
 
 fn default_system_prompt() -> String {
@@ -210,6 +270,7 @@ impl AgentConfig {
             embedding: file.agent.embedding,
             soft_escalation_turn: file.agent.soft_escalation_turn,
             soft_escalation_threshold: file.agent.soft_escalation_threshold,
+            segments: file.agent.segments,
         })
     }
 
@@ -389,6 +450,38 @@ mod tests {
     }
 
     #[test]
+    fn test_segment_config_defaults() {
+        let config = SegmentConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.labels.len(), 5);
+        assert!(config.structured_output);
+        assert!(config.gliner2_fallback);
+        assert!((config.min_confidence - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_segment_config_deserialize() {
+        let toml_str = r#"
+            enabled = true
+            labels = ["code", "answer"]
+            structured_output = false
+            gliner2_fallback = true
+            min_confidence = 0.6
+        "#;
+        let cfg: SegmentConfig = toml::from_str(toml_str).unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.labels, vec!["code", "answer"]);
+        assert!(!cfg.structured_output);
+        assert!((cfg.min_confidence - 0.6).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_agent_config_segments_default_is_none() {
+        let config = AgentConfig::default();
+        assert!(config.segments.is_none());
+    }
+
+    #[test]
     fn test_agent_config_from_toml_minimal_sectioned() {
         let toml_str = r#"
             [agent]
@@ -402,5 +495,30 @@ mod tests {
         assert_eq!(config.name, "minimal");
         assert_eq!(config.mode, AgentMode::Primary); // default
         assert!(config.permissions.is_empty()); // no [permissions] section
+    }
+
+    #[test]
+    fn test_agent_config_from_toml_with_segments() {
+        let toml_str = r#"
+            [agent]
+            name = "test"
+            model = "test-model"
+            system_prompt = "test"
+            max_turns = 5
+
+            [agent.segments]
+            enabled = true
+            labels = ["code", "answer"]
+            structured_output = true
+            gliner2_fallback = false
+            min_confidence = 0.7
+        "#;
+        let config = AgentConfig::from_toml(toml_str).unwrap();
+        let seg = config.segments.unwrap();
+        assert!(seg.enabled);
+        assert_eq!(seg.labels, vec!["code", "answer"]);
+        assert!(seg.structured_output);
+        assert!(!seg.gliner2_fallback);
+        assert!((seg.min_confidence - 0.7).abs() < f64::EPSILON);
     }
 }
