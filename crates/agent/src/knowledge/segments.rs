@@ -159,6 +159,32 @@ pub async fn persist_segments(
     .map_err(|e| AgentError::Join(e.to_string()))?
 }
 
+/// Run GLiNER2 over the raw response text with segment labels and return
+/// `Segment`s with character offsets from the model.
+///
+/// Only available with the `local-extraction` feature flag.
+/// Real integration testing requires a downloaded model; set `GLINER2_MODEL_DIR`
+/// and use `OnnxExtractor::new()` to construct the extractor.
+#[cfg(feature = "local-extraction")]
+pub async fn segment_extract_gliner2(
+    extractor: &super::local_extraction::OnnxExtractor,
+    text: &str,
+    labels: &[String],
+    min_confidence: f64,
+) -> Result<Vec<Segment>, AgentError> {
+    let raw = extractor.extract_raw(text, labels, min_confidence).await?;
+    let segments = raw
+        .into_iter()
+        .map(|e| Segment {
+            segment_type: e.entity_type,
+            content: e.text,
+            start: e.start,
+            end: e.end,
+        })
+        .collect();
+    Ok(segments)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,6 +355,16 @@ mod tests {
             .filter(|e| e.edge_type == EdgeType::Contains && e.source == parent_id)
             .collect();
         assert_eq!(contains.len(), 2);
+    }
+
+    /// Verify `segment_extract_gliner2` exists and the module compiles with the feature enabled.
+    /// Real integration testing requires a downloaded GLiNER2 model (`GLINER2_MODEL_DIR`).
+    #[cfg(feature = "local-extraction")]
+    #[test]
+    fn test_segment_extract_gliner2_compiles() {
+        // Compilation with `--features local-extraction` is the primary check.
+        // We cannot instantiate OnnxExtractor without a real model directory,
+        // so this test body is intentionally empty.
     }
 
     #[tokio::test]
