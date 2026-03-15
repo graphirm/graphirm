@@ -41,12 +41,12 @@ impl GraphirmClient {
         Ok(r.status().is_success())
     }
 
-    pub async fn create_session(&self) -> reqwest::Result<SessionResponse> {
+    pub async fn create_session(&self, enable_segments: bool) -> reqwest::Result<SessionResponse> {
         // auto_approve: true bypasses the HITL gate so bash/write/edit run
         // without human confirmation — required for programmatic eval runs.
         self.http
             .post(format!("{}/api/sessions", self.base))
-            .json(&serde_json::json!({ "auto_approve": true }))
+            .json(&serde_json::json!({ "auto_approve": true, "enable_segments": enable_segments }))
             .send()
             .await?
             .json()

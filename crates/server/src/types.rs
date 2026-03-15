@@ -154,6 +154,10 @@ pub struct CreateSessionRequest {
     /// When true, skip the HITL approval gate so bash/write/edit run without
     /// human confirmation. Intended for programmatic clients and eval harnesses.
     pub auto_approve: Option<bool>,
+    /// When true, enables structured response segmentation for this session.
+    /// The agent will request segment-formatted JSON output from the LLM and
+    /// persist each segment as a child Content node in the graph.
+    pub enable_segments: Option<bool>,
 }
 
 /// Request body for `POST /api/sessions/:id/prompt`.
@@ -309,6 +313,14 @@ mod tests {
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert!(req.agent.is_none());
         assert!(req.model.is_none());
+    }
+
+    #[test]
+    fn create_session_request_enable_segments() {
+        let json = r#"{"auto_approve": true, "enable_segments": true}"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.auto_approve, Some(true));
+        assert_eq!(req.enable_segments, Some(true));
     }
 
     #[test]

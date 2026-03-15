@@ -90,7 +90,7 @@ async fn create_session(
     State(state): State<AppState>,
     Json(body): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<SessionResponse>), ServerError> {
-    let config = AgentConfig {
+    let mut config = AgentConfig {
         name: body
             .agent
             .unwrap_or_else(|| state.default_config.name.clone()),
@@ -99,6 +99,12 @@ async fn create_session(
             .unwrap_or_else(|| state.default_config.model.clone()),
         ..state.default_config.clone()
     };
+    if body.enable_segments == Some(true) {
+        config.segments = Some(graphirm_agent::config::SegmentConfig {
+            enabled: true,
+            ..graphirm_agent::config::SegmentConfig::default()
+        });
+    }
 
     let hitl = Arc::new(HitlGate::new());
     let graph_for_session = state.graph.clone();

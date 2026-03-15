@@ -70,7 +70,7 @@ impl TestHarness {
     }
 
     async fn run_task_inner(&self, task: &EvalTask) -> anyhow::Result<TaskResult> {
-        let session = self.client.create_session().await?;
+        let session = self.client.create_session(task.enable_segments).await?;
         let session_id = session.id.clone();
         let mut last_response = String::new();
         let mut turns_used = 0u32;
@@ -176,6 +176,12 @@ impl TestHarness {
                 }
                 Ok(graph.nodes.iter().any(|n| {
                     n["node_type"]["type"].as_str() == Some(type_name.as_str())
+                }))
+            }
+            Verifier::GraphContainsContentType { content_type } => {
+                let graph = self.client.get_graph(session_id).await?;
+                Ok(graph.nodes.iter().any(|n| {
+                    n["node_type"]["content_type"].as_str() == Some(content_type.as_str())
                 }))
             }
             Verifier::All(verifiers) => {

@@ -17,6 +17,7 @@ pub fn tasks() -> Vec<EvalTask> {
             verifier: Verifier::KnowledgeNodeCount { min_count: 1 },
             max_turns: 2,
             timeout_secs: 60,
+            enable_segments: false,
         },
         EvalTask {
             id: "multi-entity".to_string(),
@@ -35,6 +36,7 @@ pub fn tasks() -> Vec<EvalTask> {
             verifier: Verifier::KnowledgeNodeCount { min_count: 3 },
             max_turns: 2,
             timeout_secs: 60,
+            enable_segments: false,
         },
     ]
 }

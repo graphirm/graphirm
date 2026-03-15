@@ -17,6 +17,7 @@ pub fn tasks() -> Vec<EvalTask> {
             ]),
             max_turns: 10,
             timeout_secs: 120,
+            enable_segments: false,
         },
     ]
 }
