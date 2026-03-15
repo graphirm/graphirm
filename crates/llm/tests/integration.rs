@@ -63,6 +63,14 @@ async fn test_full_roundtrip_with_tool_calls() {
 }
 
 #[tokio::test]
+/// Test streaming responses and collecting events from the stream.
+/// Note: `.collect()` is used here to materialize the stream into a `Vec` for counting events.
+/// For simple operations like counting, you can avoid allocation by using `.fold()`:
+/// ```ignore
+/// let (done_count, start_count) = stream.fold((0, 0), |(d, s), e| {
+///     (d + e.is_done() as usize, s + matches!(e, StreamEvent::ToolCallStart { .. }) as usize)
+/// }).await;
+/// ```
 async fn test_streaming_roundtrip() {
     let provider = MockProvider::new(vec![MockResponse::tool_call(
         "tc-1",
@@ -149,4 +157,16 @@ async fn test_multi_turn_conversation_flow() {
 
     let r2 = provider.complete(history, &[], &config).await.unwrap();
     assert_eq!(r2.text_content(), "The capital of France is Paris.");
+}
+
+#[tokio::test]
+async fn test_empty_response() {
+    let provider = MockProvider::fixed("");
+    let config = CompletionConfig::new("mock-model");
+    let messages = vec![LlmMessage::human("Say something")];
+
+    let response = provider.complete(messages, &[], &config).await.unwrap();
+    assert_eq!(response.text_content(), "");
+    assert!(!response.has_tool_calls());
+    assert!(matches!(response.stop_reason, StopReason::EndTurn));
 }

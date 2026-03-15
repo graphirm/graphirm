@@ -71,7 +71,7 @@ pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
         AgentEvent::GraphUpdate { recent_nodes, .. } => {
             app.graph_explorer.nodes = recent_nodes
                 .into_iter()
-                .map(|n| graph_node_to_entry(n))
+                .map(graph_node_to_entry)
                 .collect();
         }
         AgentEvent::SoftEscalationTriggered {

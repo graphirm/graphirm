@@ -629,7 +629,7 @@ pub async fn run_agent_loop(
         all_node_ids.extend(tool_result_ids.iter().cloned());
 
         // Check for soft escalation after tools execute
-        if check_soft_escalation(turn as u32, &session.agent_config, &response, events) {
+        if check_soft_escalation(turn, &session.agent_config, &response, events) {
             // Agent should respond to the escalation by synthesizing findings.
             // The synthesis directive is in the SoftEscalationTriggered event.
             // For now, we continue the loop so the agent can respond with synthesis.

@@ -1,0 +1,51 @@
+Can you add a function that parses this JSON and returns the user id?
+Why does cargo build fail with "expected struct, found enum"?
+I need to refactor this - the main is too long. Where should I split it?
+The CI is red. Log says "thread panicked at 'assertion failed'". How do I find which test?
+How do I read a file line by line without loading the whole thing into memory?
+This works locally but in Docker we get "connection refused". What should I check?
+Can you add error handling so we don't panic on bad input?
+We're getting rate limited by the API. What's the usual fix - backoff or caching?
+I want to add a --verbose flag to the CLI. What's the idiomatic way in Rust?
+The test passes in isolation but fails when run with others. Flaky test - how do I debug?
+Explain this compiler error: "cannot borrow as mutable more than once".
+Can you suggest a simpler type here? This Result<Result<T, E>, E> is ugly.
+How do I run just one test in this crate?
+I'm getting "borrow of moved value" - I thought I cloned it. What did I miss?
+Add a test that covers the case when the response is empty.
+The docs say "async fn" but my code is sync. Do I need to change everything?
+Why is clippy complaining about "needless collect" here?
+Can you add a small example in the doc comment?
+We need to support both JSON and TOML config. How would you structure that?
+This function is 200 lines. How would you break it up?
+How do I mock the database in tests without a real DB?
+The error says "expected `()` but found `Result`". Do I need to ? everywhere?
+Can you add logging when the request takes longer than 2 seconds?
+I want to retry on failure up to 3 times. Any crate you'd use?
+Why does this deadlock when I use Arc<Mutex> in two threads?
+Add validation: the port must be between 1 and 65535.
+How do I make this work with both stdin and a file path argument?
+The type inference is failing here - do I need to annotate?
+Can you add a benchmark for the hot path?
+We're seeing "connection reset by peer" under load. Where do I start?
+I need to pass a callback that can fail. Result in the closure or wrap the whole thing?
+How do I disable a test temporarily without deleting it?
+This regex is slow on long input. Is there a better approach?
+Can you add a CHANGELOG entry for the new endpoint?
+The lock file changed - do I commit Cargo.lock for a library?
+How do I get a stack trace when a test panics?
+I want to default this config field if not present. serde default or Option?
+Add a check: if the list is empty, return early with an error.
+Why does tokio::spawn need Send? When would it not be?
+Can you add a unit test for the edge case when n is 0?
+We need to support env var override for the config path. Where to plug it in?
+The build is failing on Windows only - "path too long". Workaround?
+How do I run the integration tests after the unit tests?
+This async function is hard to test. Should I extract the logic to sync?
+Add a TODO comment here - we should cache this later.
+The API returns 429. Should we retry with backoff or fail fast and let the caller retry?
+What's the right way to share state between two async tasks - Arc<Mutex> or channels?
+Can you add a timeout so we don't hang if the server never responds?
+I need to sort this by the created_at field. Do I need a custom Ord impl?
+The linter says this clone is unnecessary - but removing it breaks the borrow checker. Help?
+Should we use a feature flag for the new experimental endpoint?

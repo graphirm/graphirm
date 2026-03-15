@@ -31,3 +31,9 @@ Thumbs.db
 docs/*
 # Track public-facing guides (user-facing, not just internal planning)
 !docs/guides/
+
+# Nodestradamus analysis cache (large binary artifacts)
+.nodestradamus/*.msgpack
+
+# Pipeline / eval data files (corpus, spans, annotations)
+data/

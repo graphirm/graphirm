@@ -44,8 +44,24 @@ use graphirm_tools::ToolRegistry;
 pub struct ServerConfig {
     /// Interface to bind to (e.g. `"127.0.0.1"` or `"0.0.0.0"`).
     pub host: String,
-    /// TCP port to listen on.
+    /// TCP port to listen on (must be between 1 and 65535).
     pub port: u16,
+}
+
+impl ServerConfig {
+    /// Create a new ServerConfig with validation.
+    ///
+    /// # Errors
+    /// Returns an error if the port is not between 1 and 65535.
+    pub fn new(host: String, port: u16) -> Result<Self, String> {
+        if port == 0 {
+            return Err(format!(
+                "Invalid port: {}. Port must be between 1 and 65535",
+                port
+            ));
+        }
+        Ok(Self { host, port })
+    }
 }
 
 impl Default for ServerConfig {

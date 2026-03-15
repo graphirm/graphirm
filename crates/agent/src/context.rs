@@ -93,15 +93,7 @@ fn default_system_prompt() -> String {
     "You are a helpful coding assistant.".to_string()
 }
 fn default_guaranteed_recent_turns() -> usize {
-    // Large enough to keep an entire tool-call cluster (assistant + N parallel
-    // tool results) in the guaranteed-recent window. When tool results are
-    // split across guaranteed vs. older buckets, Content nodes created during
-    // parallel tool execution get interleaved (by created_at) between the
-    // assistant message and the tool-result Interaction nodes, which violates
-    // Anthropic's requirement that all tool_result blocks appear immediately
-    // after their tool_use message. Phase-6 compaction will handle trimming
-    // long histories once it is implemented.
-    30
+    4
 }
 fn default_max_content_nodes() -> usize {
     20

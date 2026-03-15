@@ -1,6 +1,6 @@
 mod error;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
@@ -283,7 +283,7 @@ fn resolve_db_path(override_path: Option<PathBuf>) -> Result<PathBuf, GraphirmEr
     Ok(path)
 }
 
-fn run_graph_command(action: GraphAction, db_path: &PathBuf) -> Result<(), GraphirmError> {
+fn run_graph_command(action: GraphAction, db_path: &Path) -> Result<(), GraphirmError> {
     let graph = graphirm_graph::GraphStore::open(db_path.to_str().unwrap_or("graph.db"))?;
 
     match action {
@@ -318,7 +318,7 @@ fn run_graph_command(action: GraphAction, db_path: &PathBuf) -> Result<(), Graph
                 return Ok(());
             }
 
-            println!("{:<38}  {:<12}  {}", "ID", "TYPE", "LABEL");
+            println!("{:<38}  {:<12}  LABEL", "ID", "TYPE");
             println!("{}", "-".repeat(90));
             for node in nodes {
                 let label = node_display_label(&node);
@@ -335,7 +335,7 @@ fn run_graph_command(action: GraphAction, db_path: &PathBuf) -> Result<(), Graph
 }
 
 fn run_export_corpus(
-    db_path: &PathBuf,
+    db_path: &Path,
     out: Option<PathBuf>,
     limit: Option<u64>,
     all_roles: bool,
@@ -759,7 +759,7 @@ fn api_key_for_provider(provider_name: &str) -> Result<String, GraphirmError> {
     }
 }
 
-async fn run_chat(model: String, db_path: &PathBuf) -> Result<(), GraphirmError> {
+async fn run_chat(model: String, db_path: &Path) -> Result<(), GraphirmError> {
     let (provider_name, model_name) = graphirm_llm::factory::parse_model_string(&model)
         .map_err(|e| GraphirmError::Config(e.to_string()))?;
 
@@ -843,7 +843,7 @@ async fn run_chat(model: String, db_path: &PathBuf) -> Result<(), GraphirmError>
 }
 
 /// Start the HTTP API server with configured providers and backends.
-async fn run_serve(db_path: &PathBuf, host: String, port: u16) -> Result<(), GraphirmError> {
+async fn run_serve(db_path: &Path, host: String, port: u16) -> Result<(), GraphirmError> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
