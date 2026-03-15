@@ -18,6 +18,7 @@ pub fn tasks() -> Vec<EvalTask> {
             max_turns: 2,
             timeout_secs: 60,
             enable_segments: false,
+            segment_filter: None,
         },
         EvalTask {
             id: "multi-entity".to_string(),
@@ -37,6 +38,7 @@ pub fn tasks() -> Vec<EvalTask> {
             max_turns: 2,
             timeout_secs: 60,
             enable_segments: false,
+            segment_filter: None,
         },
     ]
 }

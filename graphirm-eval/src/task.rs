@@ -22,6 +22,8 @@ pub struct EvalTask {
     pub timeout_secs: u64,
     /// Whether to enable structured response segmentation for this task's session.
     pub enable_segments: bool,
+    /// When set, only these segment types are included in the reconstructed context window.
+    pub segment_filter: Option<Vec<String>>,
 }
 
 /// A cross-session task that requires two separate sessions (used for memory recall).
@@ -119,6 +121,7 @@ mod tests {
             max_turns: 5,
             timeout_secs: 30,
             enable_segments: false,
+            segment_filter: None,
         };
         assert_eq!(t.id, "test-task");
         assert!(matches!(t.verifier, Verifier::ResponseContains { .. }));

@@ -70,7 +70,7 @@ impl TestHarness {
     }
 
     async fn run_task_inner(&self, task: &EvalTask) -> anyhow::Result<TaskResult> {
-        let session = self.client.create_session(task.enable_segments).await?;
+        let session = self.client.create_session(task.enable_segments, task.segment_filter.as_deref()).await?;
         let session_id = session.id.clone();
         let mut last_response = String::new();
         let mut turns_used = 0u32;

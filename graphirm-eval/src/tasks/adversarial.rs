@@ -49,6 +49,7 @@ pub fn tasks() -> Vec<EvalTask> {
             max_turns: 3,
             timeout_secs: 60,
             enable_segments: false,
+            segment_filter: None,
         },
 
         // ── 2. Precise edit — no collateral damage ────────────────────────────
@@ -93,6 +94,7 @@ pub fn tasks() -> Vec<EvalTask> {
             max_turns: 5,
             timeout_secs: 120,
             enable_segments: false,
+            segment_filter: None,
         },
 
         // ── 3. Grep exact count ───────────────────────────────────────────────
@@ -127,6 +129,7 @@ pub fn tasks() -> Vec<EvalTask> {
             max_turns: 3,
             timeout_secs: 60,
             enable_segments: false,
+            segment_filter: None,
         },
 
         // ── 4. Cascading pipeline ─────────────────────────────────────────────
@@ -159,6 +162,7 @@ pub fn tasks() -> Vec<EvalTask> {
             max_turns: 3,
             timeout_secs: 120,
             enable_segments: false,
+            segment_filter: None,
         },
 
         // ── 5. Fix broken script ──────────────────────────────────────────────
@@ -207,6 +211,7 @@ pub fn tasks() -> Vec<EvalTask> {
             max_turns: 5,
             timeout_secs: 120,
             enable_segments: false,
+            segment_filter: None,
         },
     ]
 }
