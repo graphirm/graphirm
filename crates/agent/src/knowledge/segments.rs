@@ -1,7 +1,11 @@
 //! Structured response segment parsing and graph persistence.
 
-use crate::error::AgentError;
+use std::sync::Arc;
+
+use graphirm_graph::{ContentData, EdgeType, GraphEdge, GraphNode, GraphStore, NodeId, NodeType};
 use serde::{Deserialize, Serialize};
+
+use crate::error::AgentError;
 
 /// A parsed segment from an LLM structured response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +95,68 @@ pub fn detect_nesting(segments: &[Segment]) -> Vec<(usize, usize)> {
         }
     }
     pairs
+}
+
+/// Create Content nodes for each segment and link them to the parent Interaction node
+/// via Contains edges (with `order` in edge metadata). Also adds Contains edges for
+/// detected nesting pairs (parent segment → child segment).
+///
+/// Returns the NodeId of each created segment node, in order.
+pub async fn persist_segments(
+    store: &Arc<GraphStore>,
+    parent_id: &NodeId,
+    segments: &[Segment],
+    nesting: &[(usize, usize)],
+) -> Result<Vec<NodeId>, AgentError> {
+    let store = Arc::clone(store);
+    let parent_id = parent_id.clone();
+    let segments = segments.to_vec();
+    let nesting = nesting.to_vec();
+
+    tokio::task::spawn_blocking(move || {
+        let mut node_ids = Vec::with_capacity(segments.len());
+
+        for (i, segment) in segments.iter().enumerate() {
+            let language = if segment.segment_type == "code" {
+                Some("unknown".to_string())
+            } else {
+                None
+            };
+
+            let mut node = GraphNode::new(NodeType::Content(ContentData {
+                content_type: segment.segment_type.clone(),
+                path: None,
+                body: segment.content.clone(),
+                language,
+            }));
+
+            node.metadata = serde_json::json!({
+                "segment_start": segment.start,
+                "segment_end": segment.end,
+            });
+
+            let node_id = store.add_node(node)?;
+
+            let edge = GraphEdge::new(EdgeType::Contains, parent_id.clone(), node_id.clone())
+                .with_metadata(serde_json::json!({ "order": i }));
+            store.add_edge(edge)?;
+
+            node_ids.push(node_id);
+        }
+
+        for (parent_idx, child_idx) in &nesting {
+            let edge = GraphEdge::new(
+                EdgeType::Contains,
+                node_ids[*parent_idx].clone(),
+                node_ids[*child_idx].clone(),
+            );
+            store.add_edge(edge)?;
+        }
+
+        Ok(node_ids)
+    })
+    .await
+    .map_err(|e| AgentError::Join(e.to_string()))?
 }
 
 #[cfg(test)]
@@ -211,5 +277,103 @@ mod tests {
         ];
         let pairs = detect_nesting(&segments);
         assert!(pairs.is_empty()); // identical span = not nested
+    }
+
+    #[tokio::test]
+    async fn test_persist_segments_creates_nodes_and_edges() {
+        use graphirm_graph::{EdgeType, GraphNode, GraphStore, InteractionData, NodeType};
+        use std::sync::Arc;
+
+        let store = Arc::new(GraphStore::open(":memory:").unwrap());
+        let parent = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".into(),
+            content: "raw text".into(),
+            token_count: Some(10),
+        }));
+        let parent_id = store.add_node(parent).unwrap();
+
+        let segments = vec![
+            Segment {
+                segment_type: "reasoning".into(),
+                content: "because X".into(),
+                start: 0,
+                end: 9,
+            },
+            Segment {
+                segment_type: "code".into(),
+                content: "fn f(){}".into(),
+                start: 10,
+                end: 18,
+            },
+        ];
+
+        let node_ids = persist_segments(&store, &parent_id, &segments, &[])
+            .await
+            .unwrap();
+        assert_eq!(node_ids.len(), 2);
+
+        for (i, nid) in node_ids.iter().enumerate() {
+            let node = store.get_node(nid).unwrap();
+            match node.node_type {
+                NodeType::Content(data) => {
+                    assert_eq!(data.content_type, segments[i].segment_type);
+                    assert_eq!(data.body, segments[i].content);
+                }
+                _ => panic!("Expected Content node at index {i}"),
+            }
+        }
+
+        let edges = store.edges_for_node(&parent_id).unwrap();
+        let contains: Vec<_> = edges
+            .iter()
+            .filter(|e| e.edge_type == EdgeType::Contains && e.source == parent_id)
+            .collect();
+        assert_eq!(contains.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_persist_segments_with_nesting() {
+        use graphirm_graph::{EdgeType, GraphNode, GraphStore, InteractionData, NodeType};
+        use std::sync::Arc;
+
+        let store = Arc::new(GraphStore::open(":memory:").unwrap());
+        let parent = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".into(),
+            content: "raw".into(),
+            token_count: Some(5),
+        }));
+        let parent_id = store.add_node(parent).unwrap();
+
+        let segments = vec![
+            Segment {
+                segment_type: "plan".into(),
+                content: "plan with code inside".into(),
+                start: 0,
+                end: 100,
+            },
+            Segment {
+                segment_type: "code".into(),
+                content: "fn f(){}".into(),
+                start: 30,
+                end: 60,
+            },
+        ];
+        let nesting = vec![(0usize, 1usize)];
+
+        let node_ids = persist_segments(&store, &parent_id, &segments, &nesting)
+            .await
+            .unwrap();
+        assert_eq!(node_ids.len(), 2);
+
+        let edges = store.edges_for_node(&node_ids[0]).unwrap();
+        let nested: Vec<_> = edges
+            .iter()
+            .filter(|e| {
+                e.edge_type == EdgeType::Contains
+                    && e.source == node_ids[0]
+                    && e.target == node_ids[1]
+            })
+            .collect();
+        assert_eq!(nested.len(), 1);
     }
 }
