@@ -266,7 +266,10 @@ pub fn node_to_message_filtered(
     // Get all edges touching this node and find outgoing Contains edges
     let edges = match store.edges_for_node(&node.id) {
         Ok(e) => e,
-        Err(_) => return node_to_message(node),
+        Err(e) => {
+            tracing::warn!(node_id = %node.id, error = %e, "Failed to query segment edges — falling back to raw content");
+            return node_to_message(node);
+        }
     };
 
     let mut segment_edges: Vec<_> = edges
@@ -286,7 +289,10 @@ pub fn node_to_message_filtered(
     for edge in segment_edges {
         let child_node = match store.get_node(&edge.target) {
             Ok(n) => n,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!(node_id = %edge.target, error = %e, "Failed to fetch segment child node — skipping");
+                continue;
+            }
         };
         if let NodeType::Content(data) = &child_node.node_type {
             if filter.iter().any(|f| f == &data.content_type) {
