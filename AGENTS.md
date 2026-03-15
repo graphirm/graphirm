@@ -112,10 +112,19 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | Phase | What | Status |
 |-------|------|--------|
 | 0–9 | Scaffold → Knowledge layer (graph, LLM, tools, agent, multi-agent, context engine, TUI, HTTP, knowledge/HNSW) | ✅ done |
-| 10 | Web UI — graph visualization | 🔲 pending |
+| 10 | Structured LLM response segments (parse → persist → GLiNER2 fallback → context filter → eval) | ✅ done |
+| 11 | Web UI — graph visualization | 🔲 pending |
 
-**Active work:** Structured LLM response discovery pipeline — Phases 5–6 complete (segment parsing, graph persistence, integration tests). See `docs/plans/2026-03-10-structured-llm-responses.md`.
+**Segment feature summary (Phase 10):**
+- `SegmentConfig` in `AgentConfig` — enable per-session via `POST /api/sessions` with `enable_segments: true`
+- LLM responses parsed into typed `Content` nodes (`code`, `reasoning`, `observation`, `plan`, `answer`) linked via `Contains` edges
+- Primary path: structured JSON output from LLM (system prompt injected by `build_segment_prompt`)
+- Fallback path: GLiNER2 ONNX span detection via `try_gliner2_fallback` (uses `ExtractionConfig.backend` model dir)
+- Context engine: optional `segment_filter` in `ContextConfig` to include only specific segment types
+- Eval coverage: `cargo run -p graphirm-eval -- --filter segments` (uses `GraphContainsContentType` verifier)
+- See `docs/plans/2026-03-10-structured-llm-responses.md` and `docs/plans/2026-03-15-structured-segments-phase5-6.md`
 
 **Risk areas:**
 - `Arc<RwLock<StableGraph>>` — no deadlocks; acquire briefly, never across await
 - Rust version must match spoke/CI (stable, currently 1.85)
+- `OnnxExtractor::new` is expensive (~seconds); GLiNER2 fallback constructs it per-turn — cache if latency matters

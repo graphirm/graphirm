@@ -1,8 +1,8 @@
 # graphirm-eval
 
 Evaluation harness. Drives a running graphirm server via HTTP, executes task suites, and measures
-agent correctness across five domains: coding, knowledge extraction, cross-session memory, graph
-structure, and adversarial robustness.
+agent correctness across six domains: coding, knowledge extraction, cross-session memory, graph
+structure, adversarial robustness, and structured response segments.
 
 **Does not depend on any graphirm Rust crate** — communicates via HTTP only. Standalone binary.
 
@@ -12,42 +12,75 @@ structure, and adversarial robustness.
 
 | File | What |
 |------|------|
-| `main.rs` | CLI entrypoint — suite selection, server URL, output format |
-| `client.rs` | `GraphirmClient` — thin HTTP wrapper (creates sessions, sends prompts, reads SSE) |
-| `harness.rs` | `EvalHarness` — session lifecycle, task dispatch, result collection |
-| `report.rs` | Result aggregation, pass/fail counts, metrics JSON output |
-| `task.rs` | `EvalTask` trait — every task implements `run(&client) -> TaskResult` |
+| `main.rs` | CLI entrypoint — `--filter <tag>` to select tasks, `--list` to enumerate |
+| `client.rs` | `GraphirmClient` — thin HTTP wrapper (sessions, prompts, graph queries) |
+| `harness.rs` | `TestHarness` — spawns server subprocess, runs tasks, collects results |
+| `report.rs` | Result aggregation, pass/fail counts, JSON output |
+| `task.rs` | `EvalTask` struct + `Verifier` enum |
 | `tasks/coding.rs` | Coding tasks — file creation, editing, test execution |
 | `tasks/knowledge.rs` | Knowledge extraction tasks — entity types, confidence thresholds |
 | `tasks/memory.rs` | Cross-session memory tasks — knowledge persists across sessions |
 | `tasks/graph.rs` | Graph structure tasks — node/edge counts, traversal correctness |
 | `tasks/adversarial.rs` | Adversarial tasks — injection attempts, tool misuse |
+| `tasks/segments.rs` | Segment extraction tasks — verifies Content nodes with typed segments |
+
+---
+
+## Verifiers
+
+| Variant | What it checks |
+|---------|---------------|
+| `ResponseContains { substring }` | Final assistant message contains substring (case-insensitive) |
+| `ResponseContainsAny { substrings }` | Final message contains at least one substring |
+| `ResponseNotContains { substring }` | Final message does NOT contain substring |
+| `CommandSucceeds { command, args }` | Shell command exits 0 |
+| `FileContains { path, substring }` | File exists and contains substring |
+| `ResponseContainsCommandOutput { command, args }` | Final message contains stdout of command |
+| `KnowledgeNodeCount { min_count }` | Graph has ≥ N knowledge nodes |
+| `GraphContains { min_nodes, type_name }` | Graph has ≥ N nodes and at least one with `node_type.type == type_name` |
+| `GraphContainsContentType { content_type }` | Graph has at least one Content node with `node_type.content_type == content_type` |
+| `All(verifiers)` | Every sub-verifier must pass |
+
+---
+
+## Session Options
+
+`EvalTask.enable_segments: bool` — when `true`, the harness creates the session with
+`{"enable_segments": true}`, which activates `SegmentConfig` for that session. Segment tasks
+use `GraphContainsContentType` to verify Content nodes were persisted.
 
 ---
 
 ## Integration Points
 
-**Requires:** A running `graphirm serve` instance (default `http://localhost:3000`)
+**Requires:** graphirm binary at `target/release/graphirm` (harness spawns its own server on port 19555)
 
 **Does not import:** Any `graphirm-*` crate — pure HTTP client
 
-**Depends on:** `reqwest`, `tokio`, `serde_json`, `anyhow`, `clap`, `chrono`
+**Depends on:** `reqwest`, `tokio`, `serde_json`, `anyhow`, `clap`, `chrono`, `tempfile`
 
 ---
 
 ## How to Run
 
 ```bash
-# Start server in one terminal
-DEEPSEEK_API_KEY=sk-... ./target/release/graphirm serve
+# Build the binary first (with local-extraction for GLiNER2 segment fallback)
+cargo build --release --features local-extraction
 
-# Run a suite in another
-cargo run -p graphirm-eval -- --suite coding
-cargo run -p graphirm-eval -- --suite knowledge
-cargo run -p graphirm-eval -- --suite all
+# Run all tasks (harness spawns its own server automatically)
+cargo run -p graphirm-eval
 
-# Point at non-default server
-cargo run -p graphirm-eval -- --server http://localhost:5555 --suite coding
+# Filter by tag
+cargo run -p graphirm-eval -- --filter coding
+cargo run -p graphirm-eval -- --filter knowledge
+cargo run -p graphirm-eval -- --filter segments
+cargo run -p graphirm-eval -- --filter graph
+
+# List available tasks without running
+cargo run -p graphirm-eval -- --list
+
+# Skip memory tasks (require EMBEDDING_BACKEND)
+cargo run -p graphirm-eval -- --skip-memory
 ```
 
-Output metrics are written to JSON (e.g. `s5_metrics.json`). See `graphirm-eval/README.md` for full usage.
+Results are written to `results/latest.json`.
