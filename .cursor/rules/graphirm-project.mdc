@@ -1,0 +1,14 @@
+---
+description: Graphirm project overview — what it is and core thesis
+alwaysApply: true
+---
+
+# Graphirm
+
+> **Canonical project context lives in `AGENTS.md` at the repo root.**
+> Read it before working on any part of this codebase.
+
+Graph-native coding agent in Rust. Every interaction is a graph node. Single static binary.
+
+See `AGENTS.md` for architecture, tech stack, build/test commands, conventions, and current state.
+See `README.md` for usage examples and detailed feature documentation.
