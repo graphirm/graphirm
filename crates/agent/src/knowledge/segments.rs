@@ -221,10 +221,10 @@ pub async fn segment_extract_gliner2(
     Ok(segments)
 }
 
-/// Convenience wrapper: construct an `OnnxExtractor` from `model_dir` and run
-/// GLiNER2 segment extraction over `text`.
+/// Convenience wrapper: retrieve the process-wide cached `OnnxExtractor` for
+/// `model_dir` and run GLiNER2 segment extraction over `text`.
 ///
-/// Returns `None` if the extractor cannot be built or returns no spans.
+/// Returns `None` if the extractor cannot be initialised or returns no spans.
 /// All errors are logged at `warn` level so callers can treat this as non-fatal.
 /// Only available with the `local-extraction` feature flag.
 #[cfg(feature = "local-extraction")]
@@ -234,22 +234,15 @@ pub async fn try_gliner2_fallback(
     labels: &[String],
     min_confidence: f64,
 ) -> Option<Vec<Segment>> {
-    use super::local_extraction::OnnxExtractor;
-
-    let path = std::path::PathBuf::from(model_dir);
-    let extractor = match tokio::task::spawn_blocking(move || OnnxExtractor::new(&path)).await {
-        Ok(Ok(e)) => e,
-        Ok(Err(e)) => {
-            tracing::warn!(error = %e, "GLiNER2 OnnxExtractor construction failed");
-            return None;
-        }
+    let extractor = match super::local_extraction::get_or_init_onnx_extractor(model_dir).await {
+        Ok(e) => e,
         Err(e) => {
-            tracing::warn!(error = %e, "GLiNER2 spawn_blocking panicked");
+            tracing::warn!(error = %e, "GLiNER2 OnnxExtractor init failed");
             return None;
         }
     };
 
-    match segment_extract_gliner2(&extractor, text, labels, min_confidence).await {
+    match segment_extract_gliner2(extractor.as_ref(), text, labels, min_confidence).await {
         Ok(segs) if !segs.is_empty() => {
             tracing::info!(count = segs.len(), "GLiNER2 segment fallback succeeded");
             Some(segs)

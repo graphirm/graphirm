@@ -10,6 +10,13 @@
 //! `~/.cache/huggingface/hub/` (same location as the Python `huggingface_hub`
 //! library).
 //!
+//! # Extractor caching
+//!
+//! Call [`get_or_init_onnx_extractor`] instead of [`OnnxExtractor::new`] directly.
+//! It maintains a process-wide cache keyed by canonical `model_dir` so that
+//! the expensive ONNX session loading (~seconds) happens at most once per unique
+//! directory, regardless of how many concurrent callers or agent turns request it.
+//!
 //! # Feature flag
 //!
 //! Requires the `local-extraction` cargo feature:
@@ -66,8 +73,9 @@ pub struct RawOnnxEntity {
 /// Holds the encoder, span representation, count_embed sessions and the
 /// tokenizer. All four ONNX files must be present in the same model directory.
 ///
-/// Construct once at startup and reuse — loading four large ONNX sessions is
-/// expensive (several seconds). Pass as `Arc<OnnxExtractor>` across tasks.
+/// Prefer [`get_or_init_onnx_extractor`] over constructing directly: it returns
+/// a process-wide cached `Arc<OnnxExtractor>` so the expensive session loading
+/// (~seconds) runs at most once per unique `model_dir`.
 pub struct OnnxExtractor {
     /// DeBERTa-v3-large encoder: (input_ids, attention_mask) → hidden_states
     encoder: tokio::sync::Mutex<ort::session::Session>,
@@ -580,6 +588,86 @@ pub async fn download_model() -> Result<PathBuf, AgentError> {
     model_dir.ok_or_else(|| AgentError::Workflow("Failed to determine model directory".into()))
 }
 
+// ─── Process-wide OnnxExtractor cache ─────────────────────────────────────────
+
+/// Generic async-init-once-per-key cache.
+///
+/// For the same key, only one builder future runs at a time; other concurrent
+/// waiters block until it completes and then reuse the cached `Arc<T>`.
+///
+/// Non-poisoning: if the builder returns an error the cell stays unset, so the
+/// next caller can retry with a fresh builder.
+///
+/// The `std::sync::Mutex` on the inner map is held only for the brief
+/// `get`/`insert` operation — never across an `.await` point.
+pub(crate) struct SharedInitCache<T> {
+    map: std::sync::Mutex<HashMap<String, std::sync::Arc<tokio::sync::OnceCell<std::sync::Arc<T>>>>>,
+}
+
+impl<T> Default for SharedInitCache<T> {
+    fn default() -> Self {
+        Self {
+            map: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl<T: Send + Sync + 'static> SharedInitCache<T> {
+    /// Return the cached value for `key`, initialising it via `builder` on first access.
+    pub(crate) async fn get_or_try_init<F, Fut>(
+        &self,
+        key: &str,
+        builder: F,
+    ) -> Result<std::sync::Arc<T>, AgentError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<std::sync::Arc<T>, AgentError>>,
+    {
+        let cell: std::sync::Arc<tokio::sync::OnceCell<std::sync::Arc<T>>> = {
+            let mut map = self
+                .map
+                .lock()
+                .expect("SharedInitCache mutex poisoned");
+            map.entry(key.to_string())
+                .or_insert_with(|| std::sync::Arc::new(tokio::sync::OnceCell::new()))
+                .clone()
+        };
+        cell.get_or_try_init(builder).await.cloned()
+    }
+}
+
+/// Process-wide singleton: one `OnnxExtractor` per canonical `model_dir`.
+static EXTRACTOR_CACHE: std::sync::LazyLock<SharedInitCache<OnnxExtractor>> =
+    std::sync::LazyLock::new(SharedInitCache::default);
+
+/// Return the process-wide cached `OnnxExtractor` for `model_dir`, loading it on
+/// first access.
+///
+/// The path is normalised via `std::fs::canonicalize` so that `/a/gliner2` and
+/// `/a/../a/gliner2` share a single cache entry. On error (e.g. non-existent
+/// directory), the cache entry stays unset so the next caller can retry.
+///
+/// `OnnxExtractor::new()` runs inside `tokio::task::spawn_blocking` because it
+/// performs synchronous file I/O and loads four large ONNX sessions.
+pub async fn get_or_init_onnx_extractor(
+    model_dir: &str,
+) -> Result<std::sync::Arc<OnnxExtractor>, AgentError> {
+    let canonical_key = std::fs::canonicalize(model_dir)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| model_dir.to_owned());
+    let dir_owned = model_dir.to_owned();
+    EXTRACTOR_CACHE
+        .get_or_try_init(&canonical_key, move || async move {
+            let path = std::path::PathBuf::from(dir_owned);
+            tokio::task::spawn_blocking(move || {
+                OnnxExtractor::new(&path).map(std::sync::Arc::new)
+            })
+            .await
+            .map_err(|e| AgentError::Join(e.to_string()))?
+        })
+        .await
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -679,6 +767,118 @@ mod tests {
         assert_eq!(resp.entities.len(), 1);
         assert_eq!(resp.entities[0].name, "parse_config");
         assert!((resp.entities[0].confidence - 0.92).abs() < f64::EPSILON);
+    }
+
+    // ── SharedInitCache behaviour ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn shared_cache_reuses_same_key() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let cache = SharedInitCache::<usize>::default();
+
+        let make_builder = |c: std::sync::Arc<AtomicUsize>| {
+            move || {
+                let c = c.clone();
+                async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    Ok::<std::sync::Arc<usize>, AgentError>(std::sync::Arc::new(7))
+                }
+            }
+        };
+
+        let a = cache.get_or_try_init("dir_a", make_builder(calls.clone())).await.unwrap();
+        let b = cache.get_or_try_init("dir_a", make_builder(calls.clone())).await.unwrap();
+
+        assert!(std::sync::Arc::ptr_eq(&a, &b), "second call must return cached Arc");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "builder must run exactly once");
+    }
+
+    #[tokio::test]
+    async fn shared_cache_different_keys_independent() {
+        let cache = SharedInitCache::<usize>::default();
+
+        let a = cache
+            .get_or_try_init("dir_a", || async { Ok(std::sync::Arc::new(1usize)) })
+            .await
+            .unwrap();
+        let b = cache
+            .get_or_try_init("dir_b", || async { Ok(std::sync::Arc::new(2usize)) })
+            .await
+            .unwrap();
+
+        assert_eq!(*a, 1);
+        assert_eq!(*b, 2);
+        assert!(!std::sync::Arc::ptr_eq(&a, &b));
+    }
+
+    #[tokio::test]
+    async fn shared_cache_no_poison_on_error() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let attempt = std::sync::Arc::new(AtomicUsize::new(0));
+        let cache = SharedInitCache::<usize>::default();
+
+        // First call fails.
+        let r1 = cache
+            .get_or_try_init("dir_a", {
+                let attempt = attempt.clone();
+                move || {
+                    let attempt = attempt.clone();
+                    async move {
+                        attempt.fetch_add(1, Ordering::SeqCst);
+                        Err::<std::sync::Arc<usize>, _>(AgentError::Workflow("boom".into()))
+                    }
+                }
+            })
+            .await;
+        assert!(r1.is_err());
+
+        // Second call with a succeeding builder must work (key not poisoned).
+        let r2 = cache
+            .get_or_try_init("dir_a", || async { Ok(std::sync::Arc::new(42usize)) })
+            .await;
+        assert_eq!(*r2.unwrap(), 42);
+        assert_eq!(attempt.load(Ordering::SeqCst), 1, "failed builder ran once");
+    }
+
+    #[tokio::test]
+    async fn shared_cache_concurrent_init_deduplicates() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let cache = std::sync::Arc::new(SharedInitCache::<usize>::default());
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let cache = cache.clone();
+            let calls = calls.clone();
+            handles.push(tokio::spawn(async move {
+                cache
+                    .get_or_try_init("dir_a", {
+                        let calls = calls.clone();
+                        move || {
+                            let calls = calls.clone();
+                            async move {
+                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                                calls.fetch_add(1, Ordering::SeqCst);
+                                Ok(std::sync::Arc::new(99usize))
+                            }
+                        }
+                    })
+                    .await
+            }));
+        }
+
+        let results: Vec<_> = futures::future::join_all(handles)
+            .await
+            .into_iter()
+            .map(|r| r.unwrap().unwrap())
+            .collect();
+
+        // All 8 tasks got the same Arc; builder ran exactly once.
+        for r in &results {
+            assert!(std::sync::Arc::ptr_eq(r, &results[0]));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     /// Full inference test — requires model to be downloaded first.

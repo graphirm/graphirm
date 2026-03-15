@@ -24,7 +24,7 @@ and session management. Everything in graphirm that involves deciding what to do
 | `knowledge/extraction.rs` | Entity extraction — LLM, GLiNER2 ONNX, or hybrid; `ExtractionBackend` enum |
 | `knowledge/segments.rs` | Structured response segmentation — parse JSON segments or GLiNER2 fallback (`try_gliner2_fallback`), persist as child `Content` nodes via `Contains` edges |
 | `knowledge/memory.rs` | Cross-session memory — HNSW vector search, inject past knowledge into context |
-| `knowledge/local_extraction.rs` | `OnnxExtractor` — GLiNER2 ONNX tokenisation + inference (feature-gated) |
+| `knowledge/local_extraction.rs` | `OnnxExtractor` — GLiNER2 ONNX tokenisation + inference (feature-gated); `get_or_init_onnx_extractor` caches sessions process-wide by `model_dir` |
 
 **Context scoring weights:** recency 0.3 · edge weight 0.2 · BFS distance 0.3 · PageRank 0.2
 
