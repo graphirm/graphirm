@@ -84,6 +84,10 @@ pub struct ContextConfig {
     // TODO(phase-6-followup): auto-trigger compact_context when enable_compaction=true
     #[serde(default = "default_enable_compaction")]
     pub enable_compaction: bool,
+    /// When set, assistant Interaction nodes with segments are reconstructed using
+    /// only the segment types in this list. `None` includes all content (default behavior).
+    #[serde(default)]
+    pub segment_filter: Option<Vec<String>>,
 }
 
 fn default_max_tokens() -> usize {
@@ -115,6 +119,7 @@ impl Default for ContextConfig {
             recency_decay: 0.1,
             edge_weights: EdgeWeights::default(),
             enable_compaction: false,
+            segment_filter: None,
         }
     }
 }
@@ -229,6 +234,72 @@ pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
         ))),
         _ => None,
     }
+}
+
+/// Convert a GraphNode to an LlmMessage, optionally filtering to specific segment types.
+///
+/// For assistant `Interaction` nodes with `metadata["segmented"] = true` and when
+/// `segment_filter` is `Some`, queries the graph for child `Content` nodes (via Contains
+/// edges), keeps only those whose `content_type` is in the filter list, and reconstructs
+/// the message from the matching segments in order. Falls back to `node_to_message` for
+/// all other nodes or when no filter is set.
+pub fn node_to_message_filtered(
+    node: &GraphNode,
+    store: &GraphStore,
+    segment_filter: Option<&[String]>,
+) -> Option<LlmMessage> {
+    let is_segmented = matches!(&node.node_type, NodeType::Interaction(data) if data.role == "assistant")
+        && node
+            .metadata
+            .get("segmented")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+    let Some(filter) = segment_filter else {
+        return node_to_message(node);
+    };
+
+    if !is_segmented {
+        return node_to_message(node);
+    }
+
+    // Get all edges touching this node and find outgoing Contains edges
+    let edges = match store.edges_for_node(&node.id) {
+        Ok(e) => e,
+        Err(_) => return node_to_message(node),
+    };
+
+    let mut segment_edges: Vec<_> = edges
+        .iter()
+        .filter(|e| e.edge_type == EdgeType::Contains && e.source == node.id)
+        .collect();
+
+    // Sort by the "order" field in edge metadata so segments are concatenated in order
+    segment_edges.sort_by_key(|e| {
+        e.metadata
+            .get("order")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+    });
+
+    let mut text_parts = Vec::new();
+    for edge in segment_edges {
+        let child_node = match store.get_node(&edge.target) {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        if let NodeType::Content(data) = &child_node.node_type {
+            if filter.iter().any(|f| f == &data.content_type) {
+                text_parts.push(data.body.clone());
+            }
+        }
+    }
+
+    if text_parts.is_empty() {
+        return node_to_message(node);
+    }
+
+    Some(LlmMessage::assistant(text_parts.join("\n\n")))
 }
 
 impl EdgeWeights {
@@ -513,7 +584,10 @@ pub fn build_context(
     all_nodes.extend(conv_older);
     all_nodes.extend(recent_chrono);
 
-    let messages: Vec<LlmMessage> = all_nodes.iter().filter_map(node_to_message).collect();
+    let messages: Vec<LlmMessage> = all_nodes
+        .iter()
+        .filter_map(|n| node_to_message_filtered(n, graph, config.segment_filter.as_deref()))
+        .collect();
 
     let total_tokens = system_tokens + guaranteed_tokens + selected_tokens;
 
@@ -1954,5 +2028,23 @@ mod tests {
         let tokens = estimate_tokens(&node);
         assert!(tokens > 0);
         assert!(tokens < 100);
+    }
+
+    #[test]
+    fn test_context_config_segment_filter_default_is_none() {
+        let config = ContextConfig::default();
+        assert!(config.segment_filter.is_none());
+    }
+
+    #[test]
+    fn test_node_to_message_filtered_non_segmented_uses_standard_path() {
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".into(),
+            content: "hello".into(),
+            token_count: None,
+        }));
+        let store = GraphStore::open_memory().unwrap();
+        let result = node_to_message_filtered(&node, &store, Some(&["code".to_string()]));
+        assert!(result.is_some());
     }
 }
