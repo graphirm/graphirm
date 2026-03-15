@@ -157,6 +157,7 @@ pub struct CreateSessionRequest {
     /// When true, enables structured response segmentation for this session.
     /// The agent will request segment-formatted JSON output from the LLM and
     /// persist each segment as a child Content node in the graph.
+    #[serde(default)]
     pub enable_segments: Option<bool>,
 }
 

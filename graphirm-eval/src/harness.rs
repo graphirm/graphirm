@@ -30,7 +30,7 @@ impl TestHarness {
             .unwrap_or_else(|_| "deepseek/deepseek-chat".to_string());
 
         let mut cmd = std::process::Command::new(&binary_path);
-        cmd.args(["--db", db_path.to_str().unwrap(), "serve", "--port", &port.to_string()])
+        cmd.args(["--db", db_path.to_str().expect("tempdir path is not valid UTF-8"), "serve", "--port", &port.to_string()])
             .env("EMBEDDING_BACKEND", "") // disable memory for most tasks
             .env("GRAPHIRM_MODEL", &eval_model);
         // Forward API keys and model config from environment
