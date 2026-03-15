@@ -50,6 +50,7 @@ pub async fn stream_and_record(
             .max_tokens
             .map(|t| t as usize)
             .unwrap_or(100_000),
+        segment_filter: session.agent_config.segment_filter.clone(),
         ..crate::context::ContextConfig::default()
     };
     let graph_ref = session.graph.clone();
