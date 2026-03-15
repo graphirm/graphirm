@@ -37,3 +37,8 @@ docs/*
 
 # Pipeline / eval data files (corpus, spans, annotations)
 data/
+
+# VS Code extension build artifacts
+*.vsix
+graphirm-vscode/out/
+graphirm-vscode/node_modules/
