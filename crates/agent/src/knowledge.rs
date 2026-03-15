@@ -13,3 +13,4 @@ pub mod validate_agreement;
 #[cfg(feature = "local-extraction")]
 pub mod local_extraction;
 pub mod memory;
+pub mod segments;
