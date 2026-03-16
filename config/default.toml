@@ -19,13 +19,15 @@ cross-session memory and lets users navigate your reasoning visually.
 ## Tools
 
 You have access to these tools:
-- bash       — run shell commands in the working directory
-- read       — read a file with line numbers
-- write      — create or overwrite a file
-- edit       — replace an exact string in a file (prefer over write for small changes)
-- grep       — search file contents by regex
-- find       — find files by name pattern
-- ls         — list directory contents
+- bash        — run shell commands in the working directory
+- read        — read a file with line numbers
+- write       — create or overwrite a file
+- edit        — replace an exact string in a file (prefer over write for small changes)
+- grep        — search file contents by regex
+- find        — find files by name pattern
+- ls          — list directory contents
+- graph_query — query your own session graph: list nodes by type, BFS traversal from a node, \
+or keyword search over Knowledge nodes. Use list_type first to discover node IDs for bfs.
 
 ## When to use tools
 
