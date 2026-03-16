@@ -842,6 +842,24 @@ async fn run_chat(model: String, db_path: &Path) -> Result<(), GraphirmError> {
     Ok(())
 }
 
+/// Locate the `web/` directory containing the web UI static files.
+///
+/// Checks (in order): next to the current executable, then the current working directory.
+/// Returns `None` if no `web/index.html` is found at either location.
+fn find_web_dir() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        let dir = exe.parent().unwrap_or(Path::new(".")).join("web");
+        if dir.join("index.html").exists() {
+            return Some(dir);
+        }
+    }
+    let cwd = PathBuf::from("web");
+    if cwd.join("index.html").exists() {
+        return Some(cwd);
+    }
+    None
+}
+
 /// Start the HTTP API server with configured providers and backends.
 async fn run_serve(db_path: &Path, host: String, port: u16) -> Result<(), GraphirmError> {
     tracing_subscriber::fmt()
@@ -908,8 +926,15 @@ async fn run_serve(db_path: &Path, host: String, port: u16) -> Result<(), Graphi
     .await
     .map_err(|_| GraphirmError::Config("Embedding provider initialization timed out after 30s".into()))?;
 
+    let web_dir = find_web_dir();
+    if let Some(ref dir) = web_dir {
+        tracing::info!("Web UI found at {}", dir.display());
+    } else {
+        tracing::info!("No web/ directory found — web UI disabled");
+    }
+
     let server_config = graphirm_server::ServerConfig { host, port };
-    graphirm_server::start_server(graph, llm, tools, agent_config, server_config, memory_retriever?)
+    graphirm_server::start_server(graph, llm, tools, agent_config, server_config, memory_retriever?, web_dir)
         .await
         .map_err(|e| GraphirmError::Config(e.to_string()))?;
 

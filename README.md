@@ -60,6 +60,18 @@ Open the panel: `Ctrl+Shift+P` → **Graphirm: Open Panel**
 
 The extension connects to `http://localhost:5555` by default. Change via `graphirm.serverUrl` in settings.
 
+### Browser UI
+
+```bash
+# Start the server — web UI is served automatically
+./target/release/graphirm serve
+
+# Open in browser
+open http://localhost:5555
+```
+
+No VS Code required. Same graph explorer, chat pane, and HITL approval flow — just in a browser tab. The server auto-detects the `web/` directory next to the binary or in the current working directory.
+
 ---
 
 ## Architecture

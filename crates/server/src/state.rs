@@ -1,6 +1,7 @@
 //! Shared application state and per-session bookkeeping.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -38,6 +39,9 @@ pub struct AppState {
     /// Optional embedding-based memory retriever shared across all sessions.
     /// When `Some`, each new session has cross-session memory wired in.
     pub memory_retriever: Option<Arc<MemoryRetriever>>,
+    /// Optional path to the web UI static files directory.
+    /// When `Some`, the server serves these files as a fallback for non-API routes.
+    pub web_dir: Option<PathBuf>,
 }
 
 /// Bookkeeping for a single active or completed session.
