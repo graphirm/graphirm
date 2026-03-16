@@ -109,9 +109,9 @@ pub struct AgentConfig {
     #[serde(default = "default_working_dir")]
     pub working_dir: PathBuf,
     /// Root directory under which per-session workspace subdirectories are created.
-    /// Empty string means "use working_dir as-is" (legacy behaviour).
-    #[serde(default = "default_workspaces_root")]
-    pub workspaces_root: PathBuf,
+    /// When `None`, `working_dir` is used directly (no per-session isolation).
+    #[serde(default)]
+    pub workspaces_root: Option<PathBuf>,
     /// Maximum number of interaction messages included in each LLM context
     /// window. `None` means no cap. Set to guard against unbounded context growth.
     pub max_context_messages: Option<usize>,
@@ -142,10 +142,6 @@ pub struct AgentConfig {
 
 fn default_working_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-}
-
-fn default_workspaces_root() -> PathBuf {
-    PathBuf::from("")
 }
 
 fn default_soft_escalation_turn() -> u32 {
@@ -198,7 +194,7 @@ impl Default for AgentConfig {
             temperature: Some(0.7),
             tools: vec![],
             working_dir: default_working_dir(),
-            workspaces_root: default_workspaces_root(),
+            workspaces_root: None,
             max_context_messages: None,
             permissions: HashMap::new(),
             extraction: None,
@@ -241,8 +237,8 @@ struct AgentConfigSection {
     tools: Vec<String>,
     #[serde(default = "default_working_dir")]
     working_dir: PathBuf,
-    #[serde(default = "default_workspaces_root")]
-    workspaces_root: PathBuf,
+    #[serde(default)]
+    workspaces_root: Option<PathBuf>,
     #[serde(default)]
     max_context_messages: Option<usize>,
     #[serde(default)]
@@ -551,9 +547,9 @@ mod tests {
     }
 
     #[test]
-    fn workspaces_root_defaults_to_empty() {
+    fn workspaces_root_disabled_by_default() {
         let config = AgentConfig::default();
-        assert_eq!(config.workspaces_root, PathBuf::from(""));
+        assert!(config.workspaces_root.is_none());
     }
 
     #[test]
@@ -567,7 +563,7 @@ mod tests {
             tools = ["bash"]
         "#;
         let config: AgentConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.workspaces_root, PathBuf::from("/workspaces"));
+        assert_eq!(config.workspaces_root, Some(PathBuf::from("/workspaces")));
     }
 
     #[test]
