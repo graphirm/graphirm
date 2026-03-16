@@ -138,10 +138,12 @@ async fn create_session(
     State(state): State<AppState>,
     Json(body): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<SessionResponse>), ServerError> {
+    let agent_name = body
+        .agent
+        .clone()
+        .unwrap_or_else(|| state.default_config.name.clone());
     let mut config = AgentConfig {
-        name: body
-            .agent
-            .unwrap_or_else(|| state.default_config.name.clone()),
+        name: agent_name,
         model: body
             .model
             .unwrap_or_else(|| state.default_config.model.clone()),
@@ -154,6 +156,25 @@ async fn create_session(
         });
     }
     config.segment_filter = body.segment_filter;
+
+    // Resolve per-session workspace directory
+    if let Some(ref root) = config.workspaces_root {
+        let raw_name = body
+            .workspace
+            .as_deref()
+            .or(body.agent.as_deref())
+            .unwrap_or("session");
+        let ws_name = sanitize_workspace_name(raw_name).unwrap_or_else(|| "session".to_string());
+        let ws_path = root.join(&ws_name);
+        std::fs::create_dir_all(&ws_path).map_err(|e| {
+            ServerError::Internal(format!(
+                "failed to create workspace '{}': {e}",
+                ws_path.display()
+            ))
+        })?;
+        config.working_dir = ws_path;
+        config.workspace_name = Some(ws_name);
+    }
 
     let hitl = Arc::new(HitlGate::new());
     let graph_for_session = state.graph.clone();

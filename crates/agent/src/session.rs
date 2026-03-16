@@ -40,7 +40,13 @@ impl SessionMetadata {
         created_at: DateTime<Utc>,
         status: SessionStatus,
     ) -> Self {
-        Self { session_id, name, model, created_at, status }
+        Self {
+            session_id,
+            name,
+            model,
+            created_at,
+            status,
+        }
     }
 }
 
@@ -78,6 +84,9 @@ impl Session {
         }));
         agent_node.set_label("agent_0_1_1");
         agent_node.metadata["session_id"] = serde_json::json!(agent_node.id.to_string());
+        if let Some(ws) = &config.workspace_name {
+            agent_node.metadata["workspace"] = serde_json::json!(ws);
+        }
         let id = graph.add_node(agent_node)?;
         Ok(Self {
             id,
@@ -220,11 +229,7 @@ impl Session {
             ))?;
             // node → previous (RespondsTo) — chains the conversation for graph traversal
             if let Some(prev) = prev_id {
-                graph.add_edge(GraphEdge::new(
-                    EdgeType::RespondsTo,
-                    node_id_clone,
-                    prev,
-                ))?;
+                graph.add_edge(GraphEdge::new(EdgeType::RespondsTo, node_id_clone, prev))?;
             }
             Ok(())
         })
@@ -329,12 +334,18 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(graph.get_node(&user_id).unwrap().label(), Some("interaction_1_1_1"));
+        assert_eq!(
+            graph.get_node(&user_id).unwrap().label(),
+            Some("interaction_1_1_1")
+        );
         assert_eq!(
             graph.get_node(&assistant_id).unwrap().label(),
             Some("interaction_1_2_1")
         );
-        assert_eq!(graph.get_node(&tool_id).unwrap().label(), Some("interaction_1_3_1"));
+        assert_eq!(
+            graph.get_node(&tool_id).unwrap().label(),
+            Some("interaction_1_3_1")
+        );
     }
 
     #[tokio::test]
@@ -424,8 +435,29 @@ mod tests {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let config = AgentConfig::default();
         let session = Session::new(graph, config).unwrap();
-        session.set_memory_suffix("relevant context".to_string()).await;
+        session
+            .set_memory_suffix("relevant context".to_string())
+            .await;
         assert_eq!(session.memory_suffix().await, "relevant context");
+    }
+
+    #[test]
+    fn session_stores_workspace_in_metadata() {
+        use crate::config::AgentConfig;
+        use graphirm_graph::GraphStore;
+        use std::sync::Arc;
+
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            workspace_name: Some("myapp".to_string()),
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        let node = graph.get_node(&session.id).unwrap();
+        assert_eq!(
+            node.metadata.get("workspace"),
+            Some(&serde_json::json!("myapp"))
+        );
     }
 
     #[tokio::test]

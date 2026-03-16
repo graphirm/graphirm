@@ -164,6 +164,10 @@ pub struct CreateSessionRequest {
     /// Example: `["reasoning", "code"]`
     #[serde(default)]
     pub segment_filter: Option<Vec<String>>,
+    /// Optional workspace name. When omitted, the sanitized session name is used.
+    /// The server creates `<workspaces_root>/<workspace>/` if it does not exist.
+    #[serde(default)]
+    pub workspace: Option<String>,
 }
 
 /// Request body for `POST /api/sessions/:id/prompt`.
@@ -356,7 +360,10 @@ mod tests {
     fn test_create_session_request_segment_filter_deserialization() {
         let json = r#"{"segment_filter": ["code", "reasoning"]}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.segment_filter, Some(vec!["code".to_string(), "reasoning".to_string()]));
+        assert_eq!(
+            req.segment_filter,
+            Some(vec!["code".to_string(), "reasoning".to_string()])
+        );
 
         let json_missing = r#"{}"#;
         let req2: CreateSessionRequest = serde_json::from_str(json_missing).unwrap();

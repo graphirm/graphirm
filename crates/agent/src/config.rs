@@ -138,6 +138,10 @@ pub struct AgentConfig {
     /// Example: `["reasoning", "code"]`
     #[serde(default)]
     pub segment_filter: Option<Vec<String>>,
+    /// Resolved workspace name (set by the server after resolving workspaces_root + name).
+    /// Stored here so it can be persisted to the Agent node and restored on restart.
+    #[serde(default)]
+    pub workspace_name: Option<String>,
 }
 
 fn default_working_dir() -> PathBuf {
@@ -203,6 +207,7 @@ impl Default for AgentConfig {
             soft_escalation_threshold: 2,
             segments: None,
             segment_filter: None,
+            workspace_name: None,
         }
     }
 }
@@ -253,6 +258,8 @@ struct AgentConfigSection {
     segments: Option<SegmentConfig>,
     #[serde(default)]
     segment_filter: Option<Vec<String>>,
+    #[serde(default)]
+    workspace_name: Option<String>,
 }
 
 fn default_system_prompt() -> String {
@@ -289,6 +296,7 @@ impl AgentConfig {
             soft_escalation_threshold: file.agent.soft_escalation_threshold,
             segments: file.agent.segments,
             segment_filter: file.agent.segment_filter,
+            workspace_name: file.agent.workspace_name,
         })
     }
 
