@@ -28,8 +28,9 @@ graphirm-vscode/            # VS Code / Cursor extension (TypeScript)
 **Five node types:** `Interaction` (messages), `Agent` (instances), `Content` (files/output),
 `Task` (DAG work items), `Knowledge` (extracted entities)
 
-**Twelve edge types:** `RespondsTo`, `SpawnedBy`, `DelegatesTo`, `DependsOn`, `Produces`,
-`Reads`, `Modifies`, `Summarizes`, `Contains`, `FollowsUp`, `Steers`, `RelatesTo`
+**Fifteen edge types:** `RespondsTo`, `SpawnedBy`, `DelegatesTo`, `DependsOn`, `Produces`,
+`Reads`, `Modifies`, `Summarizes`, `Contains`, `FollowsUp`, `Steers`, `RelatesTo`,
+`DerivedFrom`, `ApprovedBy`, `RejectedBy`
 
 ---
 
@@ -46,7 +47,8 @@ graphirm-vscode/            # VS Code / Cursor extension (TypeScript)
 | `crates/server/` | axum routes, SSE streaming, `AppState`, `SessionHandle`, SDK, static file serving |
 | `graphirm-eval/` | eval harness — drives agent via HTTP, checks task correctness |
 | `graphirm-vscode/` | VS Code/Cursor extension (TypeScript) |
-| `web/` | Standalone browser UI (served by axum at `/` when `web/` directory is found) |
+| `web-app/` | React + React Flow interactive whiteboard UI (Vite, TypeScript) — **active development** |
+| `web/` | Vanilla JS browser UI (legacy fallback, still served if `web-app/dist/` not present) |
 | `config/default.toml` | default model, agent, knowledge, graph, TUI, server settings |
 
 Each significant directory has its own `AGENTS.md` with purpose, key files, integration points, and test command.
@@ -79,8 +81,14 @@ DEEPSEEK_API_KEY=sk-... cargo test -p graphirm-llm --test integration
 DEEPSEEK_API_KEY=sk-... ./target/release/graphirm chat
 
 # Run HTTP server (port 5555 by default)
-# Web UI served at http://localhost:5555 when web/ directory is found
+# Web UI served at http://localhost:5555 — prefers web-app/dist/ over web/
 DEEPSEEK_API_KEY=sk-... ./target/release/graphirm serve
+
+# Build the React web UI (run once before serving, or after changes)
+cd web-app && npm install && npm run build && cd ..
+
+# Develop the web UI with hot reload (requires server running on :5555)
+cd web-app && npm run dev   # served at http://localhost:5173
 
 # Run eval harness (server must be running)
 cargo run -p graphirm-eval -- --suite coding
@@ -118,6 +126,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 10 | Structured LLM response segments (parse → persist → GLiNER2 fallback → context filter → eval) | ✅ done |
 | 11 | Web UI — browser graph visualization + chat | ✅ done |
 | 12 | `graph_query` tool — agent can query its own graph (bfs, list_type, keyword search) | ✅ done |
+| 13 | Interactive whiteboard graph — React + React Flow, card nodes, dagre/timeline/free layout | 🚧 in progress |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -130,12 +139,23 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Eval coverage: `cargo run -p graphirm-eval -- --filter segments` (uses `GraphContainsContentType` verifier)
 - See `docs/plans/2026-03-10-structured-llm-responses.md` and `docs/plans/2026-03-15-structured-segments-phase5-6.md`
 
-**Web UI summary (Phase 11):**
+**Web UI summary (Phase 11 — vanilla JS, legacy):**
 - Standalone browser UI at `web/` — adapted from `graphirm-vscode/media/` with `acquireVsCodeApi()` replaced by direct `fetch()` + `EventSource`
 - Server serves static files via `tower-http::services::ServeDir` fallback — API routes at `/api/*` take precedence
-- Auto-discovery: `find_web_dir()` looks for `web/index.html` next to the binary, then in CWD
+- Auto-discovery: `find_web_dir()` checks `web-app/dist/` first, then `web/` as fallback
 - Chat pane (markdown, HITL approval cards), graph pane (d3 force + timeline), session management
 - No build step, no framework, no auth — vanilla JS ES modules, ~1200 lines total
+
+**Interactive whiteboard UI summary (Phase 13 — in progress):**
+- `web-app/` — React 19 + TypeScript + `@xyflow/react` v12, built with Vite 6
+- Node cards per type: InteractionNode, AgentNode, ContentNode, TaskNode, KnowledgeNode, AnnotationNode
+- Custom `LabelledEdge` — per-type colour, SmoothStep (hierarchical) / Bezier (cross-cutting)
+- Three layout modes: DAG (dagre), Timeline (X=time, Y=type band), Free (manual, localStorage)
+- MiniMap, Controls, dotted background grid — full pan/zoom/drag
+- ChatPane with HITL approve/reject/modify cards; SessionBar with pause/resume
+- Dev: `cd web-app && npm run dev` (proxies `/api` → `localhost:5555`)
+- Build: `cd web-app && npm run build` → `web-app/dist/` (served automatically by `graphirm serve`)
+- See `docs/plans/2026-03-16-interactive-whiteboard-graph.md` for full plan
 
 **Risk areas:**
 - `Arc<RwLock<StableGraph>>` — no deadlocks; acquire briefly, never across await
