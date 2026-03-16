@@ -126,7 +126,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 10 | Structured LLM response segments (parse → persist → GLiNER2 fallback → context filter → eval) | ✅ done |
 | 11 | Web UI — browser graph visualization + chat | ✅ done |
 | 12 | `graph_query` tool — agent can query its own graph (bfs, list_type, keyword search) | ✅ done |
-| 13 | Interactive whiteboard graph — React + React Flow, card nodes, dagre/timeline/free layout | 🚧 in progress |
+| 13 | Interactive whiteboard graph — React + React Flow, node expansion (marked + hljs), grouping, steer-from-node, canvas annotations, keyboard shortcuts | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -146,16 +146,21 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Chat pane (markdown, HITL approval cards), graph pane (d3 force + timeline), session management
 - No build step, no framework, no auth — vanilla JS ES modules, ~1200 lines total
 
-**Interactive whiteboard UI summary (Phase 13 — in progress):**
+**Interactive whiteboard UI summary (Phase 13):**
 - `web-app/` — React 19 + TypeScript + `@xyflow/react` v12, built with Vite 6
 - Node cards per type: InteractionNode, AgentNode, ContentNode, TaskNode, KnowledgeNode, AnnotationNode
 - Custom `LabelledEdge` — per-type colour, SmoothStep (hierarchical) / Bezier (cross-cutting)
 - Three layout modes: DAG (dagre), Timeline (X=time, Y=type band), Free (manual, localStorage)
+- **Node expansion** — click ▼ to expand; Interaction renders markdown (marked), Content shows syntax-highlighted code (hljs); NodeResizer for manual resize
+- **Visual grouping** — each Interaction + its produced nodes rendered inside a React Flow parent/group node with dashed boundary
+- **Steer-from-node** — expand any Interaction node → "↩ Steer from here" button pre-fills chat input with context root; sent via existing `POST /api/sessions/{id}/prompt`
+- **Canvas annotations** — double-click empty canvas or toolbar "+ Note" adds editable AnnotationNode; `POST /api/graph/{session_id}/annotate` persists as Knowledge node
+- **Keyboard shortcuts** — `F` fit-view, `L` cycle layout, `N` new session, `/` focus chat
 - MiniMap, Controls, dotted background grid — full pan/zoom/drag
-- ChatPane with HITL approve/reject/modify cards; SessionBar with pause/resume
+- ChatPane with HITL approve/reject/modify cards, steer context banner; SessionBar with pause/resume
+- Bundle: React Flow 194 kB, highlight 21 kB (trimmed to 20 languages), dagre 43 kB, app 289 kB — all chunks ≤ 500 kB
 - Dev: `cd web-app && npm run dev` (proxies `/api` → `localhost:5555`)
 - Build: `cd web-app && npm run build` → `web-app/dist/` (served automatically by `graphirm serve`)
-- See `docs/plans/2026-03-16-interactive-whiteboard-graph.md` for full plan
 
 **Risk areas:**
 - `Arc<RwLock<StableGraph>>` — no deadlocks; acquire briefly, never across await

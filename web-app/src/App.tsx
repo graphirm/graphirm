@@ -1,9 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import styles from './App.module.css';
 import { SessionBar } from './components/SessionBar';
 import { ChatPane } from './components/ChatPane';
 import { GraphCanvas } from './components/GraphCanvas';
 import { useSession } from './hooks/useSession';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 
 export function App() {
   const {
@@ -25,9 +26,12 @@ export function App() {
   } = useSession();
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  // When user clicks "Steer from here" on a node, we pre-fill the chat input
-  // with a context marker and focus it.
   const [steerContext, setSteerContext] = useState<{ nodeId: string } | null>(null);
+
+  // Ref callbacks let GraphCanvasInner register its handlers after mount.
+  const fitViewCb = useRef<(() => void) | null>(null);
+  const cycleLayoutCb = useRef<(() => void) | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
   const handleNodeSelect = useCallback((nodeId: string | null) => {
     setSelectedNodeId(nodeId);
@@ -35,6 +39,8 @@ export function App() {
 
   const handleSteerFromNode = useCallback((nodeId: string) => {
     setSteerContext({ nodeId });
+    // Focus chat input so user can type their steer message immediately.
+    setTimeout(() => chatInputRef.current?.focus(), 50);
   }, []);
 
   const handleSendWithSteer = useCallback(
@@ -48,6 +54,13 @@ export function App() {
     },
     [steerContext, sendPrompt],
   );
+
+  useKeyboardShortcuts({
+    onFitView: () => fitViewCb.current?.(),
+    onToggleLayout: () => cycleLayoutCb.current?.(),
+    onNewSession: createSession,
+    onFocusChat: () => chatInputRef.current?.focus(),
+  });
 
   return (
     <div className={styles.app}>
@@ -66,6 +79,7 @@ export function App() {
           pendingApproval={pendingApproval}
           sessionId={currentSession?.id ?? null}
           steerContext={steerContext}
+          inputRef={chatInputRef}
           onSend={handleSendWithSteer}
           onAbort={abortSession}
           onApprove={approveAction}
@@ -79,6 +93,8 @@ export function App() {
           selectedNodeId={selectedNodeId}
           onNodeSelect={handleNodeSelect}
           onSteerFromNode={handleSteerFromNode}
+          onFitViewRef={cb => { fitViewCb.current = cb; }}
+          onCycleLayoutRef={cb => { cycleLayoutCb.current = cb; }}
         />
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -10,6 +10,7 @@ import {
 } from '@xyflow/react';
 import type { NodeTypes, EdgeTypes, Node } from '@xyflow/react';
 import type { GraphData } from '../types/graph';
+import type { LayoutMode } from '../hooks/useGraphData';
 import { useGraphData } from '../hooks/useGraphData';
 import { InteractionNode } from './nodes/InteractionNode';
 import { AgentNode } from './nodes/AgentNode';
@@ -42,13 +43,19 @@ interface GraphCanvasProps {
   selectedNodeId: string | null;
   onNodeSelect: (nodeId: string | null) => void;
   onSteerFromNode: (nodeId: string) => void;
+  onFitViewRef?: (cb: () => void) => void;
+  onCycleLayoutRef?: (cb: () => void) => void;
 }
+
+const LAYOUT_CYCLE: LayoutMode[] = ['dagre', 'timeline', 'free'];
 
 function GraphCanvasInner({
   graphData,
   sessionId,
   onNodeSelect,
   onSteerFromNode,
+  onFitViewRef,
+  onCycleLayoutRef,
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasWidth = containerRef.current?.clientWidth ?? 800;
@@ -64,6 +71,20 @@ function GraphCanvasInner({
   } = useGraphData(graphData, sessionId, canvasWidth);
 
   const { fitView, screenToFlowPosition } = useReactFlow();
+
+  // Expose fitView and layout-cycle callbacks to parent via ref callbacks.
+  useEffect(() => {
+    onFitViewRef?.(() => fitView({ padding: 0.12, duration: 400 }));
+  }, [fitView, onFitViewRef]);
+
+  useEffect(() => {
+    onCycleLayoutRef?.(() => {
+      const idx = LAYOUT_CYCLE.indexOf(layoutMode);
+      const next = LAYOUT_CYCLE[(idx + 1) % LAYOUT_CYCLE.length];
+      setLayoutMode(next);
+      setTimeout(() => fitView({ padding: 0.12, duration: 400 }), 50);
+    });
+  }, [layoutMode, setLayoutMode, fitView, onCycleLayoutRef]);
   const [annotationCount, setAnnotationCount] = useState(0);
 
   // Inject onSteer callback into interaction node data so cards can call it.

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import type { Message, PendingApproval } from '../types/graph';
 import styles from '../styles/chat.module.css';
 
@@ -12,6 +12,7 @@ interface ChatPaneProps {
   pendingApproval: PendingApproval | null;
   sessionId: string | null;
   steerContext: SteerContext | null;
+  inputRef?: React.RefObject<HTMLTextAreaElement | null>;
   onSend: (content: string) => void;
   onAbort: () => void;
   onApprove: (nodeId: string) => void;
@@ -107,6 +108,7 @@ export function ChatPane({
   isThinking,
   pendingApproval,
   steerContext,
+  inputRef,
   onSend,
   onAbort,
   onApprove,
@@ -181,6 +183,7 @@ export function ChatPane({
           </div>
         )}
         <textarea
+          ref={inputRef}
           rows={2}
           placeholder={steerContext ? 'Send message from this context node…' : 'Type your message… (Enter to send, Shift+Enter for newline)'}
           value={input}
