@@ -737,6 +737,7 @@ fn build_tool_registry() -> ToolRegistry {
     registry.register(Arc::new(graphirm_tools::grep::GrepTool));
     registry.register(Arc::new(graphirm_tools::find::FindTool));
     registry.register(Arc::new(graphirm_tools::ls::LsTool));
+    registry.register(Arc::new(graphirm_tools::graph_query::GraphQueryTool));
     registry
 }
 

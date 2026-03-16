@@ -9,6 +9,7 @@ use graphirm_tools::{
     edit::EditTool,
     executor::{execute_parallel, execute_single},
     find::FindTool,
+    graph_query::GraphQueryTool,
     grep::GrepTool,
     ls::LsTool,
     read::ReadTool,
@@ -58,6 +59,7 @@ fn setup() -> (TempDir, ToolRegistry, ToolContext) {
     registry.register(Arc::new(GrepTool::new()));
     registry.register(Arc::new(FindTool::new()));
     registry.register(Arc::new(LsTool::new()));
+    registry.register(Arc::new(GraphQueryTool::new()));
 
     (dir, registry, ctx)
 }
@@ -176,7 +178,7 @@ async fn parallel_reads() {
 async fn registry_lists_all_tools() {
     let (_dir, registry, _ctx) = setup();
     let names = registry.list();
-    assert_eq!(names.len(), 7, "expected 7 tools, got: {:?}", names);
+    assert_eq!(names.len(), 8, "expected 8 tools, got: {:?}", names);
     assert!(names.contains(&"read"));
     assert!(names.contains(&"write"));
     assert!(names.contains(&"edit"));
@@ -184,13 +186,14 @@ async fn registry_lists_all_tools() {
     assert!(names.contains(&"grep"));
     assert!(names.contains(&"find"));
     assert!(names.contains(&"ls"));
+    assert!(names.contains(&"graph_query"));
 }
 
 #[tokio::test]
 async fn definitions_for_llm() {
     let (_dir, registry, _ctx) = setup();
     let defs = registry.definitions();
-    assert_eq!(defs.len(), 7);
+    assert_eq!(defs.len(), 8);
     for def in &defs {
         assert!(!def.name.is_empty(), "tool name should not be empty");
         assert!(
