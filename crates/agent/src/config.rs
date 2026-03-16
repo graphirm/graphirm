@@ -108,6 +108,10 @@ pub struct AgentConfig {
     /// process working directory at the time `AgentConfig::default()` is called.
     #[serde(default = "default_working_dir")]
     pub working_dir: PathBuf,
+    /// Root directory under which per-session workspace subdirectories are created.
+    /// When `None`, `working_dir` is used directly (no per-session isolation).
+    #[serde(default)]
+    pub workspaces_root: Option<PathBuf>,
     /// Maximum number of interaction messages included in each LLM context
     /// window. `None` means no cap. Set to guard against unbounded context growth.
     pub max_context_messages: Option<usize>,
@@ -134,6 +138,15 @@ pub struct AgentConfig {
     /// Example: `["reasoning", "code"]`
     #[serde(default)]
     pub segment_filter: Option<Vec<String>>,
+    /// Resolved workspace name (set by the server after resolving workspaces_root + name).
+    /// Stored here so it can be persisted to the Agent node and restored on restart.
+    #[serde(default)]
+    pub workspace_name: Option<String>,
+    /// Resolved absolute path of the workspace directory.
+    /// Only set when the workspace was successfully resolved (root + name joined and directory exists).
+    /// Distinct from `working_dir` to avoid false positives when workspace resolution is unavailable.
+    #[serde(default)]
+    pub workspace_dir: Option<PathBuf>,
 }
 
 fn default_working_dir() -> PathBuf {
@@ -183,12 +196,14 @@ impl Default for AgentConfig {
                 "- Prefer the minimal number of tool calls needed.\n",
                 "- If a task is ambiguous, ask one clarifying question before starting.\n",
                 "- If a command fails, diagnose the error before retrying.\n",
-            ).to_string(),
+            )
+            .to_string(),
             max_turns: 50,
             max_tokens: Some(8192),
             temperature: Some(0.7),
             tools: vec![],
             working_dir: default_working_dir(),
+            workspaces_root: None,
             max_context_messages: None,
             permissions: HashMap::new(),
             extraction: None,
@@ -197,6 +212,8 @@ impl Default for AgentConfig {
             soft_escalation_threshold: 2,
             segments: None,
             segment_filter: None,
+            workspace_name: None,
+            workspace_dir: None,
         }
     }
 }
@@ -232,6 +249,8 @@ struct AgentConfigSection {
     #[serde(default = "default_working_dir")]
     working_dir: PathBuf,
     #[serde(default)]
+    workspaces_root: Option<PathBuf>,
+    #[serde(default)]
     max_context_messages: Option<usize>,
     #[serde(default)]
     extraction: Option<ExtractionConfig>,
@@ -245,6 +264,9 @@ struct AgentConfigSection {
     segments: Option<SegmentConfig>,
     #[serde(default)]
     segment_filter: Option<Vec<String>>,
+    // Set at runtime by the server after resolving workspaces_root; not read from TOML.
+    #[serde(default)]
+    workspace_name: Option<String>,
 }
 
 fn default_system_prompt() -> String {
@@ -272,6 +294,7 @@ impl AgentConfig {
             temperature: file.agent.temperature,
             tools: file.agent.tools,
             working_dir: file.agent.working_dir,
+            workspaces_root: file.agent.workspaces_root,
             max_context_messages: file.agent.max_context_messages,
             permissions: file.permissions,
             extraction: file.agent.extraction,
@@ -280,6 +303,8 @@ impl AgentConfig {
             soft_escalation_threshold: file.agent.soft_escalation_threshold,
             segments: file.agent.segments,
             segment_filter: file.agent.segment_filter,
+            workspace_name: file.agent.workspace_name,
+            workspace_dir: None,
         })
     }
 
@@ -535,6 +560,26 @@ mod tests {
         assert!(seg.structured_output);
         assert!(!seg.gliner2_fallback);
         assert!((seg.min_confidence - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn workspaces_root_disabled_by_default() {
+        let config = AgentConfig::default();
+        assert!(config.workspaces_root.is_none());
+    }
+
+    #[test]
+    fn workspaces_root_parsed_from_toml() {
+        let toml = r#"
+            name = "test"
+            model = "deepseek-chat"
+            system_prompt = "hi"
+            max_turns = 10
+            workspaces_root = "/workspaces"
+            tools = ["bash"]
+        "#;
+        let config: AgentConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.workspaces_root, Some(PathBuf::from("/workspaces")));
     }
 
     #[test]

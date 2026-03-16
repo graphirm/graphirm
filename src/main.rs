@@ -882,21 +882,33 @@ async fn run_chat(model: String, db_path: &Path) -> Result<(), GraphirmError> {
     Ok(())
 }
 
-/// Locate the `web/` directory containing the web UI static files.
+/// Locate the web UI static files directory.
 ///
-/// Checks (in order): next to the current executable, then the current working directory.
-/// Returns `None` if no `web/index.html` is found at either location.
+/// Checks in priority order: `web-app/dist/` (React build) first, then `web/` (vanilla JS
+/// fallback). Both locations are checked next to the current executable and in CWD.
+/// Returns `None` if no `index.html` is found at any location.
 fn find_web_dir() -> Option<PathBuf> {
+    let candidates = ["web-app/dist", "web"];
+
+    // Check next to the binary first.
     if let Ok(exe) = std::env::current_exe() {
-        let dir = exe.parent().unwrap_or(Path::new(".")).join("web");
+        let exe_dir = exe.parent().unwrap_or(Path::new("."));
+        for subdir in &candidates {
+            let dir = exe_dir.join(subdir);
+            if dir.join("index.html").exists() {
+                return Some(dir);
+            }
+        }
+    }
+
+    // Fall back to CWD.
+    for subdir in &candidates {
+        let dir = PathBuf::from(subdir);
         if dir.join("index.html").exists() {
             return Some(dir);
         }
     }
-    let cwd = PathBuf::from("web");
-    if cwd.join("index.html").exists() {
-        return Some(cwd);
-    }
+
     None
 }
 

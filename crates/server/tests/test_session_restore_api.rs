@@ -13,7 +13,7 @@ mod tests {
     async fn test_restore_sessions_from_graph_empty() {
         // Empty graph should return empty hashmap
         let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let sessions: HashMap<String, _> = restore_sessions_from_graph(&graph).await.unwrap();
+        let sessions: HashMap<String, _> = restore_sessions_from_graph(&graph, None).await.unwrap();
         assert_eq!(sessions.len(), 0);
     }
 
@@ -38,7 +38,7 @@ mod tests {
         let _agent_id = graph.add_node(agent.clone()).unwrap();
 
         // Restore sessions
-        let sessions: HashMap<String, _> = restore_sessions_from_graph(&graph).await.unwrap();
+        let sessions: HashMap<String, _> = restore_sessions_from_graph(&graph, None).await.unwrap();
 
         // Verify session was restored
         assert_eq!(sessions.len(), 1);
@@ -85,7 +85,7 @@ mod tests {
         graph.add_node(agent_active).unwrap();
         graph.add_node(agent_failed).unwrap();
 
-        let sessions: HashMap<String, _> = restore_sessions_from_graph(&graph).await.unwrap();
+        let sessions: HashMap<String, _> = restore_sessions_from_graph(&graph, None).await.unwrap();
 
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions["session-active"].status, SessionStatus::Running);
@@ -133,7 +133,7 @@ mod tests {
         }
 
         // Restore sessions from graph (simulates server startup)
-        let sessions = restore_sessions_from_graph(&graph).await.unwrap();
+        let sessions = restore_sessions_from_graph(&graph, None).await.unwrap();
 
         // Verify all sessions were restored with correct data
         assert_eq!(sessions.len(), 3);

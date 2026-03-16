@@ -164,6 +164,10 @@ pub struct CreateSessionRequest {
     /// Example: `["reasoning", "code"]`
     #[serde(default)]
     pub segment_filter: Option<Vec<String>>,
+    /// Optional workspace name. When omitted, falls back to `agent` (if set) or `"session"`.
+    /// The server creates `<workspaces_root>/<workspace>/` if it does not exist.
+    #[serde(default)]
+    pub workspace: Option<String>,
 }
 
 /// Request body for `POST /api/sessions/:id/prompt`.
@@ -214,6 +218,12 @@ pub struct SessionResponse {
     pub created_at: DateTime<Utc>,
     /// Current lifecycle status.
     pub status: SessionStatus,
+    /// Workspace name, if a per-session workspace was configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    /// Absolute path to the workspace directory (only set when `workspace` is `Some`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
 }
 
 /// Response body for `GET /api/health`.
@@ -252,6 +262,29 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+/// Canvas position hint for annotation nodes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnnotationPosition {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// `POST /api/sessions/{id}/auto-approve` request body.
+#[derive(Debug, Deserialize)]
+pub struct AutoApproveRequest {
+    pub enabled: bool,
+}
+
+/// `POST /api/graph/{session_id}/annotate` request body.
+#[derive(Debug, Deserialize)]
+pub struct AnnotationRequest {
+    pub entity: String,
+    pub entity_type: String,
+    pub summary: String,
+    /// Optional canvas position hint stored in node metadata.
+    pub position: Option<AnnotationPosition>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +311,8 @@ mod tests {
             model: "claude-sonnet-4-20250514".to_string(),
             created_at: now,
             status: SessionStatus::Idle,
+            workspace: None,
+            workspace_path: None,
         };
         let json = serde_json::to_string(&session).unwrap();
         let back: SessionResponse = serde_json::from_str(&json).unwrap();
@@ -333,7 +368,10 @@ mod tests {
     fn test_create_session_request_segment_filter_deserialization() {
         let json = r#"{"segment_filter": ["code", "reasoning"]}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.segment_filter, Some(vec!["code".to_string(), "reasoning".to_string()]));
+        assert_eq!(
+            req.segment_filter,
+            Some(vec!["code".to_string(), "reasoning".to_string()])
+        );
 
         let json_missing = r#"{}"#;
         let req2: CreateSessionRequest = serde_json::from_str(json_missing).unwrap();

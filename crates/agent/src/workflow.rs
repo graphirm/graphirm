@@ -392,24 +392,28 @@ async fn execute_tools_parallel(
 
         let gate_key = NodeId::from(call_id.as_str());
 
-        events.emit(AgentEvent::AwaitingApproval {
-            node_id: gate_key.clone(),
-            tool_name: name.clone(),
-            arguments: arguments.clone(),
-            is_pause: false,
-        });
+        // If auto-approve is enabled, skip the gate entirely.
+        let decision = if hitl.is_auto_approve() {
+            HitlDecision::Approve
+        } else {
+            events.emit(AgentEvent::AwaitingApproval {
+                node_id: gate_key.clone(),
+                tool_name: name.clone(),
+                arguments: arguments.clone(),
+                is_pause: false,
+            });
 
-        let rx = hitl.gate(&gate_key).await;
+            let rx = hitl.gate(&gate_key).await;
 
-        let decision = tokio::select! {
-            result = rx => match result {
-                Ok(d) => d,
-                // Sender dropped — treat as rejection to avoid silently executing a destructive tool.
-                Err(_) => HitlDecision::Reject("Gate sender dropped unexpectedly".to_string()),
-            },
-            _ = cancel.cancelled() => {
-                let _ = session.set_status("cancelled").await;
-                return Err(AgentError::Cancelled);
+            tokio::select! {
+                result = rx => match result {
+                    Ok(d) => d,
+                    Err(_) => HitlDecision::Reject("Gate sender dropped unexpectedly".to_string()),
+                },
+                _ = cancel.cancelled() => {
+                    let _ = session.set_status("cancelled").await;
+                    return Err(AgentError::Cancelled);
+                }
             }
         };
 

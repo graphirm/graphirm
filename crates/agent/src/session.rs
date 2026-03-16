@@ -30,6 +30,11 @@ pub struct SessionMetadata {
     pub model: String,
     pub created_at: DateTime<Utc>,
     pub status: SessionStatus,
+    /// Workspace name stored in the Agent node's metadata (e.g. `"myapp"`).
+    pub workspace: Option<String>,
+    /// Fully-resolved workspace path (`workspaces_root/workspace`).
+    /// `None` when no workspaces root was provided at restore time.
+    pub workspace_path: Option<std::path::PathBuf>,
 }
 
 impl SessionMetadata {
@@ -40,7 +45,15 @@ impl SessionMetadata {
         created_at: DateTime<Utc>,
         status: SessionStatus,
     ) -> Self {
-        Self { session_id, name, model, created_at, status }
+        Self {
+            session_id,
+            name,
+            model,
+            created_at,
+            status,
+            workspace: None,
+            workspace_path: None,
+        }
     }
 }
 
@@ -78,6 +91,9 @@ impl Session {
         }));
         agent_node.set_label("agent_0_1_1");
         agent_node.metadata["session_id"] = serde_json::json!(agent_node.id.to_string());
+        if let Some(ws) = &config.workspace_name {
+            agent_node.metadata["workspace"] = serde_json::json!(ws);
+        }
         let id = graph.add_node(agent_node)?;
         Ok(Self {
             id,
@@ -91,6 +107,31 @@ impl Session {
             turn_counter: AtomicU32::new(0),
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
         })
+    }
+
+    /// Reconstruct a [`Session`] from an existing Agent node stored in the graph.
+    ///
+    /// Unlike [`Session::new`], this does **not** create a new Agent node — it
+    /// binds to the node that is already in the graph under `node_id`.
+    /// Used at server startup to restore sessions that survived a restart.
+    pub fn restore(
+        graph: Arc<GraphStore>,
+        node_id: graphirm_graph::nodes::NodeId,
+        config: AgentConfig,
+        created_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            id: node_id,
+            agent_config: config,
+            graph,
+            created_at,
+            hitl: None,
+            memory_retriever: None,
+            runtime_system_suffix: tokio::sync::Mutex::new(String::new()),
+            last_interaction_id: Arc::new(Mutex::new(None)),
+            turn_counter: AtomicU32::new(0),
+            turn_pos_counter: Arc::new(AtomicU32::new(0)),
+        }
     }
 
     /// Attach a [`HitlGate`] to this session, enabling HITL approval flow.
@@ -220,11 +261,7 @@ impl Session {
             ))?;
             // node → previous (RespondsTo) — chains the conversation for graph traversal
             if let Some(prev) = prev_id {
-                graph.add_edge(GraphEdge::new(
-                    EdgeType::RespondsTo,
-                    node_id_clone,
-                    prev,
-                ))?;
+                graph.add_edge(GraphEdge::new(EdgeType::RespondsTo, node_id_clone, prev))?;
             }
             Ok(())
         })
@@ -329,12 +366,18 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(graph.get_node(&user_id).unwrap().label(), Some("interaction_1_1_1"));
+        assert_eq!(
+            graph.get_node(&user_id).unwrap().label(),
+            Some("interaction_1_1_1")
+        );
         assert_eq!(
             graph.get_node(&assistant_id).unwrap().label(),
             Some("interaction_1_2_1")
         );
-        assert_eq!(graph.get_node(&tool_id).unwrap().label(), Some("interaction_1_3_1"));
+        assert_eq!(
+            graph.get_node(&tool_id).unwrap().label(),
+            Some("interaction_1_3_1")
+        );
     }
 
     #[tokio::test]
@@ -424,8 +467,60 @@ mod tests {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let config = AgentConfig::default();
         let session = Session::new(graph, config).unwrap();
-        session.set_memory_suffix("relevant context".to_string()).await;
+        session
+            .set_memory_suffix("relevant context".to_string())
+            .await;
         assert_eq!(session.memory_suffix().await, "relevant context");
+    }
+
+    #[test]
+    fn session_stores_workspace_in_metadata() {
+        use crate::config::AgentConfig;
+        use graphirm_graph::GraphStore;
+        use std::sync::Arc;
+
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            workspace_name: Some("myapp".to_string()),
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        let node = graph.get_node(&session.id).unwrap();
+        assert_eq!(
+            node.metadata.get("workspace"),
+            Some(&serde_json::json!("myapp"))
+        );
+    }
+
+    #[test]
+    fn session_restore_binds_to_existing_node() {
+        use graphirm_graph::GraphStore;
+        use graphirm_graph::nodes::{AgentData, GraphNode, NodeType};
+        use std::sync::Arc;
+
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+
+        let agent_node = GraphNode::new(NodeType::Agent(AgentData {
+            name: "restored-agent".to_string(),
+            model: "deepseek-chat".to_string(),
+            system_prompt: None,
+            status: "idle".to_string(),
+        }));
+        let node_id = graph.add_node(agent_node).unwrap();
+        let agent_count_before = graph.get_agent_nodes().unwrap().len();
+
+        let config = AgentConfig::default();
+        let session = Session::restore(graph.clone(), node_id.clone(), config, chrono::Utc::now());
+
+        assert_eq!(
+            graph.get_agent_nodes().unwrap().len(),
+            agent_count_before,
+            "restore must not create new nodes"
+        );
+        assert_eq!(
+            session.id, node_id,
+            "restored session must use the existing node id"
+        );
     }
 
     #[tokio::test]

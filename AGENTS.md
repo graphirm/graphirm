@@ -114,7 +114,8 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `bash`, `write`, `edit` are destructive tools — subject to HITL gate (unless auto-approve is enabled)
 - `read`, `grep`, `find`, `ls`, `graph_query` are non-destructive — always run without confirmation
 - Auto-approve: `POST /api/sessions/{id}/auto-approve` with `{ "enabled": true }` — skips HITL gating for all destructive tools in that session
-- Config lives in `config/default.toml`; `AgentConfig` is loaded from it at startup
+- Per-session workspaces: set `workspaces_root` in `[agent]` config; `POST /api/sessions` accepts optional `"workspace"` name (defaults to sanitized session name); workspace directory is auto-created; workspace name persisted in Agent node metadata and restored on restart; response includes `workspace` and `workspace_path` when active
+- Config lives in `config/default.toml`; `AgentConfig` is loaded from it at startup; `workspaces_root` in `[agent]` — optional root; when set, each session gets an isolated subdirectory `<root>/<workspace>/`
 - API keys via env vars: `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`
 
 ---

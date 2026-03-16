@@ -32,11 +32,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::{RwLock, broadcast};
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use graphirm_agent::knowledge::memory::MemoryRetriever;
-use graphirm_agent::AgentConfig;
-use graphirm_graph::GraphStore;
+use graphirm_agent::{AgentConfig, HitlGate, Session};
+use graphirm_graph::{GraphStore, nodes::NodeId};
 use graphirm_llm::LlmProvider;
 use graphirm_tools::ToolRegistry;
 
@@ -89,12 +90,54 @@ pub async fn start_server(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (event_tx, _) = broadcast::channel::<SseEvent>(1024);
 
+    // Restore sessions from the graph before accepting connections.
+    let restored = restore_sessions_from_graph(&graph, agent_config.workspaces_root.as_deref())
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("Session restoration failed, starting with empty sessions: {e}");
+            HashMap::new()
+        });
+
+    let mut initial_sessions: HashMap<SessionId, SessionHandle> = HashMap::new();
+    for (id_str, meta) in restored {
+        let mut config = agent_config.clone();
+        config.working_dir = meta
+            .workspace_path
+            .clone()
+            .unwrap_or_else(|| agent_config.working_dir.clone());
+        config.workspace_dir = meta.workspace_path.clone();
+        config.workspace_name = meta.workspace.clone();
+
+        let node_id = NodeId(id_str.clone());
+        let session = Session::restore(graph.clone(), node_id, config, meta.created_at);
+        let session = if let Some(ref retriever) = memory_retriever {
+            session.with_memory_retriever(retriever.clone())
+        } else {
+            session
+        };
+        let hitl = Arc::new(HitlGate::new());
+        let handle = SessionHandle {
+            session: Arc::new(session),
+            signal: CancellationToken::new(),
+            join_handle: None,
+            status: crate::types::SessionStatus::Idle,
+            created_at: meta.created_at,
+            hitl,
+        };
+        initial_sessions.insert(SessionId(id_str), handle);
+    }
+
+    info!(
+        restored_count = initial_sessions.len(),
+        "Sessions restored from graph"
+    );
+
     let state = AppState {
         graph,
         llm,
         tools,
         event_tx,
-        sessions: Arc::new(RwLock::new(HashMap::new())),
+        sessions: Arc::new(RwLock::new(initial_sessions)),
         default_config: agent_config,
         memory_retriever,
         web_dir,

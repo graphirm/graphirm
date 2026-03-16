@@ -20,9 +20,46 @@ use crate::middleware::request_logging;
 use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
-    CreateSessionRequest, GraphResponse, HealthResponse, NodeAction, NodeActionRequest,
-    PromptRequest, SessionId, SessionResponse, SessionStatus, SseEvent, SseEventType, SubgraphQuery,
+    AnnotationRequest, AutoApproveRequest, CreateSessionRequest, GraphResponse, HealthResponse,
+    NodeAction, NodeActionRequest, PromptRequest, SessionId, SessionResponse, SessionStatus,
+    SseEvent, SseEventType, SubgraphQuery,
 };
+
+/// Sanitize a workspace name: trim, lowercase, replace non-`[a-z0-9_-]` with `-`,
+/// collapse consecutive dashes, strip leading/trailing dashes.
+/// Returns `None` if the result is empty.
+fn sanitize_workspace_name(name: &str) -> Option<String> {
+    let lowered = name.trim().to_lowercase();
+    let replaced: String = lowered
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let mut result = String::new();
+    let mut last_dash = false;
+    for c in replaced.chars() {
+        if c == '-' {
+            if !last_dash {
+                result.push(c);
+            }
+            last_dash = true;
+        } else {
+            result.push(c);
+            last_dash = false;
+        }
+    }
+    let result = result.trim_matches('-').to_string();
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
 
 /// Build the axum router with all routes wired to shared [`AppState`].
 ///
@@ -65,9 +102,11 @@ pub fn create_router(state: AppState) -> Router {
             "/api/graph/{session_id}/node/{node_id}/action",
             post(node_action),
         )
-        // HITL pause / resume
+        .route("/api/graph/{session_id}/annotate", post(create_annotation))
+        // HITL pause / resume / auto-approve
         .route("/api/sessions/{id}/pause", post(pause_session))
         .route("/api/sessions/{id}/resume", post(resume_session))
+        .route("/api/sessions/{id}/auto-approve", post(toggle_auto_approve))
         // SSE event streams
         .route("/api/events", get(sse_handler))
         .route("/api/events/{session_id}", get(sse_session_handler))
@@ -78,9 +117,7 @@ pub fn create_router(state: AppState) -> Router {
         .with_state(state);
 
     if let Some(dir) = web_dir {
-        router = router.fallback_service(
-            ServeDir::new(dir).append_index_html_on_directories(true),
-        );
+        router = router.fallback_service(ServeDir::new(dir).append_index_html_on_directories(true));
     }
 
     router
@@ -101,10 +138,12 @@ async fn create_session(
     State(state): State<AppState>,
     Json(body): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<SessionResponse>), ServerError> {
+    let agent_name = body
+        .agent
+        .clone()
+        .unwrap_or_else(|| state.default_config.name.clone());
     let mut config = AgentConfig {
-        name: body
-            .agent
-            .unwrap_or_else(|| state.default_config.name.clone()),
+        name: agent_name,
         model: body
             .model
             .unwrap_or_else(|| state.default_config.model.clone()),
@@ -118,13 +157,34 @@ async fn create_session(
     }
     config.segment_filter = body.segment_filter;
 
+    // Resolve per-session workspace directory
+    if let Some(ref root) = config.workspaces_root {
+        let raw_name = body
+            .workspace
+            .as_deref()
+            .or(body.agent.as_deref())
+            .unwrap_or("session");
+        let ws_name = sanitize_workspace_name(raw_name).unwrap_or_else(|| "session".to_string());
+        let ws_path = root.join(&ws_name);
+        tokio::fs::create_dir_all(&ws_path).await.map_err(|e| {
+            ServerError::Internal(format!(
+                "failed to create workspace '{}': {e}",
+                ws_path.display()
+            ))
+        })?;
+        config.working_dir = ws_path;
+        config.workspace_dir = Some(config.working_dir.clone());
+        config.workspace_name = Some(ws_name);
+    }
+
     let hitl = Arc::new(HitlGate::new());
     let graph_for_session = state.graph.clone();
     let config_clone = config.clone();
-    let mut session = tokio::task::spawn_blocking(move || Session::new(graph_for_session, config_clone))
-        .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?
-        .map_err(ServerError::Agent)?;
+    let mut session =
+        tokio::task::spawn_blocking(move || Session::new(graph_for_session, config_clone))
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?
+            .map_err(ServerError::Agent)?;
 
     // Only wire up the HITL gate when the caller hasn't opted into auto-approve.
     // Programmatic clients (eval harnesses, tests) pass `auto_approve: true` to
@@ -145,6 +205,8 @@ async fn create_session(
         model: session.agent_config.model.clone(),
         created_at: now,
         status: SessionStatus::Idle,
+        workspace: session.agent_config.workspace_name.clone(),
+        workspace_path: session_workspace_path(&session.agent_config),
     };
 
     let handle = SessionHandle {
@@ -484,7 +546,11 @@ async fn get_tasks(
 
     let graph = state.graph.clone();
     let neighbors = tokio::task::spawn_blocking(move || {
-        graph.neighbors(&session_node_id, Some(EdgeType::Produces), Direction::Outgoing)
+        graph.neighbors(
+            &session_node_id,
+            Some(EdgeType::Produces),
+            Direction::Outgoing,
+        )
     })
     .await
     .map_err(|e| ServerError::Internal(e.to_string()))?
@@ -521,8 +587,11 @@ async fn get_knowledge(
     let graph = state.graph.clone();
     let knowledge = tokio::task::spawn_blocking(move || {
         // Hop 1: get all interaction nodes for this session.
-        let interaction_nodes =
-            graph.neighbors(&session_node_id, Some(EdgeType::Produces), Direction::Outgoing)?;
+        let interaction_nodes = graph.neighbors(
+            &session_node_id,
+            Some(EdgeType::Produces),
+            Direction::Outgoing,
+        )?;
 
         // Hop 2: for each interaction node, find knowledge nodes that derived from it.
         let mut knowledge_nodes: Vec<GraphNode> = Vec::new();
@@ -530,7 +599,8 @@ async fn get_knowledge(
             if !matches!(node.node_type, NodeType::Interaction(_)) {
                 continue;
             }
-            let derived = graph.neighbors(&node.id, Some(EdgeType::DerivedFrom), Direction::Incoming)?;
+            let derived =
+                graph.neighbors(&node.id, Some(EdgeType::DerivedFrom), Direction::Incoming)?;
             for k in derived {
                 if matches!(k.node_type, NodeType::Knowledge(_)) {
                     knowledge_nodes.push(k);
@@ -567,7 +637,9 @@ async fn node_action(
     let decision = match body.action {
         NodeAction::Approve => HitlDecision::Approve,
         NodeAction::Reject => {
-            let reason = body.reason.unwrap_or_else(|| "No reason provided".to_string());
+            let reason = body
+                .reason
+                .unwrap_or_else(|| "No reason provided".to_string());
             HitlDecision::Reject(reason)
         }
         NodeAction::Modify => {
@@ -586,6 +658,69 @@ async fn node_action(
             "No pending gate for node {node_id}"
         )))
     }
+}
+
+/// `POST /api/graph/{session_id}/annotate` — create a user annotation Knowledge node.
+///
+/// Stores the node in the graph associated with the session's agent node via a `RelatesTo` edge.
+/// The optional `position` field is persisted in node metadata for canvas layout.
+async fn create_annotation(
+    State(state): State<AppState>,
+    Path(session_id): Path<SessionId>,
+    Json(body): Json<AnnotationRequest>,
+) -> Result<Json<GraphNode>, ServerError> {
+    use graphirm_graph::{GraphEdge, KnowledgeData};
+
+    // Verify session exists and get its agent node ID.
+    let agent_node_id = {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&session_id)
+            .ok_or_else(|| ServerError::NotFound(format!("session {session_id}")))?;
+        handle.session.id.clone()
+    };
+
+    let mut metadata = serde_json::Map::new();
+    if let Some(pos) = &body.position {
+        metadata.insert("position_x".to_string(), serde_json::json!(pos.x));
+        metadata.insert("position_y".to_string(), serde_json::json!(pos.y));
+    }
+    metadata.insert("source".to_string(), serde_json::json!("user-annotation"));
+
+    let annotation_node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+        entity: body.entity,
+        entity_type: body.entity_type,
+        summary: body.summary,
+        confidence: 1.0,
+    }));
+    let annotation_node = GraphNode {
+        metadata: serde_json::Value::Object(metadata),
+        ..annotation_node
+    };
+
+    let graph = state.graph.clone();
+    let node_to_store = annotation_node.clone();
+    let annotation_id = tokio::task::spawn_blocking(move || graph.add_node(node_to_store))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(ServerError::Graph)?;
+
+    // Link annotation to the session's agent node via RelatesTo.
+    let edge = GraphEdge::new(EdgeType::RelatesTo, agent_node_id, annotation_id.clone());
+    let graph = state.graph.clone();
+    tokio::task::spawn_blocking(move || graph.add_edge(edge))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(ServerError::Graph)?;
+
+    // Return the created node.
+    let graph = state.graph.clone();
+    let node = tokio::task::spawn_blocking(move || graph.get_node(&annotation_id))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(|_| ServerError::Internal("Node vanished after insert".to_string()))?;
+
+    Ok(Json(node))
 }
 
 /// `POST /api/sessions/:id/pause`
@@ -615,12 +750,39 @@ async fn resume_session(
     // fires between the while-condition check and hitl.gate(), leaving an
     // unresolvable receiver.
     let session_node_id = NodeId::from(handle.session.id.0.as_str());
-    handle.hitl.resolve(&session_node_id, HitlDecision::Approve).await;
+    handle
+        .hitl
+        .resolve(&session_node_id, HitlDecision::Approve)
+        .await;
     handle.hitl.set_paused(false);
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `POST /api/sessions/{id}/auto-approve` — toggle auto-approve mode for destructive tools.
+///
+/// Request body: `{ "enabled": true }` or `{ "enabled": false }`.
+/// When enabled, the agent loop skips HITL gating and approves all tool calls automatically.
+async fn toggle_auto_approve(
+    State(state): State<AppState>,
+    Path(session_id): Path<SessionId>,
+    Json(body): Json<AutoApproveRequest>,
+) -> Result<StatusCode, ServerError> {
+    let sessions = state.sessions.read().await;
+    let handle = sessions
+        .get(&session_id)
+        .ok_or_else(|| ServerError::NotFound(format!("session {session_id}")))?;
+    handle.hitl.set_auto_approve(body.enabled);
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn session_workspace_path(config: &graphirm_agent::AgentConfig) -> Option<String> {
+    config
+        .workspace_dir
+        .as_ref()
+        .map(|p| p.display().to_string())
+}
 
 fn session_handle_to_response(id: &str, handle: &SessionHandle) -> SessionResponse {
     SessionResponse {
@@ -629,6 +791,8 @@ fn session_handle_to_response(id: &str, handle: &SessionHandle) -> SessionRespon
         model: handle.session.agent_config.model.clone(),
         created_at: handle.created_at,
         status: handle.status,
+        workspace: handle.session.agent_config.workspace_name.clone(),
+        workspace_path: session_workspace_path(&handle.session.agent_config),
     }
 }
 
@@ -1897,5 +2061,47 @@ mod tests {
         assert_eq!(sse.data["node_id"], "n1");
         assert_eq!(sse.data["is_pause"], false);
         assert_eq!(sse.data["arguments"]["path"], "/tmp/x.rs");
+    }
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::sanitize_workspace_name;
+
+    #[test]
+    fn sanitize_trims_and_lowercases() {
+        assert_eq!(sanitize_workspace_name("  MyApp  "), Some("myapp".into()));
+    }
+
+    #[test]
+    fn sanitize_replaces_bad_chars() {
+        assert_eq!(
+            sanitize_workspace_name("My App/v2"),
+            Some("my-app-v2".into())
+        );
+    }
+
+    #[test]
+    fn sanitize_collapses_dashes() {
+        assert_eq!(sanitize_workspace_name("foo--bar"), Some("foo-bar".into()));
+    }
+
+    #[test]
+    fn sanitize_strips_leading_trailing_dash() {
+        assert_eq!(sanitize_workspace_name("--foo--"), Some("foo".into()));
+    }
+
+    #[test]
+    fn sanitize_empty_returns_none() {
+        assert_eq!(sanitize_workspace_name("   "), None);
+        assert_eq!(sanitize_workspace_name("---"), None);
+    }
+
+    #[test]
+    fn sanitize_preserves_valid_name() {
+        assert_eq!(
+            sanitize_workspace_name("my-project_2"),
+            Some("my-project_2".into())
+        );
     }
 }

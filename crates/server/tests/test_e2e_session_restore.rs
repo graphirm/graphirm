@@ -37,7 +37,7 @@ mod tests {
         }
 
         // 2. Call restore (simulates server startup)
-        let sessions = restore_sessions_from_graph(&graph).await.unwrap();
+        let sessions = restore_sessions_from_graph(&graph, None).await.unwrap();
 
         // 3. Verify all sessions restored with correct metadata
         assert_eq!(sessions.len(), 3);
@@ -69,7 +69,7 @@ mod tests {
         // Verify behavior when graph has no sessions
         let graph = Arc::new(GraphStore::open_memory().unwrap());
 
-        let sessions = restore_sessions_from_graph(&graph).await.unwrap();
+        let sessions = restore_sessions_from_graph(&graph, None).await.unwrap();
 
         assert_eq!(sessions.len(), 0);
     }
@@ -94,7 +94,7 @@ mod tests {
 
         graph.add_node(agent).unwrap();
 
-        let sessions = restore_sessions_from_graph(&graph).await.unwrap();
+        let sessions = restore_sessions_from_graph(&graph, None).await.unwrap();
 
         assert_eq!(sessions.len(), 1);
         assert!(sessions.contains_key("single-session"));
@@ -136,7 +136,7 @@ mod tests {
             graph.add_node(agent).unwrap();
         }
 
-        let sessions = restore_sessions_from_graph(&graph).await.unwrap();
+        let sessions = restore_sessions_from_graph(&graph, None).await.unwrap();
 
         assert_eq!(sessions.len(), 5);
 
