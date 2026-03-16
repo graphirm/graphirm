@@ -4,6 +4,44 @@ Items captured here are validated ideas not yet scheduled into a numbered phase.
 
 ---
 
+## Bug — HITL card shows "Agent wants to run: undefined"
+
+**What:** When the HITL gate triggers in the browser web UI, the approval card renders "Agent wants to run: **undefined**" instead of the actual tool name (e.g. "bash", "read", "write").
+
+**Root cause:** `renderApprovalCard()` in `web/chat.js` is reading the tool name from the wrong field in the `awaiting_approval` SSE payload. The server sends the tool name under a specific key that doesn't match what the JS is accessing.
+
+**Fix:** Check the exact shape of the `awaiting_approval` SSE event in `crates/server/src/sse.rs` or `crates/server/src/types.rs`, find the tool name field, and update `renderApprovalCard()` in `web/chat.js` to read it correctly.
+
+**Suggested target:** Phase 12 (small fix, high visibility — HITL is a key differentiator).
+
+---
+
+## Phase 12 vision — Miro/n8n-style interactive whiteboard graph
+
+**What:** Replace the current read-only d3 force graph with a fully interactive whiteboard — nodes as draggable cards, edges with visible connectors, in-place expansion, and manual annotation. Think Miro, FigJam, or n8n's workflow canvas applied to the agent interaction graph.
+
+**Why:** The current graph is a good visualisation but passive. The "graph is the interface" philosophy implies the graph should be *the* primary surface for navigating, annotating, and steering agent work — not just a side panel. A whiteboard makes that concrete.
+
+**Capabilities:**
+- Nodes rendered as cards (show role, content preview, type badge) — pan/zoom freely
+- Click to expand a card in-place (full message, tool output, file diff, knowledge summary)
+- Drag to manually reposition nodes; layout persists across sessions
+- Edge routing with labelled connectors (like n8n)
+- Manually add `Knowledge` nodes or annotations directly on the canvas
+- Select a node → steer the agent from that context point
+- Group/cluster related nodes visually
+
+**Architecture options:**
+- Keep d3 but extend it significantly (high effort, fragile)
+- Switch to [React Flow](https://reactflow.dev/) or [Svelte Flow](https://svelteflow.dev/) — purpose-built for node-graph UIs, handles layout/drag/connectors out of the box
+- Or build on canvas directly (Konva, PixiJS) for maximum control
+
+**Note on framework:** This is the point where vanilla JS hits its ceiling and a lightweight framework (React + React Flow, or Svelte + Svelte Flow) becomes worth the build step. The added complexity is justified by the UI complexity.
+
+**Suggested target:** Phase 12–13, after hosted demo and HITL bug fix.
+
+---
+
 ## graphirm.ai hosted demo
 
 **What:** A hosted Graphirm instance at `graphirm.ai` with rate-limited trial access. Two tiers:
