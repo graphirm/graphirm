@@ -25,6 +25,42 @@ use crate::types::{
     SseEvent, SseEventType, SubgraphQuery,
 };
 
+/// Sanitize a workspace name: trim, lowercase, replace non-`[a-z0-9_-]` with `-`,
+/// collapse consecutive dashes, strip leading/trailing dashes.
+/// Returns `None` if the result is empty.
+fn sanitize_workspace_name(name: &str) -> Option<String> {
+    let lowered = name.trim().to_lowercase();
+    let replaced: String = lowered
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let mut result = String::new();
+    let mut last_dash = false;
+    for c in replaced.chars() {
+        if c == '-' {
+            if !last_dash {
+                result.push(c);
+            }
+            last_dash = true;
+        } else {
+            result.push(c);
+            last_dash = false;
+        }
+    }
+    let result = result.trim_matches('-').to_string();
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
 /// Build the axum router with all routes wired to shared [`AppState`].
 ///
 /// Middleware applied (outermost → innermost):
@@ -81,9 +117,7 @@ pub fn create_router(state: AppState) -> Router {
         .with_state(state);
 
     if let Some(dir) = web_dir {
-        router = router.fallback_service(
-            ServeDir::new(dir).append_index_html_on_directories(true),
-        );
+        router = router.fallback_service(ServeDir::new(dir).append_index_html_on_directories(true));
     }
 
     router
@@ -124,10 +158,11 @@ async fn create_session(
     let hitl = Arc::new(HitlGate::new());
     let graph_for_session = state.graph.clone();
     let config_clone = config.clone();
-    let mut session = tokio::task::spawn_blocking(move || Session::new(graph_for_session, config_clone))
-        .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?
-        .map_err(ServerError::Agent)?;
+    let mut session =
+        tokio::task::spawn_blocking(move || Session::new(graph_for_session, config_clone))
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?
+            .map_err(ServerError::Agent)?;
 
     // Only wire up the HITL gate when the caller hasn't opted into auto-approve.
     // Programmatic clients (eval harnesses, tests) pass `auto_approve: true` to
@@ -487,7 +522,11 @@ async fn get_tasks(
 
     let graph = state.graph.clone();
     let neighbors = tokio::task::spawn_blocking(move || {
-        graph.neighbors(&session_node_id, Some(EdgeType::Produces), Direction::Outgoing)
+        graph.neighbors(
+            &session_node_id,
+            Some(EdgeType::Produces),
+            Direction::Outgoing,
+        )
     })
     .await
     .map_err(|e| ServerError::Internal(e.to_string()))?
@@ -524,8 +563,11 @@ async fn get_knowledge(
     let graph = state.graph.clone();
     let knowledge = tokio::task::spawn_blocking(move || {
         // Hop 1: get all interaction nodes for this session.
-        let interaction_nodes =
-            graph.neighbors(&session_node_id, Some(EdgeType::Produces), Direction::Outgoing)?;
+        let interaction_nodes = graph.neighbors(
+            &session_node_id,
+            Some(EdgeType::Produces),
+            Direction::Outgoing,
+        )?;
 
         // Hop 2: for each interaction node, find knowledge nodes that derived from it.
         let mut knowledge_nodes: Vec<GraphNode> = Vec::new();
@@ -533,7 +575,8 @@ async fn get_knowledge(
             if !matches!(node.node_type, NodeType::Interaction(_)) {
                 continue;
             }
-            let derived = graph.neighbors(&node.id, Some(EdgeType::DerivedFrom), Direction::Incoming)?;
+            let derived =
+                graph.neighbors(&node.id, Some(EdgeType::DerivedFrom), Direction::Incoming)?;
             for k in derived {
                 if matches!(k.node_type, NodeType::Knowledge(_)) {
                     knowledge_nodes.push(k);
@@ -570,7 +613,9 @@ async fn node_action(
     let decision = match body.action {
         NodeAction::Approve => HitlDecision::Approve,
         NodeAction::Reject => {
-            let reason = body.reason.unwrap_or_else(|| "No reason provided".to_string());
+            let reason = body
+                .reason
+                .unwrap_or_else(|| "No reason provided".to_string());
             HitlDecision::Reject(reason)
         }
         NodeAction::Modify => {
@@ -681,7 +726,10 @@ async fn resume_session(
     // fires between the while-condition check and hitl.gate(), leaving an
     // unresolvable receiver.
     let session_node_id = NodeId::from(handle.session.id.0.as_str());
-    handle.hitl.resolve(&session_node_id, HitlDecision::Approve).await;
+    handle
+        .hitl
+        .resolve(&session_node_id, HitlDecision::Approve)
+        .await;
     handle.hitl.set_paused(false);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1980,5 +2028,47 @@ mod tests {
         assert_eq!(sse.data["node_id"], "n1");
         assert_eq!(sse.data["is_pause"], false);
         assert_eq!(sse.data["arguments"]["path"], "/tmp/x.rs");
+    }
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::sanitize_workspace_name;
+
+    #[test]
+    fn sanitize_trims_and_lowercases() {
+        assert_eq!(sanitize_workspace_name("  MyApp  "), Some("myapp".into()));
+    }
+
+    #[test]
+    fn sanitize_replaces_bad_chars() {
+        assert_eq!(
+            sanitize_workspace_name("My App/v2"),
+            Some("my-app-v2".into())
+        );
+    }
+
+    #[test]
+    fn sanitize_collapses_dashes() {
+        assert_eq!(sanitize_workspace_name("foo--bar"), Some("foo-bar".into()));
+    }
+
+    #[test]
+    fn sanitize_strips_leading_trailing_dash() {
+        assert_eq!(sanitize_workspace_name("--foo--"), Some("foo".into()));
+    }
+
+    #[test]
+    fn sanitize_empty_returns_none() {
+        assert_eq!(sanitize_workspace_name("   "), None);
+        assert_eq!(sanitize_workspace_name("---"), None);
+    }
+
+    #[test]
+    fn sanitize_preserves_valid_name() {
+        assert_eq!(
+            sanitize_workspace_name("my-project_2"),
+            Some("my-project_2".into())
+        );
     }
 }
