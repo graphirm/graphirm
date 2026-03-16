@@ -33,7 +33,7 @@ export function SessionBar({
             </option>
           ))}
         </select>
-        <button onClick={onCreateSession}>+ New</button>
+        <button onClick={() => onCreateSession()}>+ New</button>
         {currentSession && (
           <>
             <button className="secondary" onClick={onPause} style={{ fontSize: 11 }}>Pause</button>
