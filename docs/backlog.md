@@ -4,6 +4,59 @@ Items captured here are validated ideas not yet scheduled into a numbered phase.
 
 ---
 
+## Feature — `graph_query` tool: let the agent query its own graph
+
+**What:** The agent currently has no way to interrogate the graph it lives in. It has `bash`, `read`, `write`, `edit`, `grep`, `find`, `ls` — all filesystem tools — but nothing that exposes the graph store. The graph is used *for* the agent (context reconstruction, HNSW memory injection) but not *by* the agent.
+
+**Why it matters:** The core Graphirm thesis is "the graph is the memory". If the agent cannot query it, that thesis is half-implemented. A `graph_query` tool would let the agent:
+- Look up Knowledge nodes about a concept from past sessions ("what do I know about auth?")
+- Inspect its own tool call history ("which files did I modify last turn?")
+- Traverse edges ("what produced this Content node?")
+- Search by node type + metadata ("find all Task nodes with status=failed")
+
+**Proposed interface:**
+```json
+{
+  "name": "graph_query",
+  "description": "Query the agent's own graph store. Supports node lookup by type, BFS traversal from a node, and keyword/embedding search over Knowledge nodes.",
+  "parameters": {
+    "mode": "bfs | search | list_type",
+    "node_id": "(bfs) starting node",
+    "depth": "(bfs) traversal depth",
+    "node_type": "(list_type) Interaction | Agent | Content | Task | Knowledge",
+    "query": "(search) natural language query over Knowledge nodes"
+  }
+}
+```
+
+**Implementation path:**
+1. Add `GraphQueryTool` in `crates/tools/src/graph_query.rs` implementing the `Tool` trait
+2. It receives a `GraphStore` handle via `ToolContext` (needs `ToolContext` to carry the store)
+3. `ToolContext` currently only holds `working_dir` — add `graph: Option<Arc<GraphStore>>`
+4. Register in `ToolRegistry::new()` alongside the existing tools
+5. Not destructive — no HITL gate needed
+
+**Note:** This is the first tool that reads from the graph rather than the filesystem. It makes the agent genuinely graph-native rather than a filesystem agent that happens to log to a graph.
+
+**Suggested target:** Phase 12.
+
+---
+
+## Bug — graph view nodes cluster when D3 simulation settles at same position
+
+**What:** In the browser web UI graph pane, nodes often render clustered at a single point rather than spread across the canvas. The `fitToView()` function correctly computes a bounding box and applies a zoom transform, but when all nodes share the same (x, y) after the force simulation (e.g. bounding box span is 0), they all overlap.
+
+**Root cause (hypothesis):** D3's force simulation seeds new nodes at position (0, 0) unless given initial coordinates. When the simulation runs with `alpha` too low or too briefly, nodes don't spread before `end` fires. The `fitToView()` then computes `spanX = max(0, 40) = 40` — a degenerate bounding box — and centres them all at the same point.
+
+**Fix direction:**
+- Ensure initial node positions are seeded with jitter around the SVG centre *before* `d3.forceSimulation(nodes)` is called
+- Increase initial `alpha` and possibly `alphaDecay` so the simulation runs longer before settling
+- Or: after `fitToView()`, if `spanX < 1 || spanY < 1` (degenerate), apply a radial spread to force nodes apart, then re-run
+
+**Suggested target:** Phase 12 (cosmetic but impacts perceived quality of the graph UI).
+
+---
+
 ## ✅ Bug — HITL card shows "Agent wants to run: undefined" — FIXED
 
 **What:** When the HITL gate triggered in the browser web UI, the approval card rendered "Agent wants to run: **undefined**" instead of the actual tool name (e.g. "bash", "read", "write").
