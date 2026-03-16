@@ -494,8 +494,8 @@ mod tests {
 
     #[test]
     fn session_restore_binds_to_existing_node() {
-        use graphirm_graph::nodes::{AgentData, GraphNode, NodeType};
         use graphirm_graph::GraphStore;
+        use graphirm_graph::nodes::{AgentData, GraphNode, NodeType};
         use std::sync::Arc;
 
         let graph = Arc::new(GraphStore::open_memory().unwrap());
@@ -517,7 +517,10 @@ mod tests {
             agent_count_before,
             "restore must not create new nodes"
         );
-        assert_eq!(session.id, node_id, "restored session must use the existing node id");
+        assert_eq!(
+            session.id, node_id,
+            "restored session must use the existing node id"
+        );
     }
 
     #[tokio::test]
