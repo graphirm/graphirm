@@ -8,6 +8,8 @@ interface SessionBarProps {
   onCreateSession: () => void;
   onPause: () => void;
   onResume: () => void;
+  autoApprove: boolean;
+  onToggleAutoApprove: () => void;
 }
 
 export function SessionBar({
@@ -17,6 +19,8 @@ export function SessionBar({
   onCreateSession,
   onPause,
   onResume,
+  autoApprove,
+  onToggleAutoApprove,
 }: SessionBarProps) {
   return (
     <header className={styles.header}>
@@ -38,6 +42,21 @@ export function SessionBar({
           <>
             <button className="secondary" onClick={onPause} style={{ fontSize: 11 }}>Pause</button>
             <button className="secondary" onClick={onResume} style={{ fontSize: 11 }}>Resume</button>
+            <button
+              onClick={onToggleAutoApprove}
+              style={{
+                fontSize: 11,
+                background: autoApprove ? '#16a34a' : '#3c3c3c',
+                color: autoApprove ? '#fff' : '#d4d4d4',
+                border: `1px solid ${autoApprove ? '#16a34a' : '#555'}`,
+                borderRadius: 3,
+                padding: '2px 8px',
+                cursor: 'pointer',
+              }}
+              title={autoApprove ? 'Auto-approve ON — all tool calls run without confirmation' : 'Auto-approve OFF — destructive tools require confirmation'}
+            >
+              {autoApprove ? 'Auto-approve ON' : 'Auto-approve'}
+            </button>
           </>
         )}
       </div>

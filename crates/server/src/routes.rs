@@ -20,9 +20,9 @@ use crate::middleware::request_logging;
 use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
-    AnnotationRequest, CreateSessionRequest, GraphResponse, HealthResponse, NodeAction,
-    NodeActionRequest, PromptRequest, SessionId, SessionResponse, SessionStatus, SseEvent,
-    SseEventType, SubgraphQuery,
+    AnnotationRequest, AutoApproveRequest, CreateSessionRequest, GraphResponse, HealthResponse,
+    NodeAction, NodeActionRequest, PromptRequest, SessionId, SessionResponse, SessionStatus,
+    SseEvent, SseEventType, SubgraphQuery,
 };
 
 /// Build the axum router with all routes wired to shared [`AppState`].
@@ -67,9 +67,10 @@ pub fn create_router(state: AppState) -> Router {
             post(node_action),
         )
         .route("/api/graph/{session_id}/annotate", post(create_annotation))
-        // HITL pause / resume
+        // HITL pause / resume / auto-approve
         .route("/api/sessions/{id}/pause", post(pause_session))
         .route("/api/sessions/{id}/resume", post(resume_session))
+        .route("/api/sessions/{id}/auto-approve", post(toggle_auto_approve))
         // SSE event streams
         .route("/api/events", get(sse_handler))
         .route("/api/events/{session_id}", get(sse_session_handler))
@@ -682,6 +683,23 @@ async fn resume_session(
     let session_node_id = NodeId::from(handle.session.id.0.as_str());
     handle.hitl.resolve(&session_node_id, HitlDecision::Approve).await;
     handle.hitl.set_paused(false);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/sessions/{id}/auto-approve` — toggle auto-approve mode for destructive tools.
+///
+/// Request body: `{ "enabled": true }` or `{ "enabled": false }`.
+/// When enabled, the agent loop skips HITL gating and approves all tool calls automatically.
+async fn toggle_auto_approve(
+    State(state): State<AppState>,
+    Path(session_id): Path<SessionId>,
+    Json(body): Json<AutoApproveRequest>,
+) -> Result<StatusCode, ServerError> {
+    let sessions = state.sessions.read().await;
+    let handle = sessions
+        .get(&session_id)
+        .ok_or_else(|| ServerError::NotFound(format!("session {session_id}")))?;
+    handle.hitl.set_auto_approve(body.enabled);
     Ok(StatusCode::NO_CONTENT)
 }
 

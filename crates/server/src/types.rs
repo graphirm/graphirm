@@ -259,6 +259,12 @@ pub struct AnnotationPosition {
     pub y: f64,
 }
 
+/// `POST /api/sessions/{id}/auto-approve` request body.
+#[derive(Debug, Deserialize)]
+pub struct AutoApproveRequest {
+    pub enabled: bool,
+}
+
 /// `POST /api/graph/{session_id}/annotate` request body.
 #[derive(Debug, Deserialize)]
 pub struct AnnotationRequest {

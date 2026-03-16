@@ -19,6 +19,8 @@ interface UseSessionReturn {
   modifyAction: (nodeId: string, modifiedArgs: string) => Promise<void>;
   pauseSession: () => Promise<void>;
   resumeSession: () => Promise<void>;
+  autoApprove: boolean;
+  toggleAutoApprove: () => Promise<void>;
 }
 
 export function useSession(): UseSessionReturn {
@@ -28,6 +30,7 @@ export function useSession(): UseSessionReturn {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [isThinking, setIsThinking] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [autoApprove, setAutoApprove] = useState(false);
 
   const sseRef = useRef<SseClient | null>(null);
   // Track current session ID in a ref so callbacks always see the latest value.
@@ -170,6 +173,14 @@ export function useSession(): UseSessionReturn {
     setPendingApproval(null);
   }, []);
 
+  const toggleAutoApprove = useCallback(async () => {
+    const session = currentSessionRef.current;
+    if (!session) return;
+    const next = !autoApprove;
+    await api.setAutoApprove(session.id, next);
+    setAutoApprove(next);
+  }, [autoApprove]);
+
   return {
     sessions,
     currentSession,
@@ -186,5 +197,7 @@ export function useSession(): UseSessionReturn {
     modifyAction,
     pauseSession,
     resumeSession,
+    autoApprove,
+    toggleAutoApprove,
   };
 }

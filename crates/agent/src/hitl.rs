@@ -22,6 +22,7 @@ pub enum HitlDecision {
 pub struct HitlGate {
     pending: Mutex<HashMap<String, oneshot::Sender<HitlDecision>>>,
     paused: AtomicBool,
+    auto_approve: AtomicBool,
 }
 
 impl HitlGate {
@@ -29,6 +30,7 @@ impl HitlGate {
         Self {
             pending: Mutex::new(HashMap::new()),
             paused: AtomicBool::new(false),
+            auto_approve: AtomicBool::new(false),
         }
     }
 
@@ -55,6 +57,14 @@ impl HitlGate {
 
     pub fn set_paused(&self, v: bool) {
         self.paused.store(v, Ordering::Relaxed);
+    }
+
+    pub fn is_auto_approve(&self) -> bool {
+        self.auto_approve.load(Ordering::Relaxed)
+    }
+
+    pub fn set_auto_approve(&self, v: bool) {
+        self.auto_approve.store(v, Ordering::Relaxed);
     }
 }
 

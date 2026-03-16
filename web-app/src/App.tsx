@@ -23,6 +23,8 @@ export function App() {
     modifyAction,
     pauseSession,
     resumeSession,
+    autoApprove,
+    toggleAutoApprove,
   } = useSession();
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -71,6 +73,8 @@ export function App() {
         onCreateSession={createSession}
         onPause={pauseSession}
         onResume={resumeSession}
+        autoApprove={autoApprove}
+        onToggleAutoApprove={toggleAutoApprove}
       />
       <div className={styles.main}>
         <ChatPane

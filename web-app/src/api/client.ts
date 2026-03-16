@@ -64,6 +64,12 @@ export const api = {
   resumeSession: (id: string): Promise<void> =>
     apiFetch(`/api/sessions/${id}/resume`, { method: 'POST' }),
 
+  setAutoApprove: (id: string, enabled: boolean): Promise<void> =>
+    apiFetch(`/api/sessions/${id}/auto-approve`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
+
   getGraph: (id: string): Promise<GraphData> =>
     apiFetch(`/api/graph/${id}`),
 
