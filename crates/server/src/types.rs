@@ -252,6 +252,23 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+/// Canvas position hint for annotation nodes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnnotationPosition {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// `POST /api/graph/{session_id}/annotate` request body.
+#[derive(Debug, Deserialize)]
+pub struct AnnotationRequest {
+    pub entity: String,
+    pub entity_type: String,
+    pub summary: String,
+    /// Optional canvas position hint stored in node metadata.
+    pub position: Option<AnnotationPosition>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

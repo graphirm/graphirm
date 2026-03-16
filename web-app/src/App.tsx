@@ -25,10 +25,29 @@ export function App() {
   } = useSession();
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  // When user clicks "Steer from here" on a node, we pre-fill the chat input
+  // with a context marker and focus it.
+  const [steerContext, setSteerContext] = useState<{ nodeId: string } | null>(null);
 
   const handleNodeSelect = useCallback((nodeId: string | null) => {
     setSelectedNodeId(nodeId);
   }, []);
+
+  const handleSteerFromNode = useCallback((nodeId: string) => {
+    setSteerContext({ nodeId });
+  }, []);
+
+  const handleSendWithSteer = useCallback(
+    (content: string) => {
+      if (steerContext) {
+        sendPrompt(content, steerContext.nodeId);
+        setSteerContext(null);
+      } else {
+        sendPrompt(content);
+      }
+    },
+    [steerContext, sendPrompt],
+  );
 
   return (
     <div className={styles.app}>
@@ -45,18 +64,21 @@ export function App() {
           messages={messages}
           isThinking={isThinking}
           pendingApproval={pendingApproval}
-          onSend={sendPrompt}
+          sessionId={currentSession?.id ?? null}
+          steerContext={steerContext}
+          onSend={handleSendWithSteer}
           onAbort={abortSession}
           onApprove={approveAction}
           onReject={rejectAction}
           onModify={modifyAction}
-          sessionId={currentSession?.id ?? null}
+          onClearSteer={() => setSteerContext(null)}
         />
         <GraphCanvas
           graphData={graphData}
           sessionId={currentSession?.id ?? null}
           selectedNodeId={selectedNodeId}
           onNodeSelect={handleNodeSelect}
+          onSteerFromNode={handleSteerFromNode}
         />
       </div>
     </div>

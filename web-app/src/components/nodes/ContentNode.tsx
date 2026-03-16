@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { GraphNode } from '../../types/graph';
 import { BaseCard } from './BaseCard';
-import styles from '../../styles/nodes.module.css';
+import { CodeBody } from './CodeBody';
 
 export function ContentNode({ data: rawData, selected }: NodeProps) {
   const [expanded, setExpanded] = useState(false);
@@ -26,14 +26,17 @@ export function ContentNode({ data: rawData, selected }: NodeProps) {
       onToggleExpand={() => setExpanded(e => !e)}
     >
       {nt.path && (
-        <div style={{ fontSize: 10, color: 'var(--fg-muted)', marginBottom: 4 }}>
+        <div style={{ fontSize: 10, color: 'var(--fg-muted)' }}>
           📄 {nt.path}
-          {nt.language && <span style={{ marginLeft: 6, color }}>{nt.language}</span>}
+          {nt.language && (
+            <span style={{ marginLeft: 6, color }}>{nt.language}</span>
+          )}
+          <span style={{ marginLeft: 8 }}>
+            {(nt.body ?? '').split('\n').length} lines
+          </span>
         </div>
       )}
-      <pre className={styles.body} style={{ fontFamily: 'monospace', fontSize: 11 }}>
-        {nt.body}
-      </pre>
+      <CodeBody code={nt.body ?? ''} language={nt.language} maxHeight={360} />
     </BaseCard>
   );
 }

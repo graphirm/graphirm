@@ -20,8 +20,9 @@ use crate::middleware::request_logging;
 use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
-    CreateSessionRequest, GraphResponse, HealthResponse, NodeAction, NodeActionRequest,
-    PromptRequest, SessionId, SessionResponse, SessionStatus, SseEvent, SseEventType, SubgraphQuery,
+    AnnotationRequest, CreateSessionRequest, GraphResponse, HealthResponse, NodeAction,
+    NodeActionRequest, PromptRequest, SessionId, SessionResponse, SessionStatus, SseEvent,
+    SseEventType, SubgraphQuery,
 };
 
 /// Build the axum router with all routes wired to shared [`AppState`].
@@ -65,6 +66,7 @@ pub fn create_router(state: AppState) -> Router {
             "/api/graph/{session_id}/node/{node_id}/action",
             post(node_action),
         )
+        .route("/api/graph/{session_id}/annotate", post(create_annotation))
         // HITL pause / resume
         .route("/api/sessions/{id}/pause", post(pause_session))
         .route("/api/sessions/{id}/resume", post(resume_session))
@@ -586,6 +588,69 @@ async fn node_action(
             "No pending gate for node {node_id}"
         )))
     }
+}
+
+/// `POST /api/graph/{session_id}/annotate` — create a user annotation Knowledge node.
+///
+/// Stores the node in the graph associated with the session's agent node via a `RelatesTo` edge.
+/// The optional `position` field is persisted in node metadata for canvas layout.
+async fn create_annotation(
+    State(state): State<AppState>,
+    Path(session_id): Path<SessionId>,
+    Json(body): Json<AnnotationRequest>,
+) -> Result<Json<GraphNode>, ServerError> {
+    use graphirm_graph::{GraphEdge, KnowledgeData};
+
+    // Verify session exists and get its agent node ID.
+    let agent_node_id = {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&session_id)
+            .ok_or_else(|| ServerError::NotFound(format!("session {session_id}")))?;
+        handle.session.id.clone()
+    };
+
+    let mut metadata = serde_json::Map::new();
+    if let Some(pos) = &body.position {
+        metadata.insert("position_x".to_string(), serde_json::json!(pos.x));
+        metadata.insert("position_y".to_string(), serde_json::json!(pos.y));
+    }
+    metadata.insert("source".to_string(), serde_json::json!("user-annotation"));
+
+    let annotation_node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+        entity: body.entity,
+        entity_type: body.entity_type,
+        summary: body.summary,
+        confidence: 1.0,
+    }));
+    let annotation_node = GraphNode {
+        metadata: serde_json::Value::Object(metadata),
+        ..annotation_node
+    };
+
+    let graph = state.graph.clone();
+    let node_to_store = annotation_node.clone();
+    let annotation_id = tokio::task::spawn_blocking(move || graph.add_node(node_to_store))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(ServerError::Graph)?;
+
+    // Link annotation to the session's agent node via RelatesTo.
+    let edge = GraphEdge::new(EdgeType::RelatesTo, agent_node_id, annotation_id.clone());
+    let graph = state.graph.clone();
+    tokio::task::spawn_blocking(move || graph.add_edge(edge))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(ServerError::Graph)?;
+
+    // Return the created node.
+    let graph = state.graph.clone();
+    let node = tokio::task::spawn_blocking(move || graph.get_node(&annotation_id))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(|_| ServerError::Internal("Node vanished after insert".to_string()))?;
+
+    Ok(Json(node))
 }
 
 /// `POST /api/sessions/:id/pause`

@@ -10,5 +10,15 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react', 'react-dom'],
+          flow: ['@xyflow/react'],
+          highlight: ['highlight.js/lib/core'],
+          dagre: ['@dagrejs/dagre'],
+        },
+      },
+    },
   },
 });

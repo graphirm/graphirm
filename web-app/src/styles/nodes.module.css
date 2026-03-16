@@ -102,20 +102,26 @@
 }
 
 .expandToggle {
-  position: absolute;
-  bottom: 6px;
-  right: 6px;
-  font-size: 10px;
+  margin-left: 4px;
+  font-size: 9px;
   color: var(--fg-muted);
   background: none;
   border: none;
-  padding: 2px 4px;
+  padding: 1px 4px;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .expandToggle:hover {
   color: var(--fg);
   opacity: 1;
+}
+
+.expandedBody {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .steerBtn {

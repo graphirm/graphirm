@@ -2,16 +2,22 @@ import { useCallback, useRef, useState } from 'react';
 import type { Message, PendingApproval } from '../types/graph';
 import styles from '../styles/chat.module.css';
 
+interface SteerContext {
+  nodeId: string;
+}
+
 interface ChatPaneProps {
   messages: Message[];
   isThinking: boolean;
   pendingApproval: PendingApproval | null;
   sessionId: string | null;
+  steerContext: SteerContext | null;
   onSend: (content: string) => void;
   onAbort: () => void;
   onApprove: (nodeId: string) => void;
   onReject: (nodeId: string, reason?: string) => void;
   onModify: (nodeId: string, modifiedArgs: string) => void;
+  onClearSteer: () => void;
 }
 
 function HitlCard({
@@ -100,11 +106,13 @@ export function ChatPane({
   messages,
   isThinking,
   pendingApproval,
+  steerContext,
   onSend,
   onAbort,
   onApprove,
   onReject,
   onModify,
+  onClearSteer,
 }: ChatPaneProps) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -152,9 +160,29 @@ export function ChatPane({
       )}
 
       <div className={styles.inputBar}>
+        {steerContext && (
+          <div style={{
+            fontSize: 11,
+            color: 'var(--node-interaction)',
+            background: '#1a3a5c',
+            borderRadius: 3,
+            padding: '3px 8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}>
+            <span>↩ Steering from node <code>{steerContext.nodeId.slice(0, 8)}</code></span>
+            <button
+              onClick={onClearSteer}
+              style={{ background: 'none', border: 'none', color: 'inherit', fontSize: 12, cursor: 'pointer', padding: '0 4px' }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <textarea
           rows={2}
-          placeholder="Type your message… (Enter to send, Shift+Enter for newline)"
+          placeholder={steerContext ? 'Send message from this context node…' : 'Type your message… (Enter to send, Shift+Enter for newline)'}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}

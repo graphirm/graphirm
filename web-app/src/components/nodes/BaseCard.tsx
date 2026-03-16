@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Handle, Position } from '@xyflow/react';
+import { Handle, NodeResizer, Position } from '@xyflow/react';
 import styles from '../../styles/nodes.module.css';
 
 interface BaseCardProps {
@@ -38,8 +38,18 @@ export function BaseCard({
         selected ? styles.selected : '',
         expanded ? styles.expanded : '',
       ].join(' ')}
-      onDoubleClick={onToggleExpand}
     >
+      {/* NodeResizer only activates when selected + expanded */}
+      {expanded && (
+        <NodeResizer
+          minWidth={200}
+          minHeight={100}
+          isVisible={!!selected}
+          lineStyle={{ borderColor: color }}
+          handleStyle={{ background: color, borderColor: color }}
+        />
+      )}
+
       <Handle type="target" position={Position.Left} style={{ opacity: 0.5 }} />
       <Handle type="source" position={Position.Right} style={{ opacity: 0.5 }} />
 
@@ -53,17 +63,20 @@ export function BaseCard({
         {timestamp && (
           <span className={styles.timestamp}>{formatTimestamp(timestamp)}</span>
         )}
+        <button
+          className={styles.expandToggle}
+          onClick={onToggleExpand}
+          title={expanded ? 'Collapse' : 'Expand'}
+        >
+          {expanded ? '▲' : '▼'}
+        </button>
       </div>
 
       {!expanded && (
         <div className={styles.preview}>{preview}</div>
       )}
 
-      {expanded && children}
-
-      <button className={styles.expandToggle} onClick={onToggleExpand}>
-        {expanded ? '▲ collapse' : '▼ expand'}
-      </button>
+      {expanded && <div className={styles.expandedBody}>{children}</div>}
     </div>
   );
 }
