@@ -108,6 +108,10 @@ pub struct AgentConfig {
     /// process working directory at the time `AgentConfig::default()` is called.
     #[serde(default = "default_working_dir")]
     pub working_dir: PathBuf,
+    /// Root directory under which per-session workspace subdirectories are created.
+    /// Empty string means "use working_dir as-is" (legacy behaviour).
+    #[serde(default = "default_workspaces_root")]
+    pub workspaces_root: PathBuf,
     /// Maximum number of interaction messages included in each LLM context
     /// window. `None` means no cap. Set to guard against unbounded context growth.
     pub max_context_messages: Option<usize>,
@@ -138,6 +142,10 @@ pub struct AgentConfig {
 
 fn default_working_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn default_workspaces_root() -> PathBuf {
+    PathBuf::from("")
 }
 
 fn default_soft_escalation_turn() -> u32 {
@@ -183,12 +191,14 @@ impl Default for AgentConfig {
                 "- Prefer the minimal number of tool calls needed.\n",
                 "- If a task is ambiguous, ask one clarifying question before starting.\n",
                 "- If a command fails, diagnose the error before retrying.\n",
-            ).to_string(),
+            )
+            .to_string(),
             max_turns: 50,
             max_tokens: Some(8192),
             temperature: Some(0.7),
             tools: vec![],
             working_dir: default_working_dir(),
+            workspaces_root: default_workspaces_root(),
             max_context_messages: None,
             permissions: HashMap::new(),
             extraction: None,
@@ -231,6 +241,8 @@ struct AgentConfigSection {
     tools: Vec<String>,
     #[serde(default = "default_working_dir")]
     working_dir: PathBuf,
+    #[serde(default = "default_workspaces_root")]
+    workspaces_root: PathBuf,
     #[serde(default)]
     max_context_messages: Option<usize>,
     #[serde(default)]
@@ -272,6 +284,7 @@ impl AgentConfig {
             temperature: file.agent.temperature,
             tools: file.agent.tools,
             working_dir: file.agent.working_dir,
+            workspaces_root: file.agent.workspaces_root,
             max_context_messages: file.agent.max_context_messages,
             permissions: file.permissions,
             extraction: file.agent.extraction,
@@ -535,6 +548,26 @@ mod tests {
         assert!(seg.structured_output);
         assert!(!seg.gliner2_fallback);
         assert!((seg.min_confidence - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn workspaces_root_defaults_to_empty() {
+        let config = AgentConfig::default();
+        assert_eq!(config.workspaces_root, PathBuf::from(""));
+    }
+
+    #[test]
+    fn workspaces_root_parsed_from_toml() {
+        let toml = r#"
+            name = "test"
+            model = "deepseek-chat"
+            system_prompt = "hi"
+            max_turns = 10
+            workspaces_root = "/workspaces"
+            tools = ["bash"]
+        "#;
+        let config: AgentConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.workspaces_root, PathBuf::from("/workspaces"));
     }
 
     #[test]
