@@ -6,11 +6,17 @@ Items captured here are validated ideas not yet scheduled into a numbered phase.
 
 ## graphirm.ai hosted demo
 
-**What:** A hosted Graphirm server at `api.graphirm.ai` with rate-limited trial access — same axum server, same API, fronted with auth (GitHub OAuth) and usage limits. The VS Code extension points to `https://api.graphirm.ai` instead of `localhost:3000` for the trial tier.
+**What:** A hosted Graphirm instance at `graphirm.ai` with rate-limited trial access. Two tiers:
+1. **Static demo** — serve `web/` with a pre-recorded `demo.json` session via `?demo` query param. No server needed, host on GitHub Pages / Cloudflare Pages. Visitors see the graph visualization, chat history, and knowledge nodes without an API key.
+2. **Live demo** — hosted `graphirm serve` with rate limiting + GitHub OAuth. BYOK (bring your own key) for LLM. Charge for the platform (persistent graph, hosted sessions), not API token resale.
 
-**Why deferred:** Requires infrastructure decisions not yet made: hosting (Coolify vs managed), billing (Stripe), rate limiting strategy, auth layer. Each is a week of work. Deferred until the VS Code extension is validated by real daily use and there's clarity on what to charge and what to limit.
+**Phase 11 shipped the foundation:** The browser UI at `web/` works with `graphirm serve`. Adding `?demo` mode (read-only, pre-recorded session) is a small follow-up — load `demo.json` instead of calling the API, hide the input bar.
 
-**graphirm.ai for now:** Static landing page (GitHub Pages or Cloudflare Pages) — what it is, install instructions, link to GitHub, one-liner USP. No backend needed.
+**What remains for hosted:**
+- Auth layer (GitHub OAuth)
+- Rate limiting (per-user session/prompt limits)
+- Demo mode (`?demo` loads pre-recorded session — no API key needed)
+- Landing page (what it is, install instructions, GitHub link)
 
 **Suggested target:** Phase 12.
 

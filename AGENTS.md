@@ -43,9 +43,10 @@ graphirm-vscode/            # VS Code / Cursor extension (TypeScript)
 | `crates/tools/` | `Tool` trait, `ToolRegistry`, parallel executor, bash/read/write/edit/grep/find/ls |
 | `crates/agent/` | `run_agent_loop`, `build_context`, `Coordinator`, `HitlGate`, knowledge extraction |
 | `crates/tui/` | `App`, chat panel, graph explorer, input handling |
-| `crates/server/` | axum routes, SSE streaming, `AppState`, `SessionHandle`, SDK |
+| `crates/server/` | axum routes, SSE streaming, `AppState`, `SessionHandle`, SDK, static file serving |
 | `graphirm-eval/` | eval harness — drives agent via HTTP, checks task correctness |
 | `graphirm-vscode/` | VS Code/Cursor extension (TypeScript) |
+| `web/` | Standalone browser UI (served by axum at `/` when `web/` directory is found) |
 | `config/default.toml` | default model, agent, knowledge, graph, TUI, server settings |
 
 Each significant directory has its own `AGENTS.md` with purpose, key files, integration points, and test command.
@@ -77,7 +78,8 @@ DEEPSEEK_API_KEY=sk-... cargo test -p graphirm-llm --test integration
 # Run TUI
 DEEPSEEK_API_KEY=sk-... ./target/release/graphirm chat
 
-# Run HTTP server (port 3000 by default)
+# Run HTTP server (port 5555 by default)
+# Web UI served at http://localhost:5555 when web/ directory is found
 DEEPSEEK_API_KEY=sk-... ./target/release/graphirm serve
 
 # Run eval harness (server must be running)
@@ -113,7 +115,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 |-------|------|--------|
 | 0–9 | Scaffold → Knowledge layer (graph, LLM, tools, agent, multi-agent, context engine, TUI, HTTP, knowledge/HNSW) | ✅ done |
 | 10 | Structured LLM response segments (parse → persist → GLiNER2 fallback → context filter → eval) | ✅ done |
-| 11 | Web UI — graph visualization | 🔲 pending |
+| 11 | Web UI — browser graph visualization + chat | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -125,6 +127,13 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Context engine: optional `segment_filter` in `ContextConfig` to include only specific segment types
 - Eval coverage: `cargo run -p graphirm-eval -- --filter segments` (uses `GraphContainsContentType` verifier)
 - See `docs/plans/2026-03-10-structured-llm-responses.md` and `docs/plans/2026-03-15-structured-segments-phase5-6.md`
+
+**Web UI summary (Phase 11):**
+- Standalone browser UI at `web/` — adapted from `graphirm-vscode/media/` with `acquireVsCodeApi()` replaced by direct `fetch()` + `EventSource`
+- Server serves static files via `tower-http::services::ServeDir` fallback — API routes at `/api/*` take precedence
+- Auto-discovery: `find_web_dir()` looks for `web/index.html` next to the binary, then in CWD
+- Chat pane (markdown, HITL approval cards), graph pane (d3 force + timeline), session management
+- No build step, no framework, no auth — vanilla JS ES modules, ~1200 lines total
 
 **Risk areas:**
 - `Arc<RwLock<StableGraph>>` — no deadlocks; acquire briefly, never across await
