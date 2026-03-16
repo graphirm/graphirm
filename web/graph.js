@@ -46,12 +46,6 @@ const EDGE_STROKE_WIDTH = {
 };
 
 export function initGraph() {
-
-  const svgEl = document.getElementById('graph-svg');
-  const rect = svgEl.getBoundingClientRect();
-  _width = rect.width || 600;
-  _height = rect.height || 500;
-
   _svg = d3.select('#graph-svg');
   const g = _svg.append('g').attr('class', 'graph-root');
 
@@ -61,7 +55,7 @@ export function initGraph() {
   _svg.call(_zoom);
 
   document.getElementById('reset-zoom-btn').addEventListener('click', () => {
-    _svg.transition().call(_zoom.transform, d3.zoomIdentity);
+    fitToView();
   });
 
   document.getElementById('node-detail-close').addEventListener('click', () => {
@@ -203,12 +197,82 @@ function releaseNodePositions(nodes) {
   });
 }
 
+/**
+ * Fit all nodes into view by computing their bounding box and applying a zoom
+ * transform that centers and scales them. Called after force simulation ends.
+ */
+function fitToView() {
+  const padding = 60;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+  _svg.select('.graph-root').selectAll('circle').each(d => {
+    if (d.x != null) { minX = Math.min(minX, d.x); maxX = Math.max(maxX, d.x); }
+    if (d.y != null) { minY = Math.min(minY, d.y); maxY = Math.max(maxY, d.y); }
+  });
+
+  if (!isFinite(minX)) return;
+
+  // Re-read dimensions here in case they've changed since renderGraph ran.
+  const rect = document.getElementById('graph-svg').getBoundingClientRect();
+  const w = rect.width || _width || 600;
+  const h = rect.height || _height || 500;
+
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const spanX = Math.max(maxX - minX, 40);
+  const spanY = Math.max(maxY - minY, 40);
+  const scale = Math.min((w - padding * 2) / spanX, (h - padding * 2) / spanY, 2);
+  const tx = w / 2 - scale * cx;
+  const ty = h / 2 - scale * cy;
+
+  _svg.transition().duration(600).call(
+    _zoom.transform,
+    d3.zoomIdentity.translate(tx, ty).scale(scale),
+  );
+}
+
 function normalizeEdgeType(et) {
   if (!et || typeof et !== 'string') return et;
   return et.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('');
 }
 
+/**
+ * Build a short display label for a graph node.
+ * Mirrors the TUI's node_label() in crates/tui/src/events.rs.
+ *
+ * Priority:
+ *   1. metadata.label — set by the backend (e.g. "interaction_1_2_1")
+ *   2. Type-specific field (role+content preview, agent name, path, etc.)
+ *   3. Bare type name as last resort
+ */
+function nodeLabel(d) {
+  if (d.metadata && typeof d.metadata.label === 'string') {
+    return d.metadata.label;
+  }
+  const nt = d.node_type;
+  if (!nt) return '?';
+  switch (nt.type) {
+    case 'Interaction': {
+      const preview = (nt.content || '').slice(0, 24);
+      const ellipsis = (nt.content || '').length > 24 ? '…' : '';
+      return `[${nt.role}] ${preview}${ellipsis}`;
+    }
+    case 'Agent':     return `[agent] ${nt.name}`;
+    case 'Content':   return `[content] ${nt.path ?? nt.content_type}`;
+    case 'Task':      return `[task] ${nt.title}`;
+    case 'Knowledge': return `[knowledge] ${nt.entity}`;
+    default:          return nt.type ?? '?';
+  }
+}
+
 function renderGraph({ nodes, edges }) {
+  // Read actual SVG dimensions at render time — the flex layout may not have
+  // been computed yet when initGraph() ran, so we can't cache these at init.
+  const svgEl = document.getElementById('graph-svg');
+  const rect = svgEl.getBoundingClientRect();
+  _width = rect.width || 600;
+  _height = rect.height || 500;
+
   const g = _svg.select('.graph-root');
   g.selectAll('*').remove();
 
@@ -284,7 +348,7 @@ function renderGraph({ nodes, edges }) {
     .attr('font-size', 9)
     .attr('text-anchor', 'middle')
     .attr('dy', 20)
-    .text(d => d.node_type?.type ?? '');
+    .text(d => nodeLabel(d));
 
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
   const simEdges = edges.map(e => ({
@@ -292,6 +356,16 @@ function renderGraph({ nodes, edges }) {
     source: nodeMap.get(e.source) || e.source,
     target: nodeMap.get(e.target) || e.target,
   }));
+
+  // Seed positions before the simulation so D3 doesn't place them at (0,0).
+  // Nodes that already have positions (e.g. from a prior simulation tick) keep
+  // them; brand-new nodes start randomly scattered around the canvas center.
+  nodes.forEach(n => {
+    if (n.x == null || n.y == null) {
+      n.x = _width / 2 + (Math.random() - 0.5) * 100;
+      n.y = _height / 2 + (Math.random() - 0.5) * 100;
+    }
+  });
 
   _simulation = d3.forceSimulation(nodes)
     .force('link', d3.forceLink(simEdges).id(d => d.id).distance(80))
@@ -311,16 +385,17 @@ function renderGraph({ nodes, edges }) {
       nodeLabel.attr('x', d => d.x).attr('y', d => d.y);
   }
 
-  _simulation.on('tick', tickUpdate);
+  _simulation.on('tick', tickUpdate).on('end', fitToView);
 
   if (_layoutMode === 'timeline') {
     applyTimelineLayout(nodes, edges, _width, _height);
     nodes.forEach(n => { n.x = n.fx; n.y = n.fy; });
     _simulation.alpha(0).stop();
     tickUpdate();
+    fitToView();
   } else {
     releaseNodePositions(nodes);
-    _simulation.alpha(0.3).restart();
+    _simulation.alpha(1).restart();
   }
 }
 
