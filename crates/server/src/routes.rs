@@ -166,7 +166,7 @@ async fn create_session(
             .unwrap_or("session");
         let ws_name = sanitize_workspace_name(raw_name).unwrap_or_else(|| "session".to_string());
         let ws_path = root.join(&ws_name);
-        std::fs::create_dir_all(&ws_path).map_err(|e| {
+        tokio::fs::create_dir_all(&ws_path).await.map_err(|e| {
             ServerError::Internal(format!(
                 "failed to create workspace '{}': {e}",
                 ws_path.display()

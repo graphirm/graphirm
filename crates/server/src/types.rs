@@ -164,7 +164,7 @@ pub struct CreateSessionRequest {
     /// Example: `["reasoning", "code"]`
     #[serde(default)]
     pub segment_filter: Option<Vec<String>>,
-    /// Optional workspace name. When omitted, the sanitized session name is used.
+    /// Optional workspace name. When omitted, falls back to `agent` (if set) or `"session"`.
     /// The server creates `<workspaces_root>/<workspace>/` if it does not exist.
     #[serde(default)]
     pub workspace: Option<String>,

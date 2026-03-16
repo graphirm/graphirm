@@ -258,6 +258,7 @@ struct AgentConfigSection {
     segments: Option<SegmentConfig>,
     #[serde(default)]
     segment_filter: Option<Vec<String>>,
+    // Set at runtime by the server after resolving workspaces_root; not read from TOML.
     #[serde(default)]
     workspace_name: Option<String>,
 }
