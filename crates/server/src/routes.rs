@@ -173,6 +173,7 @@ async fn create_session(
             ))
         })?;
         config.working_dir = ws_path;
+        config.workspace_dir = Some(config.working_dir.clone());
         config.workspace_name = Some(ws_name);
     }
 
@@ -205,11 +206,7 @@ async fn create_session(
         created_at: now,
         status: SessionStatus::Idle,
         workspace: session.agent_config.workspace_name.clone(),
-        workspace_path: if session.agent_config.workspace_name.is_some() {
-            Some(session.agent_config.working_dir.display().to_string())
-        } else {
-            None
-        },
+        workspace_path: session_workspace_path(&session.agent_config),
     };
 
     let handle = SessionHandle {
@@ -780,6 +777,13 @@ async fn toggle_auto_approve(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+fn session_workspace_path(config: &graphirm_agent::AgentConfig) -> Option<String> {
+    config
+        .workspace_dir
+        .as_ref()
+        .map(|p| p.display().to_string())
+}
+
 fn session_handle_to_response(id: &str, handle: &SessionHandle) -> SessionResponse {
     SessionResponse {
         id: id.to_string(),
@@ -788,18 +792,7 @@ fn session_handle_to_response(id: &str, handle: &SessionHandle) -> SessionRespon
         created_at: handle.created_at,
         status: handle.status,
         workspace: handle.session.agent_config.workspace_name.clone(),
-        workspace_path: if handle.session.agent_config.workspace_name.is_some() {
-            Some(
-                handle
-                    .session
-                    .agent_config
-                    .working_dir
-                    .display()
-                    .to_string(),
-            )
-        } else {
-            None
-        },
+        workspace_path: session_workspace_path(&handle.session.agent_config),
     }
 }
 

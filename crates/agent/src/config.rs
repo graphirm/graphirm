@@ -142,6 +142,11 @@ pub struct AgentConfig {
     /// Stored here so it can be persisted to the Agent node and restored on restart.
     #[serde(default)]
     pub workspace_name: Option<String>,
+    /// Resolved absolute path of the workspace directory.
+    /// Only set when the workspace was successfully resolved (root + name joined and directory exists).
+    /// Distinct from `working_dir` to avoid false positives when workspace resolution is unavailable.
+    #[serde(default)]
+    pub workspace_dir: Option<PathBuf>,
 }
 
 fn default_working_dir() -> PathBuf {
@@ -208,6 +213,7 @@ impl Default for AgentConfig {
             segments: None,
             segment_filter: None,
             workspace_name: None,
+            workspace_dir: None,
         }
     }
 }
@@ -298,6 +304,7 @@ impl AgentConfig {
             segments: file.agent.segments,
             segment_filter: file.agent.segment_filter,
             workspace_name: file.agent.workspace_name,
+            workspace_dir: None,
         })
     }
 

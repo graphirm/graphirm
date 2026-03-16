@@ -105,6 +105,7 @@ pub async fn start_server(
             .workspace_path
             .clone()
             .unwrap_or_else(|| agent_config.working_dir.clone());
+        config.workspace_dir = meta.workspace_path.clone();
         config.workspace_name = meta.workspace.clone();
 
         let node_id = NodeId(id_str.clone());
