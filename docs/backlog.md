@@ -4,15 +4,13 @@ Items captured here are validated ideas not yet scheduled into a numbered phase.
 
 ---
 
-## Bug — HITL card shows "Agent wants to run: undefined"
+## ✅ Bug — HITL card shows "Agent wants to run: undefined" — FIXED
 
-**What:** When the HITL gate triggers in the browser web UI, the approval card renders "Agent wants to run: **undefined**" instead of the actual tool name (e.g. "bash", "read", "write").
+**What:** When the HITL gate triggered in the browser web UI, the approval card rendered "Agent wants to run: **undefined**" instead of the actual tool name (e.g. "bash", "read", "write").
 
-**Root cause:** `renderApprovalCard()` in `web/chat.js` is reading the tool name from the wrong field in the `awaiting_approval` SSE payload. The server sends the tool name under a specific key that doesn't match what the JS is accessing.
+**Root cause:** The SSE handler serialises the full `SseEvent` struct as the event data payload, so the browser receives `{ session_id, event_type, data: { node_id, tool_name, arguments, is_pause } }`. `main.js` was spreading the outer envelope (`{ ...data }`) when calling `renderApprovalCard`, so `tool_name` was always `undefined` — it was one level too deep inside `data.data`.
 
-**Fix:** Check the exact shape of the `awaiting_approval` SSE event in `crates/server/src/sse.rs` or `crates/server/src/types.rs`, find the tool name field, and update `renderApprovalCard()` in `web/chat.js` to read it correctly.
-
-**Suggested target:** Phase 12 (small fix, high visibility — HITL is a key differentiator).
+**Fix (shipped 2026-03-16):** In `web/main.js`, extract `payload = data?.data ?? data` before spreading, so `renderApprovalCard` receives `{ node_id, tool_name, arguments, is_pause, session_id }` at the top level. Commit `2302f59`.
 
 ---
 
@@ -38,7 +36,7 @@ Items captured here are validated ideas not yet scheduled into a numbered phase.
 
 **Note on framework:** This is the point where vanilla JS hits its ceiling and a lightweight framework (React + React Flow, or Svelte + Svelte Flow) becomes worth the build step. The added complexity is justified by the UI complexity.
 
-**Suggested target:** Phase 12–13, after hosted demo and HITL bug fix.
+**Suggested target:** Phase 12–13, after hosted demo (HITL bug fixed 2026-03-16).
 
 ---
 
