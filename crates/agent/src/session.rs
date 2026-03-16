@@ -493,16 +493,31 @@ mod tests {
     }
 
     #[test]
-    fn session_metadata_has_workspace_fields() {
-        let meta = SessionMetadata::from_agent_node_id(
-            "id1".to_string(),
-            "name".to_string(),
-            "model".to_string(),
-            chrono::Utc::now(),
-            SessionStatus::Idle,
+    fn session_restore_binds_to_existing_node() {
+        use graphirm_graph::nodes::{AgentData, GraphNode, NodeType};
+        use graphirm_graph::GraphStore;
+        use std::sync::Arc;
+
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+
+        let agent_node = GraphNode::new(NodeType::Agent(AgentData {
+            name: "restored-agent".to_string(),
+            model: "deepseek-chat".to_string(),
+            system_prompt: None,
+            status: "idle".to_string(),
+        }));
+        let node_id = graph.add_node(agent_node).unwrap();
+        let agent_count_before = graph.get_agent_nodes().unwrap().len();
+
+        let config = AgentConfig::default();
+        let session = Session::restore(graph.clone(), node_id.clone(), config, chrono::Utc::now());
+
+        assert_eq!(
+            graph.get_agent_nodes().unwrap().len(),
+            agent_count_before,
+            "restore must not create new nodes"
         );
-        assert!(meta.workspace.is_none());
-        assert!(meta.workspace_path.is_none());
+        assert_eq!(session.id, node_id, "restored session must use the existing node id");
     }
 
     #[tokio::test]

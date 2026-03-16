@@ -71,10 +71,6 @@ pub async fn restore_sessions_from_graph(
         session_count = sessions.len(),
         "Session restoration complete"
     );
-    tracing::debug!(
-        "Session restoration complete: {} sessions loaded",
-        sessions.len()
-    );
 
     Ok(sessions)
 }
