@@ -30,6 +30,11 @@ pub struct SessionMetadata {
     pub model: String,
     pub created_at: DateTime<Utc>,
     pub status: SessionStatus,
+    /// Workspace name stored in the Agent node's metadata (e.g. `"myapp"`).
+    pub workspace: Option<String>,
+    /// Fully-resolved workspace path (`workspaces_root/workspace`).
+    /// `None` when no workspaces root was provided at restore time.
+    pub workspace_path: Option<std::path::PathBuf>,
 }
 
 impl SessionMetadata {
@@ -46,6 +51,8 @@ impl SessionMetadata {
             model,
             created_at,
             status,
+            workspace: None,
+            workspace_path: None,
         }
     }
 }
@@ -100,6 +107,31 @@ impl Session {
             turn_counter: AtomicU32::new(0),
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
         })
+    }
+
+    /// Reconstruct a [`Session`] from an existing Agent node stored in the graph.
+    ///
+    /// Unlike [`Session::new`], this does **not** create a new Agent node — it
+    /// binds to the node that is already in the graph under `node_id`.
+    /// Used at server startup to restore sessions that survived a restart.
+    pub fn restore(
+        graph: Arc<GraphStore>,
+        node_id: graphirm_graph::nodes::NodeId,
+        config: AgentConfig,
+        created_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            id: node_id,
+            agent_config: config,
+            graph,
+            created_at,
+            hitl: None,
+            memory_retriever: None,
+            runtime_system_suffix: tokio::sync::Mutex::new(String::new()),
+            last_interaction_id: Arc::new(Mutex::new(None)),
+            turn_counter: AtomicU32::new(0),
+            turn_pos_counter: Arc::new(AtomicU32::new(0)),
+        }
     }
 
     /// Attach a [`HitlGate`] to this session, enabling HITL approval flow.
@@ -458,6 +490,19 @@ mod tests {
             node.metadata.get("workspace"),
             Some(&serde_json::json!("myapp"))
         );
+    }
+
+    #[test]
+    fn session_metadata_has_workspace_fields() {
+        let meta = SessionMetadata::from_agent_node_id(
+            "id1".to_string(),
+            "name".to_string(),
+            "model".to_string(),
+            chrono::Utc::now(),
+            SessionStatus::Idle,
+        );
+        assert!(meta.workspace.is_none());
+        assert!(meta.workspace_path.is_none());
     }
 
     #[tokio::test]
