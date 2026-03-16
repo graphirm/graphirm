@@ -116,20 +116,18 @@ function computeNodeGroups(nodes, edges) {
     groups.set(interaction.id, { groupId, depth: 0 });
     processed.add(interaction.id);
     
-    // Find tool calls produced by this interaction (Produces edges)
     const toolCalls = edges
-      .filter(e => (e.edge_type === 'Produces' || e.edge_type === 'produces') && (e.from ?? e.source) === interaction.id)
-      .map(e => nodes.find(n => n.id === (e.to ?? e.target)))
+      .filter(e => e.edge_type === 'produces' && e.source === interaction.id)
+      .map(e => nodes.find(n => n.id === e.target))
       .filter(Boolean);
     
-    // Find content/results produced by tool calls
     toolCalls.forEach((tool) => {
       groups.set(tool.id, { groupId, depth: 1 });
       processed.add(tool.id);
       
       const results = edges
-        .filter(e => (e.edge_type === 'Produces' || e.edge_type === 'produces') && (e.from ?? e.source) === tool.id)
-        .map(e => nodes.find(n => n.id === (e.to ?? e.target)))
+        .filter(e => e.edge_type === 'produces' && e.source === tool.id)
+        .map(e => nodes.find(n => n.id === e.target))
         .filter(Boolean);
       
       results.forEach((result) => {
@@ -249,7 +247,7 @@ function renderGraph({ nodes, edges }) {
     .join('text')
     .attr('fill', '#888')
     .attr('font-size', 9)
-    .text(d => d.edge_type);
+    .text(d => normalizeEdgeType(d.edge_type));
 
   const node = g.append('g').selectAll('circle')
     .data(nodes)
@@ -275,7 +273,7 @@ function renderGraph({ nodes, edges }) {
       .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
       .on('end', (e, d) => {
         if (!e.active) _simulation.alphaTarget(0);
-        d.fx = null; d.fy = null;
+        if (_layoutMode !== 'timeline') { d.fx = null; d.fy = null; }
       })
     );
 
@@ -289,12 +287,10 @@ function renderGraph({ nodes, edges }) {
     .text(d => d.node_type?.type ?? '');
 
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
-  const from = e => e.from ?? e.source;
-  const to = e => e.to ?? e.target;
   const simEdges = edges.map(e => ({
     ...e,
-    source: nodeMap.get(from(e)) || from(e),
-    target: nodeMap.get(to(e)) || to(e),
+    source: nodeMap.get(e.source) || e.source,
+    target: nodeMap.get(e.target) || e.target,
   }));
 
   _simulation = d3.forceSimulation(nodes)
@@ -302,18 +298,7 @@ function renderGraph({ nodes, edges }) {
     .force('charge', d3.forceManyBody().strength(-200))
     .force('center', d3.forceCenter(_width / 2, _height / 2));
 
-  // Branch on layout mode
-  if (_layoutMode === 'timeline') {
-    // Timeline mode: fixed positions
-    applyTimelineLayout(nodes, edges, _width, _height);
-    _simulation.alpha(0).stop();
-  } else {
-    // Force mode: free-floating
-    releaseNodePositions(nodes);
-    _simulation.alpha(0.3).restart();
-  }
-
-  _simulation.on('tick', () => {
+  function tickUpdate() {
       link
         .attr('x1', d => d.source.x)
         .attr('y1', d => d.source.y)
@@ -324,7 +309,19 @@ function renderGraph({ nodes, edges }) {
         .attr('y', d => (d.source.y + d.target.y) / 2);
       node.attr('cx', d => d.x).attr('cy', d => d.y);
       nodeLabel.attr('x', d => d.x).attr('y', d => d.y);
-    });
+  }
+
+  _simulation.on('tick', tickUpdate);
+
+  if (_layoutMode === 'timeline') {
+    applyTimelineLayout(nodes, edges, _width, _height);
+    nodes.forEach(n => { n.x = n.fx; n.y = n.fy; });
+    _simulation.alpha(0).stop();
+    tickUpdate();
+  } else {
+    releaseNodePositions(nodes);
+    _simulation.alpha(0.3).restart();
+  }
 }
 
 function showNodeDetail(node) {

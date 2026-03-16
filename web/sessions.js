@@ -4,7 +4,7 @@
  */
 
 import { api } from './api.js';
-import { setCurrentSessionId, onSessionLoaded } from './main.js';
+import { setCurrentSessionId, getCurrentSessionId, onSessionLoaded } from './main.js';
 
 let _sessions = [];
 
@@ -47,6 +47,7 @@ async function selectSession(id) {
       api.getGraph(id),
       api.getSession(id),
     ]);
+    if (getCurrentSessionId() !== id) return;
     onSessionLoaded('session_loaded', session, messages, graph);
   } catch (err) {
     console.error('Failed to load session:', err);
