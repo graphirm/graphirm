@@ -65,8 +65,10 @@ async function handleSseEvent({ event, data }) {
   } else if (event === 'graph_update') {
     await refreshCurrentSession();
   } else if (event === 'awaiting_approval') {
-    renderApprovalCard({ ...data, session_id: _currentSessionId });
-    if (data.is_pause) syncPauseButtonState(true);
+    // `data` is the full SseEvent object; the HITL payload is in data.data.
+    const payload = data?.data ?? data;
+    renderApprovalCard({ ...payload, session_id: _currentSessionId });
+    if (payload.is_pause) syncPauseButtonState(true);
   }
 }
 
