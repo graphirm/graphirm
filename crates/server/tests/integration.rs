@@ -33,6 +33,7 @@ fn test_app_state() -> AppState {
         sessions: Arc::new(RwLock::new(HashMap::new())),
         default_config: AgentConfig::default(),
         memory_retriever: None,
+        web_dir: None,
     }
 }
 

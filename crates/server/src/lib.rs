@@ -28,6 +28,7 @@ pub use types::{
 // ── Server entry point ────────────────────────────────────────────────────────
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::{RwLock, broadcast};
@@ -84,6 +85,7 @@ pub async fn start_server(
     agent_config: AgentConfig,
     server_config: ServerConfig,
     memory_retriever: Option<Arc<MemoryRetriever>>,
+    web_dir: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (event_tx, _) = broadcast::channel::<SseEvent>(1024);
 
@@ -95,7 +97,12 @@ pub async fn start_server(
         sessions: Arc::new(RwLock::new(HashMap::new())),
         default_config: agent_config,
         memory_retriever,
+        web_dir,
     };
+
+    if let Some(ref dir) = state.web_dir {
+        info!("Web UI serving from {}", dir.display());
+    }
 
     let app = create_router(state);
     let addr = format!("{}:{}", server_config.host, server_config.port);

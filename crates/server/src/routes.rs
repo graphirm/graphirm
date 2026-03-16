@@ -9,6 +9,7 @@ use axum::routing::{get, post};
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 use graphirm_agent::{AgentConfig, EventBus, HitlDecision, HitlGate, Session, run_agent_loop};
@@ -29,12 +30,14 @@ use crate::types::{
 /// - [`CorsLayer`] — permissive CORS, allows any origin/method/header.
 /// - [`TraceLayer`] — per-request tracing spans at INFO level.
 pub fn create_router(state: AppState) -> Router {
+    let web_dir = state.web_dir.clone();
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
+    let mut router = Router::new()
         .route("/api/health", get(health))
         // Session management
         .route("/api/sessions", get(list_sessions).post(create_session))
@@ -72,7 +75,15 @@ pub fn create_router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn(request_logging))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
-        .with_state(state)
+        .with_state(state);
+
+    if let Some(dir) = web_dir {
+        router = router.fallback_service(
+            ServeDir::new(dir).append_index_html_on_directories(true),
+        );
+    }
+
+    router
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -739,6 +750,7 @@ pub(crate) mod test_helpers {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             default_config: AgentConfig::default(),
             memory_retriever: None,
+            web_dir: None,
         }
     }
 }
