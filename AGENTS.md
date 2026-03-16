@@ -111,8 +111,9 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 **Patterns:**
 - New tool → implement `Tool` trait in `crates/tools/src/<name>.rs`, register in `build_tool_registry()` in `src/main.rs`
 - New LLM provider → implement `LlmProvider` trait in `crates/llm/`
-- `bash`, `write`, `edit` are destructive tools — subject to HITL gate
+- `bash`, `write`, `edit` are destructive tools — subject to HITL gate (unless auto-approve is enabled)
 - `read`, `grep`, `find`, `ls`, `graph_query` are non-destructive — always run without confirmation
+- Auto-approve: `POST /api/sessions/{id}/auto-approve` with `{ "enabled": true }` — skips HITL gating for all destructive tools in that session
 - Config lives in `config/default.toml`; `AgentConfig` is loaded from it at startup
 - API keys via env vars: `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`
 
@@ -157,7 +158,8 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - **Canvas annotations** — double-click empty canvas or toolbar "+ Note" adds editable AnnotationNode; `POST /api/graph/{session_id}/annotate` persists as Knowledge node
 - **Keyboard shortcuts** — `F` fit-view, `L` cycle layout, `N` new session, `/` focus chat
 - MiniMap, Controls, dotted background grid — full pan/zoom/drag
-- ChatPane with HITL approve/reject/modify cards, steer context banner; SessionBar with pause/resume
+- **Auto-approve toggle** — SessionBar button enables/disables HITL gating per session; green when active
+- ChatPane with HITL approve/reject/modify cards, steer context banner; SessionBar with pause/resume/auto-approve
 - Bundle: React Flow 194 kB, highlight 21 kB (trimmed to 20 languages), dagre 43 kB, app 289 kB — all chunks ≤ 500 kB
 - Dev: `cd web-app && npm run dev` (proxies `/api` → `localhost:5555`)
 - Build: `cd web-app && npm run build` → `web-app/dist/` (served automatically by `graphirm serve`)
