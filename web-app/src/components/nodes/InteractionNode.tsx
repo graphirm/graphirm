@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { GraphNode } from '../../types/graph';
+import { useSteer } from '../../context/SteerContext';
 import { BaseCard } from './BaseCard';
 import { MarkdownBody } from './MarkdownBody';
 import styles from '../../styles/nodes.module.css';
 
 export function InteractionNode({ data: rawData, selected }: NodeProps) {
   const [expanded, setExpanded] = useState(false);
-  const data = rawData as unknown as GraphNode & { onSteer?: (nodeId: string) => void };
+  const onSteer = useSteer();
+  const data = rawData as unknown as GraphNode;
   const nt = data.node_type;
   if (nt.type !== 'Interaction') return null;
 
@@ -31,8 +33,8 @@ export function InteractionNode({ data: rawData, selected }: NodeProps) {
           {nt.token_count} tokens
         </div>
       )}
-      {data.onSteer && (
-        <button className={styles.steerBtn} onClick={() => data.onSteer?.(data.id)}>
+      {onSteer && (
+        <button className={styles.steerBtn} onClick={() => onSteer(data.id)}>
           ↩ Steer from here
         </button>
       )}

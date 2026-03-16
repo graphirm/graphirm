@@ -11,7 +11,7 @@ interface UseSessionReturn {
   isThinking: boolean;
   pendingApproval: PendingApproval | null;
   selectSession: (id: string) => Promise<void>;
-  createSession: (name?: string) => Promise<void>;
+  createSession: (name?: string) => Promise<Session | void>;
   sendPrompt: (content: string, contextRoot?: string) => Promise<void>;
   abortSession: () => Promise<void>;
   approveAction: (nodeId: string) => Promise<void>;
@@ -30,14 +30,21 @@ export function useSession(): UseSessionReturn {
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
 
   const sseRef = useRef<SseClient | null>(null);
+  // Track current session ID in a ref so callbacks always see the latest value.
+  const currentSessionRef = useRef<Session | null>(null);
+  currentSessionRef.current = currentSession;
 
   const refresh = useCallback(async (sessionId: string) => {
-    const [newMessages, newGraph] = await Promise.all([
-      api.getMessages(sessionId),
-      api.getGraph(sessionId),
-    ]);
-    setMessages(newMessages);
-    setGraphData(newGraph);
+    try {
+      const [newMessages, newGraph] = await Promise.all([
+        api.getMessages(sessionId),
+        api.getGraph(sessionId),
+      ]);
+      setMessages(newMessages);
+      setGraphData(newGraph);
+    } catch (err) {
+      console.error('Failed to refresh session data:', err);
+    }
   }, []);
 
   const subscribeSse = useCallback((sessionId: string) => {
@@ -48,7 +55,7 @@ export function useSession(): UseSessionReturn {
       } else if (ev.event === 'agent_end' || ev.event === 'error') {
         setIsThinking(false);
         refresh(sessionId).catch(console.error);
-      } else if (ev.event === 'graph_update') {
+      } else if (ev.event === 'graph_update' || ev.event === 'tool_end' || ev.event === 'message_end') {
         refresh(sessionId).catch(console.error);
       } else if (ev.event === 'awaiting_approval') {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -60,24 +67,33 @@ export function useSession(): UseSessionReturn {
     sseRef.current = client;
   }, [refresh]);
 
-  // Load session list on mount
-  useEffect(() => {
-    api.listSessions().then(setSessions).catch(console.error);
-  }, []);
-
-  // Cleanup SSE on unmount
-  useEffect(() => {
-    return () => { sseRef.current?.unsubscribe(); };
-  }, []);
-
   const selectSession = useCallback(async (id: string) => {
-    const session = sessions.find(s => s.id === id) ?? { id };
+    const session = sessions.find(s => s.id === id) ?? { id } as Session;
     setCurrentSession(session);
     setPendingApproval(null);
     setIsThinking(false);
     await refresh(id);
     subscribeSse(id);
   }, [sessions, refresh, subscribeSse]);
+
+  // Load session list on mount + auto-select the first session.
+  useEffect(() => {
+    api.listSessions().then((list) => {
+      setSessions(list);
+      if (list.length > 0) {
+        const first = list[0];
+        setCurrentSession(first);
+        refresh(first.id).catch(console.error);
+        subscribeSse(first.id);
+      }
+    }).catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Cleanup SSE on unmount
+  useEffect(() => {
+    return () => { sseRef.current?.unsubscribe(); };
+  }, []);
 
   const createSession = useCallback(async (name?: string) => {
     const label = name ?? `Session ${new Date().toLocaleTimeString()}`;
@@ -89,57 +105,70 @@ export function useSession(): UseSessionReturn {
     setPendingApproval(null);
     setIsThinking(false);
     subscribeSse(session.id);
+    return session;
   }, [subscribeSse]);
 
   const sendPrompt = useCallback(async (content: string, contextRoot?: string) => {
-    if (!currentSession) {
-      await createSession();
+    let session = currentSessionRef.current;
+    if (!session) {
+      const newSession = await createSession();
+      session = newSession;
     }
-    const id = currentSession?.id;
-    if (!id) return;
+    if (!session?.id) return;
     setIsThinking(true);
-    if (contextRoot) {
-      await api.steerFromNode(id, content, contextRoot);
-    } else {
-      await api.sendPrompt(id, content);
+    try {
+      if (contextRoot) {
+        await api.steerFromNode(session.id, content, contextRoot);
+      } else {
+        await api.sendPrompt(session.id, content);
+      }
+    } catch (err) {
+      console.error('Failed to send prompt:', err);
+      setIsThinking(false);
     }
-  }, [currentSession, createSession]);
+  }, [createSession]);
 
   const abortSession = useCallback(async () => {
-    if (!currentSession) return;
-    await api.abortSession(currentSession.id);
+    const session = currentSessionRef.current;
+    if (!session) return;
+    await api.abortSession(session.id);
     setIsThinking(false);
-  }, [currentSession]);
+  }, []);
 
   const approveAction = useCallback(async (nodeId: string) => {
-    if (!currentSession) return;
-    await api.nodeAction(currentSession.id, nodeId, 'approve');
+    const session = currentSessionRef.current;
+    if (!session) return;
+    await api.nodeAction(session.id, nodeId, 'approve');
     setPendingApproval(null);
-  }, [currentSession]);
+  }, []);
 
   const rejectAction = useCallback(async (nodeId: string, reason?: string) => {
-    if (!currentSession) return;
-    await api.nodeAction(currentSession.id, nodeId, 'reject', reason);
+    const session = currentSessionRef.current;
+    if (!session) return;
+    await api.nodeAction(session.id, nodeId, 'reject', reason);
     setPendingApproval(null);
     setIsThinking(false);
-  }, [currentSession]);
+  }, []);
 
   const modifyAction = useCallback(async (nodeId: string, modifiedArgs: string) => {
-    if (!currentSession) return;
-    await api.nodeAction(currentSession.id, nodeId, 'approve', undefined, modifiedArgs);
+    const session = currentSessionRef.current;
+    if (!session) return;
+    await api.nodeAction(session.id, nodeId, 'approve', undefined, modifiedArgs);
     setPendingApproval(null);
-  }, [currentSession]);
+  }, []);
 
   const pauseSession = useCallback(async () => {
-    if (!currentSession) return;
-    await api.pauseSession(currentSession.id);
-  }, [currentSession]);
+    const session = currentSessionRef.current;
+    if (!session) return;
+    await api.pauseSession(session.id);
+  }, []);
 
   const resumeSession = useCallback(async () => {
-    if (!currentSession) return;
-    await api.resumeSession(currentSession.id);
+    const session = currentSessionRef.current;
+    if (!session) return;
+    await api.resumeSession(session.id);
     setPendingApproval(null);
-  }, [currentSession]);
+  }, []);
 
   return {
     sessions,

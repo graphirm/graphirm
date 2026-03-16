@@ -21,6 +21,7 @@ import { AnnotationNode } from './nodes/AnnotationNode';
 import { GroupNode } from './nodes/GroupNode';
 import { LabelledEdge } from './edges/LabelledEdge';
 import { Toolbar } from './Toolbar';
+import { SteerContext } from '../context/SteerContext';
 import styles from './GraphCanvas.module.css';
 
 const NODE_TYPES: NodeTypes = {
@@ -87,18 +88,11 @@ function GraphCanvasInner({
   }, [layoutMode, setLayoutMode, fitView, onCycleLayoutRef]);
   const [annotationCount, setAnnotationCount] = useState(0);
 
-  // Inject onSteer callback into interaction node data so cards can call it.
-  const nodesWithSteer = nodes.map(n =>
-    n.type === 'interaction'
-      ? {
-          ...n,
-          data: {
-            ...(n.data as Record<string, unknown>),
-            onSteer: onSteerFromNode,
-          },
-        }
-      : n,
-  );
+  // Store steer callback in a ref — node components access it via a shared context
+  // rather than injecting a function into node data (which causes circular JSON errors
+  // when React Flow internally serializes nodes).
+  const steerCallbackRef = useRef(onSteerFromNode);
+  steerCallbackRef.current = onSteerFromNode;
 
   const handleAddAnnotation = useCallback(() => {
     const count = annotationCount + 1;
@@ -151,8 +145,9 @@ function GraphCanvasInner({
         onAddAnnotation={handleAddAnnotation}
       />
       <div className={styles.canvasWrapper}>
+        <SteerContext.Provider value={steerCallbackRef.current}>
         <ReactFlow
-          nodes={nodesWithSteer}
+          nodes={nodes}
           edges={edges}
           nodeTypes={NODE_TYPES}
           edgeTypes={EDGE_TYPES}
@@ -187,6 +182,7 @@ function GraphCanvasInner({
           />
           <Controls style={{ background: '#252526', border: '1px solid #333', color: '#d4d4d4' }} />
         </ReactFlow>
+        </SteerContext.Provider>
       </div>
     </div>
   );
