@@ -1,0 +1,159 @@
+.card {
+  background: #252526;
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  padding: var(--card-padding);
+  min-width: var(--card-min-width);
+  max-width: var(--card-max-width);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  position: relative;
+  user-select: none;
+}
+
+.card:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.card.expanded {
+  max-width: 420px;
+  cursor: default;
+}
+
+.card.selected {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.typeBadge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.timestamp {
+  font-size: 10px;
+  color: var(--fg-muted);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.preview {
+  color: var(--fg);
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.preview.singleLine {
+  -webkit-line-clamp: 1;
+}
+
+.body {
+  margin-top: 8px;
+  color: var(--fg);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.statusChip {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 10px;
+}
+
+.statusPending  { background: #374151; color: #9ca3af; }
+.statusRunning  { background: #1d4ed8; color: #bfdbfe; }
+.statusCompleted { background: #14532d; color: #86efac; }
+.statusFailed   { background: #7f1d1d; color: #fca5a5; }
+
+.confidenceBar {
+  margin-top: 6px;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.confidenceFill {
+  height: 100%;
+  background: var(--node-knowledge);
+  border-radius: 2px;
+  transition: width var(--transition-medium);
+}
+
+.expandToggle {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.expandToggle:hover {
+  color: var(--fg);
+  opacity: 1;
+}
+
+.steerBtn {
+  margin-top: 8px;
+  font-size: 10px;
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--border-hover);
+  color: var(--fg-muted);
+  border-radius: 3px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.steerBtn:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+/* Annotation node */
+.annotationCard {
+  background: #1c1917;
+  border: 1px dashed var(--node-annotation);
+  border-radius: var(--card-radius);
+  padding: var(--card-padding);
+  min-width: 120px;
+  max-width: 240px;
+}
+
+.annotationInput {
+  background: transparent;
+  border: none;
+  color: var(--node-annotation);
+  font-size: 12px;
+  font-family: inherit;
+  width: 100%;
+  resize: none;
+  outline: none;
+  min-height: 40px;
+}
