@@ -1139,4 +1139,4 @@ Live test confirmed both paths: structured JSON (DeepSeek follows format prompt)
 
 **Segment filter wiring:** ✅ Resolved in `docs/plans/2026-03-15-segment-context-filter-wiring.md`
 
-**Known trade-off:** `OnnxExtractor::new` is constructed per-turn in the GLiNER2 fallback path (~seconds). Acceptable for current usage; cache as `Arc<OnnxExtractor>` in `AppState` if latency becomes a concern.
+**OnnxExtractor caching:** ✅ Resolved — `get_or_init_onnx_extractor(model_dir)` returns a process-wide cached `Arc<OnnxExtractor>`. All three GLiNER2 entry points (`try_gliner2_fallback`, `Local` backend, `Hybrid` backend) now use the cache; sessions load once per unique `model_dir`. See `perf(agent): cache OnnxExtractor by model directory` commit.
