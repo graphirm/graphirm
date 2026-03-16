@@ -218,6 +218,12 @@ pub struct SessionResponse {
     pub created_at: DateTime<Utc>,
     /// Current lifecycle status.
     pub status: SessionStatus,
+    /// Workspace name, if a per-session workspace was configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    /// Absolute path to the workspace directory (only set when `workspace` is `Some`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
 }
 
 /// Response body for `GET /api/health`.
@@ -305,6 +311,8 @@ mod tests {
             model: "claude-sonnet-4-20250514".to_string(),
             created_at: now,
             status: SessionStatus::Idle,
+            workspace: None,
+            workspace_path: None,
         };
         let json = serde_json::to_string(&session).unwrap();
         let back: SessionResponse = serde_json::from_str(&json).unwrap();

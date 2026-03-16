@@ -204,6 +204,12 @@ async fn create_session(
         model: session.agent_config.model.clone(),
         created_at: now,
         status: SessionStatus::Idle,
+        workspace: session.agent_config.workspace_name.clone(),
+        workspace_path: if session.agent_config.workspace_name.is_some() {
+            Some(session.agent_config.working_dir.display().to_string())
+        } else {
+            None
+        },
     };
 
     let handle = SessionHandle {
@@ -781,6 +787,19 @@ fn session_handle_to_response(id: &str, handle: &SessionHandle) -> SessionRespon
         model: handle.session.agent_config.model.clone(),
         created_at: handle.created_at,
         status: handle.status,
+        workspace: handle.session.agent_config.workspace_name.clone(),
+        workspace_path: if handle.session.agent_config.workspace_name.is_some() {
+            Some(
+                handle
+                    .session
+                    .agent_config
+                    .working_dir
+                    .display()
+                    .to_string(),
+            )
+        } else {
+            None
+        },
     }
 }
 
