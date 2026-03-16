@@ -1759,7 +1759,149 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    use crate::nodes::KnowledgeData;
+    use crate::nodes::{KnowledgeData, TaskData, TaskStatus};
+
+    #[test]
+    fn list_nodes_by_type_filters_by_session_and_metadata() {
+        let store = GraphStore::open_memory().unwrap();
+
+        // Seed Task nodes across two sessions with varying status
+        let mut task_a_failed = GraphNode::new(NodeType::Task(TaskData {
+            title: "Fix auth".to_string(),
+            description: "Fix the auth bug".to_string(),
+            status: TaskStatus::Failed,
+            priority: Some(1),
+        }));
+        task_a_failed.metadata["session_id"] = serde_json::json!("session-a");
+        store.add_node(task_a_failed).unwrap();
+
+        let mut task_a_pending = GraphNode::new(NodeType::Task(TaskData {
+            title: "Write tests".to_string(),
+            description: "Add coverage".to_string(),
+            status: TaskStatus::Pending,
+            priority: None,
+        }));
+        task_a_pending.metadata["session_id"] = serde_json::json!("session-a");
+        store.add_node(task_a_pending).unwrap();
+
+        let mut task_b_failed = GraphNode::new(NodeType::Task(TaskData {
+            title: "Deploy".to_string(),
+            description: "Deploy to prod".to_string(),
+            status: TaskStatus::Failed,
+            priority: Some(2),
+        }));
+        task_b_failed.metadata["session_id"] = serde_json::json!("session-b");
+        store.add_node(task_b_failed).unwrap();
+
+        // Also add a non-Task node in session-a to verify type filter
+        let mut content_node = GraphNode::new(NodeType::Content(crate::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: Some("src/lib.rs".to_string()),
+            body: "code".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        content_node.metadata["session_id"] = serde_json::json!("session-a");
+        store.add_node(content_node).unwrap();
+
+        // Filter: task + session-a + status=failed → should return exactly 1
+        let nodes = store
+            .list_nodes_by_type(
+                "task",
+                Some("session-a"),
+                Some(&serde_json::json!({"status": "failed"})),
+                10,
+            )
+            .unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(nodes[0].node_type, NodeType::Task(_)));
+
+        // Filter: task + session-a (no metadata filter) → should return 2
+        let nodes = store
+            .list_nodes_by_type("task", Some("session-a"), None, 10)
+            .unwrap();
+        assert_eq!(nodes.len(), 2);
+
+        // Filter: task + no session filter → should return 3
+        let nodes = store
+            .list_nodes_by_type("task", None, None, 10)
+            .unwrap();
+        assert_eq!(nodes.len(), 3);
+
+        // Limit respected: task + no session → limit 2 → should return 2
+        let nodes = store
+            .list_nodes_by_type("task", None, None, 2)
+            .unwrap();
+        assert_eq!(nodes.len(), 2);
+    }
+
+    #[test]
+    fn search_knowledge_filters_by_query_entity_type_and_session() {
+        let store = GraphStore::open_memory().unwrap();
+
+        // auth function in session-a — should match "auth" query
+        let mut k1 = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "authenticate_user".to_string(),
+            entity_type: "function".to_string(),
+            summary: "Handles user auth via JWT tokens".to_string(),
+            confidence: 0.9,
+        }));
+        k1.metadata["session_id"] = serde_json::json!("session-a");
+        store.add_node(k1).unwrap();
+
+        // graph concept in session-a — should NOT match "auth"
+        let mut k2 = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "GraphStore".to_string(),
+            entity_type: "concept".to_string(),
+            summary: "Dual-write persistence layer".to_string(),
+            confidence: 0.95,
+        }));
+        k2.metadata["session_id"] = serde_json::json!("session-a");
+        store.add_node(k2).unwrap();
+
+        // auth function in session-b — should match "auth" but filtered out by session
+        let mut k3 = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "auth_middleware".to_string(),
+            entity_type: "function".to_string(),
+            summary: "Middleware for request authentication".to_string(),
+            confidence: 0.85,
+        }));
+        k3.metadata["session_id"] = serde_json::json!("session-b");
+        store.add_node(k3).unwrap();
+
+        // auth + session-a → should return k1 only
+        let nodes = store
+            .search_knowledge("auth", None, Some("session-a"), 10)
+            .unwrap();
+        assert_eq!(nodes.len(), 1);
+        let NodeType::Knowledge(data) = &nodes[0].node_type else {
+            panic!("expected Knowledge")
+        };
+        assert!(data.summary.contains("auth") || data.entity.contains("auth"));
+
+        // auth + no session filter → should return k1 and k3
+        let nodes = store
+            .search_knowledge("auth", None, None, 10)
+            .unwrap();
+        assert_eq!(nodes.len(), 2);
+
+        // auth + entity_type=concept → should return nothing (k1/k3 are functions)
+        let nodes = store
+            .search_knowledge("auth", Some("concept"), None, 10)
+            .unwrap();
+        assert_eq!(nodes.len(), 0);
+
+        // "graphstore" (case-insensitive) → should return k2
+        let nodes = store
+            .search_knowledge("graphstore", None, None, 10)
+            .unwrap();
+        assert_eq!(nodes.len(), 1);
+
+        // Limit respected
+        let nodes = store
+            .search_knowledge("auth", None, None, 1)
+            .unwrap();
+        assert_eq!(nodes.len(), 1);
+    }
 
     #[test]
     fn test_store_and_retrieve_embedding() {
