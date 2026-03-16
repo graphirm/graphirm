@@ -796,6 +796,182 @@ impl GraphStore {
         Ok(nodes)
     }
 
+    /// Enumerate nodes of a given type, with optional session and metadata filters.
+    ///
+    /// - `node_type`: one of `"interaction"`, `"agent"`, `"content"`, `"task"`, `"knowledge"`
+    /// - `session_id`: when `Some`, only nodes whose `metadata["session_id"]` equals this value
+    /// - `metadata_filter`: when `Some`, performs exact-match on each top-level key/value pair in
+    ///   the serialized node metadata (e.g. `{"status": "failed"}` matches a Task with
+    ///   `TaskStatus::Failed` which serializes as `"failed"`)
+    /// - `limit`: maximum number of results to return
+    pub fn list_nodes_by_type(
+        &self,
+        node_type: &str,
+        session_id: Option<&str>,
+        metadata_filter: Option<&serde_json::Value>,
+        limit: usize,
+    ) -> Result<Vec<GraphNode>, GraphError> {
+        let conn = self.pool.get()?;
+
+        let base_query = "SELECT id, data, metadata, created_at, updated_at \
+                          FROM nodes WHERE node_type = ?1 ORDER BY created_at DESC";
+        let mut stmt = conn.prepare(base_query)?;
+
+        let rows: Vec<(String, String, String, String, String)> = stmt
+            .query_map([node_type], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut results = Vec::new();
+        for (id_str, data, meta_str, created_at_str, updated_at_str) in rows {
+            if results.len() >= limit {
+                break;
+            }
+            let node_type_val: NodeType = serde_json::from_str(&data)?;
+            let metadata: serde_json::Value = serde_json::from_str(&meta_str)
+                .unwrap_or(serde_json::Value::Object(Default::default()));
+
+            // session_id filter
+            if let Some(sid) = session_id {
+                match metadata.get("session_id").and_then(|v| v.as_str()) {
+                    Some(v) if v == sid => {}
+                    _ => continue,
+                }
+            }
+
+            // metadata exact-match filter
+            if let Some(filter) = metadata_filter {
+                if let Some(filter_obj) = filter.as_object() {
+                    let node_meta_str = serde_json::to_string(&node_type_val)?;
+                    let node_meta_val: serde_json::Value =
+                        serde_json::from_str(&node_meta_str).unwrap_or_default();
+                    let mut all_match = true;
+                    for (key, expected) in filter_obj {
+                        let actual = node_meta_val.get(key).or_else(|| metadata.get(key));
+                        if actual != Some(expected) {
+                            all_match = false;
+                            break;
+                        }
+                    }
+                    if !all_match {
+                        continue;
+                    }
+                }
+            }
+
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            results.push(GraphNode {
+                id: NodeId(id_str),
+                node_type: node_type_val,
+                metadata,
+                created_at,
+                updated_at,
+            });
+        }
+        Ok(results)
+    }
+
+    /// Keyword search over `Knowledge` nodes.
+    ///
+    /// Performs case-insensitive matching of `query` against the node's `entity`,
+    /// `entity_type`, and `summary` fields. Optional filters narrow results further.
+    ///
+    /// - `query`: non-empty keyword to search for (lowercased before matching)
+    /// - `entity_type`: when `Some`, only nodes whose `entity_type` equals this value
+    /// - `session_id`: when `Some`, only nodes whose `metadata["session_id"]` equals this value
+    /// - `limit`: maximum number of results to return, ordered by `created_at` descending
+    pub fn search_knowledge(
+        &self,
+        query: &str,
+        entity_type: Option<&str>,
+        session_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<GraphNode>, GraphError> {
+        let conn = self.pool.get()?;
+        let query_lower = query.to_lowercase();
+
+        let mut stmt = conn.prepare(
+            "SELECT id, data, metadata, created_at, updated_at \
+             FROM nodes WHERE node_type = 'knowledge' ORDER BY created_at DESC",
+        )?;
+
+        let rows: Vec<(String, String, String, String, String)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut results = Vec::new();
+        for (id_str, data, meta_str, created_at_str, updated_at_str) in rows {
+            if results.len() >= limit {
+                break;
+            }
+            let node_type_val: NodeType = serde_json::from_str(&data)?;
+            let NodeType::Knowledge(ref kd) = node_type_val else {
+                continue;
+            };
+
+            // entity_type filter
+            if let Some(et) = entity_type {
+                if kd.entity_type != et {
+                    continue;
+                }
+            }
+
+            let metadata: serde_json::Value = serde_json::from_str(&meta_str)
+                .unwrap_or(serde_json::Value::Object(Default::default()));
+
+            // session_id filter
+            if let Some(sid) = session_id {
+                match metadata.get("session_id").and_then(|v| v.as_str()) {
+                    Some(v) if v == sid => {}
+                    _ => continue,
+                }
+            }
+
+            // keyword match (case-insensitive)
+            let matches = kd.entity.to_lowercase().contains(&query_lower)
+                || kd.entity_type.to_lowercase().contains(&query_lower)
+                || kd.summary.to_lowercase().contains(&query_lower);
+            if !matches {
+                continue;
+            }
+
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            results.push(GraphNode {
+                id: NodeId(id_str),
+                node_type: node_type_val,
+                metadata,
+                created_at,
+                updated_at,
+            });
+        }
+        Ok(results)
+    }
+
     /// Store an embedding vector for a node. Overwrites any existing embedding.
     // Bytes are stored in native-endian order via bytemuck::cast_slice.
     // This is correct for single-machine SQLite but will silently corrupt
