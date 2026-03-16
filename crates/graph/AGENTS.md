@@ -10,9 +10,9 @@ index via `instant-distance` for knowledge node similarity search.
 
 | File | What |
 |------|------|
-| `store.rs` | `GraphStore` — connection pool, node/edge CRUD, session management, PageRank, BFS |
+| `store.rs` | `GraphStore` — connection pool, node/edge CRUD, session management, PageRank, BFS, `list_nodes_by_type`, `search_knowledge` |
 | `nodes.rs` | `GraphNode`, `NodeType` (5 variants), `NodeId` newtype |
-| `edges.rs` | `GraphEdge`, `EdgeType` (12 variants), `EdgeId` newtype |
+| `edges.rs` | `GraphEdge`, `EdgeType` (15 variants), `EdgeId` newtype |
 | `query.rs` | Subgraph extraction, traversal helpers |
 | `vector.rs` | `VectorIndex` — HNSW wrapper, similarity search for Knowledge nodes |
 | `corpus.rs` | `export_corpus_to_jsonl`, `CorpusTurn` — corpus export for eval/analysis |
@@ -21,14 +21,15 @@ index via `instant-distance` for knowledge node similarity search.
 **Node types:** `Interaction`, `Agent`, `Content`, `Task`, `Knowledge`
 
 **Edge types:** `RespondsTo`, `SpawnedBy`, `DelegatesTo`, `DependsOn`, `Produces`, `Reads`,
-`Modifies`, `Summarizes`, `Contains`, `FollowsUp`, `Steers`, `RelatesTo`
+`Modifies`, `Summarizes`, `Contains`, `FollowsUp`, `Steers`, `RelatesTo`, `DerivedFrom`,
+`ApprovedBy`, `RejectedBy`
 
 ---
 
 ## Integration Points
 
 **Used by:** `graphirm-agent` (context scoring, session persistence), `graphirm-tools` (Content
-node creation on file ops), `graphirm-server` (graph query API), `graphirm-tui` (graph explorer panel)
+node creation on file ops, `graph_query` tool), `graphirm-server` (graph query API), `graphirm-tui` (graph explorer panel)
 
 **Depends on:** `rusqlite`, `petgraph`, `r2d2` + `r2d2_sqlite`, `instant-distance`, `uuid`, `chrono`
 

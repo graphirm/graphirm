@@ -201,7 +201,11 @@ async fn main() -> Result<(), GraphirmError> {
                 .init();
             run_model_command(action).await?;
         }
-        Commands::ExportCorpus { out, limit, all_roles } => {
+        Commands::ExportCorpus {
+            out,
+            limit,
+            all_roles,
+        } => {
             tracing_subscriber::fmt()
                 .with_writer(std::io::stderr)
                 .with_env_filter("warn")
@@ -373,8 +377,9 @@ async fn run_label_explore(
     })?;
     let model_dir = std::path::Path::new(&model_dir);
 
-    let file = std::fs::File::open(&corpus_path)
-        .map_err(|e| GraphirmError::Config(format!("open corpus {}: {}", corpus_path.display(), e)))?;
+    let file = std::fs::File::open(&corpus_path).map_err(|e| {
+        GraphirmError::Config(format!("open corpus {}: {}", corpus_path.display(), e))
+    })?;
     let turns = graphirm_agent::knowledge::label_explore::read_corpus_jsonl(BufReader::new(file))?;
     let total = turns.len();
     if total == 0 {
@@ -388,13 +393,19 @@ async fn run_label_explore(
         .filter(|s| !s.is_empty())
         .collect();
     if labels.is_empty() {
-        return Err(GraphirmError::Config("At least one --labels value required".into()));
+        return Err(GraphirmError::Config(
+            "At least one --labels value required".into(),
+        ));
     }
 
     let extractor = graphirm_agent::knowledge::local_extraction::OnnxExtractor::new(model_dir)
         .map_err(|e| GraphirmError::Config(format!("load GLiNER2 model: {}", e)))?;
 
-    eprintln!("Running GLiNER2 on {} turns with {} labels...", total, labels.len());
+    eprintln!(
+        "Running GLiNER2 on {} turns with {} labels...",
+        total,
+        labels.len()
+    );
     let report = graphirm_agent::knowledge::label_explore::run_label_exploration(
         &extractor,
         &turns,
@@ -403,7 +414,8 @@ async fn run_label_explore(
     )
     .await?;
 
-    let json = serde_json::to_string_pretty(&report).map_err(|e| GraphirmError::Config(e.to_string()))?;
+    let json =
+        serde_json::to_string_pretty(&report).map_err(|e| GraphirmError::Config(e.to_string()))?;
     if let Some(path) = out {
         std::fs::write(&path, json).map_err(|e| GraphirmError::Io(e))?;
         eprintln!("Wrote report to {}", path.display());
@@ -422,12 +434,15 @@ async fn run_label_explore(
 
 #[cfg(feature = "local-extraction")]
 fn run_schema_suggest(report_path: PathBuf, out: Option<PathBuf>) -> Result<(), GraphirmError> {
-    let json = std::fs::read_to_string(&report_path)
-        .map_err(|e| GraphirmError::Config(format!("read report {}: {}", report_path.display(), e)))?;
+    let json = std::fs::read_to_string(&report_path).map_err(|e| {
+        GraphirmError::Config(format!("read report {}: {}", report_path.display(), e))
+    })?;
     let report: graphirm_agent::knowledge::label_explore::LabelExplorationReport =
-        serde_json::from_str(&json).map_err(|e| GraphirmError::Config(format!("parse report JSON: {}", e)))?;
+        serde_json::from_str(&json)
+            .map_err(|e| GraphirmError::Config(format!("parse report JSON: {}", e)))?;
     let rec = graphirm_agent::knowledge::schema_suggest::analyse_report(&report);
-    let out_json = serde_json::to_string_pretty(&rec).map_err(|e| GraphirmError::Config(e.to_string()))?;
+    let out_json =
+        serde_json::to_string_pretty(&rec).map_err(|e| GraphirmError::Config(e.to_string()))?;
     if let Some(path) = out {
         std::fs::write(&path, out_json).map_err(|e| GraphirmError::Io(e))?;
         eprintln!("Wrote schema recommendation to {}", path.display());
@@ -465,7 +480,9 @@ async fn run_predict_spans(
         .filter(|s| !s.is_empty())
         .collect();
     if labels.is_empty() {
-        return Err(GraphirmError::Config("At least one --labels value required".into()));
+        return Err(GraphirmError::Config(
+            "At least one --labels value required".into(),
+        ));
     }
 
     let extractor = graphirm_agent::knowledge::local_extraction::OnnxExtractor::new(model_dir)
@@ -474,10 +491,7 @@ async fn run_predict_spans(
     let batch_size_usize = batch_size.map(|n| n as usize);
 
     let mut writer: Box<dyn std::io::Write> = if let Some(path) = &out {
-        Box::new(
-            std::fs::File::create(path)
-                .map_err(|e| GraphirmError::Io(e))?,
-        )
+        Box::new(std::fs::File::create(path).map_err(|e| GraphirmError::Io(e))?)
     } else {
         Box::new(std::io::stdout())
     };
@@ -485,8 +499,9 @@ async fn run_predict_spans(
     let mut total_written = 0usize;
 
     if let Some(batch_size_n) = batch_size_usize {
-        let file = std::fs::File::open(&corpus_path)
-            .map_err(|e| GraphirmError::Config(format!("open corpus {}: {}", corpus_path.display(), e)))?;
+        let file = std::fs::File::open(&corpus_path).map_err(|e| {
+            GraphirmError::Config(format!("open corpus {}: {}", corpus_path.display(), e))
+        })?;
         let mut reader = BufReader::new(file);
         loop {
             let turns = graphirm_agent::knowledge::label_explore::read_corpus_jsonl_batch(
@@ -504,18 +519,25 @@ async fn run_predict_spans(
             )
             .await?;
             for row in &rows {
-                let line = serde_json::to_string(row).map_err(|e| GraphirmError::Config(e.to_string()))?;
+                let line =
+                    serde_json::to_string(row).map_err(|e| GraphirmError::Config(e.to_string()))?;
                 writeln!(writer, "{line}").map_err(GraphirmError::Io)?;
             }
             total_written += rows.len();
             if out.is_some() {
-                eprintln!("  processed batch: {} turns (total {} so far)", rows.len(), total_written);
+                eprintln!(
+                    "  processed batch: {} turns (total {} so far)",
+                    rows.len(),
+                    total_written
+                );
             }
         }
     } else {
-        let file = std::fs::File::open(&corpus_path)
-            .map_err(|e| GraphirmError::Config(format!("open corpus {}: {}", corpus_path.display(), e)))?;
-        let turns = graphirm_agent::knowledge::label_explore::read_corpus_jsonl(BufReader::new(file))?;
+        let file = std::fs::File::open(&corpus_path).map_err(|e| {
+            GraphirmError::Config(format!("open corpus {}: {}", corpus_path.display(), e))
+        })?;
+        let turns =
+            graphirm_agent::knowledge::label_explore::read_corpus_jsonl(BufReader::new(file))?;
         if turns.is_empty() {
             eprintln!("Corpus is empty.");
             return Ok(());
@@ -528,7 +550,8 @@ async fn run_predict_spans(
         )
         .await?;
         for row in &rows {
-            let line = serde_json::to_string(row).map_err(|e| GraphirmError::Config(e.to_string()))?;
+            let line =
+                serde_json::to_string(row).map_err(|e| GraphirmError::Config(e.to_string()))?;
             writeln!(writer, "{line}").map_err(GraphirmError::Io)?;
         }
         total_written = rows.len();
@@ -549,13 +572,26 @@ fn run_validate_agreement(
 ) -> Result<(), GraphirmError> {
     use std::io::BufReader;
 
-    let human_file = std::fs::File::open(&human_path)
-        .map_err(|e| GraphirmError::Config(format!("open human annotations {}: {}", human_path.display(), e)))?;
-    let human = graphirm_agent::knowledge::validate_agreement::read_annotations_jsonl(BufReader::new(human_file))?;
+    let human_file = std::fs::File::open(&human_path).map_err(|e| {
+        GraphirmError::Config(format!(
+            "open human annotations {}: {}",
+            human_path.display(),
+            e
+        ))
+    })?;
+    let human = graphirm_agent::knowledge::validate_agreement::read_annotations_jsonl(
+        BufReader::new(human_file),
+    )?;
 
-    let gliner_file = std::fs::File::open(&gliner_path)
-        .map_err(|e| GraphirmError::Config(format!("open gliner spans {}: {}", gliner_path.display(), e)))?;
-    let gliner = graphirm_agent::knowledge::predict_spans::read_spans_jsonl(BufReader::new(gliner_file))?;
+    let gliner_file = std::fs::File::open(&gliner_path).map_err(|e| {
+        GraphirmError::Config(format!(
+            "open gliner spans {}: {}",
+            gliner_path.display(),
+            e
+        ))
+    })?;
+    let gliner =
+        graphirm_agent::knowledge::predict_spans::read_spans_jsonl(BufReader::new(gliner_file))?;
 
     const OVERLAP_RATIO_MIN: f64 = 0.5;
     let report = graphirm_agent::knowledge::validate_agreement::validate_agreement(
@@ -565,7 +601,8 @@ fn run_validate_agreement(
         OVERLAP_RATIO_MIN,
     );
 
-    let out_json = serde_json::to_string_pretty(&report).map_err(|e| GraphirmError::Config(e.to_string()))?;
+    let out_json =
+        serde_json::to_string_pretty(&report).map_err(|e| GraphirmError::Config(e.to_string()))?;
     if let Some(path) = out {
         std::fs::write(&path, out_json).map_err(GraphirmError::Io)?;
         eprintln!("Wrote agreement report to {}", path.display());
@@ -604,6 +641,7 @@ fn node_display_label(node: &graphirm_graph::nodes::GraphNode) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::node_display_label;
     use graphirm_graph::nodes::{GraphNode, InteractionData, NodeType};
@@ -651,8 +689,7 @@ fn init_file_logging() -> tracing_appender::non_blocking::WorkerGuard {
 /// HuggingFace path) **and** the binary was compiled with the
 /// `local-extraction` feature, use the fast ONNX backend.
 /// Otherwise fall back to the LLM backend.
-fn resolve_extraction_backend(
-) -> graphirm_agent::knowledge::extraction::ExtractionBackend {
+fn resolve_extraction_backend() -> graphirm_agent::knowledge::extraction::ExtractionBackend {
     use graphirm_agent::knowledge::extraction::ExtractionBackend;
 
     // Explicit override always wins.
@@ -688,7 +725,9 @@ fn resolve_extraction_backend(
         }
     }
 
-    tracing::info!("No GLiNER2 model found; using LLM extraction backend. Run `graphirm model download` to enable fast local extraction.");
+    tracing::info!(
+        "No GLiNER2 model found; using LLM extraction backend. Run `graphirm model download` to enable fast local extraction."
+    );
     ExtractionBackend::Llm
 }
 
@@ -881,9 +920,8 @@ async fn run_serve(db_path: &Path, host: String, port: u16) -> Result<(), Graphi
     // (set in .env). Defaults to Qwen Coder Next (OpenRouter) if not configured.
     let model_spec = std::env::var("GRAPHIRM_MODEL")
         .unwrap_or_else(|_| "openrouter/qwen/qwen3-coder-next".to_string());
-    let (provider_name, model_name) =
-        graphirm_llm::factory::parse_model_string(&model_spec)
-            .map_err(|e| GraphirmError::Config(e.to_string()))?;
+    let (provider_name, model_name) = graphirm_llm::factory::parse_model_string(&model_spec)
+        .map_err(|e| GraphirmError::Config(e.to_string()))?;
     let api_key = api_key_for_provider(provider_name)?;
     let llm: Arc<dyn graphirm_llm::LlmProvider> = Arc::from(
         graphirm_llm::factory::create_provider(provider_name, &api_key)
@@ -925,7 +963,9 @@ async fn run_serve(db_path: &Path, host: String, port: u16) -> Result<(), Graphi
         setup_memory_retriever(&graph),
     )
     .await
-    .map_err(|_| GraphirmError::Config("Embedding provider initialization timed out after 30s".into()))?;
+    .map_err(|_| {
+        GraphirmError::Config("Embedding provider initialization timed out after 30s".into())
+    })?;
 
     let web_dir = find_web_dir();
     if let Some(ref dir) = web_dir {
@@ -935,9 +975,17 @@ async fn run_serve(db_path: &Path, host: String, port: u16) -> Result<(), Graphi
     }
 
     let server_config = graphirm_server::ServerConfig { host, port };
-    graphirm_server::start_server(graph, llm, tools, agent_config, server_config, memory_retriever?, web_dir)
-        .await
-        .map_err(|e| GraphirmError::Config(e.to_string()))?;
+    graphirm_server::start_server(
+        graph,
+        llm,
+        tools,
+        agent_config,
+        server_config,
+        memory_retriever?,
+        web_dir,
+    )
+    .await
+    .map_err(|e| GraphirmError::Config(e.to_string()))?;
 
     Ok(())
 }
@@ -945,7 +993,8 @@ async fn run_serve(db_path: &Path, host: String, port: u16) -> Result<(), Graphi
 /// Initialize the optional embedding provider for cross-session memory.
 async fn setup_memory_retriever(
     graph: &Arc<graphirm_graph::GraphStore>,
-) -> Result<Option<std::sync::Arc<graphirm_agent::knowledge::memory::MemoryRetriever>>, GraphirmError> {
+) -> Result<Option<std::sync::Arc<graphirm_agent::knowledge::memory::MemoryRetriever>>, GraphirmError>
+{
     let embedding_backend = std::env::var("EMBEDDING_BACKEND").ok();
     if let Some(spec) = embedding_backend {
         let mistral_key = std::env::var("MISTRAL_API_KEY").ok();
@@ -966,8 +1015,12 @@ async fn setup_memory_retriever(
                 .await
                 {
                     Ok(Ok(n)) => tracing::info!(count = n, "Restored embeddings from graph store"),
-                    Ok(Err(e)) => tracing::warn!(error = %e, "HNSW hydration failed (non-fatal); starting fresh"),
-                    Err(_) => tracing::warn!("HNSW hydration timed out after 60s (non-fatal); starting fresh"),
+                    Ok(Err(e)) => {
+                        tracing::warn!(error = %e, "HNSW hydration failed (non-fatal); starting fresh")
+                    }
+                    Err(_) => tracing::warn!(
+                        "HNSW hydration timed out after 60s (non-fatal); starting fresh"
+                    ),
                 }
                 Ok(Some(retriever))
             }

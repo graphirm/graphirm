@@ -4,41 +4,22 @@ Items captured here are validated ideas not yet scheduled into a numbered phase.
 
 ---
 
-## Feature — `graph_query` tool: let the agent query its own graph
+## ✅ Feature — `graph_query` tool: let the agent query its own graph — COMPLETED (Phase 12)
 
-**What:** The agent currently has no way to interrogate the graph it lives in. It has `bash`, `read`, `write`, `edit`, `grep`, `find`, `ls` — all filesystem tools — but nothing that exposes the graph store. The graph is used *for* the agent (context reconstruction, HNSW memory injection) but not *by* the agent.
+**What:** The agent had no way to interrogate the graph it lives in. It had `bash`, `read`, `write`, `edit`, `grep`, `find`, `ls` — all filesystem tools — but nothing that exposes the graph store.
 
-**Why it matters:** The core Graphirm thesis is "the graph is the memory". If the agent cannot query it, that thesis is half-implemented. A `graph_query` tool would let the agent:
-- Look up Knowledge nodes about a concept from past sessions ("what do I know about auth?")
-- Inspect its own tool call history ("which files did I modify last turn?")
-- Traverse edges ("what produced this Content node?")
-- Search by node type + metadata ("find all Task nodes with status=failed")
+**Shipped in Phase 12:** `crates/tools/src/graph_query.rs` — a read-only `Tool` implementation with three modes:
+- `bfs` — BFS traversal from a start node following outgoing edges (configurable depth up to 10, optional edge-type filter)
+- `list_type` — enumerate nodes of a given type with optional session and metadata filters
+- `search` — case-insensitive keyword search over `Knowledge` nodes (entity, entity_type, summary)
 
-**Proposed interface:**
-```json
-{
-  "name": "graph_query",
-  "description": "Query the agent's own graph store. Supports node lookup by type, BFS traversal from a node, and keyword/embedding search over Knowledge nodes.",
-  "parameters": {
-    "mode": "bfs | search | list_type",
-    "node_id": "(bfs) starting node",
-    "depth": "(bfs) traversal depth",
-    "node_type": "(list_type) Interaction | Agent | Content | Task | Knowledge",
-    "query": "(search) natural language query over Knowledge nodes"
-  }
-}
-```
+**Key corrections from the original backlog note:**
+- `ToolContext` already carried `Arc<GraphStore>`, `agent_id`, and `interaction_id` — no plumbing was needed
+- Two new `GraphStore` helpers were added: `list_nodes_by_type` and `search_knowledge` (in `store.rs`)
+- Registration is in `build_tool_registry()` in `src/main.rs`, not `ToolRegistry::new()`
+- Not destructive — no HITL gate applied
 
-**Implementation path:**
-1. Add `GraphQueryTool` in `crates/tools/src/graph_query.rs` implementing the `Tool` trait
-2. It receives a `GraphStore` handle via `ToolContext` (needs `ToolContext` to carry the store)
-3. `ToolContext` currently only holds `working_dir` — add `graph: Option<Arc<GraphStore>>`
-4. Register in `ToolRegistry::new()` alongside the existing tools
-5. Not destructive — no HITL gate needed
-
-**Note:** This is the first tool that reads from the graph rather than the filesystem. It makes the agent genuinely graph-native rather than a filesystem agent that happens to log to a graph.
-
-**Suggested target:** Phase 12.
+**Note:** `search` in Phase 12 is keyword-only. Semantic/embedding search is preserved as a future upgrade without breaking the tool interface.
 
 ---
 

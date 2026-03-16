@@ -16,7 +16,7 @@ Cargo workspace with six crates plus an eval harness. Dependency order (bottom t
 rusqlite / petgraph / instant-distance  (external)
     └── graphirm-graph      # graph store, node/edge CRUD, PageRank, BFS, HNSW
          ├── graphirm-llm   # LLM provider trait, streaming, embeddings
-         ├── graphirm-tools # built-in tools (bash, read, write, edit, grep, find, ls)
+         ├── graphirm-tools # built-in tools (bash, read, write, edit, grep, find, ls, graph_query)
          └── graphirm-agent # agent loop, context engine, multi-agent, knowledge, HITL
               ├── graphirm-tui    # ratatui TUI (chat + graph explorer)
               └── graphirm-server # axum HTTP API + SSE
@@ -40,7 +40,7 @@ graphirm-vscode/            # VS Code / Cursor extension (TypeScript)
 | `src/main.rs` | CLI: `chat`, `graph`, `serve`, `export-corpus`, `label-explore`, `schema-suggest`, `predict-spans`, `validate-agreement` |
 | `crates/graph/` | `GraphStore`, node/edge types, PageRank, BFS, HNSW vector index |
 | `crates/llm/` | `LlmProvider` trait, Anthropic/OpenAI/DeepSeek/Ollama/OpenRouter impls, `MockProvider` |
-| `crates/tools/` | `Tool` trait, `ToolRegistry`, parallel executor, bash/read/write/edit/grep/find/ls |
+| `crates/tools/` | `Tool` trait, `ToolRegistry`, parallel executor, bash/read/write/edit/grep/find/ls/graph_query |
 | `crates/agent/` | `run_agent_loop`, `build_context`, `Coordinator`, `HitlGate`, knowledge extraction |
 | `crates/tui/` | `App`, chat panel, graph explorer, input handling |
 | `crates/server/` | axum routes, SSE streaming, `AppState`, `SessionHandle`, SDK, static file serving |
@@ -101,9 +101,10 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `Arc<RwLock<StableGraph>>` for in-memory graph — acquire locks briefly, never hold across await points
 
 **Patterns:**
-- New tool → implement `Tool` trait, register in `ToolRegistry::new()`
+- New tool → implement `Tool` trait in `crates/tools/src/<name>.rs`, register in `build_tool_registry()` in `src/main.rs`
 - New LLM provider → implement `LlmProvider` trait in `crates/llm/`
 - `bash`, `write`, `edit` are destructive tools — subject to HITL gate
+- `read`, `grep`, `find`, `ls`, `graph_query` are non-destructive — always run without confirmation
 - Config lives in `config/default.toml`; `AgentConfig` is loaded from it at startup
 - API keys via env vars: `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`
 
@@ -116,6 +117,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 0–9 | Scaffold → Knowledge layer (graph, LLM, tools, agent, multi-agent, context engine, TUI, HTTP, knowledge/HNSW) | ✅ done |
 | 10 | Structured LLM response segments (parse → persist → GLiNER2 fallback → context filter → eval) | ✅ done |
 | 11 | Web UI — browser graph visualization + chat | ✅ done |
+| 12 | `graph_query` tool — agent can query its own graph (bfs, list_type, keyword search) | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
