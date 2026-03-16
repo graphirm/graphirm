@@ -3,6 +3,7 @@ pub mod edit;
 pub mod error;
 pub mod executor;
 pub mod find;
+pub mod graph_query;
 pub mod grep;
 pub mod ls;
 pub mod permissions;
