@@ -28,15 +28,23 @@ Thumbs.db
 .worktrees/
 
 # Internal docs (plans, strategy, findings — keep local only)
-docs/*
-# Track public-facing guides (user-facing, not just internal planning)
-!docs/guides/
+docs/plans/
+docs/archive/
+docs/features/
+docs/backlog.md
+docs/completion-log.md
+docs/usage-discovery-findings.md
+docs/soft_escalation_validation_report.md
+docs/validation_summary.txt
 
 # Nodestradamus analysis cache (large binary artifacts)
 .nodestradamus/*.msgpack
 
 # Pipeline / eval data files (corpus, spans, annotations)
 data/
+
+# Eval results output
+results/
 
 # VS Code extension build artifacts
 *.vsix
