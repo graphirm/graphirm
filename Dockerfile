@@ -30,6 +30,6 @@ COPY config /app/config
 
 WORKDIR /app
 
-EXPOSE 5555
+EXPOSE 3000
 
-CMD ["graphirm", "--db", "/data/graph.db", "serve", "--host", "0.0.0.0", "--port", "5555"]
+CMD ["graphirm", "--db", "/data/graph.db", "serve", "--host", "0.0.0.0", "--port", "3000"]
