@@ -12,6 +12,9 @@
 .vscode/
 *.code-workspace
 
+# Nodestradamus analysis cache (large binary artifacts)
+.nodestradamus/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -37,8 +40,7 @@ docs/usage-discovery-findings.md
 docs/soft_escalation_validation_report.md
 docs/validation_summary.txt
 
-# Nodestradamus analysis cache (large binary artifacts)
-.nodestradamus/*.msgpack
+# (nodestradamus covered above)
 
 # Pipeline / eval data files (corpus, spans, annotations)
 data/
