@@ -121,9 +121,8 @@ impl OnnxExtractor {
         }
 
         let config_path = model_dir.join("gliner2_config.json");
-        let config_bytes = std::fs::read(&config_path).map_err(|e| {
-            AgentError::Workflow(format!("Cannot read gliner2_config.json: {e}"))
-        })?;
+        let config_bytes = std::fs::read(&config_path)
+            .map_err(|e| AgentError::Workflow(format!("Cannot read gliner2_config.json: {e}")))?;
         let config: Gliner2Config = serde_json::from_slice(&config_bytes)
             .map_err(|e| AgentError::Workflow(format!("Invalid gliner2_config.json: {e}")))?;
 
@@ -249,9 +248,7 @@ impl OnnxExtractor {
         }
 
         // ── Step 3: Text hidden states (after [SEP_TEXT]) ────────────────────
-        let text_hidden = hs_2d
-            .slice(ndarray::s![text_start_idx.., ..])
-            .to_owned(); // [text_tokens, 1024]
+        let text_hidden = hs_2d.slice(ndarray::s![text_start_idx.., ..]).to_owned(); // [text_tokens, 1024]
 
         // ── Step 4: Generate word spans ──────────────────────────────────────
         let num_words = word_offsets.len();
@@ -273,10 +270,7 @@ impl OnnxExtractor {
             .map_err(|e| AgentError::Workflow(format!("span_end shape: {e}")))?;
 
         // span_rep needs hidden_states with batch dim: [1, text_tokens, 1024]
-        let text_hidden_3d = text_hidden
-            .view()
-            .insert_axis(ndarray::Axis(0))
-            .to_owned(); // [1, text_tokens, 1024]
+        let text_hidden_3d = text_hidden.view().insert_axis(ndarray::Axis(0)).to_owned(); // [1, text_tokens, 1024]
 
         // ── Step 5: Span representations ─────────────────────────────────────
         // span_rep: [1, num_spans, 1024] → extract to owned [num_spans, 1024]
@@ -351,9 +345,9 @@ impl OnnxExtractor {
             let char_end = word_offsets[word_end].1;
             let label = &entity_types[label_idx];
 
-            let overlaps = kept.iter().any(|k| {
-                k.entity_type == *label && k.start < char_end && k.end > char_start
-            });
+            let overlaps = kept
+                .iter()
+                .any(|k| k.entity_type == *label && k.start < char_end && k.end > char_start);
 
             if !overlaps {
                 kept.push(RawOnnxEntity {
@@ -451,7 +445,13 @@ impl OnnxExtractor {
             tokens.extend(word_ids);
         }
 
-        (tokens, e_positions, word_offsets, text_start_idx, first_token_positions)
+        (
+            tokens,
+            e_positions,
+            word_offsets,
+            text_start_idx,
+            first_token_positions,
+        )
     }
 }
 
@@ -489,7 +489,9 @@ pub(crate) fn sigmoid_inplace(arr: &mut Array2<f32>) {
 // ─── Conversion helpers ───────────────────────────────────────────────────────
 
 /// Convert raw GLiNER2 entity spans into the shared `ExtractionResponse` format.
-pub fn raw_entities_to_extraction_response(raw: Vec<RawOnnxEntity>) -> super::extraction::ExtractionResponse {
+pub fn raw_entities_to_extraction_response(
+    raw: Vec<RawOnnxEntity>,
+) -> super::extraction::ExtractionResponse {
     use super::extraction::ExtractedEntity;
     let entities = raw
         .into_iter()
@@ -539,7 +541,7 @@ const HF_MODEL_ID: &str = "lmo3/gliner2-large-v1-onnx";
 /// # Upload to HuggingFace or point OnnxExtractor::new() at that directory.
 /// ```
 pub async fn download_model() -> Result<PathBuf, AgentError> {
-    use hf_hub::{api::tokio::Api, Repo, RepoType};
+    use hf_hub::{Repo, RepoType, api::tokio::Api};
 
     let api = Api::new()
         .map_err(|e| AgentError::Workflow(format!("HuggingFace API init failed: {e}")))?;
@@ -601,7 +603,8 @@ pub async fn download_model() -> Result<PathBuf, AgentError> {
 /// The `std::sync::Mutex` on the inner map is held only for the brief
 /// `get`/`insert` operation — never across an `.await` point.
 pub(crate) struct SharedInitCache<T> {
-    map: std::sync::Mutex<HashMap<String, std::sync::Arc<tokio::sync::OnceCell<std::sync::Arc<T>>>>>,
+    map:
+        std::sync::Mutex<HashMap<String, std::sync::Arc<tokio::sync::OnceCell<std::sync::Arc<T>>>>>,
 }
 
 impl<T> Default for SharedInitCache<T> {
@@ -624,10 +627,7 @@ impl<T: Send + Sync + 'static> SharedInitCache<T> {
         Fut: std::future::Future<Output = Result<std::sync::Arc<T>, AgentError>>,
     {
         let cell: std::sync::Arc<tokio::sync::OnceCell<std::sync::Arc<T>>> = {
-            let mut map = self
-                .map
-                .lock()
-                .expect("SharedInitCache mutex poisoned");
+            let mut map = self.map.lock().expect("SharedInitCache mutex poisoned");
             map.entry(key.to_string())
                 .or_insert_with(|| std::sync::Arc::new(tokio::sync::OnceCell::new()))
                 .clone()
@@ -659,11 +659,9 @@ pub async fn get_or_init_onnx_extractor(
     EXTRACTOR_CACHE
         .get_or_try_init(&canonical_key, move || async move {
             let path = std::path::PathBuf::from(dir_owned);
-            tokio::task::spawn_blocking(move || {
-                OnnxExtractor::new(&path).map(std::sync::Arc::new)
-            })
-            .await
-            .map_err(|e| AgentError::Join(e.to_string()))?
+            tokio::task::spawn_blocking(move || OnnxExtractor::new(&path).map(std::sync::Arc::new))
+                .await
+                .map_err(|e| AgentError::Join(e.to_string()))?
         })
         .await
 }
@@ -677,8 +675,12 @@ mod tests {
     #[test]
     fn test_build_schema_prefix_has_e_positions() {
         let tok_e: i64 = 128005;
-        let tokens: Vec<i64> = vec![287, 128003, 100, 287, tok_e, 101, tok_e, 102, 1263, 1263, 128002];
-        let e_positions: Vec<usize> = tokens.iter().enumerate()
+        let tokens: Vec<i64> = vec![
+            287, 128003, 100, 287, tok_e, 101, tok_e, 102, 1263, 1263, 128002,
+        ];
+        let e_positions: Vec<usize> = tokens
+            .iter()
+            .enumerate()
             .filter(|(_, t)| **t == tok_e)
             .map(|(i, _)| i)
             .collect();
@@ -740,7 +742,8 @@ mod tests {
 
     #[test]
     fn test_sigmoid_inplace() {
-        let mut arr = ndarray::Array2::from_shape_vec((2, 2), vec![0.0f32, 2.0, -2.0, 100.0]).unwrap();
+        let mut arr =
+            ndarray::Array2::from_shape_vec((2, 2), vec![0.0f32, 2.0, -2.0, 100.0]).unwrap();
         sigmoid_inplace(&mut arr);
         assert!((arr[[0, 0]] - 0.5).abs() < 1e-5);
         assert!(arr[[0, 1]] > 0.85);
@@ -787,11 +790,24 @@ mod tests {
             }
         };
 
-        let a = cache.get_or_try_init("dir_a", make_builder(calls.clone())).await.unwrap();
-        let b = cache.get_or_try_init("dir_a", make_builder(calls.clone())).await.unwrap();
+        let a = cache
+            .get_or_try_init("dir_a", make_builder(calls.clone()))
+            .await
+            .unwrap();
+        let b = cache
+            .get_or_try_init("dir_a", make_builder(calls.clone()))
+            .await
+            .unwrap();
 
-        assert!(std::sync::Arc::ptr_eq(&a, &b), "second call must return cached Arc");
-        assert_eq!(calls.load(Ordering::SeqCst), 1, "builder must run exactly once");
+        assert!(
+            std::sync::Arc::ptr_eq(&a, &b),
+            "second call must return cached Arc"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "builder must run exactly once"
+        );
     }
 
     #[tokio::test]
@@ -902,7 +918,10 @@ mod tests {
             .await
             .expect("Extraction failed");
 
-        assert!(!result.entities.is_empty(), "Should detect at least one entity");
+        assert!(
+            !result.entities.is_empty(),
+            "Should detect at least one entity"
+        );
         let names: Vec<&str> = result.entities.iter().map(|e| e.name.as_str()).collect();
         assert!(
             names.contains(&"serde") || names.contains(&"tokio"),

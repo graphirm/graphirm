@@ -59,9 +59,8 @@ pub fn export_corpus_to_jsonl(
                 text: data.content.clone(),
             };
             let line = serde_json::to_string(&turn).map_err(GraphError::Serde)?;
-            writeln!(out, "{line}").map_err(|e| {
-                GraphError::NodeNotFound(format!("write error: {e}"))
-            })?;
+            writeln!(out, "{line}")
+                .map_err(|e| GraphError::NodeNotFound(format!("write error: {e}")))?;
             count += 1;
         }
     }

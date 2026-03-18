@@ -13,8 +13,14 @@ pub fn tasks() -> Vec<EvalTask> {
                 "Compare the two. Which crate has more public exports?".to_string(),
             ],
             verifier: Verifier::All(vec![
-                Verifier::GraphContains { min_nodes: 10, type_name: "Interaction".to_string() },
-                Verifier::GraphContains { min_nodes: 10, type_name: "Content".to_string() },
+                Verifier::GraphContains {
+                    min_nodes: 10,
+                    type_name: "Interaction".to_string(),
+                },
+                Verifier::GraphContains {
+                    min_nodes: 10,
+                    type_name: "Content".to_string(),
+                },
             ]),
             max_turns: 10,
             timeout_secs: 120,
@@ -110,11 +116,9 @@ pub fn tasks() -> Vec<EvalTask> {
             name: "graph_query with an unknown mode returns an error the agent handles gracefully"
                 .to_string(),
             tags: vec!["graph".to_string(), "graph_query".to_string()],
-            prompts: vec![
-                "Call the graph_query tool with mode='does_not_exist'. \
+            prompts: vec!["Call the graph_query tool with mode='does_not_exist'. \
                  Tell me whether it returned an error or succeeded."
-                    .to_string(),
-            ],
+                .to_string()],
             // The tool returns InvalidArguments; the agent should report an error occurred.
             verifier: Verifier::ResponseContainsAny {
                 substrings: vec![

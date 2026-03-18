@@ -153,10 +153,7 @@ async fn bench_provider(name: &str, provider: &dyn EmbeddingProvider, cost_per_1
     println!("  Avg latency:       {avg_latency}ms per call");
     println!("  Related-sim avg:   {avg_related:.4} (higher = better, max 1.0)");
     println!("  Unrelated-sim:     {unrelated_sim:.4} (lower = better)");
-    println!(
-        "  Discrimination:    {:.4}",
-        avg_related - unrelated_sim
-    );
+    println!("  Discrimination:    {:.4}", avg_related - unrelated_sim);
     println!("  Cost (20 texts):   ${cost_usd:.6}");
     println!(
         "  Per-pair sims:     {:?}",
@@ -179,18 +176,11 @@ async fn main() {
 
     // Mistral mistral-embed
     if let Some(ref key) = mistral_key {
-        let mistral_embed =
-            MistralEmbeddingProvider::new(key, MistralEmbedModel::MistralEmbed);
-        bench_provider(
-            "mistral/mistral-embed ($0.10/1M tok)",
-            &mistral_embed,
-            0.10,
-        )
-        .await;
+        let mistral_embed = MistralEmbeddingProvider::new(key, MistralEmbedModel::MistralEmbed);
+        bench_provider("mistral/mistral-embed ($0.10/1M tok)", &mistral_embed, 0.10).await;
 
         // Mistral codestral-embed
-        let codestral_embed =
-            MistralEmbeddingProvider::new(key, MistralEmbedModel::CodestralEmbed);
+        let codestral_embed = MistralEmbeddingProvider::new(key, MistralEmbedModel::CodestralEmbed);
         bench_provider(
             "mistral/codestral-embed ($0.10/1M tok)",
             &codestral_embed,
@@ -213,9 +203,7 @@ async fn main() {
             "bge-large-en-v1.5",
         ] {
             match FastEmbedProvider::new(model_name) {
-                Ok(fe) => {
-                    bench_provider(&format!("fastembed/{model_name} (free)"), &fe, 0.0).await
-                }
+                Ok(fe) => bench_provider(&format!("fastembed/{model_name} (free)"), &fe, 0.0).await,
                 Err(e) => println!("\n── fastembed/{model_name} ──\n  SKIP: {e}"),
             }
         }

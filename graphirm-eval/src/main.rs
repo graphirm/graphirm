@@ -70,7 +70,10 @@ async fn main() -> anyhow::Result<()> {
         print!("  [{}] {} ... ", task.id, task.name);
         let result = harness.run_task(task).await;
         let icon = if result.passed { "✅" } else { "❌" };
-        println!("{icon} ({:.1}s, {} turns)", result.elapsed_secs, result.turns_used);
+        println!(
+            "{icon} ({:.1}s, {} turns)",
+            result.elapsed_secs, result.turns_used
+        );
         if let Some(ref reason) = result.failure_reason {
             println!("      ↳ {reason}");
         }
@@ -80,7 +83,12 @@ async fn main() -> anyhow::Result<()> {
     let passed = results.iter().filter(|r| r.passed).count();
     let total = results.len();
     if total > 0 {
-        println!("\n{}/{} tasks passed ({:.0}%)", passed, total, passed as f64 / total as f64 * 100.0);
+        println!(
+            "\n{}/{} tasks passed ({:.0}%)",
+            passed,
+            total,
+            passed as f64 / total as f64 * 100.0
+        );
     }
 
     report::write_report(&results, &cli.report)?;

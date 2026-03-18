@@ -9,8 +9,8 @@ use std::io::BufRead;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::AgentError;
 use super::predict_spans::{SpanPrediction, TurnSpans};
+use crate::error::AgentError;
 
 /// One human-annotated segment (type + character offsets).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,7 +49,9 @@ pub struct AgreementReport {
 const DEFAULT_OVERLAP_RATIO: f64 = 0.5;
 
 /// Read human annotations JSONL.
-pub fn read_annotations_jsonl<R: BufRead>(reader: R) -> Result<Vec<HumanTurnAnnotation>, AgentError> {
+pub fn read_annotations_jsonl<R: BufRead>(
+    reader: R,
+) -> Result<Vec<HumanTurnAnnotation>, AgentError> {
     let mut rows = Vec::new();
     for (i, line) in reader.lines().enumerate() {
         let line = line.map_err(|e| AgentError::Workflow(format!("read line {}: {}", i + 1, e)))?;
@@ -76,19 +78,11 @@ fn gliner_by_turn(spans: &[TurnSpans]) -> HashMap<(String, u32), &TurnSpans> {
 fn overlap_len(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> usize {
     let start = a_start.max(b_start);
     let end = a_end.min(b_end);
-    if end > start {
-        end - start
-    } else {
-        0
-    }
+    if end > start { end - start } else { 0 }
 }
 
 /// Check if a human segment matches a GLiNER2 span: same type and overlap ratio >= min_ratio.
-fn segment_matches(
-    human: &HumanSegment,
-    gliner: &SpanPrediction,
-    min_ratio: f64,
-) -> bool {
+fn segment_matches(human: &HumanSegment, gliner: &SpanPrediction, min_ratio: f64) -> bool {
     if human.segment_type != gliner.label {
         return false;
     }
@@ -125,7 +119,10 @@ pub fn compute_agreement(
 
         for seg in &ann.segments {
             total += 1;
-            let found = gliner_turn.spans.iter().any(|s| segment_matches(seg, s, overlap_ratio_min));
+            let found = gliner_turn
+                .spans
+                .iter()
+                .any(|s| segment_matches(seg, s, overlap_ratio_min));
             if found {
                 matched += 1;
             }

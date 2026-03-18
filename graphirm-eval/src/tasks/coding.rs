@@ -12,8 +12,12 @@ pub fn tasks() -> Vec<EvalTask> {
                     .to_string(),
             ],
             verifier: Verifier::All(vec![
-                Verifier::ResponseContains { substring: "get_node".to_string() },
-                Verifier::ResponseContains { substring: "add_node".to_string() },
+                Verifier::ResponseContains {
+                    substring: "get_node".to_string(),
+                },
+                Verifier::ResponseContains {
+                    substring: "add_node".to_string(),
+                },
             ]),
             max_turns: 5,
             timeout_secs: 120,
@@ -45,12 +49,10 @@ pub fn tasks() -> Vec<EvalTask> {
         EvalTask {
             id: "bash-line-count".to_string(),
             name: "Count lines in workflow.rs using bash".to_string(),
-            tags: vec!["tool-use".to_string()],  // removed "basic" tag
-            prompts: vec![
-                "How many lines are in `crates/agent/src/workflow.rs`? \
+            tags: vec!["tool-use".to_string()], // removed "basic" tag
+            prompts: vec!["How many lines are in `crates/agent/src/workflow.rs`? \
                  Use bash to count them precisely."
-                    .to_string(),
-            ],
+                .to_string()],
             verifier: Verifier::ResponseContainsCommandOutput {
                 command: "sh".to_string(),
                 args: vec![
@@ -93,7 +95,8 @@ pub fn tasks() -> Vec<EvalTask> {
             name: "Write a file then read it back in next turn".to_string(),
             tags: vec!["multi-turn".to_string()],
             prompts: vec![
-                "Write the string 'EVAL_MARKER_9a3f' to the file `/tmp/eval_marker.txt`.".to_string(),
+                "Write the string 'EVAL_MARKER_9a3f' to the file `/tmp/eval_marker.txt`."
+                    .to_string(),
                 "Read the file `/tmp/eval_marker.txt` and tell me its contents.".to_string(),
             ],
             verifier: Verifier::ResponseContains {

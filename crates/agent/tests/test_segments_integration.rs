@@ -1,10 +1,12 @@
 //! Integration test: full segment parse → graph persistence round-trip.
 
-use std::sync::Arc;
-use graphirm_graph::{AgentData, EdgeType, GraphEdge, GraphNode, GraphStore, InteractionData, NodeType};
 use graphirm_agent::knowledge::segments::{
     detect_nesting, parse_structured_segments, persist_segments,
 };
+use graphirm_graph::{
+    AgentData, EdgeType, GraphEdge, GraphNode, GraphStore, InteractionData, NodeType,
+};
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_full_segment_round_trip() {
@@ -31,7 +33,9 @@ async fn test_full_segment_round_trip() {
     assert!(nesting.is_empty());
 
     // Persist to graph
-    let node_ids = persist_segments(&store, &parent_id, &segments, &nesting).await.unwrap();
+    let node_ids = persist_segments(&store, &parent_id, &segments, &nesting)
+        .await
+        .unwrap();
     assert_eq!(node_ids.len(), 3);
 
     // Verify segment Content nodes have correct types and bodies
@@ -69,16 +73,33 @@ async fn test_segment_round_trip_with_nesting() {
     // Manually construct segments with overlapping spans to trigger nesting
     use graphirm_agent::knowledge::segments::Segment;
     let segments = vec![
-        Segment { segment_type: "plan".into(), content: "overall plan".into(), start: 0, end: 100 },
-        Segment { segment_type: "code".into(), content: "fn f(){}".into(), start: 30, end: 60 },
-        Segment { segment_type: "answer".into(), content: "done".into(), start: 110, end: 130 },
+        Segment {
+            segment_type: "plan".into(),
+            content: "overall plan".into(),
+            start: 0,
+            end: 100,
+        },
+        Segment {
+            segment_type: "code".into(),
+            content: "fn f(){}".into(),
+            start: 30,
+            end: 60,
+        },
+        Segment {
+            segment_type: "answer".into(),
+            content: "done".into(),
+            start: 110,
+            end: 130,
+        },
     ];
 
     let nesting = detect_nesting(&segments);
     assert_eq!(nesting.len(), 1);
     assert_eq!(nesting[0], (0, 1)); // plan contains code
 
-    let node_ids = persist_segments(&store, &parent_id, &segments, &nesting).await.unwrap();
+    let node_ids = persist_segments(&store, &parent_id, &segments, &nesting)
+        .await
+        .unwrap();
     assert_eq!(node_ids.len(), 3);
 
     // Check nesting edge: segment[0] (plan) → segment[1] (code)
@@ -92,7 +113,7 @@ async fn test_segment_round_trip_with_nesting() {
 
 #[tokio::test]
 async fn test_segment_filter_excludes_non_matching_types() {
-    use graphirm_agent::context::{build_context, ContextConfig};
+    use graphirm_agent::context::{ContextConfig, build_context};
 
     let store = Arc::new(GraphStore::open(":memory:").unwrap());
 
@@ -115,7 +136,11 @@ async fn test_segment_filter_excludes_non_matching_types() {
     let user_id = user_node.id.clone();
     store.add_node(user_node).unwrap();
     store
-        .add_edge(GraphEdge::new(EdgeType::Produces, agent_id.clone(), user_id.clone()))
+        .add_edge(GraphEdge::new(
+            EdgeType::Produces,
+            agent_id.clone(),
+            user_id.clone(),
+        ))
         .unwrap();
 
     // Create an assistant Interaction node (metadata["segmented"] will be stamped after persist)
@@ -129,20 +154,40 @@ async fn test_segment_filter_excludes_non_matching_types() {
 
     // Link assistant to agent (Produces) and to user turn (RespondsTo)
     store
-        .add_edge(GraphEdge::new(EdgeType::Produces, agent_id.clone(), assistant_id.clone()))
+        .add_edge(GraphEdge::new(
+            EdgeType::Produces,
+            agent_id.clone(),
+            assistant_id.clone(),
+        ))
         .unwrap();
     store
-        .add_edge(GraphEdge::new(EdgeType::RespondsTo, assistant_id.clone(), user_id.clone()))
+        .add_edge(GraphEdge::new(
+            EdgeType::RespondsTo,
+            assistant_id.clone(),
+            user_id.clone(),
+        ))
         .unwrap();
 
     // Persist reasoning + code segments as child Content nodes
     use graphirm_agent::knowledge::segments::Segment;
     let segments = vec![
-        Segment { segment_type: "reasoning".to_string(), content: "I think step by step.".to_string(), start: 0, end: 22 },
-        Segment { segment_type: "code".to_string(), content: "def add(a, b): return a + b".to_string(), start: 23, end: 50 },
+        Segment {
+            segment_type: "reasoning".to_string(),
+            content: "I think step by step.".to_string(),
+            start: 0,
+            end: 22,
+        },
+        Segment {
+            segment_type: "code".to_string(),
+            content: "def add(a, b): return a + b".to_string(),
+            start: 23,
+            end: 50,
+        },
     ];
     let nesting = detect_nesting(&segments);
-    persist_segments(&store, &assistant_id, &segments, &nesting).await.unwrap();
+    persist_segments(&store, &assistant_id, &segments, &nesting)
+        .await
+        .unwrap();
 
     // Stamp "segmented": true on the parent node, mirroring the production path in workflow.rs.
     let mut stamped = store.get_node(&assistant_id).unwrap();
@@ -178,7 +223,11 @@ async fn test_segment_filter_excludes_non_matching_types() {
         .content
         .iter()
         .filter_map(|part| {
-            if let graphirm_llm::ContentPart::Text { text } = part { Some(text.as_str()) } else { None }
+            if let graphirm_llm::ContentPart::Text { text } = part {
+                Some(text.as_str())
+            } else {
+                None
+            }
         })
         .collect::<Vec<_>>()
         .join("\n");

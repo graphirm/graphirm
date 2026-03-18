@@ -387,10 +387,7 @@ impl GraphStore {
     ///
     /// Session is identified by the agent node id stored in each node's `metadata.session_id`.
     /// Used for corpus export (assistant turns) and session thread export.
-    pub fn get_session_interactions(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<GraphNode>, GraphError> {
+    pub fn get_session_interactions(&self, session_id: &str) -> Result<Vec<GraphNode>, GraphError> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
             "SELECT id, data, metadata, created_at, updated_at
@@ -1226,7 +1223,10 @@ mod tests {
 
         let fetched = store.get_node(&id).unwrap();
         assert_eq!(fetched.label(), Some("interaction_1_2_5"));
-        assert_eq!(fetched.metadata.get("label_ver"), Some(&serde_json::json!(5)));
+        assert_eq!(
+            fetched.metadata.get("label_ver"),
+            Some(&serde_json::json!(5))
+        );
     }
 
     #[test]
@@ -1242,21 +1242,21 @@ mod tests {
         session_content.metadata["session_id"] = serde_json::json!("session-a");
         store.add_node(session_content).unwrap();
 
-        let mut same_session_other_type =
-            GraphNode::new(NodeType::Interaction(InteractionData {
-                role: "tool".to_string(),
-                content: "tool result".to_string(),
-                token_count: None,
-            }));
+        let mut same_session_other_type = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "tool".to_string(),
+            content: "tool result".to_string(),
+            token_count: None,
+        }));
         same_session_other_type.metadata["session_id"] = serde_json::json!("session-a");
         store.add_node(same_session_other_type).unwrap();
 
-        let mut other_session_content = GraphNode::new(NodeType::Content(crate::nodes::ContentData {
-            content_type: "file".to_string(),
-            path: Some("src/lib.rs".to_string()),
-            body: "pub fn lib() {}".to_string(),
-            language: Some("rust".to_string()),
-        }));
+        let mut other_session_content =
+            GraphNode::new(NodeType::Content(crate::nodes::ContentData {
+                content_type: "file".to_string(),
+                path: Some("src/lib.rs".to_string()),
+                body: "pub fn lib() {}".to_string(),
+                language: Some("rust".to_string()),
+            }));
         other_session_content.metadata["session_id"] = serde_json::json!("session-b");
         store.add_node(other_session_content).unwrap();
 
@@ -1281,12 +1281,20 @@ mod tests {
         };
 
         // Session A: user, assistant, user
-        store.add_node(make_interaction("sess-a", "user", "Hello")).unwrap();
-        store.add_node(make_interaction("sess-a", "assistant", "Hi!")).unwrap();
-        store.add_node(make_interaction("sess-a", "user", "Bye")).unwrap();
+        store
+            .add_node(make_interaction("sess-a", "user", "Hello"))
+            .unwrap();
+        store
+            .add_node(make_interaction("sess-a", "assistant", "Hi!"))
+            .unwrap();
+        store
+            .add_node(make_interaction("sess-a", "user", "Bye"))
+            .unwrap();
 
         // Session B: one assistant turn
-        store.add_node(make_interaction("sess-b", "assistant", "Only reply")).unwrap();
+        store
+            .add_node(make_interaction("sess-b", "assistant", "Only reply"))
+            .unwrap();
 
         let a_turns = store.get_session_interactions("sess-a").unwrap();
         assert_eq!(a_turns.len(), 3);
@@ -1998,15 +2006,11 @@ mod tests {
         assert_eq!(nodes.len(), 2);
 
         // Filter: task + no session filter → should return 3
-        let nodes = store
-            .list_nodes_by_type("task", None, None, 10)
-            .unwrap();
+        let nodes = store.list_nodes_by_type("task", None, None, 10).unwrap();
         assert_eq!(nodes.len(), 3);
 
         // Limit respected: task + no session → limit 2 → should return 2
-        let nodes = store
-            .list_nodes_by_type("task", None, None, 2)
-            .unwrap();
+        let nodes = store.list_nodes_by_type("task", None, None, 2).unwrap();
         assert_eq!(nodes.len(), 2);
     }
 
@@ -2055,9 +2059,7 @@ mod tests {
         assert!(data.summary.contains("auth") || data.entity.contains("auth"));
 
         // auth + no session filter → should return k1 and k3
-        let nodes = store
-            .search_knowledge("auth", None, None, 10)
-            .unwrap();
+        let nodes = store.search_knowledge("auth", None, None, 10).unwrap();
         assert_eq!(nodes.len(), 2);
 
         // auth + entity_type=concept → should return nothing (k1/k3 are functions)
@@ -2073,9 +2075,7 @@ mod tests {
         assert_eq!(nodes.len(), 1);
 
         // Limit respected
-        let nodes = store
-            .search_knowledge("auth", None, None, 1)
-            .unwrap();
+        let nodes = store.search_knowledge("auth", None, None, 1).unwrap();
         assert_eq!(nodes.len(), 1);
     }
 

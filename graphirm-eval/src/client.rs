@@ -37,7 +37,11 @@ impl GraphirmClient {
     }
 
     pub async fn health(&self) -> reqwest::Result<bool> {
-        let r = self.http.get(format!("{}/api/health", self.base)).send().await?;
+        let r = self
+            .http
+            .get(format!("{}/api/health", self.base))
+            .send()
+            .await?;
         Ok(r.status().is_success())
     }
 
@@ -48,7 +52,8 @@ impl GraphirmClient {
     ) -> reqwest::Result<SessionResponse> {
         // auto_approve: true bypasses the HITL gate so bash/write/edit run
         // without human confirmation — required for programmatic eval runs.
-        let mut body = serde_json::json!({ "auto_approve": true, "enable_segments": enable_segments });
+        let mut body =
+            serde_json::json!({ "auto_approve": true, "enable_segments": enable_segments });
         if let Some(filter) = segment_filter {
             body["segment_filter"] = serde_json::json!(filter);
         }
@@ -63,7 +68,9 @@ impl GraphirmClient {
 
     pub async fn prompt(&self, session_id: &str, content: &str) -> reqwest::Result<()> {
         #[derive(Serialize)]
-        struct Prompt<'a> { content: &'a str }
+        struct Prompt<'a> {
+            content: &'a str,
+        }
         self.http
             .post(format!("{}/api/sessions/{}/prompt", self.base, session_id))
             .json(&Prompt { content })
@@ -100,7 +107,10 @@ impl GraphirmClient {
 
     pub async fn get_messages(&self, session_id: &str) -> reqwest::Result<Vec<Value>> {
         self.http
-            .get(format!("{}/api/sessions/{}/messages", self.base, session_id))
+            .get(format!(
+                "{}/api/sessions/{}/messages",
+                self.base, session_id
+            ))
             .send()
             .await?
             .json()
@@ -127,7 +137,8 @@ impl GraphirmClient {
 
     /// Cancel and remove a session. Fires the CancellationToken, stopping any in-flight agent loop.
     pub async fn delete_session(&self, session_id: &str) -> reqwest::Result<()> {
-        let _ = self.http
+        let _ = self
+            .http
             .delete(format!("{}/api/sessions/{}", self.base, session_id))
             .send()
             .await?;

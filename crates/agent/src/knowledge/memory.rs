@@ -130,7 +130,11 @@ impl MemoryRetriever {
             }
         }
 
-        tracing::info!(loaded, skipped = total - loaded, "Hydrated HNSW index from graph store");
+        tracing::info!(
+            loaded,
+            skipped = total - loaded,
+            "Hydrated HNSW index from graph store"
+        );
         Ok(loaded)
     }
 
@@ -150,10 +154,11 @@ impl MemoryRetriever {
         // Fetch all candidate nodes from the graph in one spawn_blocking call.
         let graph = self.graph.clone();
         let node_ids: Vec<NodeId> = candidates.into_iter().map(|(id, _)| id).collect();
-        let fetched: Vec<Result<GraphNode, _>> =
-            tokio::task::spawn_blocking(move || node_ids.into_iter().map(|id| graph.get_node(&id)).collect())
-                .await
-                .map_err(|e| AgentError::Join(e.to_string()))?;
+        let fetched: Vec<Result<GraphNode, _>> = tokio::task::spawn_blocking(move || {
+            node_ids.into_iter().map(|id| graph.get_node(&id)).collect()
+        })
+        .await
+        .map_err(|e| AgentError::Join(e.to_string()))?;
 
         let mut nodes = Vec::with_capacity(fetched.len());
         for result in fetched {

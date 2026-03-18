@@ -134,27 +134,28 @@ async fn execute_bfs(args: &serde_json::Value, ctx: &ToolContext) -> Result<Tool
     let limit = args["limit"].as_u64().unwrap_or(50) as usize;
 
     // Parse optional edge_types from snake_case strings
-    let edge_types: Vec<EdgeType> = if args["edge_types"].is_null() || !args["edge_types"].is_array() {
-        EdgeType::all().to_vec()
-    } else {
-        let arr = args["edge_types"].as_array().unwrap();
-        let mut parsed = Vec::with_capacity(arr.len());
-        for v in arr {
-            let s = v.as_str().ok_or_else(|| {
-                ToolError::InvalidArguments("edge_types entries must be strings".into())
-            })?;
-            // Use serde to deserialize the snake_case string into EdgeType
-            let et: EdgeType = serde_json::from_value(serde_json::Value::String(s.to_string()))
-                .map_err(|_| {
-                    ToolError::InvalidArguments(format!(
-                        "unknown edge type '{s}'; use snake_case names like \
-                         responds_to, contains, produces"
-                    ))
+    let edge_types: Vec<EdgeType> =
+        if args["edge_types"].is_null() || !args["edge_types"].is_array() {
+            EdgeType::all().to_vec()
+        } else {
+            let arr = args["edge_types"].as_array().unwrap();
+            let mut parsed = Vec::with_capacity(arr.len());
+            for v in arr {
+                let s = v.as_str().ok_or_else(|| {
+                    ToolError::InvalidArguments("edge_types entries must be strings".into())
                 })?;
-            parsed.push(et);
-        }
-        parsed
-    };
+                // Use serde to deserialize the snake_case string into EdgeType
+                let et: EdgeType = serde_json::from_value(serde_json::Value::String(s.to_string()))
+                    .map_err(|_| {
+                        ToolError::InvalidArguments(format!(
+                            "unknown edge type '{s}'; use snake_case names like \
+                         responds_to, contains, produces"
+                        ))
+                    })?;
+                parsed.push(et);
+            }
+            parsed
+        };
 
     let graph = ctx.graph.clone();
     let node_id_clone = node_id.clone();
@@ -199,7 +200,10 @@ async fn execute_bfs(args: &serde_json::Value, ctx: &ToolContext) -> Result<Tool
         lines.push(format!("  {}", compact_node_summary(node)));
     }
     if total > limit {
-        lines.push(format!("  ... ({} more nodes, increase limit to see all)", total - limit));
+        lines.push(format!(
+            "  ... ({} more nodes, increase limit to see all)",
+            total - limit
+        ));
     }
     if total == 0 {
         lines.push("  (no reachable nodes)".to_string());
@@ -212,9 +216,9 @@ async fn execute_list_type(
     args: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<ToolOutput, ToolError> {
-    let node_type = args["node_type"]
-        .as_str()
-        .ok_or_else(|| ToolError::InvalidArguments("'node_type' is required for list_type mode".into()))?;
+    let node_type = args["node_type"].as_str().ok_or_else(|| {
+        ToolError::InvalidArguments("'node_type' is required for list_type mode".into())
+    })?;
 
     // Validate node_type
     match node_type {
@@ -275,7 +279,9 @@ async fn execute_search(
         .as_str()
         .ok_or_else(|| ToolError::InvalidArguments("'query' is required for search mode".into()))?;
     if query.trim().is_empty() {
-        return Err(ToolError::InvalidArguments("'query' must not be empty".into()));
+        return Err(ToolError::InvalidArguments(
+            "'query' must not be empty".into(),
+        ));
     }
 
     let entity_type = args["entity_type"].as_str().map(|s| s.to_string());
@@ -458,7 +464,10 @@ mod tests {
             .unwrap();
 
         assert!(!out.is_error);
-        assert!(out.content.contains(&child_id.to_string()), "child should appear in bfs output");
+        assert!(
+            out.content.contains(&child_id.to_string()),
+            "child should appear in bfs output"
+        );
     }
 
     #[tokio::test]
@@ -543,7 +552,10 @@ mod tests {
             )
             .await;
 
-        assert!(result.is_ok(), "list_type should return Ok, got: {result:?}");
+        assert!(
+            result.is_ok(),
+            "list_type should return Ok, got: {result:?}"
+        );
         let out = result.unwrap();
         assert!(!out.is_error);
         assert!(out.content.contains("task") || out.content.contains("Fix bug"));

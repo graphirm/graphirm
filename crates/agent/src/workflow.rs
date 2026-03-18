@@ -137,11 +137,16 @@ pub async fn stream_and_record(
                         Some((segs, "structured"))
                     }
                     Ok(_) => {
-                        tracing::debug!("Structured segment parse returned empty — trying GLiNER2 fallback");
+                        tracing::debug!(
+                            "Structured segment parse returned empty — trying GLiNER2 fallback"
+                        );
                         // GLiNER2 fallback
                         #[cfg(feature = "local-extraction")]
                         {
-                            let model_dir = session.agent_config.extraction.as_ref()
+                            let model_dir = session
+                                .agent_config
+                                .extraction
+                                .as_ref()
                                 .filter(|_| seg_config.gliner2_fallback)
                                 .and_then(|e| {
                                     use crate::knowledge::extraction::ExtractionBackend;
@@ -155,7 +160,10 @@ pub async fn stream_and_record(
                                 });
                             if let Some(dir) = model_dir {
                                 crate::knowledge::segments::try_gliner2_fallback(
-                                    &dir, &raw_text, &seg_config.labels, seg_config.min_confidence,
+                                    &dir,
+                                    &raw_text,
+                                    &seg_config.labels,
+                                    seg_config.min_confidence,
                                 )
                                 .await
                                 .map(|s| (s, "gliner2"))
@@ -174,7 +182,10 @@ pub async fn stream_and_record(
                         // GLiNER2 fallback
                         #[cfg(feature = "local-extraction")]
                         {
-                            let model_dir = session.agent_config.extraction.as_ref()
+                            let model_dir = session
+                                .agent_config
+                                .extraction
+                                .as_ref()
                                 .filter(|_| seg_config.gliner2_fallback)
                                 .and_then(|e| {
                                     use crate::knowledge::extraction::ExtractionBackend;
@@ -188,7 +199,10 @@ pub async fn stream_and_record(
                                 });
                             if let Some(dir) = model_dir {
                                 crate::knowledge::segments::try_gliner2_fallback(
-                                    &dir, &raw_text, &seg_config.labels, seg_config.min_confidence,
+                                    &dir,
+                                    &raw_text,
+                                    &seg_config.labels,
+                                    seg_config.min_confidence,
                                 )
                                 .await
                                 .map(|s| (s, "gliner2"))
@@ -299,10 +313,8 @@ async fn execute_tools_parallel(
     // safe ones run in parallel without gating.
     // `.copied()` turns `&&ContentPart` (from iterating `&[&ContentPart]`) into
     // `&ContentPart` so the partition buckets are `Vec<&ContentPart>`.
-    let (safe_calls, destructive_calls): (Vec<_>, Vec<_>) = tool_calls
-        .iter()
-        .copied()
-        .partition(|part| {
+    let (safe_calls, destructive_calls): (Vec<_>, Vec<_>) =
+        tool_calls.iter().copied().partition(|part| {
             let ContentPart::ToolCall { name, .. } = part else {
                 return true;
             };
@@ -388,7 +400,10 @@ async fn execute_tools_parallel(
         };
 
         // SAFETY: partition guarantees destructive_calls is non-empty only when hitl is Some.
-        let hitl = session.hitl.as_ref().expect("hitl must be Some for destructive calls");
+        let hitl = session
+            .hitl
+            .as_ref()
+            .expect("hitl must be Some for destructive calls");
 
         let gate_key = NodeId::from(call_id.as_str());
 
@@ -510,9 +525,7 @@ async fn execute_tools_parallel(
                         node_ids.push(rejection_id);
                     }
                     Err(e) => {
-                        tracing::error!(
-                            "Failed to record tool rejection for call {call_id}: {e}"
-                        );
+                        tracing::error!("Failed to record tool rejection for call {call_id}: {e}");
                     }
                 }
             }
@@ -562,7 +575,8 @@ fn check_soft_escalation(
         let synthesis_directive = format!(
             "You've called '{}' {} times. Please synthesize what you've learned so far \
              instead of making more identical calls.",
-            tool_name, current_tools.len()
+            tool_name,
+            current_tools.len()
         );
 
         events.emit(AgentEvent::SoftEscalationTriggered {
@@ -587,8 +601,7 @@ async fn emit_graph_update(
     events: &EventBus,
 ) {
     let graph = session.graph.clone();
-    let recent_nodes = match tokio::task::spawn_blocking(move || graph.list_recent_nodes(50))
-        .await
+    let recent_nodes = match tokio::task::spawn_blocking(move || graph.list_recent_nodes(50)).await
     {
         Ok(Ok(nodes)) => nodes,
         Ok(Err(e)) => {
@@ -634,8 +647,7 @@ pub async fn run_agent_loop(
         let query = session.recent_user_message().await.unwrap_or_default();
         match retriever.retrieve_relevant(&query, 5).await {
             Ok(nodes) => {
-                let context =
-                    crate::knowledge::injection::format_memory_context(&nodes);
+                let context = crate::knowledge::injection::format_memory_context(&nodes);
                 if !context.is_empty() {
                     session.set_memory_suffix(context).await;
                     tracing::info!(
@@ -711,11 +723,8 @@ pub async fn run_agent_loop(
                 );
                 // 30s timeout: generous enough for a DeepSeek API call while
                 // still capping the impact on task turn latency.
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
-                    extraction_future,
-                )
-                .await
+                match tokio::time::timeout(std::time::Duration::from_secs(30), extraction_future)
+                    .await
                 {
                     Ok(Ok(node_ids)) => {
                         if let Some(retriever) = session.memory_retriever() {
@@ -734,9 +743,9 @@ pub async fn run_agent_loop(
                     Ok(Err(e)) => {
                         tracing::warn!(error = %e, "Knowledge extraction failed (non-fatal)");
                     }
-                        Err(_) => {
-                            tracing::warn!("Knowledge extraction timed out after 30s (non-fatal)");
-                        }
+                    Err(_) => {
+                        tracing::warn!("Knowledge extraction timed out after 30s (non-fatal)");
+                    }
                 }
             }
             events.emit(AgentEvent::TurnEnd {
@@ -1183,7 +1192,11 @@ mod tests {
             .unwrap();
 
         let content_nodes = graph
-            .neighbors(&first_assistant.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .neighbors(
+                &first_assistant.id,
+                Some(EdgeType::Produces),
+                Direction::Outgoing,
+            )
             .unwrap();
         assert_eq!(content_nodes.len(), 1);
         assert_eq!(content_nodes[0].label(), Some("content_1_3_1"));
@@ -1206,7 +1219,10 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("List and find files").await.unwrap();
+        session
+            .add_user_message("List and find files")
+            .await
+            .unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![
@@ -1244,11 +1260,17 @@ mod tests {
             .find(|node| node.label() == Some("interaction_1_2_1"))
             .unwrap();
         let content_nodes = graph
-            .neighbors(&first_assistant.id, Some(EdgeType::Reads), Direction::Outgoing)
+            .neighbors(
+                &first_assistant.id,
+                Some(EdgeType::Reads),
+                Direction::Outgoing,
+            )
             .unwrap();
 
-        let content_labels: std::collections::HashSet<_> =
-            content_nodes.iter().filter_map(|node| node.label()).collect();
+        let content_labels: std::collections::HashSet<_> = content_nodes
+            .iter()
+            .filter_map(|node| node.label())
+            .collect();
         assert_eq!(content_nodes.len(), 2);
         assert_eq!(content_labels.len(), 2);
         assert!(content_labels.contains("content_1_3_1"));
@@ -1270,7 +1292,10 @@ mod tests {
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
-        session.add_user_message("Do infinite things").await.unwrap();
+        session
+            .add_user_message("Do infinite things")
+            .await
+            .unwrap();
 
         let provider = MockProvider::new(vec![
             tool_call_response(vec![(
@@ -1393,16 +1418,28 @@ mod tests {
 
         let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
-        assert_eq!(provider.call_count(), 2, "LLM should be called twice (tool turn + final)");
+        assert_eq!(
+            provider.call_count(),
+            2,
+            "LLM should be called twice (tool turn + final)"
+        );
 
         // Tool execute() was invoked exactly once.
-        assert_eq!(call_counter.load(Ordering::SeqCst), 1, "Tool should have been called once");
+        assert_eq!(
+            call_counter.load(Ordering::SeqCst),
+            1,
+            "Tool should have been called once"
+        );
 
         // An ApprovedBy edge exists: tool-result node → session.id.
         let approved_sources = graph
             .neighbors(&session.id, Some(EdgeType::ApprovedBy), Direction::Incoming)
             .unwrap();
-        assert_eq!(approved_sources.len(), 1, "Expected exactly one ApprovedBy edge into session");
+        assert_eq!(
+            approved_sources.len(),
+            1,
+            "Expected exactly one ApprovedBy edge into session"
+        );
     }
 
     #[tokio::test]
@@ -1461,7 +1498,11 @@ mod tests {
         assert_eq!(provider.call_count(), 2, "LLM should be called twice");
 
         // Tool execute() must never have been called.
-        assert_eq!(call_counter.load(Ordering::SeqCst), 0, "Tool should NOT have been called");
+        assert_eq!(
+            call_counter.load(Ordering::SeqCst),
+            0,
+            "Tool should NOT have been called"
+        );
 
         // The rejection path adds a RejectedBy edge: rejection_id → session.id.
         // Query incoming RejectedBy neighbours of session.id to find the rejection Content node.
@@ -1521,10 +1562,7 @@ mod tests {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-                if hitl_clone
-                    .resolve(&session_id, HitlDecision::Approve)
-                    .await
-                {
+                if hitl_clone.resolve(&session_id, HitlDecision::Approve).await {
                     hitl_clone.set_paused(false);
                     break;
                 }
@@ -1532,17 +1570,25 @@ mod tests {
         });
 
         let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
-        assert!(result.is_ok(), "Expected loop to complete after resume, got: {:?}", result);
-        assert_eq!(provider.call_count(), 1, "LLM should be called once after pause clears");
+        assert!(
+            result.is_ok(),
+            "Expected loop to complete after resume, got: {:?}",
+            result
+        );
+        assert_eq!(
+            provider.call_count(),
+            1,
+            "LLM should be called once after pause clears"
+        );
 
         // Verify that AwaitingApproval with is_pause=true was emitted.
         let mut events = vec![];
         while let Ok(e) = rx.try_recv() {
             events.push(e);
         }
-        let pause_event = events.iter().find(|e| {
-            matches!(e, AgentEvent::AwaitingApproval { is_pause, .. } if *is_pause)
-        });
+        let pause_event = events
+            .iter()
+            .find(|e| matches!(e, AgentEvent::AwaitingApproval { is_pause, .. } if *is_pause));
         assert!(
             pause_event.is_some(),
             "Expected an AwaitingApproval event with is_pause=true"

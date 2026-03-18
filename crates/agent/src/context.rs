@@ -575,8 +575,9 @@ pub fn build_context(
     // nodes at the front (before the conversation begins) and sort conversation
     // nodes separately to preserve logical message ordering.
     let selected_nodes: Vec<GraphNode> = selected.into_iter().map(|s| s.node).collect();
-    let (mut conv_older, mut ctx_nodes): (Vec<GraphNode>, Vec<GraphNode>) =
-        selected_nodes.into_iter().partition(|n| matches!(n.node_type, NodeType::Interaction(_)));
+    let (mut conv_older, mut ctx_nodes): (Vec<GraphNode>, Vec<GraphNode>) = selected_nodes
+        .into_iter()
+        .partition(|n| matches!(n.node_type, NodeType::Interaction(_)));
 
     conv_older.sort_by(|a, b| a.created_at.cmp(&b.created_at));
     ctx_nodes.sort_by(|a, b| a.created_at.cmp(&b.created_at));

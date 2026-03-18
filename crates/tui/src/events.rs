@@ -69,10 +69,7 @@ pub fn handle_agent_event(app: &mut App, event: AgentEvent) {
             }
         }
         AgentEvent::GraphUpdate { recent_nodes, .. } => {
-            app.graph_explorer.nodes = recent_nodes
-                .into_iter()
-                .map(graph_node_to_entry)
-                .collect();
+            app.graph_explorer.nodes = recent_nodes.into_iter().map(graph_node_to_entry).collect();
         }
         AgentEvent::SoftEscalationTriggered {
             turn,
@@ -269,11 +266,13 @@ mod tests {
 
     #[test]
     fn test_node_label_prefers_metadata_label() {
-        let mut node = GraphNode::new(NodeType::Interaction(graphirm_graph::nodes::InteractionData {
-            role: "assistant".to_string(),
-            content: "This preview should not be used".to_string(),
-            token_count: None,
-        }));
+        let mut node = GraphNode::new(NodeType::Interaction(
+            graphirm_graph::nodes::InteractionData {
+                role: "assistant".to_string(),
+                content: "This preview should not be used".to_string(),
+                token_count: None,
+            },
+        ));
         node.set_label("interaction_1_2_1");
 
         assert_eq!(node_label(&node), "interaction_1_2_1");

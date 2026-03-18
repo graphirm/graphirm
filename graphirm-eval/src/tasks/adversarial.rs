@@ -51,7 +51,6 @@ pub fn tasks() -> Vec<EvalTask> {
             enable_segments: false,
             segment_filter: None,
         },
-
         // ── 2. Precise edit — no collateral damage ────────────────────────────
         // The agent must modify exactly one function in a multi-function file.
         // Common failure: agent re-writes the whole file and subtly changes or
@@ -69,7 +68,7 @@ pub fn tasks() -> Vec<EvalTask> {
                  def multiply(a, b):\n    return a * b\n\n\
                  def subtract(a, b):\n    return a - b\n\
                  ```"
-                    .to_string(),
+                .to_string(),
                 // Turn 2: targeted edit
                 "Edit `/tmp/eval_functions.py` to change `multiply` so it returns \
                  `a * b * 2` instead of `a * b`. Do not change `add` or `subtract`."
@@ -96,7 +95,6 @@ pub fn tasks() -> Vec<EvalTask> {
             enable_segments: false,
             segment_filter: None,
         },
-
         // ── 3. Grep exact count ───────────────────────────────────────────────
         // Ask the agent to count how many times a specific token appears in the
         // source tree. Verifier runs the same command and compares dynamically —
@@ -131,7 +129,6 @@ pub fn tasks() -> Vec<EvalTask> {
             enable_segments: false,
             segment_filter: None,
         },
-
         // ── 4. Cascading pipeline ─────────────────────────────────────────────
         // Three-turn chain: write a value, write a script that reads that value,
         // run the script. Tests that the agent retains full context across turns
@@ -148,8 +145,7 @@ pub fn tasks() -> Vec<EvalTask> {
                  `/tmp/eval_secret.txt` and prints its contents prefixed with `FOUND:`. \
                  Make the script executable."
                     .to_string(),
-                "Run `/tmp/eval_reader.sh` and tell me exactly what it prints."
-                    .to_string(),
+                "Run `/tmp/eval_reader.sh` and tell me exactly what it prints.".to_string(),
             ],
             verifier: Verifier::All(vec![
                 Verifier::ResponseContains {
@@ -164,7 +160,6 @@ pub fn tasks() -> Vec<EvalTask> {
             enable_segments: false,
             segment_filter: None,
         },
-
         // ── 5. Fix broken script ──────────────────────────────────────────────
         // The agent is handed a syntactically broken Python script. It must:
         //   a) read or run it to discover the error
@@ -185,7 +180,7 @@ pub fn tasks() -> Vec<EvalTask> {
                  def greet(name)\n    print(f\"Hello, {name}!\")\n\n\
                  greet(\"Graphirm\")\n\
                  ```"
-                    .to_string(),
+                .to_string(),
                 // Turn 2: diagnose and fix
                 "Run `/tmp/eval_broken.py` with Python. It has a bug — diagnose the \
                  error, fix the file, and run it again to confirm it works."

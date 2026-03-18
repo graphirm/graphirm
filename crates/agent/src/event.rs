@@ -63,10 +63,10 @@ pub enum AgentEvent {
     /// `is_pause` is `true` when this is a manual pause (turn-start hold) rather
     /// than an automatic gate on a destructive tool call.
     AwaitingApproval {
-        node_id:   NodeId,
+        node_id: NodeId,
         tool_name: String,
         arguments: serde_json::Value,
-        is_pause:  bool,
+        is_pause: bool,
     },
 }
 

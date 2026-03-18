@@ -8,8 +8,8 @@ use std::io::BufRead;
 use graphirm_graph::CorpusTurn;
 use serde::{Deserialize, Serialize};
 
-use crate::error::AgentError;
 use super::local_extraction::{OnnxExtractor, RawOnnxEntity};
+use crate::error::AgentError;
 
 /// A single predicted span (label + character offsets + confidence).
 #[derive(Debug, Clone, Serialize, Deserialize)]

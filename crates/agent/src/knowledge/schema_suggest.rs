@@ -86,10 +86,8 @@ pub fn analyse_report(report: &LabelExplorationReport) -> SchemaRecommendation {
         } else {
             0.0
         };
-        let (max_overlap_pct, overlap_with) = max_overlap
-            .get(&stat.label)
-            .cloned()
-            .unwrap_or((0.0, None));
+        let (max_overlap_pct, overlap_with) =
+            max_overlap.get(&stat.label).cloned().unwrap_or((0.0, None));
 
         let verdict = if max_overlap_pct >= REDUNDANT_OVERLAP_PCT {
             let merge_into = overlap_with.clone().unwrap_or_default();
@@ -171,7 +169,11 @@ mod tests {
         );
         let rec = analyse_report(&report);
         assert!(rec.recommended_segment_types.contains(&"code".to_string()));
-        let code_analysis = rec.label_analyses.iter().find(|a| a.label == "code").unwrap();
+        let code_analysis = rec
+            .label_analyses
+            .iter()
+            .find(|a| a.label == "code")
+            .unwrap();
         assert!(matches!(code_analysis.verdict, LabelVerdict::Real));
     }
 
@@ -194,8 +196,15 @@ mod tests {
             vec![],
         );
         let rec = analyse_report(&report);
-        assert!(!rec.recommended_segment_types.contains(&"mumble".to_string()));
-        let a = rec.label_analyses.iter().find(|a| a.label == "mumble").unwrap();
+        assert!(
+            !rec.recommended_segment_types
+                .contains(&"mumble".to_string())
+        );
+        let a = rec
+            .label_analyses
+            .iter()
+            .find(|a| a.label == "mumble")
+            .unwrap();
         assert!(matches!(a.verdict, LabelVerdict::Noise));
     }
 
@@ -237,9 +246,17 @@ mod tests {
             }],
         );
         let rec = analyse_report(&report);
-        let analysis = rec.label_analyses.iter().find(|a| a.label == "analysis").unwrap();
+        let analysis = rec
+            .label_analyses
+            .iter()
+            .find(|a| a.label == "analysis")
+            .unwrap();
         assert!(analysis.max_overlap_pct >= REDUNDANT_OVERLAP_PCT);
         assert!(matches!(&analysis.verdict, LabelVerdict::Redundant { .. }));
-        assert!(rec.merge_suggestions.iter().any(|m| m.label == "analysis" && m.merge_into == "reasoning"));
+        assert!(
+            rec.merge_suggestions
+                .iter()
+                .any(|m| m.label == "analysis" && m.merge_into == "reasoning")
+        );
     }
 }

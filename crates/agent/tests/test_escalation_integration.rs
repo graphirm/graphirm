@@ -21,7 +21,7 @@ fn test_config() -> AgentConfig {
         model: "test-model".to_string(),
         system_prompt: "You are a test agent".to_string(),
         max_turns: 15,
-        soft_escalation_turn: 2,  // Check for escalation after turn 2
+        soft_escalation_turn: 2,      // Check for escalation after turn 2
         soft_escalation_threshold: 2, // Trigger on 2+ repeated calls
         ..AgentConfig::default()
     }
@@ -94,11 +94,25 @@ async fn test_agent_loop_soft_escalation_prevents_repeated_reads() {
 
     // Mock provider: turns 0-2 return repeated read calls, response 3 is synthesis text
     let responses = vec![
-        graphirm_llm::MockResponse::tool_call("call-0", "read", serde_json::json!({"path": "/same/file.rs"})),
-        graphirm_llm::MockResponse::tool_call("call-1", "read", serde_json::json!({"path": "/same/file.rs"})),
-        graphirm_llm::MockResponse::tool_call("call-2", "read", serde_json::json!({"path": "/same/file.rs"})),
+        graphirm_llm::MockResponse::tool_call(
+            "call-0",
+            "read",
+            serde_json::json!({"path": "/same/file.rs"}),
+        ),
+        graphirm_llm::MockResponse::tool_call(
+            "call-1",
+            "read",
+            serde_json::json!({"path": "/same/file.rs"}),
+        ),
+        graphirm_llm::MockResponse::tool_call(
+            "call-2",
+            "read",
+            serde_json::json!({"path": "/same/file.rs"}),
+        ),
         // This is called when escalation is triggered and synthesis is requested
-        graphirm_llm::MockResponse::text("Based on my analysis of /same/file.rs, I found the following..."),
+        graphirm_llm::MockResponse::text(
+            "Based on my analysis of /same/file.rs, I found the following...",
+        ),
     ];
 
     let provider = MockProvider::new(responses);
@@ -107,14 +121,9 @@ async fn test_agent_loop_soft_escalation_prevents_repeated_reads() {
     let cancel = CancellationToken::new();
 
     // Run the agent loop
-    let result = graphirm_agent::workflow::run_agent_loop(
-        &session,
-        &provider,
-        &tools,
-        &events,
-        &cancel,
-    )
-    .await;
+    let result =
+        graphirm_agent::workflow::run_agent_loop(&session, &provider, &tools, &events, &cancel)
+            .await;
 
     // Assert: should succeed (escalation triggered, model synthesized)
     assert!(
@@ -152,11 +161,27 @@ async fn test_agent_loop_hard_limit_if_model_ignores_synthesis() {
 
     // Mock provider: turns 0-3 all return read (ignoring synthesis directive at turn 2)
     let responses = vec![
-        graphirm_llm::MockResponse::tool_call("call-0", "read", serde_json::json!({"path": "/same/file.rs"})),
-        graphirm_llm::MockResponse::tool_call("call-1", "read", serde_json::json!({"path": "/same/file.rs"})),
-        graphirm_llm::MockResponse::tool_call("call-2", "read", serde_json::json!({"path": "/same/file.rs"})),
+        graphirm_llm::MockResponse::tool_call(
+            "call-0",
+            "read",
+            serde_json::json!({"path": "/same/file.rs"}),
+        ),
+        graphirm_llm::MockResponse::tool_call(
+            "call-1",
+            "read",
+            serde_json::json!({"path": "/same/file.rs"}),
+        ),
+        graphirm_llm::MockResponse::tool_call(
+            "call-2",
+            "read",
+            serde_json::json!({"path": "/same/file.rs"}),
+        ),
         // Model ignores synthesis directive and returns another read
-        graphirm_llm::MockResponse::tool_call("call-3-ignore", "read", serde_json::json!({"path": "/same/file.rs"})),
+        graphirm_llm::MockResponse::tool_call(
+            "call-3-ignore",
+            "read",
+            serde_json::json!({"path": "/same/file.rs"}),
+        ),
     ];
 
     let provider = MockProvider::new(responses);
@@ -165,18 +190,16 @@ async fn test_agent_loop_hard_limit_if_model_ignores_synthesis() {
     let cancel = CancellationToken::new();
 
     // Run the agent loop
-    let result = graphirm_agent::workflow::run_agent_loop(
-        &session,
-        &provider,
-        &tools,
-        &events,
-        &cancel,
-    )
-    .await;
+    let result =
+        graphirm_agent::workflow::run_agent_loop(&session, &provider, &tools, &events, &cancel)
+            .await;
 
     // Assert: should fail with RecursionLimit
     assert!(
-        matches!(result, Err(graphirm_agent::error::AgentError::RecursionLimit(_))),
+        matches!(
+            result,
+            Err(graphirm_agent::error::AgentError::RecursionLimit(_))
+        ),
         "Expected RecursionLimit error when model ignores synthesis, got: {:?}",
         result
     );
@@ -198,7 +221,7 @@ async fn test_soft_escalation_respects_turn_threshold() {
         model: "test-model".to_string(),
         system_prompt: "You are a test agent".to_string(),
         max_turns: 10,
-        soft_escalation_turn: 10,  // Set very high so escalation doesn't trigger
+        soft_escalation_turn: 10, // Set very high so escalation doesn't trigger
         soft_escalation_threshold: 2,
         ..AgentConfig::default()
     };
@@ -212,10 +235,26 @@ async fn test_soft_escalation_respects_turn_threshold() {
     // Mock provider: repeated calls for turns 0-3, then text on turn 4
     // Escalation turn is set to 10, so we never reach that threshold
     let responses = vec![
-        graphirm_llm::MockResponse::tool_call("c1", "read", serde_json::json!({"path": "/file.rs"})),
-        graphirm_llm::MockResponse::tool_call("c2", "read", serde_json::json!({"path": "/file.rs"})),
-        graphirm_llm::MockResponse::tool_call("c3", "read", serde_json::json!({"path": "/file.rs"})),
-        graphirm_llm::MockResponse::tool_call("c4", "read", serde_json::json!({"path": "/file.rs"})),
+        graphirm_llm::MockResponse::tool_call(
+            "c1",
+            "read",
+            serde_json::json!({"path": "/file.rs"}),
+        ),
+        graphirm_llm::MockResponse::tool_call(
+            "c2",
+            "read",
+            serde_json::json!({"path": "/file.rs"}),
+        ),
+        graphirm_llm::MockResponse::tool_call(
+            "c3",
+            "read",
+            serde_json::json!({"path": "/file.rs"}),
+        ),
+        graphirm_llm::MockResponse::tool_call(
+            "c4",
+            "read",
+            serde_json::json!({"path": "/file.rs"}),
+        ),
         graphirm_llm::MockResponse::text("Here's what I found..."),
     ];
 
@@ -224,14 +263,9 @@ async fn test_soft_escalation_respects_turn_threshold() {
     let events = EventBus::new();
     let cancel = CancellationToken::new();
 
-    let result = graphirm_agent::workflow::run_agent_loop(
-        &session,
-        &provider,
-        &tools,
-        &events,
-        &cancel,
-    )
-    .await;
+    let result =
+        graphirm_agent::workflow::run_agent_loop(&session, &provider, &tools, &events, &cancel)
+            .await;
 
     // Should succeed — escalation checks don't apply before turn 10
     assert!(result.is_ok());

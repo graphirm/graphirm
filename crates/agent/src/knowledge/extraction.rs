@@ -44,14 +44,10 @@ pub enum ExtractionBackend {
     Llm,
     /// Directory containing GLiNER2 ONNX files + tokenizer.
     /// Populate via `download_model()` on first run.
-    Local {
-        model_dir: String,
-    },
+    Local { model_dir: String },
     /// Directory containing GLiNER2 ONNX files + tokenizer.
     /// Populate via `download_model()` on first run.
-    Hybrid {
-        model_dir: String,
-    },
+    Hybrid { model_dir: String },
 }
 
 /// Configuration for post-turn knowledge extraction.
@@ -213,11 +209,8 @@ pub async fn post_turn_extract(
     let resp_id = response_node_id.clone();
     let (response_node, parents) = tokio::task::spawn_blocking(move || {
         let node = graph_for_read.get_node(&resp_id)?;
-        let parents = graph_for_read.neighbors(
-            &resp_id,
-            Some(EdgeType::RespondsTo),
-            Direction::Outgoing,
-        )?;
+        let parents =
+            graph_for_read.neighbors(&resp_id, Some(EdgeType::RespondsTo), Direction::Outgoing)?;
         Ok::<_, AgentError>((node, parents))
     })
     .await
@@ -567,9 +560,15 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids = extract_knowledge(std::sync::Arc::clone(&graph), &llm, &messages, &source_node_id, &config)
-            .await
-            .unwrap();
+        let node_ids = extract_knowledge(
+            std::sync::Arc::clone(&graph),
+            &llm,
+            &messages,
+            &source_node_id,
+            &config,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(node_ids.len(), 2);
         for id in &node_ids {
@@ -610,9 +609,15 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids = extract_knowledge(std::sync::Arc::clone(&graph), &llm, &messages, &source_id, &config)
-            .await
-            .unwrap();
+        let node_ids = extract_knowledge(
+            std::sync::Arc::clone(&graph),
+            &llm,
+            &messages,
+            &source_id,
+            &config,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(node_ids.len(), 1);
         let neighbors = graph
@@ -664,9 +669,15 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids = extract_knowledge(std::sync::Arc::clone(&graph), &llm, &messages, &source_id, &config)
-            .await
-            .unwrap();
+        let node_ids = extract_knowledge(
+            std::sync::Arc::clone(&graph),
+            &llm,
+            &messages,
+            &source_id,
+            &config,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(node_ids.len(), 1);
     }
@@ -712,9 +723,15 @@ mod tests {
             })))
             .unwrap();
 
-        let node_ids = extract_knowledge(std::sync::Arc::clone(&graph), &llm, &messages, &source_id, &config)
-            .await
-            .unwrap();
+        let node_ids = extract_knowledge(
+            std::sync::Arc::clone(&graph),
+            &llm,
+            &messages,
+            &source_id,
+            &config,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(node_ids.len(), 2);
         let neighbors = graph
@@ -916,7 +933,8 @@ mod tests {
             ))
             .unwrap();
 
-        let result = post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &assistant_id).await;
+        let result =
+            post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &assistant_id).await;
 
         assert!(result.is_ok());
         let node_ids = result.unwrap();
@@ -951,7 +969,8 @@ mod tests {
             })))
             .unwrap();
 
-        let result = post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &node_id).await;
+        let result =
+            post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &node_id).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
@@ -1106,7 +1125,8 @@ mod tests {
             })))
             .unwrap();
 
-        let result = post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &node_id).await;
+        let result =
+            post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &node_id).await;
         // Whether it errors depends on feature flag: without local-extraction
         // we get a feature error; with it we get a "model dir not found" error.
         // Either way the function must not panic.

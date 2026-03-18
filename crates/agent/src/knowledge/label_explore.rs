@@ -25,8 +25,8 @@ use std::io::BufRead;
 use graphirm_graph::CorpusTurn;
 use serde::{Deserialize, Serialize};
 
-use crate::error::AgentError;
 use super::local_extraction::{OnnxExtractor, RawOnnxEntity};
+use crate::error::AgentError;
 
 /// Corpus-level statistics from a label-exploration run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,29 +159,31 @@ pub async fn run_label_exploration(
         turns_with_any_label += 1;
 
         // Covered: union of all [start, end)
-        let mut covered_in_turn: Vec<(usize, usize)> = raw
-            .iter()
-            .map(|e| (e.start, e.end))
-            .collect();
+        let mut covered_in_turn: Vec<(usize, usize)> =
+            raw.iter().map(|e| (e.start, e.end)).collect();
         covered_in_turn.sort_by_key(|&(s, _)| s);
         let merged = merge_ranges(covered_in_turn);
         let turn_covered: u64 = merged.iter().map(|&(s, e)| (e - s) as u64).sum();
         covered_chars += turn_covered;
 
         // Group by label
-        let by_label: HashMap<String, Vec<&RawOnnxEntity>> = raw.iter().fold(
-            HashMap::new(),
-            |mut acc, e| {
+        let by_label: HashMap<String, Vec<&RawOnnxEntity>> =
+            raw.iter().fold(HashMap::new(), |mut acc, e| {
                 acc.entry(e.entity_type.clone()).or_default().push(e);
                 acc
-            },
-        );
+            });
 
         for (label, entities) in &by_label {
             let count = entities.len() as u32;
             let sum_conf: f64 = entities.iter().map(|e| e.confidence).sum();
-            let min_conf = entities.iter().map(|e| e.confidence).fold(f64::MAX, f64::min);
-            let max_conf = entities.iter().map(|e| e.confidence).fold(f64::MIN, f64::max);
+            let min_conf = entities
+                .iter()
+                .map(|e| e.confidence)
+                .fold(f64::MAX, f64::min);
+            let max_conf = entities
+                .iter()
+                .map(|e| e.confidence)
+                .fold(f64::MIN, f64::max);
             let span_chars: Vec<u32> = entities.iter().map(|e| (e.end - e.start) as u32).collect();
             let sum_chars: u64 = span_chars.iter().map(|&c| c as u64).sum();
             let min_c = *span_chars.iter().min().unwrap_or(&0);
@@ -228,8 +230,19 @@ pub async fn run_label_exploration(
     let label_stats: Vec<LabelStat> = labels
         .iter()
         .map(|label| {
-            let (span_count, turns_with_label, sum_conf, min_conf, max_conf, sum_span_chars, min_span_chars, max_span_chars) =
-                per_label.get(label).copied().unwrap_or((0, 0, 0.0, 0.0, 0.0, 0, 0, 0));
+            let (
+                span_count,
+                turns_with_label,
+                sum_conf,
+                min_conf,
+                max_conf,
+                sum_span_chars,
+                min_span_chars,
+                max_span_chars,
+            ) = per_label
+                .get(label)
+                .copied()
+                .unwrap_or((0, 0, 0.0, 0.0, 0.0, 0, 0, 0));
             let total_chars = label_total_chars.get(label).copied().unwrap_or(0);
             let avg_confidence = if span_count > 0 {
                 sum_conf / span_count as f64
@@ -243,7 +256,11 @@ pub async fn run_label_exploration(
             };
             let min_confidence_val = if min_conf == f64::MAX { 0.0 } else { min_conf };
             let max_confidence_val = if max_conf == f64::MIN { 0.0 } else { max_conf };
-            let min_span_chars_val = if min_span_chars == u32::MAX { 0 } else { min_span_chars };
+            let min_span_chars_val = if min_span_chars == u32::MAX {
+                0
+            } else {
+                min_span_chars
+            };
             LabelStat {
                 label: label.clone(),
                 span_count,
@@ -377,7 +394,10 @@ mod tests {
         let json = serde_json::to_string(&report).unwrap();
         let back: LabelExplorationReport = serde_json::from_str(&json).unwrap();
         assert_eq!(back.labels, report.labels);
-        assert_eq!(back.corpus_stats.total_turns, report.corpus_stats.total_turns);
+        assert_eq!(
+            back.corpus_stats.total_turns,
+            report.corpus_stats.total_turns
+        );
         assert_eq!(back.label_stats.len(), 2);
         assert_eq!(back.overlap_matrix.len(), 1);
     }

@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use graphirm_llm::ContentPart;
+use std::collections::HashMap;
 
 /// A key representing a unique tool call for deduplication and pattern tracking.
 ///
@@ -20,13 +20,15 @@ impl ToolCallKey {
     /// Returns `None` if the part is not a tool call.
     pub fn from_content_part(part: &ContentPart) -> Option<Self> {
         match part {
-            ContentPart::ToolCall { name, arguments, .. } => {
+            ContentPart::ToolCall {
+                name, arguments, ..
+            } => {
                 let file_path = arguments
                     .get("path")
                     .or_else(|| arguments.get("file_path"))
                     .and_then(|v| v.as_str())
                     .map(String::from);
-                
+
                 Some(ToolCallKey {
                     tool_name: name.clone(),
                     file_path,
@@ -102,8 +104,9 @@ impl EscalationDetector {
         }
 
         // Count all tool call occurrences in the sliding window
-        let mut tool_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        
+        let mut tool_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+
         for check_turn in (turn.saturating_sub(Self::WINDOW_SIZE - 1))..=turn {
             for ((t, key_str), count) in self.recent_calls.iter() {
                 if *t == check_turn {
@@ -115,10 +118,7 @@ impl EscalationDetector {
         // Find the max count for any tool
         let max_count = tool_counts.values().max().copied().unwrap_or(0);
 
-        (
-            max_count >= self.soft_escalation_threshold,
-            max_count,
-        )
+        (max_count >= self.soft_escalation_threshold, max_count)
     }
 
     /// Cleans up old entries to prevent unbounded memory growth.
@@ -131,7 +131,8 @@ impl EscalationDetector {
     /// * `current_turn` - The current turn number
     /// * `window_size` - Number of turns to retain
     pub fn cleanup_old_turns(&mut self, current_turn: usize, window_size: usize) {
-        self.recent_calls.retain(|(turn, _), _| *turn + window_size >= current_turn);
+        self.recent_calls
+            .retain(|(turn, _), _| *turn + window_size >= current_turn);
     }
 }
 
@@ -149,19 +150,19 @@ mod tests {
     #[test]
     fn test_escalation_threshold_triggers() {
         let mut detector = EscalationDetector::new(4, 2);
-        
+
         let key1 = ToolCallKey {
             tool_name: "read".to_string(),
             file_path: Some("file.rs".to_string()),
         };
-        
+
         detector.record_tool_call(1, key1.clone());
         detector.record_tool_call(2, key1.clone());
         detector.record_tool_call(3, key1.clone());
-        
+
         // Should not escalate yet (turn < soft_escalation_turn)
         assert!(!detector.should_escalate(3, &[]).0);
-        
+
         // At turn 4, we should detect the pattern
         detector.record_tool_call(4, key1);
         let (should_escalate, count) = detector.should_escalate(4, &[]);

@@ -80,7 +80,7 @@ pub fn create_embedding_provider(
                 other => {
                     return Err(LlmError::invalid_model(format!(
                         "Unknown Mistral embed model '{other}'. Use mistral-embed or codestral-embed"
-                    )))
+                    )));
                 }
             };
             let provider = MistralEmbeddingProvider::new(key, embed_model);

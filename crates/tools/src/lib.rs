@@ -12,18 +12,18 @@ pub mod registry;
 pub mod write;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 pub use error::{ToolError, ToolResult};
+use graphirm_graph::GraphStore;
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::error::GraphError;
 use graphirm_graph::nodes::{GraphNode, NodeId};
-use graphirm_graph::GraphStore;
 pub use registry::ToolRegistry;
 
 /// Context passed to every tool execution.
@@ -64,9 +64,9 @@ impl ToolContext {
             let pos = pos_counter.fetch_add(1, Ordering::SeqCst) + 1;
             node.metadata["session_id"] = serde_json::json!(agent_id.to_string());
             node.set_label(format!("content_{}_{}_1", turn, pos));
-            let id = graph.add_node(node).map_err(|e: GraphError| {
-                ToolError::ExecutionFailed(e.to_string())
-            })?;
+            let id = graph
+                .add_node(node)
+                .map_err(|e: GraphError| ToolError::ExecutionFailed(e.to_string()))?;
             graph
                 .add_edge(GraphEdge::new(edge_type, interaction_id, id.clone()))
                 .map_err(|e: GraphError| ToolError::ExecutionFailed(e.to_string()))?;

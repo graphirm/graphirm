@@ -117,7 +117,9 @@ mod tests {
             name: "Test Task".to_string(),
             tags: vec!["basic".to_string()],
             prompts: vec!["Hello".to_string()],
-            verifier: Verifier::ResponseContains { substring: "world".to_string() },
+            verifier: Verifier::ResponseContains {
+                substring: "world".to_string(),
+            },
             max_turns: 5,
             timeout_secs: 30,
             enable_segments: false,

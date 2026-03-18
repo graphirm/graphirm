@@ -123,7 +123,10 @@ mod tests {
     #[test]
     fn test_mistral_embed_model_names() {
         assert_eq!(MistralEmbedModel::MistralEmbed.as_str(), "mistral-embed");
-        assert_eq!(MistralEmbedModel::CodestralEmbed.as_str(), "codestral-embed");
+        assert_eq!(
+            MistralEmbedModel::CodestralEmbed.as_str(),
+            "codestral-embed"
+        );
     }
 
     #[test]

@@ -84,7 +84,9 @@ pub fn convert_messages_to_rig(messages: Vec<LlmMessage>) -> Vec<Message> {
         }
         let parts = std::mem::take(pending);
         match parts.len() {
-            1 => out.push(Message::User { content: OneOrMany::one(parts.into_iter().next().unwrap()) }),
+            1 => out.push(Message::User {
+                content: OneOrMany::one(parts.into_iter().next().unwrap()),
+            }),
             _ => {
                 if let Ok(content) = OneOrMany::many(parts) {
                     out.push(Message::User { content });

@@ -6,7 +6,7 @@ pub mod query;
 pub mod store;
 pub mod vector;
 
-pub use corpus::{export_corpus_to_jsonl, CorpusTurn};
+pub use corpus::{CorpusTurn, export_corpus_to_jsonl};
 pub use edges::{EdgeId, EdgeType, GraphEdge};
 pub use error::GraphError;
 pub use nodes::{
