@@ -6,7 +6,7 @@ interface SessionBarProps {
   sessions: Session[];
   currentSession: Session | null;
   onSelectSession: (id: string) => void;
-  onCreateSession: (name?: string, workspace?: string) => void;
+  onCreateSession: (name?: string, workspace?: string) => Promise<Session | void>;
   onPause: () => void;
   onResume: () => void;
   autoApprove: boolean;
@@ -27,13 +27,17 @@ export function SessionBar({
   const [sessionName, setSessionName] = useState('');
   const [workspaceName, setWorkspaceName] = useState('');
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     const name = sessionName.trim() || undefined;
     const workspace = workspaceName.trim() || undefined;
-    onCreateSession(name, workspace);
-    setShowForm(false);
-    setSessionName('');
-    setWorkspaceName('');
+    try {
+      await onCreateSession(name, workspace);
+      setShowForm(false);
+      setSessionName('');
+      setWorkspaceName('');
+    } catch {
+      // keep form open so user can retry; error handling is upstream
+    }
   };
 
   const handleCancel = () => {
@@ -64,14 +68,20 @@ export function SessionBar({
               placeholder="Session name (optional)"
               value={sessionName}
               onChange={e => setSessionName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleCreate();
+                if (e.key === 'Escape') handleCancel();
+              }}
               style={{ fontSize: 12, width: 150, padding: '2px 6px' }}
             />
             <input
               placeholder="Workspace (optional)"
               value={workspaceName}
               onChange={e => setWorkspaceName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleCreate();
+                if (e.key === 'Escape') handleCancel();
+              }}
               style={{ fontSize: 12, width: 130, padding: '2px 6px' }}
             />
             <button onClick={handleCreate}>Create</button>
