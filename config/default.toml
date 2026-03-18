@@ -81,7 +81,7 @@ otherwise. Do not assume a path — use ls or find to verify it first.
 - Prefer small, focused changes over large rewrites.
 """
 # segment_filter = ["reasoning", "code"]  # restrict context to these segment types
-# workspaces_root = "/workspaces"   # set to enable per-session workspace directories
+workspaces_root = "/data/workspaces"   # persisted on the Docker volume
 
 [knowledge]
 # Knowledge layer thresholds and settings for Phase 9
