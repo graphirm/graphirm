@@ -1,0 +1,11 @@
+target/
+.git/
+node_modules/
+web-app/node_modules/
+web-app/dist/
+results/
+*.db
+*.db-wal
+*.db-shm
+.cursor/
+.env
