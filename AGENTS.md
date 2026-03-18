@@ -80,14 +80,14 @@ DEEPSEEK_API_KEY=sk-... cargo test -p graphirm-llm --test integration
 # Run TUI
 DEEPSEEK_API_KEY=sk-... ./target/release/graphirm chat
 
-# Run HTTP server (port 5555 by default)
-# Web UI served at http://localhost:5555 — prefers web-app/dist/ over web/
+# Run HTTP server (port 3000 by default)
+# Web UI served at http://localhost:3000 — prefers web-app/dist/ over web/
 DEEPSEEK_API_KEY=sk-... ./target/release/graphirm serve
 
 # Build the React web UI (run once before serving, or after changes)
 cd web-app && npm install && npm run build && cd ..
 
-# Develop the web UI with hot reload (requires server running on :5555)
+# Develop the web UI with hot reload (requires server running on :3000)
 cd web-app && npm run dev   # served at http://localhost:5173
 
 # Run eval harness (server must be running)
@@ -163,7 +163,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - **Auto-approve toggle** — SessionBar button enables/disables HITL gating per session; green when active
 - ChatPane with HITL approve/reject/modify cards, steer context banner; SessionBar with pause/resume/auto-approve
 - Bundle: React Flow 194 kB, highlight 21 kB (trimmed to 20 languages), dagre 43 kB, app 289 kB — all chunks ≤ 500 kB
-- Dev: `cd web-app && npm run dev` (proxies `/api` → `localhost:5555`)
+- Dev: `cd web-app && npm run dev` (proxies `/api` → `localhost:3000`)
 - Build: `cd web-app && npm run build` → `web-app/dist/` (served automatically by `graphirm serve`)
 
 **Per-session workspaces summary (Phase 14):**
