@@ -1,150 +1,111 @@
 # Graphirm Backlog
 
-Items captured here are validated ideas not yet scheduled into a numbered phase. Each item includes the rationale for deferral and a suggested phase target.
+Single source of truth for planned work. Completed items are recorded in `docs/completion-log.md` and `AGENTS.md` — not here.
+
+**Current state:** Phases 0–14 complete. See `AGENTS.md` → Current State table.
 
 ---
 
-## ✅ Feature — `graph_query` tool: let the agent query its own graph — COMPLETED (Phase 12)
+## How to use this file
 
-**What:** The agent had no way to interrogate the graph it lives in. It had `bash`, `read`, `write`, `edit`, `grep`, `find`, `ls` — all filesystem tools — but nothing that exposes the graph store.
-
-**Shipped in Phase 12:** `crates/tools/src/graph_query.rs` — a read-only `Tool` implementation with three modes:
-- `bfs` — BFS traversal from a start node following outgoing edges (configurable depth up to 10, optional edge-type filter)
-- `list_type` — enumerate nodes of a given type with optional session and metadata filters
-- `search` — case-insensitive keyword search over `Knowledge` nodes (entity, entity_type, summary)
-
-**Key corrections from the original backlog note:**
-- `ToolContext` already carried `Arc<GraphStore>`, `agent_id`, and `interaction_id` — no plumbing was needed
-- Two new `GraphStore` helpers were added: `list_nodes_by_type` and `search_knowledge` (in `store.rs`)
-- Registration is in `build_tool_registry()` in `src/main.rs`, not `ToolRegistry::new()`
-- Not destructive — no HITL gate applied
-
-**Note:** `search` in Phase 12 is keyword-only. Semantic/embedding search is preserved as a future upgrade without breaking the tool interface.
+- Items are grouped by theme, not phase number
+- Each item has a **size** (S / M / L) and a **priority** (P1 high / P2 medium / P3 low)
+- When work starts, create a plan in `docs/plans/YYYY-MM-DD-<topic>.md` and link it here
+- Mark items ✅ and move details to `docs/completion-log.md` when shipped
 
 ---
 
-## Bug — graph view nodes cluster when D3 simulation settles at same position
+## Deployment & Operations
 
-**What:** In the browser web UI graph pane, nodes often render clustered at a single point rather than spread across the canvas. The `fitToView()` function correctly computes a bounding box and applies a zoom transform, but when all nodes share the same (x, y) after the force simulation (e.g. bounding box span is 0), they all overlap.
+### Coolify on always-on spoke — P1 · M
+Install Coolify on the persistent Hetzner spoke, connect to GitHub, auto-deploy on push to `main`, mount `/data` volume for the SQLite graph database. Hetzner snapshot for disaster recovery.
+Plan: `docs/plans/2026-03-16-coolify-spoke-deployment.md`
 
-**Root cause (hypothesis):** D3's force simulation seeds new nodes at position (0, 0) unless given initial coordinates. When the simulation runs with `alpha` too low or too briefly, nodes don't spread before `end` fires. The `fitToView()` then computes `spanX = max(0, 40) = 40` — a degenerate bounding box — and centres them all at the same point.
+### Wire `workspaces_root` on running server — P1 · S
+Now that per-session workspaces exist (Phase 14), set `workspaces_root = "/root/workspaces"` in the spoke's `config/default.toml` so sessions get proper filesystem isolation in production.
 
-**Fix direction:**
-- Ensure initial node positions are seeded with jitter around the SVG centre *before* `d3.forceSimulation(nodes)` is called
-- Increase initial `alpha` and possibly `alphaDecay` so the simulation runs longer before settling
-- Or: after `fitToView()`, if `spanX < 1 || spanY < 1` (degenerate), apply a radial spread to force nodes apart, then re-run
-
-**Suggested target:** Phase 12 (cosmetic but impacts perceived quality of the graph UI).
-
----
-
-## ✅ Bug — HITL card shows "Agent wants to run: undefined" — FIXED
-
-**What:** When the HITL gate triggered in the browser web UI, the approval card rendered "Agent wants to run: **undefined**" instead of the actual tool name (e.g. "bash", "read", "write").
-
-**Root cause:** The SSE handler serialises the full `SseEvent` struct as the event data payload, so the browser receives `{ session_id, event_type, data: { node_id, tool_name, arguments, is_pause } }`. `main.js` was spreading the outer envelope (`{ ...data }`) when calling `renderApprovalCard`, so `tool_name` was always `undefined` — it was one level too deep inside `data.data`.
-
-**Fix (shipped 2026-03-16):** In `web/main.js`, extract `payload = data?.data ?? data` before spreading, so `renderApprovalCard` receives `{ node_id, tool_name, arguments, is_pause, session_id }` at the top level. Commit `2302f59`.
+### CI pipeline (GitHub Actions) — P2 · S
+Run `cargo test` and `cargo clippy` on every push to `main` and every PR. Currently nothing catches regressions before they reach the spoke. A single workflow file covers it.
 
 ---
 
-## Phase 12 vision — Miro/n8n-style interactive whiteboard graph
+## UI (web-app)
 
-**What:** Replace the current read-only d3 force graph with a fully interactive whiteboard — nodes as draggable cards, edges with visible connectors, in-place expansion, and manual annotation. Think Miro, FigJam, or n8n's workflow canvas applied to the agent interaction graph.
+### Workspace selector in SessionBar — P2 · S
+The API accepts `"workspace"` on session creation; the UI doesn't expose it. Add a small input (or dropdown of existing workspaces from `GET /api/sessions`) to the "New Session" flow so users can assign sessions to projects without using curl.
 
-**Why:** The current graph is a good visualisation but passive. The "graph is the interface" philosophy implies the graph should be *the* primary surface for navigating, annotating, and steering agent work — not just a side panel. A whiteboard makes that concrete.
+### Real-time graph updates via SSE — P2 · M
+SSE currently triggers a full `GET /api/sessions/:id/graph` refresh on every `tool_end` / `message_end` event. This causes the canvas to re-layout and lose manual node positions. Instead, stream individual node/edge additions as SSE events and apply them as React Flow node/edge patches — no full re-fetch, no layout reset.
 
-**Capabilities:**
-- Nodes rendered as cards (show role, content preview, type badge) — pan/zoom freely
-- Click to expand a card in-place (full message, tool output, file diff, knowledge summary)
-- Drag to manually reposition nodes; layout persists across sessions
-- Edge routing with labelled connectors (like n8n)
-- Manually add `Knowledge` nodes or annotations directly on the canvas
-- Select a node → steer the agent from that context point
-- Group/cluster related nodes visually
+### Session rename — P3 · S
+Sessions are named only at creation. Add `PATCH /api/sessions/:id` with `{ "name": "new name" }` (server) and an inline-edit on the session name in SessionBar (UI).
 
-**Architecture options:**
-- Keep d3 but extend it significantly (high effort, fragile)
-- Switch to [React Flow](https://reactflow.dev/) or [Svelte Flow](https://svelteflow.dev/) — purpose-built for node-graph UIs, handles layout/drag/connectors out of the box
-- Or build on canvas directly (Konva, PixiJS) for maximum control
+### Graph node search / filter — P3 · M
+Add a search bar above the canvas that filters visible nodes by content keyword or type. Client-side filter first (hide non-matching nodes), then wire to `graph_query` keyword search for server-side results. Useful once sessions grow large.
 
-**Note on framework:** This is the point where vanilla JS hits its ceiling and a lightweight framework (React + React Flow, or Svelte + Svelte Flow) becomes worth the build step. The added complexity is justified by the UI complexity.
-
-**Suggested target:** Phase 12–13, after hosted demo (HITL bug fixed 2026-03-16).
+### Export session as Markdown / HTML — P3 · M
+`GET /api/sessions/:id/export?format=markdown` renders the conversation + code blocks + knowledge nodes as a readable document. Useful for sharing findings without requiring Graphirm.
 
 ---
 
-## graphirm.ai hosted demo
+## Agent Capability
 
-**What:** A hosted Graphirm instance at `graphirm.ai` with rate-limited trial access. Two tiers:
-1. **Static demo** — serve `web/` with a pre-recorded `demo.json` session via `?demo` query param. No server needed, host on GitHub Pages / Cloudflare Pages. Visitors see the graph visualization, chat history, and knowledge nodes without an API key.
-2. **Live demo** — hosted `graphirm serve` with rate limiting + GitHub OAuth. BYOK (bring your own key) for LLM. Charge for the platform (persistent graph, hosted sessions), not API token resale.
+### Workspace context injection at session start — P2 · S
+When a session has a workspace set, inject a brief snapshot into the system prompt: the workspace path and the output of `ls -la` (or a tree up to depth 2). Gives the agent immediate awareness of what's in the project without a manual `ls` tool call.
 
-**Phase 11 shipped the foundation:** The browser UI at `web/` works with `graphirm serve`. Adding `?demo` mode (read-only, pre-recorded session) is a small follow-up — load `demo.json` instead of calling the API, hide the input bar.
+### HTTP-level test for per-session workspaces — P2 · S
+The final reviewer for Phase 14 flagged this gap: no route test exercises `workspaces_root` + `create_dir_all` end-to-end. Add a test using `tempfile::tempdir()` + a custom `test_app_state_with_workspaces_root(root)` fixture. Should verify response contains `workspace_path` and the directory exists on disk.
 
-**What remains for hosted:**
-- Auth layer (GitHub OAuth)
-- Rate limiting (per-user session/prompt limits)
-- Demo mode (`?demo` loads pre-recorded session — no API key needed)
-- Landing page (what it is, install instructions, GitHub link)
+### Subagent workspace isolation — P3 · M
+Spawned subagents inherit the parent session's `working_dir`. They could optionally get their own subdirectory (`<workspace>/subagents/<id>/`) to avoid clobbering each other's file output. Requires passing workspace config through `Coordinator` → `delegate.rs`.
 
-**Suggested target:** Phase 12.
+### Multi-file context tool (`read_many` / `diff`) — P3 · M
+A single tool call that reads multiple files or shows a `git diff` output. Currently requires the agent to call `read` N times. Reduces turn count on code review tasks.
 
----
-
-## ✅ Human-in-the-Loop — backend COMPLETE, VS Code UI pending
-
-**Backend status (shipped 2026-03-09):**
-- `HitlGate` — approve / reject / modify decisions via oneshot channels per pending tool call
-- `is_destructive_tool` — gates `write`, `edit`, `bash`
-- Agent loop awaits the gate before executing any destructive tool
-- API routes: `POST /api/graph/:session/node/:node/action`, `POST /api/sessions/:id/pause`, `POST /api/sessions/:id/resume`
-- Full test coverage (approve/reject/modify flows, pause/resume, concurrent resolution)
-
-**What remains — VS Code extension UI only:**
-Per-node approve/reject/edit buttons in the node detail panel of the VS Code extension. When a tool call is pending, the node should show action buttons that POST to the existing API routes. The server wiring is complete; this is purely a UI task.
-
-**Why it matters:** Strongest Graphirm differentiator — the only coding agent where you can intercept and change a specific agent decision. Linear agents (Cline, OpenCode, Aider) cannot do this without rebuilding their data model.
-
-**Suggested target:** Phase 12 (small UI addition to the existing node detail panel).
+### Semantic `graph_query` search — P3 · M
+Phase 12 `graph_query` search mode is keyword-only. Add a `semantic` mode that uses HNSW embeddings to find Knowledge nodes by meaning, not literal text match. The tool interface is already designed for this extension.
 
 ---
 
-## ✅ DAG timeline layout for the graph visualiser - COMPLETED
+## Infrastructure & Quality
 
-**Status:** Shipped and merged to main.
+### Cross-session knowledge extraction — P2 · L
+Knowledge nodes are created per-session but not automatically linked across sessions. Add a post-turn job that embeds new Knowledge nodes and links them to similar nodes in other sessions via `RelatesTo` edges. Enables the agent to surface relevant past work without a manual `graph_query`. (Embeddings + HNSW are already in place via Phase 9.)
 
-**Implementation:** Full DAG timeline layout with toggle button in VS Code extension.
-- Timeline mode: X-axis by timestamp (left=oldest, right=newest), Y-axis by node type + group offset
-- Force mode: Traditional force-directed layout (toggle between both)
-- Edge colors by type (RespondsTo=white, Reads=blue, Produces=green, Modifies=orange, DependsOn=purple, SpawnedBy=red)
-- Group-aware layout: interactions + tool calls + results aligned vertically
-- Full zoom/pan support with drag-to-reposition nodes
+### Custom tool plugins — P2 · L
+Users can't extend Graphirm without recompiling. Add a plugin mechanism: load script-based tools (shell or Python) from `~/.graphirm/plugins/` at startup. Each plugin exposes a name, description, and `execute` command. Subject to the same HITL gate as `bash`.
 
-**Location:** `graphirm-vscode/media/graph.js`
-- Layout modes: lines 18-19
-- Type positioning: lines 22-29
-- Timeline assignment: lines 166-204
-- Toggle button: lines 85-95
+### Agent Trace ingestion (import) — P3 · M
+Phase 12 exports sessions as Agent Trace JSON. The reverse — importing a trace from another agent (Claude, OpenCode, Aider) into the Graphirm graph — is not yet implemented. Useful for consolidating work done outside Graphirm.
 
-See `docs/completion-log.md` for full details.
+### Performance: pagination + query caching — P3 · M
+The context engine traverses the full graph on every request. On sessions with 1k+ nodes this is measurable. Add:
+- Offset/limit on all list endpoints
+- SQLite indices on `session_id`, `node_type`, `created_at`
+- In-memory TTL cache for frequent read queries (session list, node-by-id)
 
 ---
 
-## ✅ Completed Items
+## Enterprise / Scale
 
-See `docs/completion-log.md` for detailed implementation notes on completed features.
+### API versioning (`/api/v1/`) — P3 · M
+Current REST API is unstable — breaking changes happen freely. Add a `/api/v1/` prefix, extract versioned request/response structs, and generate an OpenAPI spec. Required before any third-party tooling builds on top.
+
+### Multi-user support — P3 · L
+No user concept exists — all sessions share one database. For teams: add OAuth2 login (GitHub), per-session ownership + sharing links, and basic permission model (owner / viewer). Foundation for a hosted SaaS tier.
+
+### graphirm.ai hosted demo — P3 · M
+A `?demo` query param loads a pre-recorded session JSON instead of calling the API, hiding the input bar. Deploy to Cloudflare Pages (static, no server needed). Gives visitors a zero-friction look at the graph without an API key.
 
 ---
 
+## Completed (summary — details in `docs/completion-log.md`)
 
-## Phase 13 and Beyond
-
-For a comprehensive list of planned features, advanced features, and strategic directions, see `docs/backlog/phase-13-advanced-features.md`. That document contains:
-
-- **7 Major Feature Categories** with complexity estimates and dependencies
-- **Strategic Insights** on graph-native differentiation
-- **Sequencing recommendations** for feature prioritization
-- **Success criteria** and integration points
-
-The backlog here focuses on items in the active pipeline. Proposed features for Phase 13+ are documented separately.
+| Phase | What |
+|-------|------|
+| 0–9 | Scaffold → Knowledge layer (graph, LLM, tools, agent, multi-agent, context engine, TUI, HTTP, knowledge/HNSW) |
+| 10 | Structured LLM response segments + GLiNER2 fallback + segment context filter |
+| 11 | Browser web UI (vanilla JS, d3 force graph + chat) |
+| 12 | `graph_query` tool (bfs, list_type, keyword search) |
+| 13 | Interactive whiteboard (React + React Flow, node expansion, grouping, steer-from-node, annotations, keyboard shortcuts, auto-approve) |
+| 14 | Per-session workspaces (`workspaces_root`, named dirs, graph persistence, restart restore) |
