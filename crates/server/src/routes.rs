@@ -61,6 +61,45 @@ fn sanitize_workspace_name(name: &str) -> Option<String> {
     }
 }
 
+/// Build a brief workspace context block to inject into the system prompt.
+/// Lists up to 20 entries (non-recursive) so the agent knows where it's working.
+async fn build_workspace_context(path: &std::path::Path) -> String {
+    let mut lines = vec![
+        String::from("\n\n## Active Workspace"),
+        format!("Path: {}", path.display()),
+    ];
+
+    match tokio::fs::read_dir(path).await {
+        Ok(mut dir) => {
+            let mut entries: Vec<String> = Vec::new();
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
+                entries.push(if is_dir {
+                    format!("  {name}/")
+                } else {
+                    format!("  {name}")
+                });
+                if entries.len() >= 20 {
+                    entries.push("  ...".to_string());
+                    break;
+                }
+            }
+            if entries.is_empty() {
+                lines.push("(empty)".to_string());
+            } else {
+                lines.push("Contents:".to_string());
+                lines.extend(entries);
+            }
+        }
+        Err(_) => {
+            lines.push("(could not read directory)".to_string());
+        }
+    }
+
+    lines.join("\n")
+}
+
 /// Build the axum router with all routes wired to shared [`AppState`].
 ///
 /// Middleware applied (outermost → innermost):
@@ -175,6 +214,9 @@ async fn create_session(
         config.working_dir = ws_path;
         config.workspace_dir = Some(config.working_dir.clone());
         config.workspace_name = Some(ws_name);
+        // Inject workspace path + directory listing into system prompt
+        let ws_context = build_workspace_context(&config.working_dir).await;
+        config.system_prompt.push_str(&ws_context);
     }
 
     let hitl = Arc::new(HitlGate::new());
