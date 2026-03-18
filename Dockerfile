@@ -8,7 +8,7 @@ COPY web-app/ ./
 RUN npm run build
 
 # Stage 2: Build the Rust binary
-FROM rust:1.85-bookworm AS rust-builder
+FROM rust:1.88-bookworm AS rust-builder
 
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./

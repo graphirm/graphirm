@@ -46,4 +46,4 @@ git pull origin main   # after spoke work — pull changes back here
 ## Risk Reminders
 
 - `Arc<RwLock<StableGraph>>` — acquire locks briefly, never hold across an await point
-- Rust version must match spoke/CI (stable, currently 1.85)
+- Rust version must match spoke/CI (stable, currently 1.88)
