@@ -11,7 +11,7 @@ interface UseSessionReturn {
   isThinking: boolean;
   pendingApproval: PendingApproval | null;
   selectSession: (id: string) => Promise<void>;
-  createSession: (name?: string) => Promise<Session | void>;
+  createSession: (name?: string, workspace?: string) => Promise<Session | void>;
   sendPrompt: (content: string, contextRoot?: string) => Promise<void>;
   abortSession: () => Promise<void>;
   approveAction: (nodeId: string) => Promise<void>;
@@ -98,9 +98,9 @@ export function useSession(): UseSessionReturn {
     return () => { sseRef.current?.unsubscribe(); };
   }, []);
 
-  const createSession = useCallback(async (name?: string) => {
+  const createSession = useCallback(async (name?: string, workspace?: string) => {
     const label = name ?? `Session ${new Date().toLocaleTimeString()}`;
-    const session = await api.createSession(label);
+    const session = await api.createSession(label, workspace);
     setSessions(prev => [session, ...prev]);
     setCurrentSession(session);
     setMessages([]);

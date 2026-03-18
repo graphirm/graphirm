@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Session } from '../types/graph';
 import styles from './SessionBar.module.css';
 
@@ -5,7 +6,7 @@ interface SessionBarProps {
   sessions: Session[];
   currentSession: Session | null;
   onSelectSession: (id: string) => void;
-  onCreateSession: () => void;
+  onCreateSession: (name?: string, workspace?: string) => void;
   onPause: () => void;
   onResume: () => void;
   autoApprove: boolean;
@@ -22,6 +23,25 @@ export function SessionBar({
   autoApprove,
   onToggleAutoApprove,
 }: SessionBarProps) {
+  const [showForm, setShowForm] = useState(false);
+  const [sessionName, setSessionName] = useState('');
+  const [workspaceName, setWorkspaceName] = useState('');
+
+  const handleCreate = () => {
+    const name = sessionName.trim() || undefined;
+    const workspace = workspaceName.trim() || undefined;
+    onCreateSession(name, workspace);
+    setShowForm(false);
+    setSessionName('');
+    setWorkspaceName('');
+  };
+
+  const handleCancel = () => {
+    setShowForm(false);
+    setSessionName('');
+    setWorkspaceName('');
+  };
+
   return (
     <header className={styles.header}>
       <span className={styles.logo}>graphirm</span>
@@ -37,7 +57,29 @@ export function SessionBar({
             </option>
           ))}
         </select>
-        <button onClick={() => onCreateSession()}>+ New</button>
+        {showForm ? (
+          <>
+            <input
+              autoFocus
+              placeholder="Session name (optional)"
+              value={sessionName}
+              onChange={e => setSessionName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              style={{ fontSize: 12, width: 150, padding: '2px 6px' }}
+            />
+            <input
+              placeholder="Workspace (optional)"
+              value={workspaceName}
+              onChange={e => setWorkspaceName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              style={{ fontSize: 12, width: 130, padding: '2px 6px' }}
+            />
+            <button onClick={handleCreate}>Create</button>
+            <button className="secondary" onClick={handleCancel} style={{ fontSize: 11 }}>Cancel</button>
+          </>
+        ) : (
+          <button onClick={() => setShowForm(true)}>+ New</button>
+        )}
         {currentSession && (
           <>
             <button className="secondary" onClick={onPause} style={{ fontSize: 11 }}>Pause</button>

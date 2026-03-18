@@ -19,10 +19,13 @@ export const api = {
   listSessions: (): Promise<Session[]> =>
     apiFetch('/api/sessions'),
 
-  createSession: (name: string): Promise<Session> =>
+  createSession: (name: string, workspace?: string): Promise<Session> =>
     apiFetch('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({ agent: name }),
+      body: JSON.stringify({
+        agent: name,
+        ...(workspace ? { workspace } : {}),
+      }),
     }),
 
   getSession: (id: string): Promise<Session> =>
