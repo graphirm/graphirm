@@ -47,7 +47,7 @@ graphirm-vscode/            # VS Code / Cursor extension (TypeScript)
 | `crates/server/` | axum routes, SSE streaming, `AppState`, `SessionHandle`, SDK, static file serving |
 | `graphirm-eval/` | eval harness — drives agent via HTTP, checks task correctness |
 | `graphirm-vscode/` | VS Code/Cursor extension (TypeScript) |
-| `web-app/` | React + React Flow interactive whiteboard UI (Vite, TypeScript) — **active development** |
+| `web-app/` | React + React Flow interactive whiteboard UI (Vite, TypeScript) |
 | `web/` | Vanilla JS browser UI (legacy fallback, still served if `web-app/dist/` not present) |
 | `config/default.toml` | default model, agent, knowledge, graph, TUI, server settings |
 
@@ -129,6 +129,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 11 | Web UI — browser graph visualization + chat | ✅ done |
 | 12 | `graph_query` tool — agent can query its own graph (bfs, list_type, keyword search) | ✅ done |
 | 13 | Interactive whiteboard graph — React + React Flow, node expansion (marked + hljs), grouping, steer-from-node, canvas annotations, keyboard shortcuts | ✅ done |
+| 14 | Per-session workspaces — `workspaces_root` config, named workspace directories, persisted in Agent node metadata, restored on restart | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -164,6 +165,15 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Bundle: React Flow 194 kB, highlight 21 kB (trimmed to 20 languages), dagre 43 kB, app 289 kB — all chunks ≤ 500 kB
 - Dev: `cd web-app && npm run dev` (proxies `/api` → `localhost:5555`)
 - Build: `cd web-app && npm run build` → `web-app/dist/` (served automatically by `graphirm serve`)
+
+**Per-session workspaces summary (Phase 14):**
+- Set `workspaces_root = "/workspaces"` in `[agent]` section of `config/default.toml` to enable
+- `POST /api/sessions` accepts optional `"workspace"` field; defaults to sanitized session name
+- Server calls `tokio::fs::create_dir_all(<root>/<workspace>/)` and sets it as the session's `working_dir`
+- Workspace name stored in Agent node metadata (`"workspace"` key) — survives SQLite restarts
+- On startup, `restore_sessions_from_graph` reconstructs `working_dir` from stored workspace name
+- `GET /api/sessions/:id` response includes `workspace` and `workspace_path` fields when active
+- Backward-compatible: when `workspaces_root` is unset, all behaviour is unchanged
 
 **Risk areas:**
 - `Arc<RwLock<StableGraph>>` — no deadlocks; acquire briefly, never across await
