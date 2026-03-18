@@ -72,7 +72,12 @@ async fn build_workspace_context(path: &std::path::Path) -> String {
     match tokio::fs::read_dir(path).await {
         Ok(mut dir) => {
             let mut entries: Vec<String> = Vec::new();
+            let mut truncated = false;
             while let Ok(Some(entry)) = dir.next_entry().await {
+                if entries.len() == 20 {
+                    truncated = true;
+                    break;
+                }
                 let name = entry.file_name().to_string_lossy().to_string();
                 let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
                 entries.push(if is_dir {
@@ -80,10 +85,10 @@ async fn build_workspace_context(path: &std::path::Path) -> String {
                 } else {
                     format!("  {name}")
                 });
-                if entries.len() >= 20 {
-                    entries.push("  ...".to_string());
-                    break;
-                }
+            }
+            entries.sort();
+            if truncated {
+                entries.push("  ...".to_string());
             }
             if entries.is_empty() {
                 lines.push("(empty)".to_string());
@@ -92,7 +97,8 @@ async fn build_workspace_context(path: &std::path::Path) -> String {
                 lines.extend(entries);
             }
         }
-        Err(_) => {
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "could not read workspace dir for context injection");
             lines.push("(could not read directory)".to_string());
         }
     }
