@@ -78,7 +78,7 @@ fn gliner_by_turn(spans: &[TurnSpans]) -> HashMap<(String, u32), &TurnSpans> {
 fn overlap_len(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> usize {
     let start = a_start.max(b_start);
     let end = a_end.min(b_end);
-    if end > start { end - start } else { 0 }
+    end.saturating_sub(start)
 }
 
 /// Check if a human segment matches a GLiNER2 span: same type and overlap ratio >= min_ratio.

@@ -112,10 +112,10 @@ pub struct SubagentHandle {
 fn build_scoped_tools(base_tools: &ToolRegistry, config: &AgentConfig) -> ToolRegistry {
     let mut scoped = ToolRegistry::new();
     for name in base_tools.list() {
-        if config.is_tool_allowed(name) {
-            if let Ok(tool) = base_tools.get(name) {
-                scoped.register(tool);
-            }
+        if config.is_tool_allowed(name)
+            && let Ok(tool) = base_tools.get(name)
+        {
+            scoped.register(tool);
         }
     }
     scoped

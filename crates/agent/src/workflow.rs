@@ -121,140 +121,141 @@ pub async fn stream_and_record(
     // Primary path: parse JSON envelope emitted by LLM when structured_output is true.
     // Fallback path: GLiNER2 ONNX span detection (requires local-extraction feature +
     //   ExtractionConfig with a Local or Hybrid backend pointing at a downloaded model).
-    if let Some(ref seg_config) = session.agent_config.segments {
-        if seg_config.enabled && !response.has_tool_calls() {
-            let raw_text = response.text_content();
+    if let Some(ref seg_config) = session.agent_config.segments
+        && seg_config.enabled
+        && !response.has_tool_calls()
+    {
+        let raw_text = response.text_content();
 
-            // Try structured JSON first, fall back to GLiNER2 if that fails or is empty.
-            let structured = crate::knowledge::segments::parse_structured_segments(&raw_text);
-            let segments_opt: Option<(Vec<crate::knowledge::segments::Segment>, &str)> =
-                match structured {
-                    Ok(segs) if !segs.is_empty() => {
-                        tracing::info!(
-                            count = segs.len(),
-                            "Parsed structured segments from LLM response"
-                        );
-                        Some((segs, "structured"))
-                    }
-                    Ok(_) => {
-                        tracing::debug!(
-                            "Structured segment parse returned empty — trying GLiNER2 fallback"
-                        );
-                        // GLiNER2 fallback
-                        #[cfg(feature = "local-extraction")]
-                        {
-                            let model_dir = session
-                                .agent_config
-                                .extraction
-                                .as_ref()
-                                .filter(|_| seg_config.gliner2_fallback)
-                                .and_then(|e| {
-                                    use crate::knowledge::extraction::ExtractionBackend;
-                                    match &e.backend {
-                                        ExtractionBackend::Local { model_dir }
-                                        | ExtractionBackend::Hybrid { model_dir } => {
-                                            Some(model_dir.clone())
-                                        }
-                                        _ => None,
+        // Try structured JSON first, fall back to GLiNER2 if that fails or is empty.
+        let structured = crate::knowledge::segments::parse_structured_segments(&raw_text);
+        let segments_opt: Option<(Vec<crate::knowledge::segments::Segment>, &str)> =
+            match structured {
+                Ok(segs) if !segs.is_empty() => {
+                    tracing::info!(
+                        count = segs.len(),
+                        "Parsed structured segments from LLM response"
+                    );
+                    Some((segs, "structured"))
+                }
+                Ok(_) => {
+                    tracing::debug!(
+                        "Structured segment parse returned empty — trying GLiNER2 fallback"
+                    );
+                    // GLiNER2 fallback
+                    #[cfg(feature = "local-extraction")]
+                    {
+                        let model_dir = session
+                            .agent_config
+                            .extraction
+                            .as_ref()
+                            .filter(|_| seg_config.gliner2_fallback)
+                            .and_then(|e| {
+                                use crate::knowledge::extraction::ExtractionBackend;
+                                match &e.backend {
+                                    ExtractionBackend::Local { model_dir }
+                                    | ExtractionBackend::Hybrid { model_dir } => {
+                                        Some(model_dir.clone())
                                     }
-                                });
-                            if let Some(dir) = model_dir {
-                                crate::knowledge::segments::try_gliner2_fallback(
-                                    &dir,
-                                    &raw_text,
-                                    &seg_config.labels,
-                                    seg_config.min_confidence,
-                                )
-                                .await
-                                .map(|s| (s, "gliner2"))
-                            } else {
-                                None
-                            }
+                                    _ => None,
+                                }
+                            });
+                        if let Some(dir) = model_dir {
+                            crate::knowledge::segments::try_gliner2_fallback(
+                                &dir,
+                                &raw_text,
+                                &seg_config.labels,
+                                seg_config.min_confidence,
+                            )
+                            .await
+                            .map(|s| (s, "gliner2"))
+                        } else {
+                            None
                         }
-                        #[cfg(not(feature = "local-extraction"))]
-                        None
                     }
-                    Err(e) => {
-                        tracing::debug!(
-                            error = %e,
-                            "Structured segment parse failed — trying GLiNER2 fallback"
-                        );
-                        // GLiNER2 fallback
-                        #[cfg(feature = "local-extraction")]
-                        {
-                            let model_dir = session
-                                .agent_config
-                                .extraction
-                                .as_ref()
-                                .filter(|_| seg_config.gliner2_fallback)
-                                .and_then(|e| {
-                                    use crate::knowledge::extraction::ExtractionBackend;
-                                    match &e.backend {
-                                        ExtractionBackend::Local { model_dir }
-                                        | ExtractionBackend::Hybrid { model_dir } => {
-                                            Some(model_dir.clone())
-                                        }
-                                        _ => None,
+                    #[cfg(not(feature = "local-extraction"))]
+                    None
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        error = %e,
+                        "Structured segment parse failed — trying GLiNER2 fallback"
+                    );
+                    // GLiNER2 fallback
+                    #[cfg(feature = "local-extraction")]
+                    {
+                        let model_dir = session
+                            .agent_config
+                            .extraction
+                            .as_ref()
+                            .filter(|_| seg_config.gliner2_fallback)
+                            .and_then(|e| {
+                                use crate::knowledge::extraction::ExtractionBackend;
+                                match &e.backend {
+                                    ExtractionBackend::Local { model_dir }
+                                    | ExtractionBackend::Hybrid { model_dir } => {
+                                        Some(model_dir.clone())
                                     }
-                                });
-                            if let Some(dir) = model_dir {
-                                crate::knowledge::segments::try_gliner2_fallback(
-                                    &dir,
-                                    &raw_text,
-                                    &seg_config.labels,
-                                    seg_config.min_confidence,
-                                )
-                                .await
-                                .map(|s| (s, "gliner2"))
-                            } else {
-                                None
-                            }
+                                    _ => None,
+                                }
+                            });
+                        if let Some(dir) = model_dir {
+                            crate::knowledge::segments::try_gliner2_fallback(
+                                &dir,
+                                &raw_text,
+                                &seg_config.labels,
+                                seg_config.min_confidence,
+                            )
+                            .await
+                            .map(|s| (s, "gliner2"))
+                        } else {
+                            None
                         }
-                        #[cfg(not(feature = "local-extraction"))]
-                        None
                     }
-                };
+                    #[cfg(not(feature = "local-extraction"))]
+                    None
+                }
+            };
 
-            if let Some((segments, source)) = segments_opt {
-                let nesting = crate::knowledge::segments::detect_nesting(&segments);
-                match crate::knowledge::segments::persist_segments(
-                    &session.graph,
-                    &node_id,
-                    &segments,
-                    &nesting,
-                )
-                .await
-                {
-                    Ok(seg_ids) => {
-                        tracing::info!(
-                            count = seg_ids.len(),
-                            source = source,
-                            nesting_pairs = nesting.len(),
-                            "Persisted response segments"
-                        );
-                        // Stamp the parent Interaction node so the context engine can detect
-                        // that segment children exist and apply the segment_filter correctly.
-                        let graph_clone = session.graph.clone();
-                        let stamp_id = node_id.clone();
-                        match tokio::task::spawn_blocking(move || {
-                            let mut node = graph_clone.get_node(&stamp_id)?;
-                            node.metadata["segmented"] = serde_json::json!(true);
-                            graph_clone.update_node(&stamp_id, node)
-                        })
-                        .await
-                        {
-                            Ok(Ok(())) => {}
-                            Ok(Err(e)) => {
-                                tracing::warn!(error = %e, "Failed to stamp segmented metadata on interaction node (non-fatal)");
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "spawn_blocking panicked while stamping segmented metadata (non-fatal)");
-                            }
+        if let Some((segments, source)) = segments_opt {
+            let nesting = crate::knowledge::segments::detect_nesting(&segments);
+            match crate::knowledge::segments::persist_segments(
+                &session.graph,
+                &node_id,
+                &segments,
+                &nesting,
+            )
+            .await
+            {
+                Ok(seg_ids) => {
+                    tracing::info!(
+                        count = seg_ids.len(),
+                        source = source,
+                        nesting_pairs = nesting.len(),
+                        "Persisted response segments"
+                    );
+                    // Stamp the parent Interaction node so the context engine can detect
+                    // that segment children exist and apply the segment_filter correctly.
+                    let graph_clone = session.graph.clone();
+                    let stamp_id = node_id.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        let mut node = graph_clone.get_node(&stamp_id)?;
+                        node.metadata["segmented"] = serde_json::json!(true);
+                        graph_clone.update_node(&stamp_id, node)
+                    })
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => {
+                            tracing::warn!(error = %e, "Failed to stamp segmented metadata on interaction node (non-fatal)");
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "spawn_blocking panicked while stamping segmented metadata (non-fatal)");
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Failed to persist response segments (non-fatal)");
-                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to persist response segments (non-fatal)");
                 }
             }
         }

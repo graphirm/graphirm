@@ -177,10 +177,10 @@ impl Session {
             .await
             .ok()?
             .ok()?;
-        if let NodeType::Interaction(ref data) = node.node_type {
-            if data.role == "user" {
-                return Some(data.content.clone());
-            }
+        if let NodeType::Interaction(ref data) = node.node_type
+            && data.role == "user"
+        {
+            return Some(data.content.clone());
         }
         None
     }

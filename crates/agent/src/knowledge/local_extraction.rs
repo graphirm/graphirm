@@ -387,6 +387,7 @@ impl OnnxExtractor {
     /// - `word_offsets`: char (start, end) of each word in original text
     /// - `text_start_idx`: token index where text begins (after [SEP_TEXT])
     /// - `first_token_positions`: for each word, index of its first token in `text_hidden`
+    #[allow(clippy::type_complexity)]
     fn build_ner_input(
         &self,
         text: &str,

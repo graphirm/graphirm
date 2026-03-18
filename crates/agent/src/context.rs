@@ -294,10 +294,10 @@ pub fn node_to_message_filtered(
                 continue;
             }
         };
-        if let NodeType::Content(data) = &child_node.node_type {
-            if filter.iter().any(|f| f == &data.content_type) {
-                text_parts.push(data.body.clone());
-            }
+        if let NodeType::Content(data) = &child_node.node_type
+            && filter.iter().any(|f| f == &data.content_type)
+        {
+            text_parts.push(data.body.clone());
         }
     }
 

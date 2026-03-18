@@ -417,7 +417,7 @@ async fn run_label_explore(
     let json =
         serde_json::to_string_pretty(&report).map_err(|e| GraphirmError::Config(e.to_string()))?;
     if let Some(path) = out {
-        std::fs::write(&path, json).map_err(|e| GraphirmError::Io(e))?;
+        std::fs::write(&path, json).map_err(GraphirmError::Io)?;
         eprintln!("Wrote report to {}", path.display());
     } else {
         println!("{}", json);
@@ -444,7 +444,7 @@ fn run_schema_suggest(report_path: PathBuf, out: Option<PathBuf>) -> Result<(), 
     let out_json =
         serde_json::to_string_pretty(&rec).map_err(|e| GraphirmError::Config(e.to_string()))?;
     if let Some(path) = out {
-        std::fs::write(&path, out_json).map_err(|e| GraphirmError::Io(e))?;
+        std::fs::write(&path, out_json).map_err(GraphirmError::Io)?;
         eprintln!("Wrote schema recommendation to {}", path.display());
     } else {
         println!("{}", out_json);
@@ -491,7 +491,7 @@ async fn run_predict_spans(
     let batch_size_usize = batch_size.map(|n| n as usize);
 
     let mut writer: Box<dyn std::io::Write> = if let Some(path) = &out {
-        Box::new(std::fs::File::create(path).map_err(|e| GraphirmError::Io(e))?)
+        Box::new(std::fs::File::create(path).map_err(GraphirmError::Io)?)
     } else {
         Box::new(std::io::stdout())
     };

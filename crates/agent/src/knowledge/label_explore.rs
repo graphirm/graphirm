@@ -28,6 +28,9 @@ use serde::{Deserialize, Serialize};
 use super::local_extraction::{OnnxExtractor, RawOnnxEntity};
 use crate::error::AgentError;
 
+// span_count, turns_with_label, sum_conf, min_conf, max_conf, sum_chars, min_chars, max_chars
+type LabelStats = (u32, u32, f64, f64, f64, u64, u32, u32);
+
 /// Corpus-level statistics from a label-exploration run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorpusStats {
@@ -129,7 +132,7 @@ pub async fn run_label_exploration(
     let mut turns_with_any_label: u32 = 0;
 
     // Per-label: span_count, turns_with_label, sum_conf, min_conf, max_conf, sum_span_chars, min_span_chars, max_span_chars
-    let mut per_label: HashMap<String, (u32, u32, f64, f64, f64, u64, u32, u32)> = HashMap::new();
+    let mut per_label: HashMap<String, LabelStats> = HashMap::new();
     for label in labels {
         per_label.insert(
             label.clone(),
