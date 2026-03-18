@@ -17,9 +17,10 @@
   <div class="container">
     <span class="logo">graph<span>irm</span></span>
     <div class="links">
-      <a href="https://github.com/consoulhub/graphirm">GitHub</a>
-      <a href="https://github.com/consoulhub/graphirm/releases">Releases</a>
-      <a href="https://github.com/consoulhub/graphirm/blob/main/docs/plans/00-execution-strategy.md">Roadmap</a>
+      <a href="https://app.graphirm.ai" class="btn-nav-primary">Try it live →</a>
+      <a href="https://github.com/graphirm/graphirm">GitHub</a>
+      <a href="https://github.com/graphirm/graphirm/releases">Releases</a>
+      <a href="https://github.com/graphirm/graphirm/blob/main/README.md">Docs</a>
     </div>
   </div>
 </nav>
@@ -32,8 +33,8 @@
       <h1>A coding agent where<br/><em>the graph is the product</em></h1>
       <p>Every decision, tool call, and file edit is a node you can navigate, replay, and steer. Not a chat log — a knowledge graph that grows with your project.</p>
       <div class="hero-actions">
-        <a class="btn btn-primary" href="https://github.com/consoulhub/graphirm">View on GitHub</a>
-        <a class="btn btn-secondary" href="#install">Install VS Code Extension ↓</a>
+        <a class="btn btn-primary" href="https://app.graphirm.ai">Try it live →</a>
+        <a class="btn btn-secondary" href="https://github.com/graphirm/graphirm">View on GitHub</a>
       </div>
 
       <div class="demo">
@@ -42,14 +43,14 @@
         </div>
         <pre><span class="comment"># Start the Graphirm server</span>
 <span class="prompt">$</span> graphirm serve
-<span class="output">INFO graphirm_server: Starting on 127.0.0.1:3000</span>
+<span class="output">INFO graphirm_server: Starting on 127.0.0.1:5555</span>
 
 <span class="comment"># Every message, tool call, and file edit becomes a graph node</span>
-<span class="prompt">$</span> curl -s -X POST localhost:3000/api/sessions \
+<span class="prompt">$</span> curl -s -X POST localhost:5555/api/sessions \
     -d '{"name":"fix-auth-bug"}'
 <span class="output">{"id":"3fa85f64","name":"fix-auth-bug","status":"idle"}</span>
 
-<span class="comment"># Open VS Code → Ctrl+Shift+P → "Graphirm: Open"</span>
+<span class="comment"># Open the web UI at http://localhost:5555</span>
 <span class="comment"># Chat pane on the left, live graph explorer on the right</span></pre>
       </div>
     </div>
@@ -82,7 +83,7 @@
         <div class="feature-card">
           <div class="icon">◉</div>
           <h3>Navigate your reasoning</h3>
-          <p>Chat and graph side-by-side in VS Code. Click any node to see what triggered it and what it produced.</p>
+          <p>Interactive whiteboard with React Flow. Click any node to expand it, steer from any point, and annotate the canvas.</p>
         </div>
 
         <div class="feature-card">
@@ -108,26 +109,27 @@
       <div class="arch-diagram">graphirm/
 ├── crates/
 │   ├── graph/    ← GraphStore (rusqlite + petgraph) — every node + edge
-│   ├── llm/      ← 17+ providers via rig-core (Anthropic, OpenAI, DeepSeek…)
-│   ├── tools/    ← bash, read, write, edit, grep, find, ls
+│   ├── llm/      ← providers: Anthropic, OpenAI, DeepSeek, Ollama, OpenRouter
+│   ├── tools/    ← bash, read, write, edit, grep, find, ls, graph_query
 │   ├── agent/    ← async loop, context engine, multi-agent, knowledge extraction
 │   ├── server/   ← axum REST + SSE streaming API
 │   └── tui/      ← ratatui terminal UI
-└── graphirm-vscode/   ← VS Code/Cursor extension (chat + d3 graph explorer)</div>
+├── web-app/      ← React + React Flow interactive whiteboard (Vite, TypeScript)
+└── graphirm-vscode/   ← VS Code/Cursor extension</div>
     </div>
   </section>
 
   <!-- Install -->
   <section class="install" id="install">
     <div class="container">
-      <h2>Get started</h2>
+      <h2>Self-host in minutes</h2>
       <div class="install-steps">
 
         <div class="install-step">
           <div class="step-num">1</div>
           <div class="step-body">
-            <h4>Clone and build (Rust 1.75+ required)</h4>
-            <code>git clone https://github.com/consoulhub/graphirm && cd graphirm && cargo build --release</code>
+            <h4>Clone and build (Rust 1.88+ required)</h4>
+            <code>git clone https://github.com/graphirm/graphirm && cd graphirm && cargo build --release</code>
           </div>
         </div>
 
@@ -135,24 +137,17 @@
           <div class="step-num">2</div>
           <div class="step-body">
             <h4>Set your LLM API key and start the server</h4>
-            <code>export ANTHROPIC_API_KEY=sk-ant-... && ./target/release/graphirm serve</code>
-            <p>Supports Anthropic, OpenAI, DeepSeek, Google, and 13 more providers via <code>GRAPHIRM_MODEL</code>.</p>
+            <code>export GRAPHIRM_MODEL=openrouter/qwen/qwen3-coder-next && export OPENROUTER_API_KEY=sk-or-... && ./target/release/graphirm serve</code>
+            <p>Supports Anthropic, OpenAI, DeepSeek, Ollama, and OpenRouter via <code>GRAPHIRM_MODEL</code>.</p>
           </div>
         </div>
 
         <div class="install-step">
           <div class="step-num">3</div>
           <div class="step-body">
-            <h4>Install the VS Code extension</h4>
-            <p>Download the latest <code>.vsix</code> from <a href="https://github.com/consoulhub/graphirm/releases">Releases</a>, then in VS Code or Cursor: <strong>Extensions → ⋯ → Install from VSIX</strong></p>
-          </div>
-        </div>
-
-        <div class="install-step">
-          <div class="step-num">4</div>
-          <div class="step-body">
-            <h4>Open the panel</h4>
-            <code>Ctrl+Shift+P → Graphirm: Open</code>
+            <h4>Open the web UI</h4>
+            <code>open http://localhost:5555</code>
+            <p>Interactive whiteboard with chat pane, graph explorer, node expansion, and canvas annotations.</p>
           </div>
         </div>
 
@@ -166,9 +161,9 @@
   <div class="container">
     <span>Graphirm — MIT License — built with Rust</span>
     <div style="display:flex;gap:20px">
-      <a href="https://github.com/consoulhub/graphirm">GitHub</a>
-      <a href="https://github.com/consoulhub/graphirm/blob/main/README.md">Docs</a>
-      <a href="https://github.com/consoulhub/graphirm/blob/main/docs/plans/00-execution-strategy.md">Roadmap</a>
+      <a href="https://app.graphirm.ai">Live App</a>
+      <a href="https://github.com/graphirm/graphirm">GitHub</a>
+      <a href="https://github.com/graphirm/graphirm/blob/main/README.md">Docs</a>
     </div>
   </div>
 </footer>
