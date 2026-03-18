@@ -37,6 +37,23 @@ fn test_app_state() -> AppState {
     }
 }
 
+fn test_app_state_with_workspaces_root(root: std::path::PathBuf) -> AppState {
+    let graph = Arc::new(GraphStore::open_memory().unwrap());
+    let (event_tx, _) = broadcast::channel::<SseEvent>(256);
+    let mut config = AgentConfig::default();
+    config.workspaces_root = Some(root);
+    AppState {
+        graph,
+        llm: Arc::new(MockProvider::fixed("I processed your request.")),
+        tools: Arc::new(ToolRegistry::new()),
+        event_tx,
+        sessions: Arc::new(RwLock::new(HashMap::new())),
+        default_config: config,
+        memory_retriever: None,
+        web_dir: None,
+    }
+}
+
 #[tokio::test]
 async fn test_full_lifecycle() {
     let state = test_app_state();
@@ -289,4 +306,40 @@ async fn test_concurrent_sessions() {
 
     let unique: std::collections::HashSet<_> = ids.iter().collect();
     assert_eq!(unique.len(), 5);
+}
+
+#[tokio::test]
+async fn test_workspace_creation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
+    let state = test_app_state_with_workspaces_root(root.clone());
+    let app = create_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/sessions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"agent": "my-project", "workspace": "my-project"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let session: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(session.workspace.as_deref(), Some("my-project"));
+    let ws_path = session.workspace_path.expect("workspace_path must be set");
+    assert!(ws_path.ends_with("my-project"));
+    assert!(
+        std::path::Path::new(&ws_path).exists(),
+        "workspace directory must exist on disk"
+    );
 }
