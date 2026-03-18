@@ -67,10 +67,10 @@ impl RequestLogger {
             };
 
             while let Some(entry) = rx.blocking_recv() {
-                if let Ok(json) = serde_json::to_string(&entry) {
-                    if let Err(e) = writeln!(file, "{json}") {
-                        tracing::warn!("request log write failed: {e}");
-                    }
+                if let Ok(json) = serde_json::to_string(&entry)
+                    && let Err(e) = writeln!(file, "{json}")
+                {
+                    tracing::warn!("request log write failed: {e}");
                 }
             }
         });

@@ -82,24 +82,24 @@ impl App {
             })?;
 
             // Poll for keyboard events with 50ms timeout
-            if event::poll(Duration::from_millis(50))? {
-                if let Event::Key(key) = event::read()? {
-                    match handle_key_event(&mut self, key) {
-                        KeyAction::SubmitMessage(msg) => {
-                            self.chat.add_message(ChatMessage {
-                                role: Role::Human,
-                                content: msg.clone(),
-                                timestamp: Utc::now(),
-                                node_id: None,
-                                is_tool_call: false,
-                                tool_name: None,
-                            });
-                            self.chat.scroll_to_bottom();
-                            self.state = AppState::WaitingForAgent;
-                            on_submit(msg);
-                        }
-                        KeyAction::Quit | KeyAction::None => {}
+            if event::poll(Duration::from_millis(50))?
+                && let Event::Key(key) = event::read()?
+            {
+                match handle_key_event(&mut self, key) {
+                    KeyAction::SubmitMessage(msg) => {
+                        self.chat.add_message(ChatMessage {
+                            role: Role::Human,
+                            content: msg.clone(),
+                            timestamp: Utc::now(),
+                            node_id: None,
+                            is_tool_call: false,
+                            tool_name: None,
+                        });
+                        self.chat.scroll_to_bottom();
+                        self.state = AppState::WaitingForAgent;
+                        on_submit(msg);
                     }
+                    KeyAction::Quit | KeyAction::None => {}
                 }
             }
 

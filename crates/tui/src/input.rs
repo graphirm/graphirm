@@ -12,11 +12,11 @@ pub enum KeyAction {
 
 pub fn handle_key_event(app: &mut App, key: KeyEvent) -> KeyAction {
     // Global shortcuts (work regardless of focus)
-    if key.modifiers.contains(KeyModifiers::CONTROL) {
-        if let KeyCode::Char('c') = key.code {
-            app.should_quit = true;
-            return KeyAction::Quit;
-        }
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        && let KeyCode::Char('c') = key.code
+    {
+        app.should_quit = true;
+        return KeyAction::Quit;
     }
 
     // F2 toggles the graph panel (Ctrl+G is captured by Cursor/code-server)
