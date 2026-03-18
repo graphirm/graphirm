@@ -277,10 +277,10 @@ impl GraphStore {
                 .unwrap_or(1);
             let next = current + 1;
             node.metadata["label_ver"] = serde_json::json!(next);
-            if let Some(label) = node.label().map(str::to_string) {
-                if let Some((prefix, _)) = label.rsplit_once('_') {
-                    node.metadata["label"] = serde_json::json!(format!("{prefix}_{next}"));
-                }
+            if let Some(label) = node.label().map(str::to_string)
+                && let Some((prefix, _)) = label.rsplit_once('_')
+            {
+                node.metadata["label"] = serde_json::json!(format!("{prefix}_{next}"));
             }
         }
         let conn = self.pool.get()?;
@@ -844,22 +844,22 @@ impl GraphStore {
             }
 
             // metadata exact-match filter
-            if let Some(filter) = metadata_filter {
-                if let Some(filter_obj) = filter.as_object() {
-                    let node_meta_str = serde_json::to_string(&node_type_val)?;
-                    let node_meta_val: serde_json::Value =
-                        serde_json::from_str(&node_meta_str).unwrap_or_default();
-                    let mut all_match = true;
-                    for (key, expected) in filter_obj {
-                        let actual = node_meta_val.get(key).or_else(|| metadata.get(key));
-                        if actual != Some(expected) {
-                            all_match = false;
-                            break;
-                        }
+            if let Some(filter) = metadata_filter
+                && let Some(filter_obj) = filter.as_object()
+            {
+                let node_meta_str = serde_json::to_string(&node_type_val)?;
+                let node_meta_val: serde_json::Value =
+                    serde_json::from_str(&node_meta_str).unwrap_or_default();
+                let mut all_match = true;
+                for (key, expected) in filter_obj {
+                    let actual = node_meta_val.get(key).or_else(|| metadata.get(key));
+                    if actual != Some(expected) {
+                        all_match = false;
+                        break;
                     }
-                    if !all_match {
-                        continue;
-                    }
+                }
+                if !all_match {
+                    continue;
                 }
             }
 
@@ -927,10 +927,10 @@ impl GraphStore {
             };
 
             // entity_type filter
-            if let Some(et) = entity_type {
-                if kd.entity_type != et {
-                    continue;
-                }
+            if let Some(et) = entity_type
+                && kd.entity_type != et
+            {
+                continue;
             }
 
             let metadata: serde_json::Value = serde_json::from_str(&meta_str)

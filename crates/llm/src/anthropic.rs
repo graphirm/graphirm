@@ -156,10 +156,10 @@ pub fn convert_messages_to_rig(messages: Vec<LlmMessage>) -> Vec<Message> {
                         _ => {}
                     }
                 }
-                if !assistant_content.is_empty() {
-                    if let Ok(content) = OneOrMany::many(assistant_content) {
-                        rig_messages.push(Message::Assistant { id: None, content });
-                    }
+                if !assistant_content.is_empty()
+                    && let Ok(content) = OneOrMany::many(assistant_content)
+                {
+                    rig_messages.push(Message::Assistant { id: None, content });
                 }
             }
         }
