@@ -52,3 +52,10 @@ results/
 *.vsix
 graphirm-vscode/out/
 graphirm-vscode/node_modules/
+
+# Web app build artifacts and dependencies
+web-app/node_modules/
+web-app/dist/
+
+# Internal eval/research scripts (not user-facing)
+scripts/
