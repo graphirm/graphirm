@@ -61,6 +61,12 @@ pub struct SessionHandle {
     pub created_at: DateTime<Utc>,
     /// Shared HITL gate — the agent loop awaits on this; route handlers resolve it.
     pub hitl: Arc<HitlGate>,
+    /// Human-readable session name, mutable post-creation via PATCH.
+    /// `std::sync::RwLock` is used because the critical section is a string
+    /// clone — never an await point — so no tokio thread-blocking risk.
+    /// The `Arc` lets a PATCH handler clone out the lock before releasing
+    /// the outer sessions map lock.
+    pub display_name: Arc<std::sync::RwLock<String>>,
 }
 
 #[cfg(test)]

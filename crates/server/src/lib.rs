@@ -117,6 +117,7 @@ pub async fn start_server(
         };
         let hitl = Arc::new(HitlGate::new());
         let handle = SessionHandle {
+            display_name: Arc::new(std::sync::RwLock::new(meta.name.clone())),
             session: Arc::new(session),
             signal: CancellationToken::new(),
             join_handle: None,

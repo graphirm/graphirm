@@ -223,6 +223,7 @@ async fn create_session(
     };
 
     let handle = SessionHandle {
+        display_name: Arc::new(std::sync::RwLock::new(session.agent_config.name.clone())),
         session: Arc::new(session),
         signal: CancellationToken::new(),
         join_handle: None,
@@ -798,9 +799,12 @@ fn session_workspace_path(config: &graphirm_agent::AgentConfig) -> Option<String
 }
 
 fn session_handle_to_response(id: &str, handle: &SessionHandle) -> SessionResponse {
+    let name = handle.display_name.read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     SessionResponse {
         id: id.to_string(),
-        agent: handle.session.agent_config.name.clone(),
+        agent: name,
         model: handle.session.agent_config.model.clone(),
         created_at: handle.created_at,
         status: handle.status,
