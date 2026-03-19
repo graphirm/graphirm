@@ -28,6 +28,7 @@ interface UseSessionReturn {
   resumeSession: () => Promise<void>;
   autoApprove: boolean;
   toggleAutoApprove: () => Promise<void>;
+  renameSession: (id: string, name: string) => Promise<void>;
 }
 
 export function useSession(): UseSessionReturn {
@@ -225,6 +226,12 @@ export function useSession(): UseSessionReturn {
     setAutoApprove(next);
   }, [autoApprove]);
 
+  const renameSession = useCallback(async (id: string, name: string) => {
+    const updated = await api.renameSession(id, name);
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, name: updated.name } : s));
+    setCurrentSession(prev => prev?.id === id ? { ...prev, name: updated.name } : prev);
+  }, []);
+
   return {
     sessions,
     currentSession,
@@ -243,5 +250,6 @@ export function useSession(): UseSessionReturn {
     resumeSession,
     autoApprove,
     toggleAutoApprove,
+    renameSession,
   };
 }

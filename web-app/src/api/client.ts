@@ -31,6 +31,12 @@ export const api = {
   getSession: (id: string): Promise<Session> =>
     apiFetch(`/api/sessions/${id}`),
 
+  renameSession: (id: string, name: string): Promise<Session> =>
+    apiFetch(`/api/sessions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+
   getMessages: async (id: string): Promise<Message[]> => {
     const nodes = await apiFetch<GraphNode[]>(`/api/sessions/${id}/messages`);
     return (nodes ?? [])

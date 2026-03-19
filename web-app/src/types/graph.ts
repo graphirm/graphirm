@@ -56,6 +56,7 @@ export interface GraphData {
 export interface Session {
   id: string;
   name?: string;
+  agent?: string;
   status?: AgentStatus;
   created_at?: string;
 }
