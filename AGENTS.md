@@ -137,6 +137,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 18 | Semantic `graph_query` mode — `KnowledgeRetriever` trait, HNSW cosine similarity search (`1-d²/2`), scores in output, graceful fallback | ✅ done |
 | 19 | Subagent workspace isolation + multi-file tools — `parent_working_dir` in `spawn_subagent`, subagents get `<workspace>/subagents/<name>-<id>/`; `diff` (file + git) and `read_many` (up to 20 files) tools, non-destructive | ✅ done |
 | 20 | Graph node search / filter — keyword + type filter pills in Toolbar; `applyFilterToNodes` stamps `hidden` on React Flow nodes; group nodes hidden when all children match; `matchCount` counter; Ctrl+F shortcut | ✅ done |
+| 21 | Session export — `GET /api/sessions/:id/export?format=markdown`; `render_session_markdown` in `crates/server/src/export.rs`; "↓ Export" button in SessionBar | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -221,6 +222,12 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - On startup, `restore_sessions_from_graph` reconstructs `working_dir` from stored workspace name
 - `GET /api/sessions/:id` response includes `workspace` and `workspace_path` fields when active
 - Backward-compatible: when `workspaces_root` is unset, all behaviour is unchanged
+
+**Session export (Phase 21):**
+- `crates/server/src/export.rs` — `render_session_markdown(name, model, created_at, nodes)` → Markdown; user + assistant turns sorted by `created_at` (tool/system excluded); Knowledge nodes as pipe table with escaped cells; 5 unit tests
+- `GET /api/sessions/:id/export?format=markdown` — fetches subgraph (depth 10), renders, returns `text/markdown; charset=utf-8` with `Content-Disposition: attachment; filename="session-<name>.md"`; `format!=markdown` → 400; unknown session → 404
+- `ExportQuery` in `crates/server/src/types.rs` with `format` defaulting to `"markdown"`
+- "↓ Export" button in `SessionBar` — `window.open(url, '_blank')` triggers browser download
 
 **Graph node search / filter (Phase 20):**
 - `NodeFilter` interface (`query: string`, `types: Set<string>`) + `EMPTY_FILTER` exported from `crates/web-app/src/hooks/useGraphData.ts`
