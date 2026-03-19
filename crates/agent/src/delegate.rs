@@ -95,7 +95,7 @@ impl Tool for SubagentTool {
     async fn execute(
         &self,
         args: serde_json::Value,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
         let agent_name = args["agent"]
             .as_str()
@@ -128,6 +128,7 @@ impl Tool for SubagentTool {
             task_description,
             context_nodes,
             cancel,
+            Some(ctx.working_dir.clone()),
         )
         .await
         .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;

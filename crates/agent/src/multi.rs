@@ -1,7 +1,7 @@
 // Multi-agent: subagent spawning, result aggregation, task dependency tracking
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use graphirm_graph::edges::{EdgeType, GraphEdge};
@@ -19,6 +19,7 @@ use crate::error::AgentError;
 use crate::event::EventBus;
 use crate::session::Session;
 use crate::workflow::run_agent_loop;
+use crate::workspace::sanitize_workspace_name;
 
 /// Registry of agent configurations loaded from TOML files.
 #[derive(Debug)]
@@ -146,14 +147,15 @@ pub async fn spawn_subagent(
     task_description: &str,
     context_nodes: Vec<NodeId>,
     cancel: CancellationToken,
+    parent_working_dir: Option<PathBuf>,
 ) -> Result<SubagentHandle, AgentError> {
     // Look up agent config
-    let agent_config = agents
+    let mut agent_config = agents
         .get(agent_name)
         .ok_or_else(|| AgentError::AgentNotFound(agent_name.to_string()))?
         .clone();
 
-    // Create Task node and Session in a single spawn_blocking to avoid blocking the runtime.
+    // Create Task node (we need task_id for subagent dir name before spawn_blocking).
     let task_node = GraphNode::new(NodeType::Task(TaskData {
         title: format!("Delegated to {}", agent_name),
         description: task_description.to_string(),
@@ -161,6 +163,28 @@ pub async fn spawn_subagent(
         priority: None,
     }));
     let task_id = task_node.id.clone();
+
+    // If parent has a workspace, give this subagent its own subdirectory under it.
+    if let Some(ref parent_dir) = parent_working_dir {
+        let short_id = task_id.to_string();
+        let short_id = if short_id.len() >= 8 {
+            &short_id[..8]
+        } else {
+            short_id.as_str()
+        };
+        let dir_name = sanitize_workspace_name(&format!("{}-{}", agent_name, short_id))
+            .unwrap_or_else(|| format!("{}-{}", agent_name, short_id));
+        let subagent_dir = parent_dir.join("subagents").join(&dir_name);
+        tokio::fs::create_dir_all(&subagent_dir).await.map_err(|e| {
+            AgentError::Workflow(format!(
+                "Failed to create subagent workspace {}: {}",
+                subagent_dir.display(),
+                e
+            ))
+        })?;
+        agent_config.working_dir = subagent_dir;
+    }
+
     let graph_for_setup = graph.clone();
     let parent_agent_id_clone = parent_agent_id.clone();
     let agent_config_clone = agent_config.clone();
@@ -633,6 +657,7 @@ max_turns = 10
             "Analyze the auth module",
             vec![],
             cancel,
+            None,
         )
         .await
         .unwrap();
@@ -696,11 +721,105 @@ max_turns = 10
             "Do something",
             vec![],
             cancel,
+            None,
         )
         .await;
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AgentError::AgentNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_subagent_inherits_parent_workspace() {
+        let dir = TempDir::new().unwrap();
+        let parent_dir = dir.path().to_path_buf();
+
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let mut agents = HashMap::new();
+        agents.insert("explore".to_string(), explore_config());
+        let registry = AgentRegistry::from_configs(agents).unwrap();
+        let tools = Arc::new(ToolRegistry::new());
+        let events = Arc::new(EventBus::new());
+        let factory = mock_factory_text("done");
+
+        let parent_agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "build".to_string(),
+            model: "claude".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let parent_id = parent_agent.id.clone();
+        graph.add_node(parent_agent).unwrap();
+
+        let cancel = CancellationToken::new();
+
+        let handle = spawn_subagent(
+            &graph,
+            &registry,
+            &factory,
+            &tools,
+            &events,
+            &parent_id,
+            "explore",
+            "Check files",
+            vec![],
+            cancel,
+            Some(parent_dir.clone()),
+        )
+        .await
+        .unwrap();
+
+        // Subagent dir should exist under parent_workspace/subagents/
+        let subagents_dir = parent_dir.join("subagents");
+        assert!(subagents_dir.is_dir(), "subagents/ should exist");
+        let subagent_dirs: Vec<_> = std::fs::read_dir(&subagents_dir)
+            .expect("read subagents dir")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .collect();
+        assert_eq!(subagent_dirs.len(), 1, "exactly one subagent dir expected");
+
+        handle.join_handle.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_spawn_subagent_none_working_dir_uses_config() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let mut agents = HashMap::new();
+        agents.insert("explore".to_string(), explore_config());
+        let registry = AgentRegistry::from_configs(agents).unwrap();
+        let tools = Arc::new(ToolRegistry::new());
+        let events = Arc::new(EventBus::new());
+        let factory = mock_factory_text("done");
+
+        let parent_agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "build".to_string(),
+            model: "claude".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let parent_id = parent_agent.id.clone();
+        graph.add_node(parent_agent).unwrap();
+
+        let cancel = CancellationToken::new();
+
+        let handle = spawn_subagent(
+            &graph,
+            &registry,
+            &factory,
+            &tools,
+            &events,
+            &parent_id,
+            "explore",
+            "Check files",
+            vec![],
+            cancel,
+            None,
+        )
+        .await
+        .unwrap();
+
+        handle.join_handle.await.unwrap().unwrap();
     }
 
     // ── wait_for_subagents tests ─────────────────────────────────────────────
@@ -737,6 +856,7 @@ max_turns = 10
             "Task A",
             vec![],
             cancel.clone(),
+            None,
         )
         .await
         .unwrap();
@@ -752,6 +872,7 @@ max_turns = 10
             "Task B",
             vec![],
             cancel.clone(),
+            None,
         )
         .await
         .unwrap();
@@ -817,6 +938,7 @@ max_turns = 10
             "Task A",
             vec![],
             cancel.clone(),
+            None,
         )
         .await
         .unwrap();
@@ -866,6 +988,7 @@ max_turns = 10
             "Task B",
             vec![],
             cancel.clone(),
+            None,
         )
         .await
         .unwrap();
@@ -917,6 +1040,7 @@ max_turns = 10
                 &format!("Task {}", i),
                 vec![],
                 cancel.clone(),
+                None,
             )
             .await
             .unwrap();
@@ -974,6 +1098,7 @@ max_turns = 10
             "Analyze auth tokens",
             vec![],
             cancel,
+            None,
         )
         .await
         .unwrap();
@@ -1025,6 +1150,7 @@ max_turns = 10
             "Task to cancel",
             vec![],
             cancel.clone(),
+            None,
         )
         .await
         .unwrap();

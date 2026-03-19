@@ -201,6 +201,7 @@ async fn test_multi_agent_graph_isolation() {
         "Explore something",
         vec![],
         cancel,
+        None,
     )
     .await
     .unwrap();
