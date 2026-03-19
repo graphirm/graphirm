@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@dagrejs/dagre": "^1.1.4",
+    "@dagrejs/dagre": "^1.0.4",
     "@vitejs/plugin-react": "^4.7.0",
     "@xyflow/react": "^12.10.1",
     "highlight.js": "^11.11.1",
