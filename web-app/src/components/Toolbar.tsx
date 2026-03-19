@@ -1,3 +1,4 @@
+import { type RefObject } from 'react';
 import type { LayoutMode, NodeFilter } from '../hooks/useGraphData';
 import styles from './Toolbar.module.css';
 
@@ -11,6 +12,7 @@ interface ToolbarProps {
   onFilterChange: (f: NodeFilter) => void;
   matchCount: number;
   totalCount: number;
+  searchInputRef?: RefObject<HTMLInputElement | null>;
 }
 
 const LAYOUT_LABELS: Record<LayoutMode, string> = {
@@ -29,6 +31,7 @@ export function Toolbar({
   onFilterChange,
   matchCount,
   totalCount,
+  searchInputRef,
 }: ToolbarProps) {
   const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
 
@@ -44,6 +47,7 @@ export function Toolbar({
       <span className={styles.title}>Graph</span>
 
       <input
+        ref={searchInputRef}
         className={styles.searchInput}
         type="text"
         placeholder="Search nodes…"

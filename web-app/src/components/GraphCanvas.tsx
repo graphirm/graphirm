@@ -59,9 +59,32 @@ function GraphCanvasInner({
   onCycleLayoutRef,
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const canvasWidth = containerRef.current?.clientWidth ?? 800;
 
   const [filter, setFilter] = useState<NodeFilter>(EMPTY_FILTER);
+
+  // Ctrl+F (or Cmd+F) focuses the search bar when hovering the graph pane.
+  // Escape clears the filter and blurs the input when it is focused.
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        if (containerRef.current?.matches(':hover')) {
+          e.preventDefault();
+          searchInputRef.current?.focus();
+          searchInputRef.current?.select();
+        }
+      }
+      if (e.key === 'Escape' && document.activeElement === searchInputRef.current) {
+        setFilter(EMPTY_FILTER);
+        searchInputRef.current?.blur();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+    // setFilter and EMPTY_FILTER are stable references (useState setter + module constant).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const {
     nodes,
@@ -150,6 +173,7 @@ function GraphCanvasInner({
         onFilterChange={setFilter}
         matchCount={matchCount}
         totalCount={graphData?.nodes.length ?? 0}
+        searchInputRef={searchInputRef}
       />
       <div className={styles.canvasWrapper}>
         <SteerContext.Provider value={steerCallbackRef.current}>
