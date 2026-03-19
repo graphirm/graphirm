@@ -769,6 +769,29 @@ pub async fn run_agent_loop(
                                         error = %e,
                                         "Failed to embed knowledge node (non-fatal)"
                                     );
+                                    continue;
+                                }
+                                // Cross-session linking: find similar nodes from other sessions
+                                // and create RelatesTo edges so graph traversal can discover them.
+                                match retriever
+                                    .find_cross_session_links(node_id, &session.id, 3, 0.7)
+                                    .await
+                                {
+                                    Ok(links) if !links.is_empty() => {
+                                        tracing::info!(
+                                            node_id = %node_id,
+                                            cross_links = links.len(),
+                                            "Creating cross-session knowledge links"
+                                        );
+                                        retriever.persist_cross_session_links(node_id, &links).await;
+                                    }
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            error = %e,
+                                            "Cross-session link search failed (non-fatal)"
+                                        );
+                                    }
                                 }
                             }
                         }

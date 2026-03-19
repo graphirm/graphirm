@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use graphirm_graph::{GraphNode, GraphStore, NodeId, NodeType, vector::VectorIndex};
+use graphirm_graph::{GraphNode, GraphStore, NodeId, NodeType, edges::{EdgeType, GraphEdge}, vector::VectorIndex};
 use graphirm_llm::EmbeddingProvider;
 
 use crate::error::AgentError;
@@ -174,6 +174,107 @@ impl MemoryRetriever {
         }
 
         Ok(nodes)
+    }
+
+    /// After embedding a knowledge node, find the top-k most similar Knowledge
+    /// nodes that belong to a **different** session and return their IDs with
+    /// similarity scores (0..1, higher = more similar).
+    ///
+    /// Uses the node's stored text representation to query HNSW, then filters
+    /// out same-session candidates by reading `metadata["session_id"]`.
+    /// Returns an empty vec (never errors) if the index is empty or the LLM
+    /// embed call fails — callers should log and continue.
+    pub async fn find_cross_session_links(
+        &self,
+        node_id: &NodeId,
+        exclude_session: &NodeId,
+        k: usize,
+        min_similarity: f32,
+    ) -> Result<Vec<(NodeId, f64)>, AgentError> {
+        let graph = self.graph.clone();
+        let nid = node_id.clone();
+        let node = tokio::task::spawn_blocking(move || graph.get_node(&nid))
+            .await
+            .map_err(|e| AgentError::Join(e.to_string()))??;
+
+        let text = match &node.node_type {
+            NodeType::Knowledge(data) => {
+                format!("[{}] {}: {}", data.entity_type, data.entity, data.summary)
+            }
+            _ => return Ok(vec![]),
+        };
+
+        let query_embedding = self.llm.embed(&text).await.map_err(AgentError::Llm)?;
+
+        let index = self.vector_index.read().await;
+        // Request 3× k candidates to have room after same-session filtering.
+        let candidates = index.search(&query_embedding, k.saturating_mul(3).max(10));
+        drop(index);
+
+        let graph = self.graph.clone();
+        let self_id = node_id.clone();
+        let exclude = exclude_session.to_string();
+        let results: Vec<(NodeId, f64)> = tokio::task::spawn_blocking(move || {
+            candidates
+                .into_iter()
+                .filter(|(id, distance)| {
+                    // Skip self and low-similarity matches.
+                    if *id == self_id {
+                        return false;
+                    }
+                    (1.0 - distance) >= min_similarity
+                })
+                .filter(|(id, _)| {
+                    // Keep only nodes from different sessions.
+                    match graph.get_node(id) {
+                        Ok(n) => {
+                            let sid = n
+                                .metadata
+                                .get("session_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            sid != exclude
+                        }
+                        Err(_) => false,
+                    }
+                })
+                .take(k)
+                .map(|(id, distance)| (id, (1.0_f32 - distance) as f64))
+                .collect()
+        })
+        .await
+        .map_err(|e| AgentError::Join(e.to_string()))?;
+
+        Ok(results)
+    }
+
+    /// Persist `RelatesTo` edges between `source_id` and each `(target_id, weight)` pair.
+    /// Non-fatal: individual edge insertion failures are logged and skipped.
+    pub async fn persist_cross_session_links(
+        &self,
+        source_id: &NodeId,
+        links: &[(NodeId, f64)],
+    ) {
+        for (target_id, weight) in links {
+            let graph = self.graph.clone();
+            let src = source_id.clone();
+            let tgt = target_id.clone();
+            let w = *weight;
+            if let Err(e) = tokio::task::spawn_blocking(move || {
+                let mut edge = GraphEdge::new(EdgeType::RelatesTo, src, tgt);
+                edge.weight = w;
+                graph.add_edge(edge)
+            })
+            .await
+            {
+                tracing::warn!(
+                    source = %source_id,
+                    target = %target_id,
+                    error = %e,
+                    "Failed to persist cross-session RelatesTo edge (non-fatal)"
+                );
+            }
+        }
     }
 }
 
@@ -470,5 +571,130 @@ mod tests {
 
         let result = retriever.embed_knowledge_node(&node_id).await;
         assert!(matches!(result, Err(AgentError::Workflow(_))));
+    }
+
+    #[tokio::test]
+    async fn test_cross_session_links_finds_similar_from_other_session() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
+        let llm: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+
+        let retriever = MemoryRetriever::new(graph.clone(), vector_index.clone(), llm, 64);
+
+        // Session A: JWT authentication knowledge node.
+        let mut node_a = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "JWT Authentication".to_string(),
+            entity_type: "pattern".to_string(),
+            summary: "Token-based authentication using JSON Web Tokens".to_string(),
+            confidence: 0.9,
+        }));
+        node_a.metadata = serde_json::json!({ "session_id": "session-a" });
+        let id_a = graph.add_node(node_a).unwrap();
+        retriever.embed_knowledge_node(&id_a).await.unwrap();
+
+        // Session B: OAuth2 knowledge node (similar domain).
+        let mut node_b = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "OAuth2 Flow".to_string(),
+            entity_type: "pattern".to_string(),
+            summary: "Authorization protocol for secure API access using tokens".to_string(),
+            confidence: 0.85,
+        }));
+        node_b.metadata = serde_json::json!({ "session_id": "session-b" });
+        let id_b = graph.add_node(node_b).unwrap();
+        retriever.embed_knowledge_node(&id_b).await.unwrap();
+
+        // Rebuild index so HNSW can search.
+        {
+            let mut idx = vector_index.write().await;
+            idx.rebuild();
+        }
+
+        // From session B's perspective, search for links to other sessions.
+        let session_b_id = NodeId::from("session-b");
+        let links = retriever
+            .find_cross_session_links(&id_b, &session_b_id, 5, 0.0)
+            .await
+            .unwrap();
+
+        // Should find node_a (different session).
+        assert!(!links.is_empty(), "Should find at least one cross-session link");
+        assert!(
+            links.iter().any(|(id, _)| *id == id_a),
+            "Should find node_a from session-a"
+        );
+        // Should NOT include node_b itself (same session).
+        assert!(
+            !links.iter().any(|(id, _)| *id == id_b),
+            "Should not link to self"
+        );
+        // Similarity scores must be in [0, 1].
+        for (_, score) in &links {
+            assert!(*score >= 0.0 && *score <= 1.0, "Score out of range: {score}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cross_session_links_empty_index_returns_empty() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
+        let llm: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+
+        let retriever = MemoryRetriever::new(graph.clone(), vector_index.clone(), llm, 64);
+
+        let mut node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "Lonely Node".to_string(),
+            entity_type: "pattern".to_string(),
+            summary: "Only node in the system".to_string(),
+            confidence: 0.9,
+        }));
+        node.metadata = serde_json::json!({ "session_id": "session-a" });
+        let id = graph.add_node(node).unwrap();
+
+        // Do NOT embed — index is empty.
+        let links = retriever
+            .find_cross_session_links(&id, &NodeId::from("session-a"), 5, 0.0)
+            .await
+            .unwrap();
+
+        assert!(links.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_persist_cross_session_links_creates_relates_to_edges() {
+        use graphirm_graph::edges::EdgeType;
+
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
+        let llm: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+
+        let retriever = MemoryRetriever::new(graph.clone(), vector_index, llm, 64);
+
+        let id_src = graph
+            .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: "Source".to_string(),
+                entity_type: "pattern".to_string(),
+                summary: "Source node".to_string(),
+                confidence: 0.9,
+            })))
+            .unwrap();
+        let id_tgt = graph
+            .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: "Target".to_string(),
+                entity_type: "pattern".to_string(),
+                summary: "Target node".to_string(),
+                confidence: 0.9,
+            })))
+            .unwrap();
+
+        let links = vec![(id_tgt.clone(), 0.85)];
+        retriever.persist_cross_session_links(&id_src, &links).await;
+
+        let edges = graph.edges_for_node(&id_src).unwrap();
+        assert!(
+            edges
+                .iter()
+                .any(|e| e.edge_type == EdgeType::RelatesTo && e.target == id_tgt),
+            "Expected RelatesTo edge from source to target"
+        );
     }
 }
