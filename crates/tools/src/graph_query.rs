@@ -426,11 +426,45 @@ fn truncate(s: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::retriever::{KnowledgeResult, KnowledgeRetriever};
     use crate::tests::make_test_context;
     use graphirm_graph::nodes::{
         GraphNode, InteractionData, KnowledgeData, NodeType, TaskData, TaskStatus,
     };
     use serde_json::json;
+    use std::sync::Arc;
+
+    struct MockKnowledgeRetriever {
+        results: Vec<(String, String, f64)>, // (entity, summary, score)
+    }
+
+    #[async_trait::async_trait]
+    impl KnowledgeRetriever for MockKnowledgeRetriever {
+        async fn retrieve_semantic(
+            &self,
+            _query: &str,
+            k: usize,
+        ) -> Result<Vec<KnowledgeResult>, crate::ToolError> {
+            Ok(self
+                .results
+                .iter()
+                .take(k)
+                .map(|(entity, summary, score)| {
+                    let node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                        entity: entity.clone(),
+                        entity_type: "concept".to_string(),
+                        summary: summary.clone(),
+                        confidence: 0.9,
+                    }));
+                    KnowledgeResult {
+                        node_id: node.id.clone(),
+                        node,
+                        score: *score,
+                    }
+                })
+                .collect())
+        }
+    }
 
     #[tokio::test]
     async fn bfs_returns_traversed_nodes_from_seeded_graph() {
@@ -684,5 +718,122 @@ mod tests {
         assert!(result.is_ok(), "empty search should be Ok, got: {result:?}");
         let out = result.unwrap();
         assert!(!out.is_error);
+    }
+
+    #[tokio::test]
+    async fn semantic_mode_returns_results_from_retriever() {
+        let mut ctx = make_test_context();
+        ctx.knowledge_retriever = Some(Arc::new(MockKnowledgeRetriever {
+            results: vec![
+                ("JWT Auth".to_string(), "Token-based authentication".to_string(), 0.92),
+                ("OAuth2".to_string(), "Auth protocol for APIs".to_string(), 0.85),
+            ],
+        }));
+
+        let tool = GraphQueryTool::new();
+        let out = tool
+            .execute(
+                json!({
+                    "mode": "semantic",
+                    "query": "user authentication"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        assert!(!out.is_error);
+        assert!(out.content.contains("JWT Auth"), "Should contain first result");
+        assert!(out.content.contains("OAuth2"), "Should contain second result");
+        assert!(out.content.contains("0.920") || out.content.contains("sim=0.92"));
+    }
+
+    #[tokio::test]
+    async fn semantic_mode_without_retriever_returns_execution_failed() {
+        let ctx = make_test_context(); // knowledge_retriever is None
+
+        let tool = GraphQueryTool::new();
+        let result = tool
+            .execute(
+                json!({
+                    "mode": "semantic",
+                    "query": "anything"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(matches!(result, Err(ToolError::ExecutionFailed(_))));
+    }
+
+    #[tokio::test]
+    async fn semantic_mode_empty_query_returns_invalid_arguments() {
+        let mut ctx = make_test_context();
+        ctx.knowledge_retriever = Some(Arc::new(MockKnowledgeRetriever { results: vec![] }));
+
+        let tool = GraphQueryTool::new();
+        let result = tool
+            .execute(
+                json!({
+                    "mode": "semantic",
+                    "query": "   "
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(matches!(result, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn semantic_mode_no_results_returns_success_not_error() {
+        let mut ctx = make_test_context();
+        ctx.knowledge_retriever = Some(Arc::new(MockKnowledgeRetriever { results: vec![] }));
+
+        let tool = GraphQueryTool::new();
+        let out = tool
+            .execute(
+                json!({
+                    "mode": "semantic",
+                    "query": "xyzzy_unlikely_match"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        assert!(!out.is_error);
+        assert!(out.content.contains("no Knowledge nodes"));
+    }
+
+    #[tokio::test]
+    async fn semantic_mode_respects_limit() {
+        let mut ctx = make_test_context();
+        ctx.knowledge_retriever = Some(Arc::new(MockKnowledgeRetriever {
+            results: vec![
+                ("Node A".to_string(), "First result".to_string(), 0.9),
+                ("Node B".to_string(), "Second result".to_string(), 0.8),
+                ("Node C".to_string(), "Third result".to_string(), 0.7),
+            ],
+        }));
+
+        let tool = GraphQueryTool::new();
+        let out = tool
+            .execute(
+                json!({
+                    "mode": "semantic",
+                    "query": "test",
+                    "limit": 2
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        assert!(!out.is_error);
+        assert!(out.content.contains("Node A"));
+        assert!(out.content.contains("Node B"));
+        // Node C was cut by limit=2
+        assert!(!out.content.contains("Node C"));
     }
 }
