@@ -21,10 +21,13 @@ description, JSON schema for parameters, and an async `execute` method. Tools ar
 | `find.rs` | File name pattern search |
 | `ls.rs` | Directory listing |
 | `graph_query.rs` | Graph query tool — BFS traversal, node-type enumeration, Knowledge keyword search |
+| `script.rs` | `ScriptTool` + `PluginManifest` — TOML-defined plugins executed as shell commands |
 | `error.rs` | `ToolError` enum |
 
-**Destructive tools** (`bash`, `write`, `edit`) block on the `HitlGate` when one is attached to the
-session. Non-destructive tools (`read`, `grep`, `find`, `ls`, `graph_query`) always run without confirmation.
+**Destructive tools** (`bash`, `write`, `edit`, and any script plugin with `destructive = true`) block
+on the `HitlGate` when one is attached to the session. Non-destructive tools always run without confirmation.
+Destructiveness is determined by `Tool::is_destructive()` (trait method, default `false`) checked via
+`ToolRegistry::is_destructive(name)`, with a legacy name fallback for the three built-in destructive tools.
 
 ---
 
@@ -35,10 +38,15 @@ the LLM emits; creates `Content` nodes in the graph for reads/writes
 
 **Depends on:** `graphirm-graph` (Content node creation, graph queries), `tokio`, `glob`
 
-**Adding a new tool:**
+**Adding a new built-in tool:**
 1. Create `crates/tools/src/<name>.rs`, implement the `Tool` trait
 2. Register it in `build_tool_registry()` in `src/main.rs` (not `ToolRegistry::new()`)
 3. Add integration test to `tests/integration.rs`
+
+**Adding a script plugin (no recompile):**
+1. Create `~/.graphirm/plugins/<name>/plugin.toml` (see `examples/plugins/hello/` for format)
+2. Set `destructive = true` in the manifest if the plugin modifies files or runs dangerous commands
+3. Restart graphirm — plugin is loaded automatically
 
 ---
 

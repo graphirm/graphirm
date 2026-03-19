@@ -101,7 +101,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 ## Key Conventions
 
 **Rust:**
-- Edition 2024, MSRV 1.85 — run `cargo fmt` and `cargo clippy` before every commit
+- Edition 2024, MSRV 1.88 — run `cargo fmt` and `cargo clippy` before every commit
 - `thiserror` for error enums (one per crate), `anyhow` in `main.rs` only
 - Never `unwrap()` in production — use `?` or `expect("context")`
 - `tracing::info!` / `tracing::error!` for logging — never `println!`
