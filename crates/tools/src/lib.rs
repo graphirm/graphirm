@@ -1,4 +1,5 @@
 pub mod bash;
+pub mod diff;
 pub mod edit;
 pub mod error;
 pub mod executor;
