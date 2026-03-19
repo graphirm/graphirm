@@ -6,6 +6,13 @@ import { applyTimelineLayout } from '../layout/timeline';
 
 export type LayoutMode = 'dagre' | 'timeline' | 'free';
 
+export interface NodeFilter {
+  query: string;
+  types: Set<string>;
+}
+
+export const EMPTY_FILTER: NodeFilter = { query: '', types: new Set() };
+
 const STORAGE_PREFIX = 'graphirm:positions:';
 const GROUP_COLOR = '#4fc3f7';
 
@@ -135,6 +142,25 @@ function buildGroups(
   return { grouped: safe, groupNodes };
 }
 
+function extractNodeText(gn: GraphNode): string {
+  const nt = gn.node_type;
+  switch (nt.type) {
+    case 'Interaction': return nt.content;
+    case 'Agent':       return `${nt.name} ${nt.model} ${nt.system_prompt ?? ''}`;
+    case 'Content':     return `${nt.body} ${nt.path ?? ''}`;
+    case 'Task':        return `${nt.title} ${nt.description}`;
+    case 'Knowledge':   return `${nt.entity} ${nt.entity_type} ${nt.summary}`;
+    default:            return '';
+  }
+}
+
+function nodeMatchesFilter(gn: GraphNode, filter: NodeFilter): boolean {
+  const { query, types } = filter;
+  if (types.size > 0 && !types.has(gn.node_type.type)) return false;
+  if (query.trim() === '') return true;
+  return extractNodeText(gn).toLowerCase().includes(query.toLowerCase());
+}
+
 interface UseGraphDataReturn {
   nodes: Node[];
   edges: Edge[];
@@ -143,16 +169,19 @@ interface UseGraphDataReturn {
   onNodesChange: (changes: unknown) => void;
   persistPositions: () => void;
   addNode: (node: Node) => void;
+  matchCount: number;
 }
 
 export function useGraphData(
   graphData: GraphData | null,
   sessionId: string | null,
   canvasWidth: number,
+  filter: NodeFilter = EMPTY_FILTER,
 ): UseGraphDataReturn {
   const [layoutMode, setLayoutModeState] = useState<LayoutMode>('dagre');
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
+  const [matchCount, setMatchCount] = useState<number>(0);
   const rawNodesRef = useRef<GraphNode[]>([]);
 
   const rawEdges = useMemo(() => {
@@ -243,11 +272,54 @@ export function useGraphData(
       };
     });
 
+    // Apply filter: stamp hidden: true on non-matching nodes.
+    const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
+    const visibleGraphNodeIds = isFiltering
+      ? new Set(graphData.nodes.filter(gn => nodeMatchesFilter(gn, filter)).map(gn => gn.id))
+      : null;
+
+    const withHidden = [...positionedGroups, ...rebased].map(n => {
+      if (!visibleGraphNodeIds) return n;
+      if (n.type === 'group') {
+        const children = rebased.filter(c => c.parentId === n.id);
+        const allHidden = children.length > 0 && children.every(c => !visibleGraphNodeIds.has(c.id));
+        return { ...n, hidden: allHidden };
+      }
+      if (n.type === 'annotation') return n;
+      return { ...n, hidden: !visibleGraphNodeIds.has(n.id) };
+    });
+
+    const count = visibleGraphNodeIds ? visibleGraphNodeIds.size : graphData.nodes.length;
+    setMatchCount(count);
     // Group nodes must come before their children in the array.
-    setNodes([...positionedGroups, ...rebased]);
+    setNodes(withHidden);
     setEdges(flowEdges);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphData, rawEdges, sessionId]);
+
+  useEffect(() => {
+    setNodes(prev => {
+      const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
+      if (!graphData || !isFiltering) {
+        const count = graphData?.nodes.length ?? 0;
+        setMatchCount(count);
+        return prev.map(n => ({ ...n, hidden: false }));
+      }
+      const visibleIds = new Set(
+        graphData.nodes.filter(gn => nodeMatchesFilter(gn, filter)).map(gn => gn.id),
+      );
+      setMatchCount(visibleIds.size);
+      return prev.map(n => {
+        if (n.type === 'group') {
+          const children = prev.filter(c => c.parentId === n.id);
+          const allHidden = children.length > 0 && children.every(c => !visibleIds.has(c.id));
+          return { ...n, hidden: allHidden };
+        }
+        if (n.type === 'annotation') return n;
+        return { ...n, hidden: !visibleIds.has(n.id) };
+      });
+    });
+  }, [filter, graphData]);
 
   const setLayoutMode = useCallback(
     (mode: LayoutMode) => {
@@ -280,9 +352,25 @@ export function useGraphData(
         if (!origin) return n;
         return { ...n, position: { x: n.position.x - origin.x, y: n.position.y - origin.y } };
       });
-      setNodes([...positionedGroups, ...rebased]);
+
+      const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
+      const visibleIds = isFiltering
+        ? new Set(graphData.nodes.filter(gn => nodeMatchesFilter(gn, filter)).map(gn => gn.id))
+        : null;
+
+      const withHidden = [...positionedGroups, ...rebased].map(n => {
+        if (!visibleIds) return n;
+        if (n.type === 'group') {
+          const children = rebased.filter(c => c.parentId === n.id);
+          const allHidden = children.length > 0 && children.every(c => !visibleIds.has(c.id));
+          return { ...n, hidden: allHidden };
+        }
+        if (n.type === 'annotation') return n;
+        return { ...n, hidden: !visibleIds.has(n.id) };
+      });
+      setNodes(withHidden);
     },
-    [applyLayout, edges, graphData, sessionId],
+    [applyLayout, edges, graphData, sessionId, filter],
   );
 
   const onNodesChange = useCallback((changes: unknown) => {
@@ -318,5 +406,5 @@ export function useGraphData(
     setNodes(prev => [...prev, node]);
   }, []);
 
-  return { nodes, edges, layoutMode, setLayoutMode, onNodesChange, persistPositions, addNode };
+  return { nodes, edges, layoutMode, setLayoutMode, onNodesChange, persistPositions, addNode, matchCount };
 }
