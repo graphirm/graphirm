@@ -69,11 +69,13 @@ pub fn render_session_markdown(
         out.push_str("|--------|------|---------|------------|\n");
         for node in &knowledge {
             if let NodeType::Knowledge(k) = &node.node_type {
+                let entity = k.entity.replace('|', "\\|");
+                let entity_type = k.entity_type.replace('|', "\\|");
                 let summary = k.summary.replace('|', "\\|");
                 out.push_str(&format!(
                     "| {} | {} | {} | {:.0}% |\n",
-                    k.entity,
-                    k.entity_type,
+                    entity,
+                    entity_type,
                     summary,
                     k.confidence * 100.0,
                 ));
