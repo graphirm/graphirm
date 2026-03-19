@@ -165,6 +165,7 @@ pub async fn extract_knowledge(
     llm: &dyn LlmProvider,
     messages: &[(String, String)],
     source_node_id: &NodeId,
+    session_id: &NodeId,
     config: &ExtractionConfig,
 ) -> Result<Vec<NodeId>, AgentError> {
     if !config.enabled {
@@ -181,9 +182,10 @@ pub async fn extract_knowledge(
         .map_err(|e| AgentError::Workflow(format!("Failed to parse extraction response: {e}")))?;
 
     let source_id = source_node_id.clone();
+    let session_id = session_id.clone();
     let config_clone = config.clone();
     tokio::task::spawn_blocking(move || {
-        persist_extracted_entities(&graph, &source_id, &extraction, &config_clone)
+        persist_extracted_entities(&graph, &source_id, &session_id, &extraction, &config_clone)
     })
     .await
     .map_err(|e| AgentError::Join(e.to_string()))?
@@ -199,6 +201,7 @@ pub async fn post_turn_extract(
     llm: &dyn LlmProvider,
     config: &ExtractionConfig,
     response_node_id: &NodeId,
+    session_id: &NodeId,
 ) -> Result<Vec<NodeId>, AgentError> {
     if !config.enabled {
         return Ok(vec![]);
@@ -235,6 +238,7 @@ pub async fn post_turn_extract(
         None,
         &messages,
         response_node_id,
+        session_id,
         config,
     )
     .await
@@ -259,6 +263,7 @@ pub async fn extract_knowledge_with_backend(
     #[cfg(not(feature = "local-extraction"))] _onnx: Option<()>,
     messages: &[(String, String)],
     source_node_id: &NodeId,
+    session_id: &NodeId,
     config: &ExtractionConfig,
 ) -> Result<Vec<NodeId>, AgentError> {
     if !config.enabled {
@@ -393,9 +398,10 @@ pub async fn extract_knowledge_with_backend(
     };
 
     let source_id = source_node_id.clone();
+    let session_id = session_id.clone();
     let config_clone = config.clone();
     tokio::task::spawn_blocking(move || {
-        persist_extracted_entities(&graph, &source_id, &extraction, &config_clone)
+        persist_extracted_entities(&graph, &source_id, &session_id, &extraction, &config_clone)
     })
     .await
     .map_err(|e| AgentError::Join(e.to_string()))?
@@ -403,9 +409,12 @@ pub async fn extract_knowledge_with_backend(
 
 /// Shared node-creation logic: persists filtered entities as `Knowledge` graph nodes,
 /// links them to the source via `DerivedFrom`, and wires `RelatesTo` edges.
+/// `session_id` is stored in each node's metadata so cross-session HNSW searches
+/// can exclude same-session candidates without graph traversal.
 fn persist_extracted_entities(
     graph: &GraphStore,
     source_node_id: &NodeId,
+    session_id: &NodeId,
     extraction: &ExtractionResponse,
     config: &ExtractionConfig,
 ) -> Result<Vec<NodeId>, AgentError> {
@@ -419,12 +428,14 @@ fn persist_extracted_entities(
     let mut created_ids: Vec<NodeId> = Vec::new();
 
     for entity in &filtered {
-        let node_id = graph.add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+        let mut node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
             entity: entity.name.clone(),
             entity_type: entity.entity_type.clone(),
             summary: entity.description.clone(),
             confidence: entity.confidence,
-        })))?;
+        }));
+        node.metadata = serde_json::json!({ "session_id": session_id.to_string() });
+        let node_id = graph.add_node(node)?;
 
         graph.add_edge(GraphEdge::new(
             EdgeType::DerivedFrom,
@@ -565,6 +576,7 @@ mod tests {
             &llm,
             &messages,
             &source_node_id,
+        &NodeId::from("test-session"),
             &config,
         )
         .await
@@ -614,6 +626,7 @@ mod tests {
             &llm,
             &messages,
             &source_id,
+        &NodeId::from("test-session"),
             &config,
         )
         .await
@@ -674,6 +687,7 @@ mod tests {
             &llm,
             &messages,
             &source_id,
+        &NodeId::from("test-session"),
             &config,
         )
         .await
@@ -728,6 +742,7 @@ mod tests {
             &llm,
             &messages,
             &source_id,
+        &NodeId::from("test-session"),
             &config,
         )
         .await
@@ -934,7 +949,8 @@ mod tests {
             .unwrap();
 
         let result =
-            post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &assistant_id).await;
+            post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &assistant_id,
+            &NodeId::from("test-session")).await;
 
         assert!(result.is_ok());
         let node_ids = result.unwrap();
@@ -970,7 +986,8 @@ mod tests {
             .unwrap();
 
         let result =
-            post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &node_id).await;
+            post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &node_id,
+            &NodeId::from("test-session")).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
@@ -1005,6 +1022,7 @@ mod tests {
             None,
             &messages,
             &source_id,
+            &NodeId::from("test-session"),
             &config,
         )
         .await;
@@ -1045,6 +1063,7 @@ mod tests {
             None,
             &messages,
             &source_id,
+            &NodeId::from("test-session"),
             &config,
         )
         .await
@@ -1126,7 +1145,8 @@ mod tests {
             .unwrap();
 
         let result =
-            post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &node_id).await;
+            post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &node_id,
+            &NodeId::from("test-session")).await;
         // Whether it errors depends on feature flag: without local-extraction
         // we get a feature error; with it we get a "model dir not found" error.
         // Either way the function must not panic.
@@ -1168,6 +1188,7 @@ mod tests {
             None,
             &messages,
             &source_id,
+            &NodeId::from("test-session"),
             &config,
         )
         .await;

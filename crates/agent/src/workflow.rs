@@ -753,6 +753,7 @@ pub async fn run_agent_loop(
                     llm,
                     extraction_config,
                     &response_id,
+                    &session.id,
                 );
                 // 30s timeout: generous enough for a DeepSeek API call while
                 // still capping the impact on task turn latency.

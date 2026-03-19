@@ -10,7 +10,7 @@ use std::sync::Arc;
 use graphirm_agent::knowledge::extraction::{
     ExtractionBackend, ExtractionConfig, extract_knowledge_with_backend,
 };
-use graphirm_graph::{GraphNode, GraphStore, InteractionData, NodeType};
+use graphirm_graph::{GraphNode, GraphStore, InteractionData, NodeType, nodes::NodeId};
 
 fn make_source_node(graph: &GraphStore) -> graphirm_graph::NodeId {
     graph
@@ -46,6 +46,7 @@ async fn test_local_backend_without_feature_returns_error() {
         None,
         &messages,
         &source_id,
+        &NodeId::from("test-session"),
         &config,
     )
     .await;
@@ -80,6 +81,7 @@ async fn test_hybrid_backend_without_feature_returns_error() {
         None,
         &messages,
         &source_id,
+        &NodeId::from("test-session"),
         &config,
     )
     .await;
