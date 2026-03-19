@@ -177,7 +177,7 @@ impl MemoryRetriever {
     }
 
     /// Like `retrieve_relevant` but also returns the cosine similarity score for each result.
-    /// Similarity = 1.0 - HNSW distance (higher = more similar, range 0..1).
+    /// Similarity = 1.0 - L2_distance² / 2 (cosine similarity for unit vectors, clamped to [0, 1]).
     pub async fn retrieve_with_scores(
         &self,
         query: &str,
@@ -196,7 +196,11 @@ impl MemoryRetriever {
         let graph = self.graph.clone();
         let scored: Vec<(NodeId, f64)> = candidates
             .into_iter()
-            .map(|(id, dist)| (id, (1.0_f32 - dist) as f64))
+            .map(|(id, dist)| {
+                // L2 distance on unit vectors: ‖a-b‖² = 2 - 2·cos(θ) → cos(θ) = 1 - d²/2
+                let similarity = (1.0_f32 - dist.powi(2) / 2.0).clamp(0.0, 1.0);
+                (id, similarity as f64)
+            })
             .collect();
 
         let node_ids: Vec<NodeId> = scored.iter().map(|(id, _)| id.clone()).collect();
@@ -265,7 +269,9 @@ impl MemoryRetriever {
                     if *id == self_id {
                         return false;
                     }
-                    (1.0 - distance) >= min_similarity
+                    // L2 distance on unit vectors: ‖a-b‖² = 2 - 2·cos(θ) → cos(θ) = 1 - d²/2
+                    let similarity = (1.0_f32 - distance.powi(2) / 2.0).clamp(0.0, 1.0);
+                    similarity >= min_similarity
                 })
                 .filter(|(id, _)| {
                     // Keep only nodes from different sessions.
@@ -282,7 +288,11 @@ impl MemoryRetriever {
                     }
                 })
                 .take(k)
-                .map(|(id, distance)| (id, (1.0_f32 - distance) as f64))
+                .map(|(id, distance)| {
+                    // L2 distance on unit vectors: ‖a-b‖² = 2 - 2·cos(θ) → cos(θ) = 1 - d²/2
+                    let similarity = (1.0_f32 - distance.powi(2) / 2.0).clamp(0.0, 1.0);
+                    (id, similarity as f64)
+                })
                 .collect()
         })
         .await
@@ -805,5 +815,52 @@ mod tests {
             .await
             .unwrap();
         assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_with_scores_score_is_bounded_zero_to_one() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
+        let llm: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+
+        let retriever = MemoryRetriever::new(graph.clone(), vector_index.clone(), llm, 64);
+
+        // Add several nodes with varied content so some may be quite dissimilar to the query.
+        let texts = [
+            ("Rust ownership", "Memory safety without GC via ownership"),
+            ("React hooks", "useState and useEffect for state management"),
+            ("PostgreSQL", "Relational database for persistent data"),
+            ("JWT Auth", "Token-based authentication"),
+            ("OAuth2", "Authorization protocol for API access"),
+        ];
+        for (entity, summary) in &texts {
+            let node_id = graph
+                .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                    entity: entity.to_string(),
+                    entity_type: "concept".to_string(),
+                    summary: summary.to_string(),
+                    confidence: 0.9,
+                })))
+                .unwrap();
+            retriever.embed_knowledge_node(&node_id).await.unwrap();
+        }
+
+        {
+            let mut idx = vector_index.write().await;
+            idx.rebuild();
+        }
+
+        // Use a query that may produce large L2 distances with some nodes.
+        let results = retriever
+            .retrieve_with_scores("quantum physics nuclear fusion", 10)
+            .await
+            .unwrap();
+
+        for (_, score) in &results {
+            assert!(
+                *score >= 0.0 && *score <= 1.0,
+                "Score {score} is outside [0, 1]"
+            );
+        }
     }
 }
