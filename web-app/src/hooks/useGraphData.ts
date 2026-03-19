@@ -161,6 +161,35 @@ function nodeMatchesFilter(gn: GraphNode, filter: NodeFilter): boolean {
   return extractNodeText(gn).toLowerCase().includes(query.toLowerCase());
 }
 
+/**
+ * Apply filter visibility to a flat array of React Flow nodes.
+ * Group nodes are hidden only when all their children are hidden.
+ * Annotation nodes are never hidden.
+ */
+function applyFilterToNodes(
+  nodes: Node[],
+  graphNodes: GraphNode[],
+  filter: NodeFilter,
+): { nodes: Node[]; matchCount: number } {
+  const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
+  if (!isFiltering) {
+    return { nodes: nodes.map(n => ({ ...n, hidden: false })), matchCount: graphNodes.length };
+  }
+  const visibleIds = new Set(
+    graphNodes.filter(gn => nodeMatchesFilter(gn, filter)).map(gn => gn.id),
+  );
+  const mapped = nodes.map(n => {
+    if (n.type === 'group') {
+      const children = nodes.filter(c => c.parentId === n.id);
+      const allHidden = children.length > 0 && children.every(c => !visibleIds.has(c.id));
+      return { ...n, hidden: allHidden };
+    }
+    if (n.type === 'annotation') return n;
+    return { ...n, hidden: !visibleIds.has(n.id) };
+  });
+  return { nodes: mapped, matchCount: visibleIds.size };
+}
+
 interface UseGraphDataReturn {
   nodes: Node[];
   edges: Edge[];
@@ -273,42 +302,34 @@ export function useGraphData(
     });
 
     // Apply filter: stamp hidden: true on non-matching nodes.
-    const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
-    const visibleGraphNodeIds = isFiltering
-      ? new Set(graphData.nodes.filter(gn => nodeMatchesFilter(gn, filter)).map(gn => gn.id))
-      : null;
-
-    const withHidden = [...positionedGroups, ...rebased].map(n => {
-      if (!visibleGraphNodeIds) return n;
-      if (n.type === 'group') {
-        const children = rebased.filter(c => c.parentId === n.id);
-        const allHidden = children.length > 0 && children.every(c => !visibleGraphNodeIds.has(c.id));
-        return { ...n, hidden: allHidden };
-      }
-      if (n.type === 'annotation') return n;
-      return { ...n, hidden: !visibleGraphNodeIds.has(n.id) };
-    });
-
-    const count = visibleGraphNodeIds ? visibleGraphNodeIds.size : graphData.nodes.length;
+    const { nodes: withHidden, matchCount: count } = applyFilterToNodes(
+      [...positionedGroups, ...rebased],
+      graphData.nodes,
+      filter,
+    );
     setMatchCount(count);
     // Group nodes must come before their children in the array.
     setNodes(withHidden);
     setEdges(flowEdges);
+    // filter intentionally excluded from deps: filter-only changes are handled by
+    // the second useEffect below to avoid re-running the expensive layout algorithm
+    // on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphData, rawEdges, sessionId]);
 
   useEffect(() => {
+    if (!graphData) return;
+    const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
+
+    // Compute visibleIds and matchCount outside the state updater — updaters must be pure.
+    const visibleIds = isFiltering
+      ? new Set(graphData.nodes.filter(gn => nodeMatchesFilter(gn, filter)).map(gn => gn.id))
+      : null;
+    setMatchCount(visibleIds ? visibleIds.size : graphData.nodes.length);
+
+    // Apply hidden flags using a pure functional updater (visibleIds is already fully computed).
     setNodes(prev => {
-      const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
-      if (!graphData || !isFiltering) {
-        const count = graphData?.nodes.length ?? 0;
-        setMatchCount(count);
-        return prev.map(n => ({ ...n, hidden: false }));
-      }
-      const visibleIds = new Set(
-        graphData.nodes.filter(gn => nodeMatchesFilter(gn, filter)).map(gn => gn.id),
-      );
-      setMatchCount(visibleIds.size);
+      if (!visibleIds) return prev.map(n => ({ ...n, hidden: false }));
       return prev.map(n => {
         if (n.type === 'group') {
           const children = prev.filter(c => c.parentId === n.id);
@@ -353,21 +374,11 @@ export function useGraphData(
         return { ...n, position: { x: n.position.x - origin.x, y: n.position.y - origin.y } };
       });
 
-      const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
-      const visibleIds = isFiltering
-        ? new Set(graphData.nodes.filter(gn => nodeMatchesFilter(gn, filter)).map(gn => gn.id))
-        : null;
-
-      const withHidden = [...positionedGroups, ...rebased].map(n => {
-        if (!visibleIds) return n;
-        if (n.type === 'group') {
-          const children = rebased.filter(c => c.parentId === n.id);
-          const allHidden = children.length > 0 && children.every(c => !visibleIds.has(c.id));
-          return { ...n, hidden: allHidden };
-        }
-        if (n.type === 'annotation') return n;
-        return { ...n, hidden: !visibleIds.has(n.id) };
-      });
+      const { nodes: withHidden } = applyFilterToNodes(
+        [...positionedGroups, ...rebased],
+        graphData.nodes,
+        filter,
+      );
       setNodes(withHidden);
     },
     [applyLayout, edges, graphData, sessionId, filter],
