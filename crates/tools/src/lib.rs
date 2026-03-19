@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 pub use error::{ToolError, ToolResult};
-pub use retriever::KnowledgeRetriever;
+pub use retriever::{KnowledgeResult, KnowledgeRetriever};
 use graphirm_graph::GraphStore;
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::error::GraphError;
