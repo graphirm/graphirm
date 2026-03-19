@@ -51,7 +51,7 @@ impl ToolRegistry {
     pub fn is_destructive(&self, name: &str) -> bool {
         self.tools
             .get(name)
-            .map_or(false, |t| t.is_destructive())
+            .is_some_and(|t| t.is_destructive())
     }
 
     pub async fn execute(

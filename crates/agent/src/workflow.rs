@@ -635,10 +635,8 @@ async fn emit_graph_update(
             .collect();
         for e in &recent_edges {
             for nid in [&e.source, &e.target] {
-                if !node_map.contains_key(nid) {
-                    if let Ok(n) = graph.get_node(nid) {
-                        node_map.insert(nid.clone(), n);
-                    }
+                if !node_map.contains_key(nid) && let Ok(n) = graph.get_node(nid) {
+                    node_map.insert(nid.clone(), n);
                 }
             }
         }

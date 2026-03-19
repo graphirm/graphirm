@@ -5,6 +5,7 @@
 //! graph, and stream real-time agent events.
 
 pub mod error;
+pub mod export;
 pub mod middleware;
 pub mod request_log;
 pub mod routes;
