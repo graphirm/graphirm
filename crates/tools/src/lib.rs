@@ -9,6 +9,7 @@ pub mod grep;
 pub mod ls;
 pub mod permissions;
 pub mod read;
+pub mod read_many;
 pub mod registry;
 pub mod retriever;
 pub mod script;
