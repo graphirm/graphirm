@@ -136,6 +136,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 17 | Custom tool plugins — `ScriptTool` loads TOML manifests from `~/.graphirm/plugins/`, executes shell commands, `is_destructive` flag respected by HITL gate | ✅ done |
 | 18 | Semantic `graph_query` mode — `KnowledgeRetriever` trait, HNSW cosine similarity search (`1-d²/2`), scores in output, graceful fallback | ✅ done |
 | 19 | Subagent workspace isolation + multi-file tools — `parent_working_dir` in `spawn_subagent`, subagents get `<workspace>/subagents/<name>-<id>/`; `diff` (file + git) and `read_many` (up to 20 files) tools, non-destructive | ✅ done |
+| 20 | Graph node search / filter — keyword + type filter pills in Toolbar; `applyFilterToNodes` stamps `hidden` on React Flow nodes; group nodes hidden when all children match; `matchCount` counter; Ctrl+F shortcut | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -220,6 +221,13 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - On startup, `restore_sessions_from_graph` reconstructs `working_dir` from stored workspace name
 - `GET /api/sessions/:id` response includes `workspace` and `workspace_path` fields when active
 - Backward-compatible: when `workspaces_root` is unset, all behaviour is unchanged
+
+**Graph node search / filter (Phase 20):**
+- `NodeFilter` interface (`query: string`, `types: Set<string>`) + `EMPTY_FILTER` exported from `crates/web-app/src/hooks/useGraphData.ts`
+- `applyFilterToNodes(nodes, graphNodes, filter)` helper — computes `visibleIds`, stamps `hidden: true` on non-matching React Flow nodes; group nodes hidden when all children hidden; annotation nodes never hidden
+- `useGraphData` accepts `filter: NodeFilter` (4th param, default `EMPTY_FILTER`); returns `matchCount: number`; filter reactively applied in second `useEffect` without re-running layout
+- Toolbar: search `<input>` + five type-pill buttons (`I A C T K`), `matchCount/total` counter, clear `✕` button — all controlled by filter state in `GraphCanvasInner`
+- Ctrl+F (hover over graph pane) focuses search, Escape clears + blurs; existing `/` shortcut for chat unaffected
 
 **Risk areas:**
 - `Arc<RwLock<StableGraph>>` — no deadlocks; acquire briefly, never across await

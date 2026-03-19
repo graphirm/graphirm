@@ -41,8 +41,9 @@ Plan: `docs/plans/2026-03-18-p2-sse-knowledge-plugins.md`
 ### Session rename — P3 · S
 Sessions are named only at creation. Add `PATCH /api/sessions/:id` with `{ "name": "new name" }` (server) and an inline-edit on the session name in SessionBar (UI).
 
-### Graph node search / filter — P3 · M
-Add a search bar above the canvas that filters visible nodes by content keyword or type. Client-side filter first (hide non-matching nodes), then wire to `graph_query` keyword search for server-side results. Useful once sessions grow large.
+### ✅ Graph node search / filter — P3 · M
+Done 2026-03-19. Search input + type filter pills (`I A C T K`) in Toolbar. `useGraphData` applies `hidden: true` to non-matching React Flow nodes via `applyFilterToNodes` helper; group nodes hidden when all children hidden; annotation nodes never hidden. `matchCount/total` counter shown when filter is active. Clear `✕` button. Ctrl+F (hover) focuses search input, Escape clears and blurs. No backend changes.
+Plan: `docs/plans/2026-03-19-graph-node-search.md`
 
 ### Export session as Markdown / HTML — P3 · M
 `GET /api/sessions/:id/export?format=markdown` renders the conversation + code blocks + knowledge nodes as a readable document. Useful for sharing findings without requiring Graphirm.
