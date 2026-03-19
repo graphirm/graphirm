@@ -898,12 +898,16 @@ fn agent_event_to_sse(session_id: &str, event: &graphirm_agent::AgentEvent) -> S
             }),
         ),
         AgentEvent::GraphUpdate {
-            node_id, edge_ids, ..
+            node_id,
+            patch_nodes,
+            recent_edges,
+            ..
         } => (
             SseEventType::GraphUpdate,
             serde_json::json!({
                 "node_id": node_id.to_string(),
-                "edge_count": edge_ids.len(),
+                "nodes": patch_nodes,
+                "edges": recent_edges,
             }),
         ),
         AgentEvent::AwaitingApproval {

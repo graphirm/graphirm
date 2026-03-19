@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { SseClient } from '../api/sse';
-import type { GraphData, Message, PendingApproval, Session } from '../types/graph';
+import type {
+  GraphData,
+  GraphEdge,
+  GraphNode,
+  Message,
+  PendingApproval,
+  Session,
+} from '../types/graph';
 
 interface UseSessionReturn {
   sessions: Session[];
@@ -33,9 +40,30 @@ export function useSession(): UseSessionReturn {
   const [autoApprove, setAutoApprove] = useState(false);
 
   const sseRef = useRef<SseClient | null>(null);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Track current session ID in a ref so callbacks always see the latest value.
   const currentSessionRef = useRef<Session | null>(null);
   currentSessionRef.current = currentSession;
+
+  const patchGraphData = useCallback((incomingNodes: GraphNode[], incomingEdges: GraphEdge[]) => {
+    setGraphData(prev => {
+      if (!prev) {
+        return { nodes: [...incomingNodes], edges: [...incomingEdges] };
+      }
+      const nodeMap = new Map(prev.nodes.map(n => [n.id, n]));
+      for (const n of incomingNodes) {
+        nodeMap.set(n.id, n);
+      }
+      const edgeMap = new Map(prev.edges.map(e => [e.id, e]));
+      for (const e of incomingEdges) {
+        edgeMap.set(e.id, e);
+      }
+      return {
+        nodes: [...nodeMap.values()],
+        edges: [...edgeMap.values()],
+      };
+    });
+  }, []);
 
   const refresh = useCallback(async (sessionId: string) => {
     try {
@@ -57,9 +85,21 @@ export function useSession(): UseSessionReturn {
         setIsThinking(true);
       } else if (ev.event === 'agent_end' || ev.event === 'error') {
         setIsThinking(false);
-        refresh(sessionId).catch(console.error);
-      } else if (ev.event === 'graph_update' || ev.event === 'tool_end' || ev.event === 'message_end') {
-        refresh(sessionId).catch(console.error);
+        if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = setTimeout(() => {
+          refreshTimerRef.current = null;
+          refresh(sessionId).catch(console.error);
+        }, 500);
+      } else if (ev.event === 'graph_update') {
+        const root = ev.data as { data?: { nodes?: GraphNode[]; edges?: GraphEdge[] } };
+        const payload = root?.data ?? (ev.data as { nodes?: GraphNode[]; edges?: GraphEdge[] });
+        const nodes = payload?.nodes;
+        const edges = payload?.edges;
+        if (Array.isArray(nodes) && Array.isArray(edges)) {
+          patchGraphData(nodes, edges);
+        }
+      } else if (ev.event === 'message_end') {
+        api.getMessages(sessionId).then(setMessages).catch(console.error);
       } else if (ev.event === 'awaiting_approval') {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         const payload = ev.data?.data ?? ev.data;
@@ -68,7 +108,7 @@ export function useSession(): UseSessionReturn {
     });
     client.subscribe(sessionId);
     sseRef.current = client;
-  }, [refresh]);
+  }, [refresh, patchGraphData]);
 
   const selectSession = useCallback(async (id: string) => {
     const session = sessions.find(s => s.id === id) ?? { id } as Session;
@@ -95,7 +135,10 @@ export function useSession(): UseSessionReturn {
 
   // Cleanup SSE on unmount
   useEffect(() => {
-    return () => { sseRef.current?.unsubscribe(); };
+    return () => {
+      sseRef.current?.unsubscribe();
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    };
   }, []);
 
   const createSession = useCallback(async (name?: string, workspace?: string) => {
@@ -125,6 +168,7 @@ export function useSession(): UseSessionReturn {
       } else {
         await api.sendPrompt(session.id, content);
       }
+      api.getMessages(session.id).then(setMessages).catch(console.error);
     } catch (err) {
       console.error('Failed to send prompt:', err);
       setIsThinking(false);

@@ -1,6 +1,6 @@
 // Agent events: streaming events for UI consumption
 
-use graphirm_graph::edges::EdgeId;
+use graphirm_graph::edges::{EdgeId, GraphEdge};
 use graphirm_graph::nodes::{GraphNode, NodeId};
 use graphirm_llm::StreamEvent;
 use tokio::sync::mpsc;
@@ -46,10 +46,14 @@ pub enum AgentEvent {
     },
     /// Emitted after each agent turn so the TUI can refresh the graph explorer.
     /// `recent_nodes` is a snapshot of the most recently created nodes (newest first).
+    /// `recent_edges` touches the response node and any tool-result nodes from this turn.
+    /// `patch_nodes` is `recent_nodes` plus every node incident to `recent_edges` (for SSE clients).
     GraphUpdate {
         node_id: NodeId,
         edge_ids: Vec<EdgeId>,
         recent_nodes: Vec<GraphNode>,
+        recent_edges: Vec<GraphEdge>,
+        patch_nodes: Vec<GraphNode>,
     },
     /// Emitted when repeated tool calls trigger soft escalation.
     /// The agent should synthesize findings rather than continuing to call the same tool.

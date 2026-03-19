@@ -592,21 +592,50 @@ fn check_soft_escalation(
     false
 }
 
-/// Emit a GraphUpdate event with a fresh snapshot of the 50 most recent nodes.
-/// Errors from querying the store are logged and silently swallowed so a
-/// display refresh failure never crashes the agent loop.
+/// Emit a GraphUpdate event with recent nodes, edges touching this turn's nodes, and a merged
+/// node list for incremental SSE clients.
 async fn emit_graph_update(
     session: &Session,
     node_id: &NodeId,
-    edge_ids: Vec<NodeId>,
+    tool_result_node_ids: Vec<NodeId>,
     events: &EventBus,
 ) {
     let graph = session.graph.clone();
-    let recent_nodes = match tokio::task::spawn_blocking(move || graph.list_recent_nodes(50)).await
+    let anchor = node_id.clone();
+    let tools = tool_result_node_ids.clone();
+    let payload = match tokio::task::spawn_blocking(move || {
+        let recent_nodes = graph.list_recent_nodes(50)?;
+        let mut anchors = vec![anchor];
+        anchors.extend(tools);
+        let mut edge_map: std::collections::HashMap<graphirm_graph::edges::EdgeId, GraphEdge> =
+            std::collections::HashMap::new();
+        for nid in &anchors {
+            for e in graph.edges_for_node(nid)? {
+                edge_map.entry(e.id.clone()).or_insert(e);
+            }
+        }
+        let recent_edges: Vec<GraphEdge> = edge_map.into_values().collect();
+        let mut node_map: std::collections::HashMap<NodeId, GraphNode> = recent_nodes
+            .iter()
+            .map(|n| (n.id.clone(), n.clone()))
+            .collect();
+        for e in &recent_edges {
+            for nid in [&e.source, &e.target] {
+                if !node_map.contains_key(nid) {
+                    if let Ok(n) = graph.get_node(nid) {
+                        node_map.insert(nid.clone(), n);
+                    }
+                }
+            }
+        }
+        let patch_nodes: Vec<GraphNode> = node_map.into_values().collect();
+        Ok::<_, graphirm_graph::GraphError>((recent_nodes, recent_edges, patch_nodes))
+    })
+    .await
     {
-        Ok(Ok(nodes)) => nodes,
+        Ok(Ok(p)) => p,
         Ok(Err(e)) => {
-            tracing::warn!("GraphUpdate: failed to fetch recent nodes: {e}");
+            tracing::warn!("GraphUpdate: failed to build payload: {e}");
             return;
         }
         Err(e) => {
@@ -614,13 +643,16 @@ async fn emit_graph_update(
             return;
         }
     };
+    let (recent_nodes, recent_edges, patch_nodes) = payload;
     events.emit(AgentEvent::GraphUpdate {
         node_id: node_id.clone(),
-        edge_ids: edge_ids
+        edge_ids: tool_result_node_ids
             .into_iter()
             .map(|id| graphirm_graph::edges::EdgeId(id.0))
             .collect(),
         recent_nodes,
+        recent_edges,
+        patch_nodes,
     });
 }
 
