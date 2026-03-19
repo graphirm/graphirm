@@ -2,7 +2,7 @@
 
 Single source of truth for planned work. Completed items are recorded in `docs/completion-log.md` and `AGENTS.md` — not here.
 
-**Current state:** Phases 0–14 complete. See `AGENTS.md` → Current State table.
+**Current state:** Phases 0–19 complete. See `AGENTS.md` → Current State table.
 
 ---
 
@@ -57,11 +57,13 @@ Done 2026-03-18. `build_workspace_context` in `routes.rs` lists up to 20 sorted 
 ### ✅ HTTP-level test for per-session workspaces — P2 · S
 Done 2026-03-18. `test_workspace_creation` in `crates/server/tests/integration.rs` verifies response fields and directory existence on disk via `tempfile::tempdir()`.
 
-### Subagent workspace isolation — P3 · M
-Spawned subagents inherit the parent session's `working_dir`. They could optionally get their own subdirectory (`<workspace>/subagents/<id>/`) to avoid clobbering each other's file output. Requires passing workspace config through `Coordinator` → `delegate.rs`.
+### ✅ Subagent workspace isolation — P3 · M
+Done 2026-03-19. `spawn_subagent` accepts `parent_working_dir: Option<PathBuf>`; when set, creates `<parent>/subagents/<agent>-<short_id>/` and sets subagent `working_dir`. Delegate passes `ctx.working_dir`. Integration test verifies subagent tool runs in workspace.
+Plan: `docs/plans/2026-03-19-agent-capability-subagent-ws-multifile.md`
 
-### Multi-file context tool (`read_many` / `diff`) — P3 · M
-A single tool call that reads multiple files or shows a `git diff` output. Currently requires the agent to call `read` N times. Reduces turn count on code review tasks.
+### ✅ Multi-file context tool (`read_many` / `diff`) — P3 · M
+Done 2026-03-19. `diff` tool: file compare (`file_a`/`file_b`) and git diff (optional `ref`/`path`/`cached`), non-destructive. `read_many` tool: up to 20 paths, optional `max_lines_per_file`, concatenated output with path headers; non-destructive. Both registered in `build_tool_registry`.
+Plan: `docs/plans/2026-03-19-agent-capability-subagent-ws-multifile.md`
 
 ### ✅ Semantic `graph_query` search — P3 · M
 Done 2026-03-19. Added `semantic` mode to `graph_query` tool. `KnowledgeRetriever` trait defined in `graphirm-tools` (no circular deps); `MemoryRetriever` implements it via `retrieve_with_scores` (correct L2→cosine conversion: `1 - d²/2`); wired via `ToolContext.knowledge_retriever`. Returns HNSW-ranked Knowledge nodes with cosine similarity scores. Graceful `ExecutionFailed` when no embedding provider is configured.
@@ -113,3 +115,4 @@ A `?demo` query param loads a pre-recorded session JSON instead of calling the A
 | 12 | `graph_query` tool (bfs, list_type, keyword search) |
 | 13 | Interactive whiteboard (React + React Flow, node expansion, grouping, steer-from-node, annotations, keyboard shortcuts, auto-approve) |
 | 14 | Per-session workspaces (`workspaces_root`, named dirs, graph persistence, restart restore) |
+| 19 | Subagent workspace isolation + diff/read_many tools |

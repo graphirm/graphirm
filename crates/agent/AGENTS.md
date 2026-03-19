@@ -16,6 +16,7 @@ and session management. Everything in graphirm that involves deciding what to do
 | `coordinator.rs` | `Coordinator` — orchestrates subagent spawning, result collection |
 | `delegate.rs` | `SubagentTool` — the `delegate` tool; spawns a subagent as a tool call |
 | `multi.rs` | `spawn_subagent`, `collect_subagent_results`, `wait_for_subagents` |
+| `workspace.rs` | `sanitize_workspace_name` — shared with server for session/subagent directory names |
 | `escalation.rs` | Soft escalation — detects repeated identical tool calls, prompts synthesis |
 | `hitl.rs` | `HitlGate`, `HitlDecision` — blocks on destructive tools for human approval |
 | `config.rs` | `AgentConfig`, `AgentMode`, `Permission` — loaded from `config/default.toml`; includes `segment_filter: Option<Vec<String>>` to restrict context to specific segment types |

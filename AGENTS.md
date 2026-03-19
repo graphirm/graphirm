@@ -16,7 +16,7 @@ Cargo workspace with six crates plus an eval harness. Dependency order (bottom t
 rusqlite / petgraph / instant-distance  (external)
     └── graphirm-graph      # graph store, node/edge CRUD, PageRank, BFS, HNSW
          ├── graphirm-llm   # LLM provider trait, streaming, embeddings
-         ├── graphirm-tools # built-in tools (bash, read, write, edit, grep, find, ls, graph_query)
+         ├── graphirm-tools # built-in tools (bash, read, write, edit, grep, find, ls, graph_query, diff, read_many)
          └── graphirm-agent # agent loop, context engine, multi-agent, knowledge, HITL
               ├── graphirm-tui    # ratatui TUI (chat + graph explorer)
               └── graphirm-server # axum HTTP API + SSE
@@ -41,7 +41,7 @@ graphirm-vscode/            # VS Code / Cursor extension (TypeScript)
 | `src/main.rs` | CLI: `chat`, `graph`, `serve`, `export-corpus`, `label-explore`, `schema-suggest`, `predict-spans`, `validate-agreement` |
 | `crates/graph/` | `GraphStore`, node/edge types, PageRank, BFS, HNSW vector index |
 | `crates/llm/` | `LlmProvider` trait, Anthropic/OpenAI/DeepSeek/Ollama/OpenRouter impls, `MockProvider` |
-| `crates/tools/` | `Tool` trait, `ToolRegistry`, parallel executor, bash/read/write/edit/grep/find/ls/graph_query |
+| `crates/tools/` | `Tool` trait, `ToolRegistry`, parallel executor, bash/read/write/edit/grep/find/ls/graph_query/diff/read_many |
 | `crates/agent/` | `run_agent_loop`, `build_context`, `Coordinator`, `HitlGate`, knowledge extraction |
 | `crates/tui/` | `App`, chat panel, graph explorer, input handling |
 | `crates/server/` | axum routes, SSE streaming, `AppState`, `SessionHandle`, SDK, static file serving |
@@ -135,6 +135,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 16 | Cross-session knowledge linking — `session_id` in Knowledge metadata, HNSW-based `find_cross_session_links`, `RelatesTo` edges between sessions | ✅ done |
 | 17 | Custom tool plugins — `ScriptTool` loads TOML manifests from `~/.graphirm/plugins/`, executes shell commands, `is_destructive` flag respected by HITL gate | ✅ done |
 | 18 | Semantic `graph_query` mode — `KnowledgeRetriever` trait, HNSW cosine similarity search (`1-d²/2`), scores in output, graceful fallback | ✅ done |
+| 19 | Subagent workspace isolation + multi-file tools — `parent_working_dir` in `spawn_subagent`, subagents get `<workspace>/subagents/<name>-<id>/`; `diff` (file + git) and `read_many` (up to 20 files) tools, non-destructive | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -170,6 +171,13 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Bundle: React Flow 194 kB, highlight 21 kB (trimmed to 20 languages), dagre 43 kB, app 289 kB — all chunks ≤ 500 kB
 - Dev: `cd web-app && npm run dev` (proxies `/api` → `localhost:3000`)
 - Build: `cd web-app && npm run build` → `web-app/dist/` (served automatically by `graphirm serve`)
+
+**Subagent workspace + multi-file tools (Phase 19):**
+- `graphirm_agent::workspace::sanitize_workspace_name` — shared from server; used for subagent dir names
+- `spawn_subagent(..., parent_working_dir: Option<PathBuf>)` — when `Some`, creates `<parent>/subagents/<agent>-<short_task_id>/`, sets `agent_config.working_dir`; `delegate` passes `ctx.working_dir`
+- `diff` tool — file mode (`file_a`/`file_b`, runs `diff -u`) and git mode (`mode: "git"`, optional `ref`/`path`/`cached`); non-destructive
+- `read_many` tool — `paths: string[]` (max 20), optional `max_lines_per_file` (default 500); concatenated output with `=== path (N lines) ===` headers; partial failures reported per file; non-destructive
+- Plan: `docs/plans/2026-03-19-agent-capability-subagent-ws-multifile.md`
 
 **Semantic graph_query (Phase 18):**
 - `KnowledgeRetriever` trait in `crates/tools/src/retriever.rs` — decouples tool from agent crate (avoids circular deps)

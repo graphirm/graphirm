@@ -21,6 +21,8 @@ description, JSON schema for parameters, and an async `execute` method. Tools ar
 | `find.rs` | File name pattern search |
 | `ls.rs` | Directory listing |
 | `graph_query.rs` | Graph query — BFS traversal, node-type enumeration, keyword search, **semantic HNSW search** |
+| `diff.rs` | File compare (`diff -u`) and git diff — non-destructive |
+| `read_many.rs` | Read up to 20 files in one call — concatenated output with path headers |
 | `retriever.rs` | `KnowledgeRetriever` trait — decouples semantic search from agent crate |
 | `script.rs` | `ScriptTool` + `PluginManifest` — TOML-defined plugins executed as shell commands |
 | `error.rs` | `ToolError` enum |
