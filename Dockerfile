@@ -7,21 +7,36 @@ RUN npm ci
 COPY web-app/ ./
 RUN npm run build
 
-# Stage 2: Build the Rust binary
-FROM rust:1.88-bookworm AS rust-builder
-
+# Stage 2: Install cargo-chef into a base Rust image (reused by stages 3 and 4)
+FROM rust:1.88-bookworm AS chef
+RUN cargo install cargo-chef --locked
 WORKDIR /app
+
+# Stage 3: Compute the dependency recipe from workspace manifests
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ crates/
+COPY src/ src/
+COPY graphirm-eval/ graphirm-eval/
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Stage 4: Cook (cache) dependencies, then compile the binary
+FROM chef AS rust-builder
+COPY --from=planner /app/recipe.json recipe.json
+# This layer is cached as long as Cargo.toml / Cargo.lock don't change
+RUN cargo chef cook --release -p graphirm --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY src/ src/
 COPY graphirm-eval/ graphirm-eval/
 RUN cargo build --release -p graphirm
 
-# Stage 3: Runtime image
-FROM debian:bookworm-slim
+# Stage 5: Slim runtime image
+FROM debian:bookworm-slim AS runtime
 
+# curl is required by the HEALTHCHECK instruction below
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 \
+    ca-certificates libssl3 curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=rust-builder /app/target/release/graphirm /usr/local/bin/graphirm
