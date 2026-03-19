@@ -12,6 +12,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
+use graphirm_agent::workspace::sanitize_workspace_name;
 use graphirm_agent::{AgentConfig, EventBus, HitlDecision, HitlGate, Session, run_agent_loop};
 use graphirm_graph::{Direction, EdgeType, GraphNode, NodeId, NodeType};
 
@@ -24,42 +25,6 @@ use crate::types::{
     NodeAction, NodeActionRequest, PromptRequest, SessionId, SessionResponse, SessionStatus,
     SseEvent, SseEventType, SubgraphQuery,
 };
-
-/// Sanitize a workspace name: trim, lowercase, replace non-`[a-z0-9_-]` with `-`,
-/// collapse consecutive dashes, strip leading/trailing dashes.
-/// Returns `None` if the result is empty.
-fn sanitize_workspace_name(name: &str) -> Option<String> {
-    let lowered = name.trim().to_lowercase();
-    let replaced: String = lowered
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    let mut result = String::new();
-    let mut last_dash = false;
-    for c in replaced.chars() {
-        if c == '-' {
-            if !last_dash {
-                result.push(c);
-            }
-            last_dash = true;
-        } else {
-            result.push(c);
-            last_dash = false;
-        }
-    }
-    let result = result.trim_matches('-').to_string();
-    if result.is_empty() {
-        None
-    } else {
-        Some(result)
-    }
-}
 
 /// Build a brief workspace context block to inject into the system prompt.
 /// Lists up to 20 entries (non-recursive) so the agent knows where it's working.

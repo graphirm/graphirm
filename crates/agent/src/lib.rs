@@ -1,5 +1,6 @@
 pub mod compact;
 pub mod config;
+pub mod workspace;
 pub mod context;
 pub mod coordinator;
 pub mod delegate;
