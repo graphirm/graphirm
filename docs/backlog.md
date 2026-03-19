@@ -38,8 +38,9 @@ Done 2026-03-18. "+ New" button expands an inline form with session name + works
 Done 2026-03-19. `GraphUpdate` SSE payload now includes full `nodes` + `edges` patch data. Web-app applies incremental patches to React Flow state — no full re-fetch, canvas positions preserved. `message_end` refreshes messages only. `agent_end` uses a 500 ms debounced reconciliation refresh. Also fixed `@dagrejs/dagre` 1.1.8 → 1.0.4 (broken graphlib packaging).
 Plan: `docs/plans/2026-03-18-p2-sse-knowledge-plugins.md`
 
-### Session rename — P3 · S
-Sessions are named only at creation. Add `PATCH /api/sessions/:id` with `{ "name": "new name" }` (server) and an inline-edit on the session name in SessionBar (UI).
+### ✅ Session rename — P3 · S
+Done 2026-03-19. `PATCH /api/sessions/:id` with `{ "name": "new name" }` persists to Agent graph node (survives restart). `display_name: Arc<RwLock<String>>` in `SessionHandle`. `name` field added to `SessionResponse` (also fixes pre-existing bug where `Session.name` was always undefined in the UI). Inline double-click edit in `SessionBar` — Enter commits, Escape cancels, blur commits.
+Plan: `docs/plans/2026-03-19-session-rename.md`
 
 ### Graph node search / filter — P3 · M
 Add a search bar above the canvas that filters visible nodes by content keyword or type. Client-side filter first (hide non-matching nodes), then wire to `graph_query` keyword search for server-side results. Useful once sessions grow large.
