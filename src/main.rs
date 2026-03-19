@@ -977,7 +977,16 @@ async fn run_serve(db_path: &Path, host: String, port: u16) -> Result<(), Graphi
     )?);
     let tools = Arc::new(build_tool_registry());
 
-    let agent_config = graphirm_agent::AgentConfig::default();
+    let config_path = std::path::Path::new("config/default.toml");
+    let agent_config = if config_path.exists() {
+        graphirm_agent::AgentConfig::from_file(config_path).unwrap_or_else(|e| {
+            tracing::warn!("Failed to load {}: {e}; using defaults", config_path.display());
+            graphirm_agent::AgentConfig::default()
+        })
+    } else {
+        tracing::warn!("config/default.toml not found; using AgentConfig defaults");
+        graphirm_agent::AgentConfig::default()
+    };
 
     // LLM provider requires a model spec; reads GRAPHIRM_MODEL env var
     // (set in .env). Defaults to Qwen Coder Next (OpenRouter) if not configured.
