@@ -10,8 +10,8 @@ import {
 } from '@xyflow/react';
 import type { NodeTypes, EdgeTypes, Node } from '@xyflow/react';
 import type { GraphData } from '../types/graph';
-import type { LayoutMode } from '../hooks/useGraphData';
-import { useGraphData } from '../hooks/useGraphData';
+import { useGraphData, EMPTY_FILTER } from '../hooks/useGraphData';
+import type { LayoutMode, NodeFilter } from '../hooks/useGraphData';
 import { InteractionNode } from './nodes/InteractionNode';
 import { AgentNode } from './nodes/AgentNode';
 import { ContentNode } from './nodes/ContentNode';
@@ -61,6 +61,8 @@ function GraphCanvasInner({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasWidth = containerRef.current?.clientWidth ?? 800;
 
+  const [filter, setFilter] = useState<NodeFilter>(EMPTY_FILTER);
+
   const {
     nodes,
     edges,
@@ -69,7 +71,8 @@ function GraphCanvasInner({
     onNodesChange,
     persistPositions,
     addNode,
-  } = useGraphData(graphData, sessionId, canvasWidth);
+    matchCount,
+  } = useGraphData(graphData, sessionId, canvasWidth, filter);
 
   const { fitView, screenToFlowPosition } = useReactFlow();
 
@@ -143,6 +146,10 @@ function GraphCanvasInner({
           setTimeout(() => fitView({ padding: 0.1, duration: 400 }), 50);
         }}
         onAddAnnotation={handleAddAnnotation}
+        filter={filter}
+        onFilterChange={setFilter}
+        matchCount={matchCount}
+        totalCount={graphData?.nodes.length ?? 0}
       />
       <div className={styles.canvasWrapper}>
         <SteerContext.Provider value={steerCallbackRef.current}>
