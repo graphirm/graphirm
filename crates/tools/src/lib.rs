@@ -39,6 +39,9 @@ pub struct ToolContext {
     pub signal: CancellationToken,
     pub turn: u32,
     pub turn_pos_counter: Arc<AtomicU32>,
+    /// Optional semantic retriever — present when the session has an active
+    /// HNSW index and embedding provider. Used by `graph_query` semantic mode.
+    pub knowledge_retriever: Option<Arc<dyn crate::retriever::KnowledgeRetriever>>,
 }
 
 impl ToolContext {
@@ -188,6 +191,7 @@ pub(crate) mod tests {
             signal: CancellationToken::new(),
             turn: 1,
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
+            knowledge_retriever: None,
         }
     }
 

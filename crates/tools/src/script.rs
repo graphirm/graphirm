@@ -179,6 +179,7 @@ mod tests {
             signal: CancellationToken::new(),
             turn: 0,
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
+            knowledge_retriever: None,
         }
     }
 
