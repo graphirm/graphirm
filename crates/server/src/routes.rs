@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::{Json, Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, patch, post};
+use axum::routing::{get, post};
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
