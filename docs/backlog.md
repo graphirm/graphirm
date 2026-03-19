@@ -70,8 +70,9 @@ Phase 12 `graph_query` search mode is keyword-only. Add a `semantic` mode that u
 
 ## Infrastructure & Quality
 
-### Cross-session knowledge extraction — P2 · L
-Knowledge nodes are created per-session but not automatically linked across sessions. Add a post-turn job that embeds new Knowledge nodes and links them to similar nodes in other sessions via `RelatesTo` edges. Enables the agent to surface relevant past work without a manual `graph_query`. (Embeddings + HNSW are already in place via Phase 9.)
+### ✅ Cross-session knowledge extraction — P2 · L
+Done 2026-03-19. Knowledge nodes now store `session_id` in metadata. After each embedding, `MemoryRetriever.find_cross_session_links` queries HNSW (min 0.7 cosine similarity, top 3) and `persist_cross_session_links` writes `RelatesTo` edges with similarity as weight. Three unit tests added.
+Plan: `docs/plans/2026-03-18-p2-sse-knowledge-plugins.md`
 
 ### Custom tool plugins — P2 · L
 Users can't extend Graphirm without recompiling. Add a plugin mechanism: load script-based tools (shell or Python) from `~/.graphirm/plugins/` at startup. Each plugin exposes a name, description, and `execute` command. Subject to the same HITL gate as `bash`.

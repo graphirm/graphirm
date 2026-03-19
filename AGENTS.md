@@ -131,6 +131,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 13 | Interactive whiteboard graph — React + React Flow, node expansion (marked + hljs), grouping, steer-from-node, canvas annotations, keyboard shortcuts | ✅ done |
 | 14 | Per-session workspaces — `workspaces_root` config, named workspace directories, persisted in Agent node metadata, restored on restart | ✅ done |
 | 15 | Incremental SSE graph updates — `GraphUpdate` payload carries full node/edge patch; web-app applies patches without full re-fetch or canvas re-layout | ✅ done |
+| 16 | Cross-session knowledge linking — `session_id` in Knowledge metadata, HNSW-based `find_cross_session_links`, `RelatesTo` edges between sessions | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -166,6 +167,14 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Bundle: React Flow 194 kB, highlight 21 kB (trimmed to 20 languages), dagre 43 kB, app 289 kB — all chunks ≤ 500 kB
 - Dev: `cd web-app && npm run dev` (proxies `/api` → `localhost:3000`)
 - Build: `cd web-app && npm run build` → `web-app/dist/` (served automatically by `graphirm serve`)
+
+**Cross-session knowledge linking (Phase 16):**
+- `persist_extracted_entities` stamps every new `Knowledge` node with `metadata["session_id"]` — enables HNSW results to be filtered by session without graph traversal
+- `session_id` threaded through `post_turn_extract → extract_knowledge_with_backend → persist_extracted_entities`
+- `MemoryRetriever.find_cross_session_links(node_id, exclude_session, k, min_similarity)` — embeds the node's text, queries HNSW with 3×k candidates, strips same-session and self matches, returns top-k `(NodeId, f64)` similarity pairs
+- `MemoryRetriever.persist_cross_session_links(source, links)` — writes `RelatesTo` edges with cosine similarity as edge weight; non-fatal (logs per-edge failures)
+- Wired in workflow after each successful `embed_knowledge_node` call; threshold `0.7`, top `3` per node
+- Three new unit tests in `knowledge::memory::tests`: cross-session discovery, empty-index guard, edge persistence
 
 **Incremental SSE graph updates (Phase 15):**
 - `AgentEvent::GraphUpdate` now carries `recent_edges` (edges touching the response + tool-result nodes) and `patch_nodes` (recent nodes + edge endpoints) in addition to `recent_nodes`
