@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::{Json, Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
@@ -22,8 +22,8 @@ use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
     AnnotationRequest, AutoApproveRequest, CreateSessionRequest, GraphResponse, HealthResponse,
-    NodeAction, NodeActionRequest, PromptRequest, SessionId, SessionResponse, SessionStatus,
-    SseEvent, SseEventType, SubgraphQuery,
+    NodeAction, NodeActionRequest, PromptRequest, RenameSessionRequest, SessionId, SessionResponse,
+    SessionStatus, SseEvent, SseEventType, SubgraphQuery,
 };
 
 /// Build a brief workspace context block to inject into the system prompt.
@@ -90,7 +90,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/sessions/{id}",
-            get(get_session).delete(delete_session),
+            get(get_session).delete(delete_session).patch(rename_session),
         )
         .route("/api/sessions/{id}/prompt", post(prompt_session))
         .route("/api/sessions/{id}/abort", post(abort_session))
@@ -214,6 +214,7 @@ async fn create_session(
 
     let response = SessionResponse {
         id: session_id.to_string(),
+        name: session.agent_config.name.clone(),
         agent: session.agent_config.name.clone(),
         model: session.agent_config.model.clone(),
         created_at: now,
@@ -249,6 +250,53 @@ async fn get_session(
         .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
 
     Ok(Json(session_handle_to_response(&id, handle)))
+}
+
+/// `PATCH /api/sessions/:id` — rename a session.
+async fn rename_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<RenameSessionRequest>,
+) -> Result<Json<SessionResponse>, ServerError> {
+    let name = body.name.trim().to_string();
+    if name.is_empty() {
+        return Err(ServerError::BadRequest(
+            "name must not be empty".to_string(),
+        ));
+    }
+
+    let key = SessionId::from(id.as_str());
+
+    // Update display_name in-memory and build response while holding the read lock.
+    // We clone the Arc<Session> to get the NodeId for the subsequent graph write,
+    // which must happen outside the sessions lock (no await inside RwLock guard).
+    let (session_arc, response) = {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&key)
+            .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
+
+        *handle.display_name.write().unwrap_or_else(|e| e.into_inner()) = name.clone();
+
+        let response = session_handle_to_response(&id, handle);
+        (handle.session.clone(), response)
+    }; // sessions read lock released here
+
+    // Persist the new name to the Agent node in the graph store.
+    let graph = state.graph.clone();
+    let session_node_id = session_arc.id.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), graphirm_graph::GraphError> {
+        let mut node = graph.get_node(&session_node_id)?;
+        if let NodeType::Agent(ref mut data) = node.node_type {
+            data.name = name;
+        }
+        graph.update_node(&session_node_id, node)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))?
+    .map_err(ServerError::Graph)?;
+
+    Ok(Json(response))
 }
 
 /// `GET /api/sessions` — list all sessions.
@@ -804,6 +852,7 @@ fn session_handle_to_response(id: &str, handle: &SessionHandle) -> SessionRespon
         .clone();
     SessionResponse {
         id: id.to_string(),
+        name: name.clone(),
         agent: name,
         model: handle.session.agent_config.model.clone(),
         created_at: handle.created_at,

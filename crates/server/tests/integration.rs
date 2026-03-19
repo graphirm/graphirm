@@ -331,3 +331,138 @@ async fn test_workspace_creation() {
         "workspace directory must exist on disk"
     );
 }
+
+#[tokio::test]
+async fn test_session_rename() {
+    let state = test_app_state();
+    let app = create_router(state);
+
+    // Create a session
+    let body = serde_json::json!({ "agent": "original-name" });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/sessions")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created: SessionResponse = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(created.name, "original-name");
+    assert_eq!(created.agent, "original-name");
+
+    // Rename via PATCH
+    let patch = serde_json::json!({ "name": "renamed-session" });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/sessions/{}", created.id))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&patch).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated: SessionResponse = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(updated.name, "renamed-session");
+
+    // Subsequent GET reflects the new name
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/sessions/{}", created.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let fetched: SessionResponse = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fetched.name, "renamed-session");
+}
+
+#[tokio::test]
+async fn test_session_rename_empty_name_rejected() {
+    let state = test_app_state();
+    let app = create_router(state);
+
+    // Create a session
+    let body = serde_json::json!({ "agent": "my-agent" });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/sessions")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created: SessionResponse = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+
+    // Empty name should be rejected
+    let patch = serde_json::json!({ "name": "   " });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/sessions/{}", created.id))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&patch).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_session_rename_not_found() {
+    let state = test_app_state();
+    let app = create_router(state);
+
+    let patch = serde_json::json!({ "name": "anything" });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/api/sessions/nonexistent-id")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&patch).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

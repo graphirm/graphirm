@@ -210,7 +210,9 @@ pub struct NodeActionRequest {
 pub struct SessionResponse {
     /// Session UUID.
     pub id: String,
-    /// Agent profile name.
+    /// Human-readable session name, mutable via `PATCH /api/sessions/:id`.
+    pub name: String,
+    /// Agent profile name (same value as `name` at creation; kept for API compatibility).
     pub agent: String,
     /// LLM model identifier.
     pub model: String,
@@ -224,6 +226,12 @@ pub struct SessionResponse {
     /// Absolute path to the workspace directory (only set when `workspace` is `Some`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_path: Option<String>,
+}
+
+/// Request body for `PATCH /api/sessions/:id`.
+#[derive(Debug, Deserialize)]
+pub struct RenameSessionRequest {
+    pub name: String,
 }
 
 /// Response body for `GET /api/health`.
@@ -307,6 +315,7 @@ mod tests {
         let now = Utc::now();
         let session = SessionResponse {
             id: "abc-123".to_string(),
+            name: "graphirm".to_string(),
             agent: "graphirm".to_string(),
             model: "claude-sonnet-4-20250514".to_string(),
             created_at: now,
