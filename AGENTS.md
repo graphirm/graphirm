@@ -134,6 +134,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 15 | Incremental SSE graph updates — `GraphUpdate` payload carries full node/edge patch; web-app applies patches without full re-fetch or canvas re-layout | ✅ done |
 | 16 | Cross-session knowledge linking — `session_id` in Knowledge metadata, HNSW-based `find_cross_session_links`, `RelatesTo` edges between sessions | ✅ done |
 | 17 | Custom tool plugins — `ScriptTool` loads TOML manifests from `~/.graphirm/plugins/`, executes shell commands, `is_destructive` flag respected by HITL gate | ✅ done |
+| 18 | Semantic `graph_query` mode — `KnowledgeRetriever` trait, HNSW cosine similarity search (`1-d²/2`), scores in output, graceful fallback | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -169,6 +170,14 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Bundle: React Flow 194 kB, highlight 21 kB (trimmed to 20 languages), dagre 43 kB, app 289 kB — all chunks ≤ 500 kB
 - Dev: `cd web-app && npm run dev` (proxies `/api` → `localhost:3000`)
 - Build: `cd web-app && npm run build` → `web-app/dist/` (served automatically by `graphirm serve`)
+
+**Semantic graph_query (Phase 18):**
+- `KnowledgeRetriever` trait in `crates/tools/src/retriever.rs` — decouples tool from agent crate (avoids circular deps)
+- `MemoryRetriever` implements `KnowledgeRetriever` via `retrieve_with_scores`; L2→cosine: `similarity = (1 - d²/2).clamp(0,1)`
+- `ToolContext.knowledge_retriever: Option<Arc<dyn KnowledgeRetriever>>` — wired from `session.memory_retriever()` in `execute_tools_parallel`
+- `graph_query` `semantic` mode: embeds query, returns top-k Knowledge nodes with `sim=X.XXX` scores ordered by similarity
+- Returns `ExecutionFailed` with helpful message when no embedding provider is configured
+- 5 unit tests in `graph_query.rs` (happy path, no retriever, empty query, empty results, limit); 3 in `memory.rs` (scores bounded, empty index, score formula regression)
 
 **Custom tool plugins (Phase 17):**
 - `crates/tools/src/script.rs` — `PluginManifest` (TOML) + `ScriptTool` that implements `Tool`

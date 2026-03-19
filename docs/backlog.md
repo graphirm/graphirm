@@ -63,8 +63,9 @@ Spawned subagents inherit the parent session's `working_dir`. They could optiona
 ### Multi-file context tool (`read_many` / `diff`) — P3 · M
 A single tool call that reads multiple files or shows a `git diff` output. Currently requires the agent to call `read` N times. Reduces turn count on code review tasks.
 
-### Semantic `graph_query` search — P3 · M
-Phase 12 `graph_query` search mode is keyword-only. Add a `semantic` mode that uses HNSW embeddings to find Knowledge nodes by meaning, not literal text match. The tool interface is already designed for this extension.
+### ✅ Semantic `graph_query` search — P3 · M
+Done 2026-03-19. Added `semantic` mode to `graph_query` tool. `KnowledgeRetriever` trait defined in `graphirm-tools` (no circular deps); `MemoryRetriever` implements it via `retrieve_with_scores` (correct L2→cosine conversion: `1 - d²/2`); wired via `ToolContext.knowledge_retriever`. Returns HNSW-ranked Knowledge nodes with cosine similarity scores. Graceful `ExecutionFailed` when no embedding provider is configured.
+Plan: `docs/plans/2026-03-19-semantic-graph-query.md`
 
 ---
 

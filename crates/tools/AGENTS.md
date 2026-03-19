@@ -20,7 +20,8 @@ description, JSON schema for parameters, and an async `execute` method. Tools ar
 | `grep.rs` | Regex search across files |
 | `find.rs` | File name pattern search |
 | `ls.rs` | Directory listing |
-| `graph_query.rs` | Graph query tool — BFS traversal, node-type enumeration, Knowledge keyword search |
+| `graph_query.rs` | Graph query — BFS traversal, node-type enumeration, keyword search, **semantic HNSW search** |
+| `retriever.rs` | `KnowledgeRetriever` trait — decouples semantic search from agent crate |
 | `script.rs` | `ScriptTool` + `PluginManifest` — TOML-defined plugins executed as shell commands |
 | `error.rs` | `ToolError` enum |
 
