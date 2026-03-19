@@ -42,8 +42,9 @@ Plan: `docs/plans/2026-03-18-p2-sse-knowledge-plugins.md`
 Done 2026-03-19. `PATCH /api/sessions/:id` with `{ "name": "new name" }` persists to Agent graph node (survives restart). `display_name: Arc<RwLock<String>>` in `SessionHandle`. `name` field added to `SessionResponse` (also fixes pre-existing bug where `Session.name` was always undefined in the UI). Inline double-click edit in `SessionBar` — Enter commits, Escape cancels, blur commits.
 Plan: `docs/plans/2026-03-19-session-rename.md`
 
-### Graph node search / filter — P3 · M
-Add a search bar above the canvas that filters visible nodes by content keyword or type. Client-side filter first (hide non-matching nodes), then wire to `graph_query` keyword search for server-side results. Useful once sessions grow large.
+### ✅ Graph node search / filter — P3 · M
+Done 2026-03-19. Search input + type filter pills (`I A C T K`) in Toolbar. `useGraphData` applies `hidden: true` to non-matching React Flow nodes via `applyFilterToNodes` helper; group nodes hidden when all children hidden; annotation nodes never hidden. `matchCount/total` counter shown when filter is active. Clear `✕` button. Ctrl+F (hover) focuses search input, Escape clears and blurs. No backend changes.
+Plan: `docs/plans/2026-03-19-graph-node-search.md`
 
 ### Export session as Markdown / HTML — P3 · M
 `GET /api/sessions/:id/export?format=markdown` renders the conversation + code blocks + knowledge nodes as a readable document. Useful for sharing findings without requiring Graphirm.
