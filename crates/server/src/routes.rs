@@ -21,9 +21,9 @@ use crate::middleware::request_logging;
 use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
-    AnnotationRequest, AutoApproveRequest, CreateSessionRequest, GraphResponse, HealthResponse,
-    NodeAction, NodeActionRequest, PromptRequest, RenameSessionRequest, SessionId, SessionResponse,
-    SessionStatus, SseEvent, SseEventType, SubgraphQuery,
+    AnnotationRequest, AutoApproveRequest, CreateSessionRequest, ExportQuery, GraphResponse,
+    HealthResponse, NodeAction, NodeActionRequest, PromptRequest, RenameSessionRequest, SessionId,
+    SessionResponse, SessionStatus, SseEvent, SseEventType, SubgraphQuery,
 };
 
 /// Build a brief workspace context block to inject into the system prompt.
@@ -95,6 +95,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions/{id}/prompt", post(prompt_session))
         .route("/api/sessions/{id}/abort", post(abort_session))
         .route("/api/sessions/{id}/messages", get(get_messages))
+        .route("/api/sessions/{id}/export", get(export_session))
         .route("/api/sessions/{id}/children", get(get_children))
         // Graph queries
         .route("/api/graph/{session_id}", get(get_session_graph))
@@ -500,6 +501,68 @@ async fn get_messages(
         .collect();
 
     Ok(Json(messages))
+}
+
+/// `GET /api/sessions/{id}/export?format=markdown` — export session as a Markdown document.
+///
+/// Returns a `text/markdown` file attachment with the session's conversation and extracted
+/// knowledge. Currently only `format=markdown` is supported (the default).
+async fn export_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<ExportQuery>,
+) -> Result<axum::response::Response, ServerError> {
+    use axum::http::header;
+    use crate::export::render_session_markdown;
+
+    if query.format != "markdown" {
+        return Err(ServerError::BadRequest(format!(
+            "Unsupported export format: '{}'. Only 'markdown' is supported.",
+            query.format
+        )));
+    }
+
+    let key = SessionId::from(id.as_str());
+    let (session_node_id, session_name, model, created_at) = {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&key)
+            .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
+        let name = handle.display_name.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let model = handle.session.agent_config.model.clone();
+        let created_at = handle.session.created_at;
+        (handle.session.id.clone(), name, model, created_at)
+    };
+
+    let graph = state.graph.clone();
+    let session_node_id_clone = session_node_id.clone();
+    let (nodes, _edges) =
+        tokio::task::spawn_blocking(move || graph.subgraph(&session_node_id_clone, 10))
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?
+            .map_err(ServerError::Graph)?;
+
+    let markdown = render_session_markdown(&session_name, &model, created_at, &nodes);
+
+    let filename = format!(
+        "session-{}.md",
+        session_name
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+            .collect::<String>()
+    );
+
+    let response = axum::response::Response::builder()
+        .status(200)
+        .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{filename}\""),
+        )
+        .body(axum::body::Body::from(markdown))
+        .map_err(|e| ServerError::Internal(e.to_string()))?;
+
+    Ok(response)
 }
 
 /// `GET /api/sessions/{id}/children` — list subagent sessions spawned by this session.

@@ -177,6 +177,18 @@ pub struct PromptRequest {
     pub content: String,
 }
 
+/// Query parameters for `GET /api/sessions/:id/export`.
+#[derive(Debug, Deserialize)]
+pub struct ExportQuery {
+    /// Output format. Currently only `"markdown"` is supported (default: `"markdown"`).
+    #[serde(default = "default_export_format")]
+    pub format: String,
+}
+
+fn default_export_format() -> String {
+    "markdown".to_string()
+}
+
 /// Query parameters for `GET /api/sessions/:id/graph`.
 #[derive(Debug, Deserialize)]
 pub struct SubgraphQuery {
