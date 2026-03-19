@@ -74,8 +74,9 @@ Phase 12 `graph_query` search mode is keyword-only. Add a `semantic` mode that u
 Done 2026-03-19. Knowledge nodes now store `session_id` in metadata. After each embedding, `MemoryRetriever.find_cross_session_links` queries HNSW (min 0.7 cosine similarity, top 3) and `persist_cross_session_links` writes `RelatesTo` edges with similarity as weight. Three unit tests added.
 Plan: `docs/plans/2026-03-18-p2-sse-knowledge-plugins.md`
 
-### Custom tool plugins — P2 · L
-Users can't extend Graphirm without recompiling. Add a plugin mechanism: load script-based tools (shell or Python) from `~/.graphirm/plugins/` at startup. Each plugin exposes a name, description, and `execute` command. Subject to the same HITL gate as `bash`.
+### ✅ Custom tool plugins — P2 · L
+Done 2026-03-19. `ScriptTool` loads `plugin.toml` manifests from `~/.graphirm/plugins/` (or `GRAPHIRM_PLUGINS_DIR`). Each plugin defines name, description, `command`, `destructive` flag, and JSON Schema parameters. Args passed as `GRAPHIRM_ARGS` (JSON) + `GRAPHIRM_ARG_<KEY>` env vars. `is_destructive()` added to `Tool` trait; overridden in `bash`/`write`/`edit` and respected by HITL gate alongside the built-in name list. Example plugin at `examples/plugins/hello/`.
+Plan: `docs/plans/2026-03-18-p2-sse-knowledge-plugins.md`
 
 ### Agent Trace ingestion (import) — P3 · M
 Phase 12 exports sessions as Agent Trace JSON. The reverse — importing a trace from another agent (Claude, OpenCode, Aider) into the Graphirm graph — is not yet implemented. Useful for consolidating work done outside Graphirm.

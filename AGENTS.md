@@ -109,7 +109,8 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `Arc<RwLock<StableGraph>>` for in-memory graph — acquire locks briefly, never hold across await points
 
 **Patterns:**
-- New tool → implement `Tool` trait in `crates/tools/src/<name>.rs`, register in `build_tool_registry()` in `src/main.rs`
+- New built-in tool → implement `Tool` trait in `crates/tools/src/<name>.rs`, register in `build_tool_registry()` in `src/main.rs`
+- Script plugin → create `~/.graphirm/plugins/<name>/plugin.toml` (see `examples/plugins/hello/`); loaded automatically at startup; no recompile required
 - New LLM provider → implement `LlmProvider` trait in `crates/llm/`
 - `bash`, `write`, `edit` are destructive tools — subject to HITL gate (unless auto-approve is enabled)
 - `read`, `grep`, `find`, `ls`, `graph_query` are non-destructive — always run without confirmation
@@ -132,6 +133,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 14 | Per-session workspaces — `workspaces_root` config, named workspace directories, persisted in Agent node metadata, restored on restart | ✅ done |
 | 15 | Incremental SSE graph updates — `GraphUpdate` payload carries full node/edge patch; web-app applies patches without full re-fetch or canvas re-layout | ✅ done |
 | 16 | Cross-session knowledge linking — `session_id` in Knowledge metadata, HNSW-based `find_cross_session_links`, `RelatesTo` edges between sessions | ✅ done |
+| 17 | Custom tool plugins — `ScriptTool` loads TOML manifests from `~/.graphirm/plugins/`, executes shell commands, `is_destructive` flag respected by HITL gate | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -167,6 +169,16 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Bundle: React Flow 194 kB, highlight 21 kB (trimmed to 20 languages), dagre 43 kB, app 289 kB — all chunks ≤ 500 kB
 - Dev: `cd web-app && npm run dev` (proxies `/api` → `localhost:3000`)
 - Build: `cd web-app && npm run build` → `web-app/dist/` (served automatically by `graphirm serve`)
+
+**Custom tool plugins (Phase 17):**
+- `crates/tools/src/script.rs` — `PluginManifest` (TOML) + `ScriptTool` that implements `Tool`
+- Plugins live in `~/.graphirm/plugins/<name>/plugin.toml`; override dir via `GRAPHIRM_PLUGINS_DIR` env var
+- At startup, `build_tool_registry()` in `src/main.rs` scans the plugins dir, calls `ScriptTool::from_dir`, and registers each valid plugin; invalid plugins are skipped with a warning
+- Command execution: `bash -c <command>` in session `working_dir`; `${plugin_dir}` substituted in command string; args passed as `GRAPHIRM_ARGS` (JSON) and `GRAPHIRM_ARG_<KEY>` env vars
+- `Tool::is_destructive()` trait method added (default `false`); overridden to `true` in `BashTool`, `WriteTool`, `EditTool`; `ScriptTool` returns `manifest.destructive`
+- `ToolRegistry::is_destructive(name)` delegates to the registered tool's method
+- HITL gate check uses both legacy name list (`write`/`edit`/`bash`) **and** `ToolRegistry::is_destructive` — plugins with `destructive = true` are gated
+- Example plugin: `examples/plugins/hello/` — copy to `~/.graphirm/plugins/hello/` to try it
 
 **Cross-session knowledge linking (Phase 16):**
 - `persist_extracted_entities` stamps every new `Knowledge` node with `metadata["session_id"]` — enables HNSW results to be filtered by session without graph traversal
