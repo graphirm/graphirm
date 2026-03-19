@@ -137,6 +137,16 @@ export function SessionBar({
         )}
         {currentSession && (
           <>
+            <button
+              className="secondary"
+              style={{ fontSize: 11, padding: '2px 8px' }}
+              onClick={() =>
+                window.open(`/api/sessions/${currentSession.id}/export?format=markdown`, '_blank')
+              }
+              title="Download session as Markdown"
+            >
+              ↓ Export
+            </button>
             <button className="secondary" onClick={onPause} style={{ fontSize: 11 }}>Pause</button>
             <button className="secondary" onClick={onResume} style={{ fontSize: 11 }}>Resume</button>
             <button
