@@ -9,6 +9,7 @@ use graphirm_graph::edges::EdgeType;
 use graphirm_graph::nodes::{NodeType, TaskStatus};
 use graphirm_graph::{Direction, GraphStore};
 use graphirm_llm::{LlmProvider, MockProvider, MockResponse};
+use graphirm_tools::ls::LsTool;
 use graphirm_tools::registry::ToolRegistry;
 use tokio_util::sync::CancellationToken;
 
@@ -285,6 +286,84 @@ async fn test_subagent_tool_cancel_propagation() {
     // We don't actually run the tool here — the propagation logic is in execute().
     // The structural test above verifies the token hierarchy is correct.
     let _ = tool; // suppress unused warning
+}
+
+/// Subagent spawned with parent_working_dir runs tools in its own workspace subdirectory.
+#[tokio::test]
+async fn test_subagent_file_operations_use_workspace() {
+    use graphirm_graph::nodes::{AgentData, GraphNode};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let parent_dir = dir.path().to_path_buf();
+
+    let graph = Arc::new(GraphStore::open_memory().unwrap());
+    let mut configs = HashMap::new();
+    configs.insert("build".to_string(), primary_config());
+    let mut explore = explore_config();
+    explore.tools = vec!["ls".to_string()];
+    configs.insert("explore".to_string(), explore);
+    let registry = Arc::new(AgentRegistry::from_configs(configs).unwrap());
+
+    let mut tools = ToolRegistry::new();
+    tools.register(Arc::new(LsTool::new()));
+    let base_tools = Arc::new(tools);
+    let events = Arc::new(EventBus::new());
+
+    let factory: LlmFactory = Arc::new(|_model: &str| {
+        Box::new(MockProvider::new(vec![
+            MockResponse::tool_call("call_1", "ls", serde_json::json!({"path": "."})),
+            MockResponse::text("Listed directory."),
+        ]))
+    });
+
+    let parent_agent = GraphNode::new(NodeType::Agent(AgentData {
+        name: "build".to_string(),
+        model: "test".to_string(),
+        system_prompt: None,
+        status: "running".to_string(),
+    }));
+    let parent_id = parent_agent.id.clone();
+    graph.add_node(parent_agent).unwrap();
+
+    let cancel = CancellationToken::new();
+    let handle = spawn_subagent(
+        &graph,
+        &registry,
+        &factory,
+        &base_tools,
+        &events,
+        &parent_id,
+        "explore",
+        "List workspace contents",
+        vec![],
+        cancel,
+        Some(parent_dir),
+    )
+    .await
+    .unwrap();
+
+    let subagent_id = handle.agent_id.clone();
+    wait_for_subagents(vec![handle]).await.unwrap();
+
+    // Subagent Produces interactions; Content from tools is linked via Interaction --Reads--> Content.
+    let produced: Vec<_> = graph
+        .neighbors(&subagent_id, Some(EdgeType::Produces), Direction::Outgoing)
+        .unwrap();
+    let mut content_count = 0;
+    for interaction in &produced {
+        let read_content: Vec<_> = graph
+            .neighbors(&interaction.id, Some(EdgeType::Reads), Direction::Outgoing)
+            .unwrap();
+        content_count += read_content
+            .iter()
+            .filter(|n| matches!(&n.node_type, NodeType::Content(_)))
+            .count();
+    }
+    assert!(
+        content_count > 0,
+        "Subagent should produce at least one Content node from ls tool (got {} Produces, 0 Content via Reads)",
+        produced.len()
+    );
 }
 
 /// Verify Coordinator auto-injects delegate without manual wiring.
