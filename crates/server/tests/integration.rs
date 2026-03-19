@@ -466,3 +466,88 @@ async fn test_session_rename_not_found() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn test_session_export_markdown() {
+    let state = test_app_state();
+    let app = create_router(state);
+
+    // Create a session
+    let body = serde_json::json!({ "agent": "export-test" });
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/sessions")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let session_id = created["id"].as_str().unwrap().to_string();
+
+    // Export the session
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/sessions/{session_id}/export?format=markdown"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("text/markdown"));
+
+    let cd = resp.headers().get("content-disposition").unwrap().to_str().unwrap();
+    assert!(cd.contains("attachment"));
+    assert!(cd.ends_with(".md\""));
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let markdown = std::str::from_utf8(&bytes).unwrap();
+    assert!(markdown.contains("# Session:"));
+    assert!(markdown.contains("export-test"));
+    assert!(markdown.contains("*No messages.*"));
+}
+
+#[tokio::test]
+async fn test_session_export_unsupported_format() {
+    let state = test_app_state();
+    let app = create_router(state);
+
+    // Create a session
+    let body = serde_json::json!({ "agent": "fmt-test" });
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/sessions")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let session_id = created["id"].as_str().unwrap().to_string();
+
+    // Try unsupported format
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/sessions/{session_id}/export?format=html"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_session_export_not_found() {
+    let state = test_app_state();
+    let app = create_router(state);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/sessions/no-such-session/export?format=markdown")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
