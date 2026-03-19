@@ -319,7 +319,13 @@ async fn execute_tools_parallel(
             let ContentPart::ToolCall { name, .. } = part else {
                 return true;
             };
-            !crate::hitl::is_destructive_tool(name.as_str()) || session.hitl.is_none()
+            // A tool call is "safe" (no HITL gate needed) when EITHER:
+            // - It is not destructive by name (legacy built-in list) AND
+            //   not flagged destructive by the registry (handles ScriptTool plugins)
+            // - No HITL gate is attached to this session at all
+            (!crate::hitl::is_destructive_tool(name.as_str())
+                && !tools.is_destructive(name.as_str()))
+                || session.hitl.is_none()
         });
 
     // Phase 1: spawn SAFE tools in parallel and collect results

@@ -31,6 +31,10 @@ impl Tool for BashTool {
         "Execute a bash command. Captures stdout and stderr. Non-zero exit codes are reported as errors."
     }
 
+    fn is_destructive(&self) -> bool {
+        true
+    }
+
     fn parameters(&self) -> serde_json::Value {
         json!({
             "type": "object",

@@ -29,6 +29,10 @@ impl Tool for EditTool {
         "Replace an exact string in a file. The old_string must match exactly once."
     }
 
+    fn is_destructive(&self) -> bool {
+        true
+    }
+
     fn parameters(&self) -> serde_json::Value {
         json!({
             "type": "object",

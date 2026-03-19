@@ -29,6 +29,10 @@ impl Tool for WriteTool {
         "Write content to a file, creating parent directories as needed."
     }
 
+    fn is_destructive(&self) -> bool {
+        true
+    }
+
     fn parameters(&self) -> serde_json::Value {
         json!({
             "type": "object",

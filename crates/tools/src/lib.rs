@@ -9,6 +9,7 @@ pub mod ls;
 pub mod permissions;
 pub mod read;
 pub mod registry;
+pub mod script;
 pub mod write;
 
 use std::path::PathBuf;
@@ -133,6 +134,12 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     fn parameters(&self) -> serde_json::Value;
+
+    /// Returns `true` if the tool can modify the filesystem or execute
+    /// arbitrary commands. Destructive tools are gated by the HITL flow.
+    fn is_destructive(&self) -> bool {
+        false
+    }
 
     async fn execute(
         &self,

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use error::GraphirmError;
+use graphirm_tools::Tool;
 use graphirm_tools::registry::ToolRegistry;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -777,6 +778,54 @@ fn build_tool_registry() -> ToolRegistry {
     registry.register(Arc::new(graphirm_tools::find::FindTool));
     registry.register(Arc::new(graphirm_tools::ls::LsTool));
     registry.register(Arc::new(graphirm_tools::graph_query::GraphQueryTool));
+
+    // Load script-based plugins from ~/.graphirm/plugins/ or GRAPHIRM_PLUGINS_DIR
+    let plugins_dir = std::env::var("GRAPHIRM_PLUGINS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            dirs_next::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".graphirm/plugins")
+        });
+
+    if plugins_dir.is_dir() {
+        match std::fs::read_dir(&plugins_dir) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    match graphirm_tools::script::ScriptTool::from_dir(&path) {
+                        Ok(tool) => {
+                            tracing::info!(
+                                name = tool.name(),
+                                destructive = tool.is_destructive(),
+                                dir = %path.display(),
+                                "Loaded plugin tool"
+                            );
+                            registry.register(Arc::new(tool));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                dir = %path.display(),
+                                error = %e,
+                                "Skipping invalid plugin"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    dir = %plugins_dir.display(),
+                    error = %e,
+                    "Failed to read plugins directory"
+                );
+            }
+        }
+    }
+
     registry
 }
 

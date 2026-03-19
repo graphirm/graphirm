@@ -1,0 +1,11 @@
+name = "hello"
+description = "A demo plugin that greets the user. Use this to verify plugins work."
+destructive = false
+command = "bash ${plugin_dir}/hello.sh"
+
+[parameters]
+type = "object"
+
+[parameters.properties.name]
+type = "string"
+description = "Name to greet (default: World)"

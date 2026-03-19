@@ -17,6 +17,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 glob = "0.3"
+toml = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
