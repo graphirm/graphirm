@@ -26,7 +26,7 @@ impl Tool for GraphQueryTool {
     }
 
     fn description(&self) -> &str {
-        "Query the session graph in three modes:
+        "Query the session graph in four modes:
 
 • bfs — BFS traversal from a start node following outgoing edges.
   To get a start node_id, call list_type first or use an ID returned by a previous tool call.
@@ -36,7 +36,11 @@ impl Tool for GraphQueryTool {
 
 • search — Case-insensitive keyword search over Knowledge nodes.
   Matches against entity, entity_type, and summary fields.
-  NOTE: This is keyword-only (Phase 12). Semantic/embedding search is not yet available.
+
+• semantic — Embedding-based similarity search over Knowledge nodes.
+  Embeds the query string and finds the k most semantically similar Knowledge nodes using HNSW.
+  Returns results ranked by cosine similarity (highest first).
+  Requires an embedding provider to be configured (e.g. DEEPSEEK_API_KEY or local-embed feature).
 
 The tool is read-only — it never mutates the graph."
     }
@@ -47,7 +51,7 @@ The tool is read-only — it never mutates the graph."
             "properties": {
                 "mode": {
                     "type": "string",
-                    "enum": ["bfs", "list_type", "search"],
+                    "enum": ["bfs", "list_type", "search", "semantic"],
                     "description": "Which query mode to run"
                 },
                 "node_id": {
@@ -84,7 +88,8 @@ The tool is read-only — it never mutates the graph."
                 },
                 "query": {
                     "type": "string",
-                    "description": "Keyword to search for (required for search mode, case-insensitive)"
+                    "description": "Keyword to search for (search mode, case-insensitive) or \
+                                    natural language query (semantic mode)"
                 },
                 "entity_type": {
                     "type": "string",
@@ -113,8 +118,9 @@ The tool is read-only — it never mutates the graph."
             "bfs" => execute_bfs(&args, ctx).await,
             "list_type" => execute_list_type(&args, ctx).await,
             "search" => execute_search(&args, ctx).await,
+            "semantic" => execute_semantic(&args, ctx).await,
             other => Err(ToolError::InvalidArguments(format!(
-                "unknown mode '{other}'; must be one of: bfs, list_type, search"
+                "unknown mode '{other}'; must be one of: bfs, list_type, search, semantic"
             ))),
         }
     }
@@ -325,6 +331,59 @@ async fn execute_search(
     }
     if nodes.is_empty() {
         lines.push(format!("  (no Knowledge nodes matching '{query}')"));
+    }
+
+    Ok(ToolOutput::success(lines.join("\n")))
+}
+
+async fn execute_semantic(
+    args: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<ToolOutput, ToolError> {
+    let query = args["query"].as_str().ok_or_else(|| {
+        ToolError::InvalidArguments("'query' is required for semantic mode".into())
+    })?;
+    if query.trim().is_empty() {
+        return Err(ToolError::InvalidArguments(
+            "'query' must not be empty".into(),
+        ));
+    }
+
+    let retriever = ctx.knowledge_retriever.as_ref().ok_or_else(|| {
+        ToolError::ExecutionFailed(
+            "Semantic search is not available: this session has no embedding provider. \
+             Configure an API key (e.g. DEEPSEEK_API_KEY) or enable the local-embed feature."
+                .into(),
+        )
+    })?;
+
+    let limit = args["limit"].as_u64().unwrap_or(10) as usize;
+
+    let results = retriever.retrieve_semantic(query, limit).await?;
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "Semantic search for '{}' ({} result{}):",
+        query,
+        results.len(),
+        if results.len() == 1 { "" } else { "s" }
+    ));
+
+    for result in &results {
+        if let graphirm_graph::nodes::NodeType::Knowledge(kd) = &result.node.node_type {
+            lines.push(format!(
+                "  [{id}] {entity} ({entity_type}) sim={score:.3}: {summary}",
+                id = result.node_id,
+                entity = kd.entity,
+                entity_type = kd.entity_type,
+                score = result.score,
+                summary = truncate(&kd.summary, 120),
+            ));
+        }
+    }
+
+    if results.is_empty() {
+        lines.push(format!("  (no Knowledge nodes semantically similar to '{query}')"));
     }
 
     Ok(ToolOutput::success(lines.join("\n")))
