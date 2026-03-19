@@ -176,6 +176,49 @@ impl MemoryRetriever {
         Ok(nodes)
     }
 
+    /// Like `retrieve_relevant` but also returns the cosine similarity score for each result.
+    /// Similarity = 1.0 - HNSW distance (higher = more similar, range 0..1).
+    pub async fn retrieve_with_scores(
+        &self,
+        query: &str,
+        k: usize,
+    ) -> Result<Vec<(GraphNode, f64)>, AgentError> {
+        let query_embedding = self.llm.embed(query).await.map_err(AgentError::Llm)?;
+
+        let index = self.vector_index.read().await;
+        let candidates = index.search(&query_embedding, k);
+        drop(index);
+
+        if candidates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let graph = self.graph.clone();
+        let scored: Vec<(NodeId, f64)> = candidates
+            .into_iter()
+            .map(|(id, dist)| (id, (1.0_f32 - dist) as f64))
+            .collect();
+
+        let node_ids: Vec<NodeId> = scored.iter().map(|(id, _)| id.clone()).collect();
+        let fetched: Vec<Result<GraphNode, _>> = tokio::task::spawn_blocking(move || {
+            node_ids.into_iter().map(|id| graph.get_node(&id)).collect()
+        })
+        .await
+        .map_err(|e| AgentError::Join(e.to_string()))?;
+
+        let mut results = Vec::with_capacity(fetched.len());
+        for (result, (_, score)) in fetched.into_iter().zip(scored.into_iter()) {
+            match result {
+                Ok(node) => results.push((node, score)),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Knowledge node in HNSW index but missing from graph");
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     /// After embedding a knowledge node, find the top-k most similar Knowledge
     /// nodes that belong to a **different** session and return their IDs with
     /// similarity scores (0..1, higher = more similar).
@@ -275,6 +318,29 @@ impl MemoryRetriever {
                 );
             }
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl graphirm_tools::retriever::KnowledgeRetriever for MemoryRetriever {
+    async fn retrieve_semantic(
+        &self,
+        query: &str,
+        k: usize,
+    ) -> Result<Vec<graphirm_tools::retriever::KnowledgeResult>, graphirm_tools::ToolError> {
+        self.retrieve_with_scores(query, k)
+            .await
+            .map_err(|e| graphirm_tools::ToolError::ExecutionFailed(e.to_string()))
+            .map(|pairs| {
+                pairs
+                    .into_iter()
+                    .map(|(node, score)| graphirm_tools::retriever::KnowledgeResult {
+                        node_id: node.id.clone(),
+                        node,
+                        score,
+                    })
+                    .collect()
+            })
     }
 }
 
@@ -696,5 +762,48 @@ mod tests {
                 .any(|e| e.edge_type == EdgeType::RelatesTo && e.target == id_tgt),
             "Expected RelatesTo edge from source to target"
         );
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_with_scores_returns_similarity_scores() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
+        let llm: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+
+        let retriever = MemoryRetriever::new(graph.clone(), vector_index.clone(), llm, 64);
+
+        let node_id = graph
+            .add_node(knowledge_node("JWT Authentication", "Token-based auth"))
+            .unwrap();
+        retriever.embed_knowledge_node(&node_id).await.unwrap();
+
+        {
+            let mut idx = vector_index.write().await;
+            idx.rebuild();
+        }
+
+        let results = retriever
+            .retrieve_with_scores("authentication tokens", 5)
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        let (_, score) = &results[0];
+        assert!(*score >= 0.0 && *score <= 1.0, "Score must be in [0, 1]: {score}");
+    }
+
+    #[tokio::test]
+    async fn test_retrieve_with_scores_empty_index() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let vector_index = Arc::new(RwLock::new(VectorIndex::new(64)));
+        let llm: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider);
+
+        let retriever = MemoryRetriever::new(graph.clone(), vector_index, llm, 64);
+
+        let results = retriever
+            .retrieve_with_scores("anything", 5)
+            .await
+            .unwrap();
+        assert!(results.is_empty());
     }
 }

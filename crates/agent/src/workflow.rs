@@ -1,5 +1,7 @@
 // Agent workflow: async state machine with plan -> act -> observe -> reflect loop
 
+use std::sync::Arc;
+
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{ContentData, GraphNode, InteractionData, NodeId, NodeType};
 use graphirm_llm::{CompletionConfig, ContentPart, LlmProvider, LlmResponse};
@@ -300,6 +302,11 @@ async fn execute_tools_parallel(
     events: &EventBus,
     cancel: &CancellationToken,
 ) -> Result<Vec<NodeId>, AgentError> {
+    let knowledge_retriever: Option<Arc<dyn graphirm_tools::retriever::KnowledgeRetriever>> =
+        session
+            .memory_retriever()
+            .map(|r| Arc::clone(r) as Arc<dyn graphirm_tools::retriever::KnowledgeRetriever>);
+
     let ctx = ToolContext {
         graph: session.graph.clone(),
         agent_id: session.id.clone(),
@@ -308,6 +315,7 @@ async fn execute_tools_parallel(
         signal: cancel.clone(),
         turn: session.current_turn(),
         turn_pos_counter: session.turn_position_counter(),
+        knowledge_retriever,
     };
 
     // Partition tool calls: destructive ones go through sequential HITL approval,
