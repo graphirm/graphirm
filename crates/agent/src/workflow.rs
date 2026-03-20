@@ -307,6 +307,16 @@ async fn execute_tools_parallel(
             .memory_retriever()
             .map(|r| Arc::clone(r) as Arc<dyn graphirm_tools::retriever::KnowledgeRetriever>);
 
+    let impact_provider: Option<Arc<dyn graphirm_tools::impact::ImpactProvider>> =
+        if session.agent_config.pre_edit_impact {
+            Some(Arc::new(crate::impact::GraphImpactProvider::new(
+                session.graph.clone(),
+                session.agent_config.working_dir.clone(),
+            )))
+        } else {
+            None
+        };
+
     let ctx = ToolContext {
         graph: session.graph.clone(),
         agent_id: session.id.clone(),
@@ -316,7 +326,7 @@ async fn execute_tools_parallel(
         turn: session.current_turn(),
         turn_pos_counter: session.turn_position_counter(),
         knowledge_retriever,
-        impact_provider: None,
+        impact_provider: impact_provider.clone(),
     };
 
     // Partition tool calls: destructive ones go through sequential HITL approval,
@@ -336,6 +346,13 @@ async fn execute_tools_parallel(
                 && !tools.is_destructive(name.as_str()))
                 || session.hitl.is_none()
         });
+
+    // Per-turn cache for impact briefs — populated by the pre_edit_impact_brief helper
+    // and reused across all destructive tool executions in this turn
+    use std::collections::HashMap;
+
+    let impact_cache: Arc<tokio::sync::Mutex<HashMap<std::path::PathBuf, graphirm_tools::impact::ImpactBrief>>> =
+        Arc::new(tokio::sync::Mutex::new(HashMap::new()));
 
     // Phase 1: spawn SAFE tools in parallel and collect results
     let mut set = JoinSet::new();
@@ -456,12 +473,62 @@ async fn execute_tools_parallel(
                 };
 
                 let tool = tools.get(name)?;
-                let exec_result = tool.execute(exec_args, &ctx).await;
+                let exec_result = tool.execute(exec_args.clone(), &ctx).await;
 
-                let (content, is_error) = match exec_result {
-                    Ok(output) => (output.content, output.is_error),
-                    Err(e) => (e.to_string(), true),
+                // Compute impact brief (if applicable)
+                let impact_brief_text = if let Some(ref provider) = impact_provider {
+                    pre_edit_impact_brief(
+                        provider.as_ref(),
+                        name,
+                        &exec_args,
+                        &session.id,
+                        &impact_cache,
+                    )
+                    .await
+                } else {
+                    None
                 };
+
+                let mut content = match &exec_result {
+                    Ok(output) => output.content.clone(),
+                    Err(e) => e.to_string(),
+                };
+                let is_error = exec_result.as_ref().map(|o| o.is_error).unwrap_or(true);
+
+                // Prepend impact brief
+                if let Some(ref brief_text) = impact_brief_text {
+                    content = format!("{brief_text}\n{content}");
+                    
+                    // Persist as Content node
+                    let mut brief_node = GraphNode::new(NodeType::Content(ContentData {
+                        content_type: "impact_brief".to_string(),
+                        path: None,
+                        body: brief_text.clone(),
+                        language: None,
+                    }));
+                    brief_node.metadata["session_id"] =
+                        serde_json::json!(session.id.to_string());
+                    brief_node.set_label(format!(
+                        "content_{}_{}_1",
+                        session.current_turn(),
+                        session.next_turn_pos()
+                    ));
+                    match session.graph.add_node(brief_node) {
+                        Ok(brief_id) => {
+                            let _ = session.graph.add_edge(GraphEdge::new(
+                                EdgeType::Reads,
+                                response_id.clone(),
+                                brief_id,
+                            ));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "Failed to persist impact brief node (non-fatal)"
+                            );
+                        }
+                    }
+                }
 
                 let mut tool_metadata = serde_json::Map::new();
                 tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(call_id));
@@ -549,6 +616,59 @@ async fn execute_tools_parallel(
     }
 
     Ok(node_ids)
+}
+
+async fn pre_edit_impact_brief(
+    impact_provider: &dyn graphirm_tools::impact::ImpactProvider,
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    session_id: &NodeId,
+    cache: &tokio::sync::Mutex<std::collections::HashMap<std::path::PathBuf, graphirm_tools::impact::ImpactBrief>>,
+) -> Option<String> {
+    let paths = graphirm_tools::impact::extract_target_paths(tool_name, arguments);
+    if paths.is_empty() {
+        return None;
+    }
+
+    // Check cache and collect uncached paths
+    let mut uncached_paths = Vec::new();
+    {
+        let cache_guard = cache.lock().await;
+        for path in &paths {
+            if !cache_guard.contains_key(path) {
+                uncached_paths.push(path.clone());
+            }
+        }
+    }
+
+    // Analyze uncached paths
+    if !uncached_paths.is_empty() {
+        match impact_provider.analyze(&uncached_paths, session_id).await {
+            Ok(new_briefs) => {
+                let mut cache_guard = cache.lock().await;
+                for brief in new_briefs {
+                    cache_guard.insert(brief.path.clone(), brief);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Impact analysis failed (non-fatal)");
+            }
+        }
+    }
+
+    // Collect briefs for all requested paths
+    let cache_guard = cache.lock().await;
+    let briefs: Vec<&graphirm_tools::impact::ImpactBrief> = paths
+        .iter()
+        .filter_map(|p| cache_guard.get(p))
+        .collect();
+
+    if briefs.is_empty() {
+        return None;
+    }
+
+    let formatted: Vec<String> = briefs.iter().map(|b| b.format_markdown()).collect();
+    Some(formatted.join("\n"))
 }
 
 /// Detect repeated tool calls and trigger soft escalation if detected.

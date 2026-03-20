@@ -116,15 +116,13 @@ impl GraphImpactProvider {
 impl ImpactProvider for GraphImpactProvider {
     /// Analyze the impact of modifying the given paths.
     /// Returns a Vec of ImpactBrief, skipping empty briefs (no dependents and no knowledge notes).
-    async fn analyze(&self, paths: &[PathBuf]) -> Result<Vec<ImpactBrief>, String> {
+    async fn analyze(&self, paths: &[PathBuf], session_id: &graphirm_graph::nodes::NodeId) -> Result<Vec<ImpactBrief>, String> {
         let mut briefs = Vec::new();
-
-        // Placeholder session_id for now — in real usage this would come from context
-        let session_id = "placeholder-session";
+        let session_id_str = session_id.to_string();
 
         for path in paths {
             let dependent_count = self.count_dependents(path).await;
-            let knowledge_notes = self.find_knowledge_notes(path, session_id);
+            let knowledge_notes = self.find_knowledge_notes(path, &session_id_str);
 
             // Compute risk
             let risk = compute_risk(dependent_count, !knowledge_notes.is_empty());
@@ -252,7 +250,8 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         let briefs = rt.block_on(async {
             // Nonexistent path, no Knowledge nodes
-            provider.analyze(&[PathBuf::from("/nonexistent/path.rs")]).await
+            let session_id = graphirm_graph::nodes::NodeId::from("test-session");
+            provider.analyze(&[PathBuf::from("/nonexistent/path.rs")], &session_id).await
         }).expect("analyze failed");
 
         // Should be empty due to threshold gate

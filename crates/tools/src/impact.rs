@@ -88,7 +88,8 @@ fn truncate(text: &str, max_len: usize) -> String {
 #[async_trait]
 pub trait ImpactProvider: Send + Sync {
     /// Analyze the impact of a tool call targeting the given paths.
-    async fn analyze(&self, paths: &[PathBuf]) -> Result<Vec<ImpactBrief>, String>;
+    /// `session_id` is used to filter knowledge notes to cross-session references.
+    async fn analyze(&self, paths: &[PathBuf], session_id: &graphirm_graph::nodes::NodeId) -> Result<Vec<ImpactBrief>, String>;
 }
 
 /// Extract target paths from a tool call's arguments.
