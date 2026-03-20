@@ -253,6 +253,8 @@ pub struct HealthResponse {
     pub status: String,
     /// Server binary version from `CARGO_PKG_VERSION`.
     pub version: String,
+    /// Number of active sessions currently loaded in memory.
+    pub session_count: usize,
 }
 
 /// Response body for graph query endpoints.
@@ -315,11 +317,13 @@ mod tests {
         let health = HealthResponse {
             status: "ok".to_string(),
             version: "0.1.0".to_string(),
+            session_count: 5,
         };
         let json = serde_json::to_string(&health).unwrap();
         let back: HealthResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back.status, "ok");
         assert_eq!(back.version, "0.1.0");
+        assert_eq!(back.session_count, 5);
     }
 
     #[test]

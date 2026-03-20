@@ -1,10 +1,12 @@
 [model]
-provider = "deepseek"
-name = "deepseek-chat"
+provider = "openrouter"
+name = "qwen/qwen3-coder-next"
 temperature = 0.7
 max_tokens = 8192
 
 [agent]
+name = "graphirm"
+model = "openrouter/qwen/qwen3-coder-next"
 max_iterations = 50
 parallel_tool_calls = true
 timeout_seconds = 300
@@ -20,7 +22,9 @@ cross-session memory and lets users navigate your reasoning visually.
 
 You have access to these tools:
 - bash        — run shell commands in the working directory
-- read        — read a file with line numbers
+- read        — read a file with line numbers. Supports `offset` (1-based start line) and \
+`limit` (max lines to return). Use grep to find line numbers first, then read only the \
+range you need. Never read an entire large file.
 - write       — create or overwrite a file
 - edit        — replace an exact string in a file (prefer over write for small changes)
 - grep        — search file contents by regex
@@ -61,9 +65,14 @@ need specific information you don't already have.
 
 ## File reading discipline
 
-Prefer grep over read for finding specific information. Use read only \
-when you need to understand a whole file's structure. Never read the \
-same file twice in one turn — if you have already read a file, use \
+NEVER read an entire file over 100 lines. Instead: \
+1. Use grep to find the symbol or line you need (e.g. `grep "SessionResponse"`) \
+2. Note the line number from the grep result \
+3. Use read with offset and limit to read only that range \
+   (e.g. `read path offset=250 limit=20`) \
+This is critical — reading whole large files wastes context tokens and causes failures.
+
+Never read the same file twice in one turn — if you have already read a file, use \
 what you have. Once you can answer the question, stop calling tools \
 and respond immediately. Every tool call must bring you closer to the \
 answer; if the last tool call did not help, stop and answer with what \

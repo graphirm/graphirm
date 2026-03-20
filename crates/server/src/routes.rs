@@ -139,10 +139,12 @@ pub fn create_router(state: AppState) -> Router {
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 /// `GET /api/health` — liveness check.
-async fn health() -> Json<HealthResponse> {
+async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
+    let session_count = state.sessions.read().await.len();
     Json(HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        session_count,
     })
 }
 
