@@ -482,7 +482,9 @@ async fn test_session_export_markdown() {
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let session_id = created["id"].as_str().unwrap().to_string();
 
@@ -495,14 +497,26 @@ async fn test_session_export_markdown() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(ct.contains("text/markdown"));
 
-    let cd = resp.headers().get("content-disposition").unwrap().to_str().unwrap();
+    let cd = resp
+        .headers()
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(cd.contains("attachment"));
     assert!(cd.ends_with(".md\""));
 
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let markdown = std::str::from_utf8(&bytes).unwrap();
     assert!(markdown.contains("# Session:"));
     assert!(markdown.contains("export-test"));
@@ -524,7 +538,9 @@ async fn test_session_export_unsupported_format() {
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let session_id = created["id"].as_str().unwrap().to_string();
 

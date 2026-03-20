@@ -576,7 +576,7 @@ mod tests {
             &llm,
             &messages,
             &source_node_id,
-        &NodeId::from("test-session"),
+            &NodeId::from("test-session"),
             &config,
         )
         .await
@@ -626,7 +626,7 @@ mod tests {
             &llm,
             &messages,
             &source_id,
-        &NodeId::from("test-session"),
+            &NodeId::from("test-session"),
             &config,
         )
         .await
@@ -687,7 +687,7 @@ mod tests {
             &llm,
             &messages,
             &source_id,
-        &NodeId::from("test-session"),
+            &NodeId::from("test-session"),
             &config,
         )
         .await
@@ -742,7 +742,7 @@ mod tests {
             &llm,
             &messages,
             &source_id,
-        &NodeId::from("test-session"),
+            &NodeId::from("test-session"),
             &config,
         )
         .await
@@ -948,9 +948,14 @@ mod tests {
             ))
             .unwrap();
 
-        let result =
-            post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &assistant_id,
-            &NodeId::from("test-session")).await;
+        let result = post_turn_extract(
+            std::sync::Arc::clone(&graph),
+            &llm,
+            &config,
+            &assistant_id,
+            &NodeId::from("test-session"),
+        )
+        .await;
 
         assert!(result.is_ok());
         let node_ids = result.unwrap();
@@ -985,9 +990,14 @@ mod tests {
             })))
             .unwrap();
 
-        let result =
-            post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &node_id,
-            &NodeId::from("test-session")).await;
+        let result = post_turn_extract(
+            std::sync::Arc::clone(&graph),
+            &llm,
+            &config,
+            &node_id,
+            &NodeId::from("test-session"),
+        )
+        .await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
@@ -1144,9 +1154,14 @@ mod tests {
             })))
             .unwrap();
 
-        let result =
-            post_turn_extract(std::sync::Arc::clone(&graph), &llm, &config, &node_id,
-            &NodeId::from("test-session")).await;
+        let result = post_turn_extract(
+            std::sync::Arc::clone(&graph),
+            &llm,
+            &config,
+            &node_id,
+            &NodeId::from("test-session"),
+        )
+        .await;
         // Whether it errors depends on feature flag: without local-extraction
         // we get a feature error; with it we get a "model dir not found" error.
         // Either way the function must not panic.

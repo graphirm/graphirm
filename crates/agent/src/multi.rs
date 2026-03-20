@@ -175,13 +175,15 @@ pub async fn spawn_subagent(
         let dir_name = sanitize_workspace_name(&format!("{}-{}", agent_name, short_id))
             .unwrap_or_else(|| format!("{}-{}", agent_name, short_id));
         let subagent_dir = parent_dir.join("subagents").join(&dir_name);
-        tokio::fs::create_dir_all(&subagent_dir).await.map_err(|e| {
-            AgentError::Workflow(format!(
-                "Failed to create subagent workspace {}: {}",
-                subagent_dir.display(),
-                e
-            ))
-        })?;
+        tokio::fs::create_dir_all(&subagent_dir)
+            .await
+            .map_err(|e| {
+                AgentError::Workflow(format!(
+                    "Failed to create subagent workspace {}: {}",
+                    subagent_dir.display(),
+                    e
+                ))
+            })?;
         agent_config.working_dir = subagent_dir;
     }
 

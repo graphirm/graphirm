@@ -49,9 +49,7 @@ impl ToolRegistry {
     /// Built-in destructive tools (`bash`, `write`, `edit`) return `true` via
     /// their `Tool::is_destructive` impl. Script plugins respect the manifest flag.
     pub fn is_destructive(&self, name: &str) -> bool {
-        self.tools
-            .get(name)
-            .is_some_and(|t| t.is_destructive())
+        self.tools.get(name).is_some_and(|t| t.is_destructive())
     }
 
     pub async fn execute(

@@ -257,10 +257,7 @@ mod tests {
         };
         let tool = ScriptTool::new(manifest, dir.path().to_path_buf());
         let ctx = test_context(dir.path());
-        let result = tool
-            .execute(serde_json::json!({}), &ctx)
-            .await
-            .unwrap();
+        let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
         assert!(result.is_error);
     }
 
@@ -290,11 +287,12 @@ mod tests {
         let plugin_dir = dir.path().to_path_buf();
         let tool = ScriptTool::new(manifest, plugin_dir.clone());
         let ctx = test_context(dir.path());
-        let result = tool
-            .execute(serde_json::json!({}), &ctx)
-            .await
-            .unwrap();
+        let result = tool.execute(serde_json::json!({}), &ctx).await.unwrap();
         assert!(!result.is_error);
-        assert!(result.content.contains(plugin_dir.to_string_lossy().as_ref()));
+        assert!(
+            result
+                .content
+                .contains(plugin_dir.to_string_lossy().as_ref())
+        );
     }
 }

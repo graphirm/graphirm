@@ -4,7 +4,11 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use graphirm_graph::{GraphNode, GraphStore, NodeId, NodeType, edges::{EdgeType, GraphEdge}, vector::VectorIndex};
+use graphirm_graph::{
+    GraphNode, GraphStore, NodeId, NodeType,
+    edges::{EdgeType, GraphEdge},
+    vector::VectorIndex,
+};
 use graphirm_llm::EmbeddingProvider;
 
 use crate::error::AgentError;
@@ -303,11 +307,7 @@ impl MemoryRetriever {
 
     /// Persist `RelatesTo` edges between `source_id` and each `(target_id, weight)` pair.
     /// Non-fatal: individual edge insertion failures are logged and skipped.
-    pub async fn persist_cross_session_links(
-        &self,
-        source_id: &NodeId,
-        links: &[(NodeId, f64)],
-    ) {
+    pub async fn persist_cross_session_links(&self, source_id: &NodeId, links: &[(NodeId, f64)]) {
         for (target_id, weight) in links {
             let graph = self.graph.clone();
             let src = source_id.clone();
@@ -693,7 +693,10 @@ mod tests {
             .unwrap();
 
         // Should find node_a (different session).
-        assert!(!links.is_empty(), "Should find at least one cross-session link");
+        assert!(
+            !links.is_empty(),
+            "Should find at least one cross-session link"
+        );
         assert!(
             links.iter().any(|(id, _)| *id == id_a),
             "Should find node_a from session-a"
@@ -705,7 +708,10 @@ mod tests {
         );
         // Similarity scores must be in [0, 1].
         for (_, score) in &links {
-            assert!(*score >= 0.0 && *score <= 1.0, "Score out of range: {score}");
+            assert!(
+                *score >= 0.0 && *score <= 1.0,
+                "Score out of range: {score}"
+            );
         }
     }
 
@@ -799,7 +805,10 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         let (_, score) = &results[0];
-        assert!(*score >= 0.0 && *score <= 1.0, "Score must be in [0, 1]: {score}");
+        assert!(
+            *score >= 0.0 && *score <= 1.0,
+            "Score must be in [0, 1]: {score}"
+        );
     }
 
     #[tokio::test]
@@ -810,10 +819,7 @@ mod tests {
 
         let retriever = MemoryRetriever::new(graph.clone(), vector_index, llm, 64);
 
-        let results = retriever
-            .retrieve_with_scores("anything", 5)
-            .await
-            .unwrap();
+        let results = retriever.retrieve_with_scores("anything", 5).await.unwrap();
         assert!(results.is_empty());
     }
 

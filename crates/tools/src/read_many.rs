@@ -172,10 +172,7 @@ mod tests {
         let tool = ReadManyTool::new();
         let ctx = make_ctx_with_dir(&dir);
         let out = tool
-            .execute(
-                json!({"paths": ["exists.txt", "missing.txt"]}),
-                &ctx,
-            )
+            .execute(json!({"paths": ["exists.txt", "missing.txt"]}), &ctx)
             .await
             .unwrap();
         assert!(!out.is_error);

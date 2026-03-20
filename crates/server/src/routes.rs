@@ -90,7 +90,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/sessions/{id}",
-            get(get_session).delete(delete_session).patch(rename_session),
+            get(get_session)
+                .delete(delete_session)
+                .patch(rename_session),
         )
         .route("/api/sessions/{id}/prompt", post(prompt_session))
         .route("/api/sessions/{id}/abort", post(abort_session))
@@ -277,7 +279,10 @@ async fn rename_session(
             .get(&key)
             .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
 
-        *handle.display_name.write().unwrap_or_else(|e| e.into_inner()) = name.clone();
+        *handle
+            .display_name
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = name.clone();
 
         let response = session_handle_to_response(&id, handle);
         (handle.session.clone(), response)
@@ -512,8 +517,8 @@ async fn export_session(
     Path(id): Path<String>,
     Query(query): Query<ExportQuery>,
 ) -> Result<axum::response::Response, ServerError> {
-    use axum::http::header;
     use crate::export::render_session_markdown;
+    use axum::http::header;
 
     if query.format != "markdown" {
         return Err(ServerError::BadRequest(format!(
@@ -528,7 +533,11 @@ async fn export_session(
         let handle = sessions
             .get(&key)
             .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
-        let name = handle.display_name.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let name = handle
+            .display_name
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let model = handle.session.agent_config.model.clone();
         let created_at = handle.session.created_at;
         (handle.session.id.clone(), name, model, created_at)
@@ -548,7 +557,11 @@ async fn export_session(
         "session-{}.md",
         session_name
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+            .map(|c| if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            })
             .collect::<String>()
     );
 
@@ -910,7 +923,9 @@ fn session_workspace_path(config: &graphirm_agent::AgentConfig) -> Option<String
 }
 
 fn session_handle_to_response(id: &str, handle: &SessionHandle) -> SessionResponse {
-    let name = handle.display_name.read()
+    let name = handle
+        .display_name
+        .read()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
     SessionResponse {

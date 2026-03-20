@@ -351,8 +351,9 @@ async fn execute_tools_parallel(
     // and reused across all destructive tool executions in this turn
     use std::collections::HashMap;
 
-    let impact_cache: Arc<tokio::sync::Mutex<HashMap<std::path::PathBuf, graphirm_tools::impact::ImpactBrief>>> =
-        Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    let impact_cache: Arc<
+        tokio::sync::Mutex<HashMap<std::path::PathBuf, graphirm_tools::impact::ImpactBrief>>,
+    > = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
 
     // Phase 1: spawn SAFE tools in parallel and collect results
     let mut set = JoinSet::new();
@@ -498,7 +499,7 @@ async fn execute_tools_parallel(
                 // Prepend impact brief
                 if let Some(ref brief_text) = impact_brief_text {
                     content = format!("{brief_text}\n{content}");
-                    
+
                     // Persist as Content node
                     let mut brief_node = GraphNode::new(NodeType::Content(ContentData {
                         content_type: "impact_brief".to_string(),
@@ -506,8 +507,7 @@ async fn execute_tools_parallel(
                         body: brief_text.clone(),
                         language: None,
                     }));
-                    brief_node.metadata["session_id"] =
-                        serde_json::json!(session.id.to_string());
+                    brief_node.metadata["session_id"] = serde_json::json!(session.id.to_string());
                     brief_node.set_label(format!(
                         "content_{}_{}_1",
                         session.current_turn(),
@@ -623,7 +623,9 @@ async fn pre_edit_impact_brief(
     tool_name: &str,
     arguments: &serde_json::Value,
     session_id: &NodeId,
-    cache: &tokio::sync::Mutex<std::collections::HashMap<std::path::PathBuf, graphirm_tools::impact::ImpactBrief>>,
+    cache: &tokio::sync::Mutex<
+        std::collections::HashMap<std::path::PathBuf, graphirm_tools::impact::ImpactBrief>,
+    >,
 ) -> Option<String> {
     let paths = graphirm_tools::impact::extract_target_paths(tool_name, arguments);
     if paths.is_empty() {
@@ -658,10 +660,8 @@ async fn pre_edit_impact_brief(
 
     // Collect briefs for all requested paths
     let cache_guard = cache.lock().await;
-    let briefs: Vec<&graphirm_tools::impact::ImpactBrief> = paths
-        .iter()
-        .filter_map(|p| cache_guard.get(p))
-        .collect();
+    let briefs: Vec<&graphirm_tools::impact::ImpactBrief> =
+        paths.iter().filter_map(|p| cache_guard.get(p)).collect();
 
     if briefs.is_empty() {
         return None;
@@ -756,7 +756,9 @@ async fn emit_graph_update(
             .collect();
         for e in &recent_edges {
             for nid in [&e.source, &e.target] {
-                if !node_map.contains_key(nid) && let Ok(n) = graph.get_node(nid) {
+                if !node_map.contains_key(nid)
+                    && let Ok(n) = graph.get_node(nid)
+                {
                     node_map.insert(nid.clone(), n);
                 }
             }
@@ -916,7 +918,9 @@ pub async fn run_agent_loop(
                                             cross_links = links.len(),
                                             "Creating cross-session knowledge links"
                                         );
-                                        retriever.persist_cross_session_links(node_id, &links).await;
+                                        retriever
+                                            .persist_cross_session_links(node_id, &links)
+                                            .await;
                                     }
                                     Ok(_) => {}
                                     Err(e) => {
@@ -1905,7 +1909,7 @@ mod tests {
 
         let config = AgentConfig {
             max_turns: 10,
-            pre_edit_impact: false,  // Disable impact to avoid rg hanging in tests
+            pre_edit_impact: false, // Disable impact to avoid rg hanging in tests
             working_dir: temp_dir.path().to_path_buf(),
             ..AgentConfig::default()
         };
@@ -1939,7 +1943,11 @@ mod tests {
 
         let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
-        assert_eq!(call_counter.load(Ordering::SeqCst), 1, "write tool should have been called once");
+        assert_eq!(
+            call_counter.load(Ordering::SeqCst),
+            1,
+            "write tool should have been called once"
+        );
 
         // Find the tool result node
         let neighbors = graph

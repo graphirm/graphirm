@@ -145,7 +145,11 @@ mod tests {
 
     #[test]
     fn renders_knowledge_section() {
-        let nodes = vec![knowledge("Rust", "language", "A systems programming language.")];
+        let nodes = vec![knowledge(
+            "Rust",
+            "language",
+            "A systems programming language.",
+        )];
         let md = render_session_markdown("s", "m", Utc::now(), &nodes);
         assert!(md.contains("## Extracted Knowledge"));
         assert!(md.contains("Rust"));

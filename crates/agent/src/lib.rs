@@ -1,7 +1,5 @@
 pub mod compact;
 pub mod config;
-pub mod impact;
-pub mod workspace;
 pub mod context;
 pub mod coordinator;
 pub mod delegate;
@@ -9,10 +7,12 @@ pub mod error;
 pub mod escalation;
 pub mod event;
 pub mod hitl;
+pub mod impact;
 pub mod knowledge;
 pub mod multi;
 pub mod session;
 pub mod workflow;
+pub mod workspace;
 
 pub use compact::{CompactionConfig, CompactionResult, compact_context, is_compacted};
 pub use config::{AgentConfig, AgentMode, Permission};

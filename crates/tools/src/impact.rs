@@ -48,9 +48,11 @@ impl ImpactBrief {
 
     /// Format this brief as a markdown block suitable for prepending to tool output.
     pub fn format_markdown(&self) -> String {
-        let mut lines = vec![
-            format!("> **Impact:** `{}` — **Risk: {}**", self.path.display(), self.risk),
-        ];
+        let mut lines = vec![format!(
+            "> **Impact:** `{}` — **Risk: {}**",
+            self.path.display(),
+            self.risk
+        )];
 
         if let Some(count) = self.dependent_count {
             lines.push(format!("> - **{} files depend on this**", count));
@@ -89,7 +91,11 @@ fn truncate(text: &str, max_len: usize) -> String {
 pub trait ImpactProvider: Send + Sync {
     /// Analyze the impact of a tool call targeting the given paths.
     /// `session_id` is used to filter knowledge notes to cross-session references.
-    async fn analyze(&self, paths: &[PathBuf], session_id: &graphirm_graph::nodes::NodeId) -> Result<Vec<ImpactBrief>, String>;
+    async fn analyze(
+        &self,
+        paths: &[PathBuf],
+        session_id: &graphirm_graph::nodes::NodeId,
+    ) -> Result<Vec<ImpactBrief>, String>;
 }
 
 /// Extract target paths from a tool call's arguments.

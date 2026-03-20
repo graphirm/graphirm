@@ -383,7 +383,9 @@ async fn execute_semantic(
     }
 
     if results.is_empty() {
-        lines.push(format!("  (no Knowledge nodes semantically similar to '{query}')"));
+        lines.push(format!(
+            "  (no Knowledge nodes semantically similar to '{query}')"
+        ));
     }
 
     Ok(ToolOutput::success(lines.join("\n")))
@@ -725,8 +727,16 @@ mod tests {
         let mut ctx = make_test_context();
         ctx.knowledge_retriever = Some(Arc::new(MockKnowledgeRetriever {
             results: vec![
-                ("JWT Auth".to_string(), "Token-based authentication".to_string(), 0.92),
-                ("OAuth2".to_string(), "Auth protocol for APIs".to_string(), 0.85),
+                (
+                    "JWT Auth".to_string(),
+                    "Token-based authentication".to_string(),
+                    0.92,
+                ),
+                (
+                    "OAuth2".to_string(),
+                    "Auth protocol for APIs".to_string(),
+                    0.85,
+                ),
             ],
         }));
 
@@ -743,8 +753,14 @@ mod tests {
             .unwrap();
 
         assert!(!out.is_error);
-        assert!(out.content.contains("JWT Auth"), "Should contain first result");
-        assert!(out.content.contains("OAuth2"), "Should contain second result");
+        assert!(
+            out.content.contains("JWT Auth"),
+            "Should contain first result"
+        );
+        assert!(
+            out.content.contains("OAuth2"),
+            "Should contain second result"
+        );
         assert!(out.content.contains("0.920") || out.content.contains("sim=0.92"));
     }
 
