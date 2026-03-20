@@ -32,9 +32,33 @@ pub fn extract_paths(command: &str) -> Vec<PathBuf> {
 
 /// Known file extensions for code and config files.
 const PATH_EXTENSIONS: &[&str] = &[
-    "rs", "toml", "lock", "md", "txt", "json", "yaml", "yml", "ts", "tsx",
-    "js", "jsx", "py", "sh", "bash", "sql", "html", "css", "xml", "csv",
-    "env", "cfg", "ini", "conf", "log", "gitignore", "dockerfile",
+    "rs",
+    "toml",
+    "lock",
+    "md",
+    "txt",
+    "json",
+    "yaml",
+    "yml",
+    "ts",
+    "tsx",
+    "js",
+    "jsx",
+    "py",
+    "sh",
+    "bash",
+    "sql",
+    "html",
+    "css",
+    "xml",
+    "csv",
+    "env",
+    "cfg",
+    "ini",
+    "conf",
+    "log",
+    "gitignore",
+    "dockerfile",
 ];
 
 fn is_path_like(text: &str) -> bool {
@@ -48,10 +72,10 @@ fn is_path_like(text: &str) -> bool {
     }
 
     // Has a known file extension
-    if let Some((_base, ext)) = text.rsplit_once('.') {
-        if PATH_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
-            return true;
-        }
+    if let Some((_base, ext)) = text.rsplit_once('.')
+        && PATH_EXTENSIONS.contains(&ext.to_lowercase().as_str())
+    {
+        return true;
     }
 
     false
@@ -87,26 +111,24 @@ fn collect_paths(node: tree_sitter::Node, source: &[u8], paths: &mut Vec<PathBuf
     // Check leaf-like nodes for path patterns
     if (kind == "word" || kind == "raw_string" || kind == "string_content")
         && !is_inside_expansion(node)
+        && let Ok(text) = node.utf8_text(source)
     {
-        if let Ok(text) = node.utf8_text(source) {
-            let cleaned = text.trim_matches(|c| c == '"' || c == '\'');
-            if is_path_like(cleaned) {
-                paths.push(PathBuf::from(cleaned));
-            }
+        let cleaned = text.trim_matches(|c| c == '"' || c == '\'');
+        if is_path_like(cleaned) {
+            paths.push(PathBuf::from(cleaned));
         }
     }
 
     // Also check redirect targets: `> file.txt`, `>> log.txt`
     if kind == "file_redirect" || kind == "heredoc_redirect" {
         for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
-                if child.kind() == "word" || child.kind() == "string_content" {
-                    if let Ok(text) = child.utf8_text(source) {
-                        let cleaned = text.trim_matches(|c| c == '"' || c == '\'');
-                        if is_path_like(cleaned) {
-                            paths.push(PathBuf::from(cleaned));
-                        }
-                    }
+            if let Some(child) = node.child(i)
+                && (child.kind() == "word" || child.kind() == "string_content")
+                && let Ok(text) = child.utf8_text(source)
+            {
+                let cleaned = text.trim_matches(|c| c == '"' || c == '\'');
+                if is_path_like(cleaned) {
+                    paths.push(PathBuf::from(cleaned));
                 }
             }
         }
@@ -184,7 +206,10 @@ mod tests {
     #[test]
     fn deduplicates_paths() {
         let paths = extract_paths("cat src/lib.rs && grep foo src/lib.rs");
-        let count = paths.iter().filter(|p| *p == &PathBuf::from("src/lib.rs")).count();
+        let count = paths
+            .iter()
+            .filter(|p| *p == &PathBuf::from("src/lib.rs"))
+            .count();
         assert_eq!(count, 1, "duplicate paths should be deduplicated");
     }
 }

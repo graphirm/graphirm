@@ -23,17 +23,20 @@ impl GraphImpactProvider {
     ///
     /// Returns `Some(count)` if rg is available, `None` if rg is not found or fails.
     /// Filters with `--glob !.git --glob !target --glob !node_modules` to keep searches fast.
-    pub async fn count_dependents(&self, path: &PathBuf) -> Option<usize> {
+    pub async fn count_dependents(&self, path: &std::path::Path) -> Option<usize> {
         // Get filename for ripgrep search
         let file_stem = path.file_stem()?.to_string_lossy().to_string();
 
         let output = tokio::process::Command::new("rg")
-            .args(&[
+            .args([
                 "--files-with-matches",
                 "--no-messages",
-                "--glob", "!.git",
-                "--glob", "!target",
-                "--glob", "!node_modules",
+                "--glob",
+                "!.git",
+                "--glob",
+                "!target",
+                "--glob",
+                "!node_modules",
                 &file_stem,
             ])
             .current_dir(&self.workspace)
@@ -54,7 +57,11 @@ impl GraphImpactProvider {
     /// Matches by file stem (case-insensitive) in entity or summary.
     /// Skips Knowledge nodes from the current session.
     /// Returns at most 5 notes to keep briefs concise.
-    pub fn find_knowledge_notes(&self, path: &PathBuf, session_id: &str) -> Vec<KnowledgeNote> {
+    pub fn find_knowledge_notes(
+        &self,
+        path: &std::path::Path,
+        session_id: &str,
+    ) -> Vec<KnowledgeNote> {
         let file_stem = match path.file_stem() {
             Some(stem) => stem.to_string_lossy().to_string().to_lowercase(),
             None => return Vec::new(),
@@ -62,10 +69,9 @@ impl GraphImpactProvider {
 
         // Query for Knowledge nodes matching the path stem, excluding current session
         let search_result = self.graph.search_knowledge(
-            &file_stem,
-            None,     // no entity_type filter
-            None,     // no session_id filter — we'll filter manually
-            1000,     // get many to filter
+            &file_stem, None, // no entity_type filter
+            None, // no session_id filter — we'll filter manually
+            1000, // get many to filter
         );
 
         let nodes = match search_result {
@@ -76,14 +82,15 @@ impl GraphImpactProvider {
         let mut notes = Vec::new();
         for node in nodes {
             // Skip nodes from the current session
-            if let Some(node_session_id) = node.metadata.get("session_id").and_then(|v| v.as_str()) {
-                if node_session_id == session_id {
-                    continue;
-                }
+            if let Some(node_session_id) = node.metadata.get("session_id").and_then(|v| v.as_str())
+                && node_session_id == session_id
+            {
+                continue;
             }
 
             // Extract turn number from metadata
-            let turn = node.metadata
+            let turn = node
+                .metadata
                 .get("turn")
                 .and_then(|v| v.as_u64())
                 .map(|t| t as u32)
@@ -116,7 +123,11 @@ impl GraphImpactProvider {
 impl ImpactProvider for GraphImpactProvider {
     /// Analyze the impact of modifying the given paths.
     /// Returns a Vec of ImpactBrief, skipping empty briefs (no dependents and no knowledge notes).
-    async fn analyze(&self, paths: &[PathBuf], session_id: &graphirm_graph::nodes::NodeId) -> Result<Vec<ImpactBrief>, String> {
+    async fn analyze(
+        &self,
+        paths: &[PathBuf],
+        session_id: &graphirm_graph::nodes::NodeId,
+    ) -> Result<Vec<ImpactBrief>, String> {
         let mut briefs = Vec::new();
         let session_id_str = session_id.to_string();
 
@@ -173,7 +184,8 @@ mod tests {
         let provider = GraphImpactProvider::new(store, PathBuf::from("."));
 
         // Query for src/auth/tokens.rs from "current-session"
-        let notes = provider.find_knowledge_notes(&PathBuf::from("src/auth/tokens.rs"), "current-session");
+        let notes =
+            provider.find_knowledge_notes(&PathBuf::from("src/auth/tokens.rs"), "current-session");
 
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].text, "tokens.rs");
@@ -204,7 +216,8 @@ mod tests {
         let provider = GraphImpactProvider::new(store, PathBuf::from("."));
 
         // Query from same session
-        let notes = provider.find_knowledge_notes(&PathBuf::from("src/auth/tokens.rs"), "current-session");
+        let notes =
+            provider.find_knowledge_notes(&PathBuf::from("src/auth/tokens.rs"), "current-session");
 
         // Should be empty
         assert_eq!(notes.len(), 0);
@@ -248,11 +261,15 @@ mod tests {
         let provider = GraphImpactProvider::new(store, PathBuf::from("/nonexistent/workspace"));
 
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-        let briefs = rt.block_on(async {
-            // Nonexistent path, no Knowledge nodes
-            let session_id = graphirm_graph::nodes::NodeId::from("test-session");
-            provider.analyze(&[PathBuf::from("/nonexistent/path.rs")], &session_id).await
-        }).expect("analyze failed");
+        let briefs = rt
+            .block_on(async {
+                // Nonexistent path, no Knowledge nodes
+                let session_id = graphirm_graph::nodes::NodeId::from("test-session");
+                provider
+                    .analyze(&[PathBuf::from("/nonexistent/path.rs")], &session_id)
+                    .await
+            })
+            .expect("analyze failed");
 
         // Should be empty due to threshold gate
         assert_eq!(briefs.len(), 0);

@@ -25,6 +25,8 @@ description, JSON schema for parameters, and an async `execute` method. Tools ar
 | `read_many.rs` | Read up to 20 files in one call — concatenated output with path headers |
 | `retriever.rs` | `KnowledgeRetriever` trait — decouples semantic search from agent crate |
 | `script.rs` | `ScriptTool` + `PluginManifest` — TOML-defined plugins executed as shell commands |
+| `bash_paths.rs` | tree-sitter-bash AST walker — extracts literal file paths from shell commands |
+| `impact.rs` | `ImpactProvider` trait, `ImpactBrief`, `RiskLevel`, `extract_target_paths` |
 | `error.rs` | `ToolError` enum |
 
 **Destructive tools** (`bash`, `write`, `edit`, and any script plugin with `destructive = true`) block
