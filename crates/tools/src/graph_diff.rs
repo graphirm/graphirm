@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use graphirm_graph::GraphStore;
 use serde_json::json;
 use tokio::process::Command;
 
@@ -225,6 +226,58 @@ async fn find_dependents(
         .collect()
 }
 
+#[allow(dead_code)]
+struct StaleNote {
+    session_id: String,
+    entity: String,
+    summary: String,
+}
+
+/// Find Knowledge nodes from other sessions that mention this file's stem.
+#[allow(dead_code)]
+fn find_stale_knowledge(
+    path: &std::path::Path,
+    graph: &GraphStore,
+    current_session_id: &str,
+) -> Vec<StaleNote> {
+    let file_stem = match path.file_stem() {
+        Some(s) => s.to_string_lossy().to_string().to_lowercase(),
+        None => return vec![],
+    };
+
+    let nodes = match graph.search_knowledge(&file_stem, None, None, 50) {
+        Ok(n) => n,
+        Err(_) => return vec![],
+    };
+
+    let mut notes = Vec::new();
+    for node in nodes {
+        let node_session = node
+            .metadata
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if node_session == current_session_id {
+            continue;
+        }
+
+        if let graphirm_graph::nodes::NodeType::Knowledge(kd) = &node.node_type {
+            notes.push(StaleNote {
+                session_id: node_session.to_string(),
+                entity: kd.entity.clone(),
+                summary: kd.summary.clone(),
+            });
+        }
+
+        if notes.len() >= 10 {
+            break;
+        }
+    }
+
+    notes
+}
+
 /// Placeholder — will be replaced in Task 5.
 async fn analyze_changed_files(
     changed_files: &[PathBuf],
@@ -294,6 +347,52 @@ mod tests {
             !result.is_empty(),
             "should find at least one dependent: {result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn find_stale_knowledge_returns_cross_session_notes() {
+        let ctx = make_test_context();
+
+        let mut k = graphirm_graph::nodes::GraphNode::new(
+            graphirm_graph::nodes::NodeType::Knowledge(graphirm_graph::nodes::KnowledgeData {
+                entity: "store.rs".to_string(),
+                entity_type: "file".to_string(),
+                summary: "Has a race condition on concurrent access".to_string(),
+                confidence: 0.9,
+            }),
+        );
+        k.metadata["session_id"] = serde_json::json!("other-session");
+        ctx.graph.add_node(k).unwrap();
+
+        let notes = find_stale_knowledge(
+            &PathBuf::from("src/store.rs"),
+            &ctx.graph,
+            &ctx.agent_id.to_string(),
+        );
+
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].summary.contains("race condition"));
+    }
+
+    #[tokio::test]
+    async fn find_stale_knowledge_skips_current_session() {
+        let ctx = make_test_context();
+        let session_id = ctx.agent_id.to_string();
+
+        let mut k = graphirm_graph::nodes::GraphNode::new(
+            graphirm_graph::nodes::NodeType::Knowledge(graphirm_graph::nodes::KnowledgeData {
+                entity: "store.rs".to_string(),
+                entity_type: "file".to_string(),
+                summary: "Session-local note".to_string(),
+                confidence: 0.9,
+            }),
+        );
+        k.metadata["session_id"] = serde_json::json!(session_id.clone());
+        ctx.graph.add_node(k).unwrap();
+
+        let notes = find_stale_knowledge(&PathBuf::from("src/store.rs"), &ctx.graph, &session_id);
+
+        assert!(notes.is_empty());
     }
 
     #[tokio::test]
