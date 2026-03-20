@@ -38,8 +38,10 @@ impl GraphImpactProvider {
                 "--glob",
                 "!node_modules",
                 &file_stem,
+                ".",
             ])
             .current_dir(&self.workspace)
+            .stdin(std::process::Stdio::null())
             .output()
             .await
             .ok()?;

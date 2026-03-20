@@ -27,7 +27,7 @@ impl Tool for GraphQueryTool {
     }
 
     fn description(&self) -> &str {
-        "Query the session graph in five modes:
+        "Query the session graph in six modes:
 
 • bfs — BFS traversal from a start node following outgoing edges.
   To get a start node_id, call list_type first or use an ID returned by a previous tool call.
@@ -43,13 +43,16 @@ impl Tool for GraphQueryTool {
   Returns results ranked by cosine similarity (highest first).
   Requires an embedding provider to be configured (e.g. DEEPSEEK_API_KEY or local-embed feature).
 
+• neighbors — List direct neighbors of a node. Returns immediate neighbors (one hop away).
+  To get a start node_id, call list_type first or use an ID returned by a previous tool call.
+
 • project — Project planning operations for creating and managing planning Knowledge nodes:
   - create: Create a new planning node (epic, story, criterion, or decision)
   - list: List planning nodes with optional filtering
   - link_session: Link the current session to a planning node
   - update: Update a planning node's status
 
-The tool is read-only for bfs/list_type/search/semantic modes; project mode may write to the graph."
+The tool is read-only for bfs/list_type/search/semantic/neighbors modes; project mode may write to the graph."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -58,12 +61,12 @@ The tool is read-only for bfs/list_type/search/semantic modes; project mode may 
             "properties": {
                 "mode": {
                     "type": "string",
-                    "enum": ["bfs", "list_type", "search", "semantic", "project"],
+                    "enum": ["bfs", "list_type", "search", "semantic", "neighbors", "project"],
                     "description": "Which query mode to run"
                 },
                 "node_id": {
                     "type": "string",
-                    "description": "BFS start node ID (required for bfs mode)"
+                    "description": "BFS start node ID (required for bfs mode), or target node for neighbors mode"
                 },
                 "depth": {
                     "type": "integer",
@@ -82,7 +85,12 @@ The tool is read-only for bfs/list_type/search/semantic modes; project mode may 
                     "items": { "type": "string" },
                     "description": "BFS edge-type filter — array of snake_case EdgeType names \
                                     (e.g. [\"responds_to\", \"contains\", \"produces\"]). \
-                                    Omit to follow all edge types."
+                                    Omit to follow all edge types. For neighbors mode, filters by edge type."
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["outgoing", "incoming", "all"],
+                    "description": "Neighbors mode only — direction of edges to follow (default: all)"
                 },
                 "node_type": {
                     "type": "string",
@@ -111,7 +119,7 @@ The tool is read-only for bfs/list_type/search/semantic modes; project mode may 
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Maximum results to return (default: 50 for bfs, 20 for list_type, 10 for search)"
+                    "description": "Maximum results to return (default: 50 for bfs, 20 for list_type, 10 for search, 50 for neighbors)"
                 },
                 "action": {
                     "type": "string",
@@ -158,9 +166,10 @@ The tool is read-only for bfs/list_type/search/semantic modes; project mode may 
             "list_type" => execute_list_type(&args, ctx).await,
             "search" => execute_search(&args, ctx).await,
             "semantic" => execute_semantic(&args, ctx).await,
+            "neighbors" => execute_neighbors(&args, ctx).await,
             "project" => execute_project(&args, ctx).await,
             other => Err(ToolError::InvalidArguments(format!(
-                "unknown mode '{other}'; must be one of: bfs, list_type, search, semantic, project"
+                "unknown mode '{other}'; must be one of: bfs, list_type, search, semantic, neighbors, project"
             ))),
         }
     }
@@ -434,6 +443,139 @@ async fn execute_semantic(
         lines.push(format!(
             "  (no Knowledge nodes semantically similar to '{query}')"
         ));
+    }
+
+    Ok(ToolOutput::success(lines.join("\n")))
+}
+
+async fn execute_neighbors(
+    args: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<ToolOutput, ToolError> {
+    let node_id_str = args["node_id"]
+        .as_str()
+        .ok_or_else(|| ToolError::InvalidArguments("'node_id' is required for neighbors mode".into()))?;
+    let node_id = NodeId(node_id_str.to_string());
+
+    let direction_str = args["direction"].as_str().unwrap_or("all");
+    let dir_filter: Option<Direction> = match direction_str {
+        "outgoing" => Some(Direction::Outgoing),
+        "incoming" => Some(Direction::Incoming),
+        "all" => None,
+        other => {
+            return Err(ToolError::InvalidArguments(format!(
+                "unknown direction '{other}'; must be one of: outgoing, incoming, all"
+            )));
+        }
+    };
+
+    let edge_type_labels: Option<String> = args["edge_types"].as_array().map(|arr| {
+        arr.iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    });
+
+    let edge_type_filter: Option<Vec<EdgeType>> = if let Some(arr) = args["edge_types"].as_array() {
+        let mut parsed = Vec::with_capacity(arr.len());
+        for v in arr {
+            let s = v.as_str().ok_or_else(|| {
+                ToolError::InvalidArguments("edge_types entries must be strings".into())
+            })?;
+            let et: EdgeType = serde_json::from_value(serde_json::Value::String(s.to_string()))
+                .map_err(|_| {
+                    ToolError::InvalidArguments(format!(
+                        "unknown edge type '{s}'; use snake_case names like \
+                         responds_to, contains, produces"
+                    ))
+                })?;
+            parsed.push(et);
+        }
+        Some(parsed)
+    } else {
+        None
+    };
+
+    let limit = args["limit"].as_u64().unwrap_or(50) as usize;
+
+    let graph = ctx.graph.clone();
+    let node_id_clone = node_id.clone();
+
+    let results: Vec<(GraphNode, String, String)> = tokio::task::spawn_blocking(move || {
+        graph.get_node(&node_id_clone).map_err(|_| {
+            ToolError::InvalidArguments(format!(
+                "node '{}' does not exist in the graph",
+                node_id_clone
+            ))
+        })?;
+
+        let edges = graph.edges_for_node(&node_id_clone)?;
+        let mut out: Vec<(GraphNode, String, String)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for edge in &edges {
+            let (neighbor_id, dir) = if edge.source == node_id_clone {
+                (&edge.target, "outgoing")
+            } else {
+                (&edge.source, "incoming")
+            };
+
+            if let Some(ref d) = dir_filter {
+                let wanted = match d {
+                    Direction::Outgoing => "outgoing",
+                    Direction::Incoming => "incoming",
+                };
+                if dir != wanted {
+                    continue;
+                }
+            }
+
+            if let Some(ref allowed) = edge_type_filter
+                && !allowed.contains(&edge.edge_type)
+            {
+                continue;
+            }
+
+            if !seen.insert(neighbor_id.clone()) {
+                continue;
+            }
+
+            match graph.get_node(neighbor_id) {
+                Ok(node) => out.push((node, edge.edge_type.as_str().to_string(), dir.to_string())),
+                Err(_) => continue,
+            }
+        }
+
+        Ok::<_, ToolError>(out)
+    })
+    .await
+    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))??;
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "Neighbors of {} (direction={}, edge_types={}):",
+        node_id,
+        direction_str,
+        edge_type_labels.as_deref().unwrap_or("all")
+    ));
+
+    let total = results.len();
+    for (node, edge_type, dir) in results.iter().take(limit) {
+        lines.push(format!(
+            "  [{}] (edge_type={}, direction={})",
+            compact_node_summary(node),
+            edge_type,
+            dir,
+        ));
+    }
+    if total > limit {
+        lines.push(format!(
+            "  ... ({} more neighbors, increase limit to see all)",
+            total - limit
+        ));
+    }
+    if total == 0 {
+        lines.push("  (no neighbors)".to_string());
     }
 
     Ok(ToolOutput::success(lines.join("\n")))
@@ -1569,5 +1711,225 @@ mod tests {
         assert!(out.content.contains(&child_id.to_string()));
         assert!(out.content.contains(&grandchild_id.to_string()));
         assert!(out.content.contains(&great_grandchild_id.to_string()));
+    }
+
+    #[tokio::test]
+    async fn neighbors_basic() {
+        let ctx = make_test_context();
+        let graph = &ctx.graph;
+
+        let agent = GraphNode::new(NodeType::Agent(graphirm_graph::nodes::AgentData {
+            name: "test_agent".to_string(),
+            model: "claude".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let content1 = GraphNode::new(NodeType::Content(graphirm_graph::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: Some("a.rs".to_string()),
+            body: "code".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let content2 = GraphNode::new(NodeType::Content(graphirm_graph::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: Some("b.rs".to_string()),
+            body: "more code".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let agent_id = agent.id.clone();
+        let c1_id = content1.id.clone();
+        let c2_id = content2.id.clone();
+        graph.add_node(agent).unwrap();
+        graph.add_node(content1).unwrap();
+        graph.add_node(content2).unwrap();
+
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Reads,
+                agent_id.clone(),
+                c1_id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Modifies,
+                agent_id.clone(),
+                c2_id.clone(),
+            ))
+            .unwrap();
+
+        let tool = GraphQueryTool::new();
+        let out = tool
+            .execute(
+                json!({
+                    "mode": "neighbors",
+                    "node_id": agent_id.to_string()
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        assert!(!out.is_error);
+        assert!(out.content.contains(&c1_id.to_string()));
+        assert!(out.content.contains(&c2_id.to_string()));
+        assert!(out.content.contains("Neighbors"));
+    }
+
+    #[tokio::test]
+    async fn neighbors_direction_filtering() {
+        let ctx = make_test_context();
+        let graph = &ctx.graph;
+
+        let parent = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "parent".to_string(),
+            token_count: None,
+        }));
+        let child = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "child".to_string(),
+            token_count: None,
+        }));
+        let parent_id = parent.id.clone();
+        let child_id = child.id.clone();
+
+        graph.add_node(parent).unwrap();
+        graph.add_node(child).unwrap();
+        // parent → child (outgoing from parent)
+        graph
+            .add_edge(graphirm_graph::edges::GraphEdge::new(
+                graphirm_graph::edges::EdgeType::Contains,
+                parent_id.clone(),
+                child_id.clone(),
+            ))
+            .unwrap();
+
+        let tool = GraphQueryTool::new();
+
+        // Test outgoing from parent - should see child
+        let out = tool
+            .execute(
+                json!({
+                    "mode": "neighbors",
+                    "node_id": parent_id.to_string(),
+                    "direction": "outgoing"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains(&child_id.to_string()));
+
+        // Test incoming to child - should see parent
+        let out = tool
+            .execute(
+                json!({
+                    "mode": "neighbors",
+                    "node_id": child_id.to_string(),
+                    "direction": "incoming"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains(&parent_id.to_string()));
+
+        // Test outgoing from child - should see nothing
+        let out = tool
+            .execute(
+                json!({
+                    "mode": "neighbors",
+                    "node_id": child_id.to_string(),
+                    "direction": "outgoing"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains("(no neighbors)") || !out.content.contains(&parent_id.to_string()));
+    }
+
+    #[tokio::test]
+    async fn neighbors_edge_type_filtering() {
+        let ctx = make_test_context();
+        let graph = &ctx.graph;
+
+        let agent = GraphNode::new(NodeType::Agent(graphirm_graph::nodes::AgentData {
+            name: "test_agent".to_string(),
+            model: "claude".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let content1 = GraphNode::new(NodeType::Content(graphirm_graph::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: Some("a.rs".to_string()),
+            body: "code".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let content2 = GraphNode::new(NodeType::Content(graphirm_graph::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: Some("b.rs".to_string()),
+            body: "more code".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let agent_id = agent.id.clone();
+        let c1_id = content1.id.clone();
+        let c2_id = content2.id.clone();
+        graph.add_node(agent).unwrap();
+        graph.add_node(content1).unwrap();
+        graph.add_node(content2).unwrap();
+
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Reads,
+                agent_id.clone(),
+                c1_id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Modifies,
+                agent_id.clone(),
+                c2_id.clone(),
+            ))
+            .unwrap();
+
+        let tool = GraphQueryTool::new();
+
+        // Filter by Reads only - should see only content1
+        let out = tool
+            .execute(
+                json!({
+                    "mode": "neighbors",
+                    "node_id": agent_id.to_string(),
+                    "edge_types": ["reads"]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains(&c1_id.to_string()));
+        assert!(!out.content.contains(&c2_id.to_string()));
+
+        // Filter by specific edge types - should see only content2
+        let out = tool
+            .execute(
+                json!({
+                    "mode": "neighbors",
+                    "node_id": agent_id.to_string(),
+                    "edge_types": ["modifies"]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains(&c2_id.to_string()));
+        assert!(!out.content.contains(&c1_id.to_string()));
     }
 }

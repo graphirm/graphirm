@@ -131,7 +131,7 @@ Graphirm stores this as an Interaction node. Knowledge extraction captures entit
 
 ## Phase 3: Iterate (ongoing)
 
-Twelve dogfood runs completed 2026-03-20 (2 hung, 1 model-ID fail). Results in `docs/dogfood-findings.md`.
+Thirteen dogfood runs completed 2026-03-20 (2 hung, 1 model-ID fail). Results in `docs/dogfood-findings.md`.
 
 ### System prompt improvements discovered
 
@@ -149,6 +149,7 @@ Twelve dogfood runs completed 2026-03-20 (2 hung, 1 model-ID fail). Results in `
 | 10 (Qwen) | **Fail** | Model ID `openrouter/qwen/qwen3-coder-next` sent to API without prefix stripping. Cause: explicit `model` in curl. Instant 400 |
 | 11 (Qwen) | **Partial** | bfs-max-depth: agent bypassed GraphStore API, wrote raw SQL with private `pool` field. 2 compile errors. Fix: "Abstraction boundaries" prompt section |
 | 12 (Qwen) | **Pass (assist)** | Prompt fix worked. Agent modified graph crate `traverse()`, used public API, cargo_check passed, 20/20 tests passed. rig JSON error before graph test fix (2-line human assist) |
+| 13 (Qwen) | **Pass (assist)** | neighbors mode: 5 edits, 22 messages. Every destructive tool hung on `rg` stdin bug in impact provider. Context overflow (266k) before cargo_check. Human: rewrote execute_neighbors (borrow/format errors), fixed imports, found+fixed impact `rg` bug |
 
 ### Key insights
 
@@ -162,9 +163,11 @@ Twelve dogfood runs completed 2026-03-20 (2 hung, 1 model-ID fail). Results in `
 
 5. **Abstraction boundaries must be explicit** (runs 11–12): Without an explicit "use the public API" rule, the agent happily accessed `graph.pool` (private) and imported `rusqlite` (not a dependency). After adding an "Abstraction boundaries" section to the system prompt, the agent correctly modified `traverse()` in `graphirm-graph` to return depth info, then called the updated method from the tool. One prompt section eliminated an entire category of architectural mistakes.
 
-6. **`rig` JSON parse errors are a recurring failure mode** (runs 11–12): The `rig` Rust LLM library fails to deserialize certain OpenRouter responses (`data did not match any variant of untagged enum ApiResponse`). This kills sessions mid-work. Not a timeout — the response arrives but can't be parsed. Needs investigation: retry logic, or pinning a `rig` version that handles OpenRouter's response format.
+6. **Impact analysis `rg` hangs when stdin is a pipe** (run 13): `count_dependents()` in `GraphImpactProvider` ran `rg --files-with-matches <pattern>` without a path argument. When the server is spawned with stdin as a pipe (not TTY), `rg` reads from stdin instead of searching the current directory, blocking forever. Every destructive tool call in the session hung until the `rg` process was manually killed. Fix: add `"."` as explicit path arg + `.stdin(Stdio::null())`. This was a latent bug in Phase 22 that only manifested when the server's stdin was a pipe (e.g. spawned from Cursor's shell tool or a script).
 
-7. **LLM timeout is critical infrastructure** (runs 8–9): `timeout_seconds = 300` was in the config but never wired to code. The LLM call in `workflow.rs` used `tokio::select!` with only a cancellation token — no time-based arm. When OpenRouter/Qwen hung during tool-call generation, the session stayed "running" forever. Fix: added `tokio::time::sleep(llm_timeout)` as a third `select!` arm; session transitions to `"error"` on timeout. Also discovered the agent successfully wrote code to `grep.rs` before hanging — partial work was silently lost.
+7. **`rig` JSON parse errors are a recurring failure mode** (runs 11–12): The `rig` Rust LLM library fails to deserialize certain OpenRouter responses (`data did not match any variant of untagged enum ApiResponse`). This kills sessions mid-work. Not a timeout — the response arrives but can't be parsed. Needs investigation: retry logic, or pinning a `rig` version that handles OpenRouter's response format.
+
+8. **LLM timeout is critical infrastructure** (runs 8–9): `timeout_seconds = 300` was in the config but never wired to code. The LLM call in `workflow.rs` used `tokio::select!` with only a cancellation token — no time-based arm. When OpenRouter/Qwen hung during tool-call generation, the session stayed "running" forever. Fix: added `tokio::time::sleep(llm_timeout)` as a third `select!` arm; session transitions to `"error"` on timeout. Also discovered the agent successfully wrote code to `grep.rs` before hanging — partial work was silently lost.
 
 ### Identified system prompt fixes needed
 
