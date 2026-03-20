@@ -10,7 +10,7 @@ index via `instant-distance` for knowledge node similarity search.
 
 | File | What |
 |------|------|
-| `store.rs` | `GraphStore` — connection pool, node/edge CRUD, session management, PageRank, BFS, `list_nodes_by_type`, `search_knowledge` |
+| `store.rs` | `GraphStore` — connection pool, node/edge CRUD, session management, PageRank, BFS, `list_nodes_by_type`, `search_knowledge`, `get_session_chain` |
 | `nodes.rs` | `GraphNode`, `NodeType` (5 variants), `NodeId` newtype |
 | `edges.rs` | `GraphEdge`, `EdgeType` (15 variants), `EdgeId` newtype |
 | `query.rs` | Subgraph extraction, traversal helpers |

@@ -162,26 +162,10 @@ Done 2026-03-20. Two-tier briefing: (1) compact summary auto-injected into every
 Plan: `docs/plans/2026-03-20-repo-briefing.md`
 Design: `docs/plans/2026-03-20-repo-briefing-design.md`
 
-### Session Flow Traces (Queryable Agent Decision History) — P2 · M
-
-A `session_trace` tool that queries the agent's own past decision flows — not "how does
-LoginFlow work in the code" but "how did I debug the auth bug last time?" Returns ranked
-sequences of past `Interaction → tool call → Content` chains, giving the agent a template for
-approaching similar problems.
-
-This is institutional memory for the agent's reasoning, not just facts. No other system has a
-queryable history of agent decision sequences because no other system stores them as a
-traversable graph.
-
-**Key files:**
-- `crates/tools/src/session_trace.rs` — new non-destructive tool querying `Interaction` chains
-- `crates/tools/src/lib.rs` — register `session_trace`
-- `crates/graph/src/store.rs` — `get_session_chain(session_id)` helper
-- `src/main.rs` — add to `build_tool_registry()`
-
-**Useful Nodestradamus tools:**
-- `semantic_analysis mode=search query="how are interaction nodes linked in the graph"` — find traversal patterns
-- `find_similar file_path=crates/tools/src/graph_query.rs` — reuse query structure
+### ✅ Session Flow Traces (Queryable Agent Decision History) — P2 · M
+Done 2026-03-20. `session_trace` non-destructive tool: `search` (Knowledge-anchored semantic via `KnowledgeRetriever`, keyword fallback with note when no embeddings) groups by `session_id` and prints interaction traces; `replay` full chronological chain for one session; `detail` compact/full; `get_session_chain` in GraphStore. 16+ unit tests in tools, 2 in graph.
+Plan: `docs/plans/2026-03-20-session-trace.md`
+Design: `docs/plans/2026-03-20-session-trace-design.md`
 
 ### Any-Repo Instant Analysis (Zero-Config, Incremental, Persistent) — P2 · L
 

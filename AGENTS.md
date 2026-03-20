@@ -141,6 +141,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 22 | Graph-aware tool execution — `ImpactProvider` trait, tree-sitter bash path extraction, `GraphImpactProvider` (rg + Knowledge notes), risk scoring, pre-edit hook in workflow, per-turn cache | ✅ done |
 | 23 | `graph_diff` tool — session-aware blast radius: `git`/`paths` → dependents (rg) + stale Knowledge + risk scoring | ✅ done |
 | 24 | Repo briefing on session start — compact auto-injected summary (language breakdown, top files, recent knowledge) + on-demand `repo_briefing` tool (files/knowledge/git sections) | ✅ done |
+| 25 | Session flow traces — `session_trace` tool: `search` mode (Knowledge-anchored semantic or keyword fallback → ranked interaction traces per session) + `replay` mode (full chronological chain); `get_session_chain` in GraphStore; `compact`/`full` detail | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -264,6 +265,11 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `Arc<RwLock<StableGraph>>` — no deadlocks; acquire briefly, never across await
 - Rust version must match spoke/CI (stable, currently 1.88)
 - `OnnxExtractor` is cached process-wide via `get_or_init_onnx_extractor(model_dir)` — call this instead of `OnnxExtractor::new` directly; sessions load once per unique directory
+
+**Session flow traces (Phase 25):**
+- `crates/tools/src/session_trace.rs` — `SessionTraceTool`: `search` (groups `KnowledgeRetriever` / `search_knowledge` results by `session_id`, loads `get_session_chain`, formats turns with tool metadata) and `replay` (full chain for one session); keyword fallback + note when no embedding provider
+- `crates/graph/src/store.rs` — `get_session_chain(session_id)` — interactions with matching `metadata.session_id`, `ORDER BY created_at ASC, id ASC`
+- Registered in `build_tool_registry()` in `src/main.rs`
 
 **Graph-diff tool (Phase 23):**
 - `graph_diff` non-destructive tool in `crates/tools/src/graph_diff.rs` — two modes: `git` (resolve changed files via `git diff --name-only`) and `paths` (explicit file list)
