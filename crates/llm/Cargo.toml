@@ -8,7 +8,7 @@ authors.workspace = true
 description = "LLM provider abstraction layer for Graphirm"
 
 [dependencies]
-rig-core = "0.31"
+rig-core = "0.33"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"

@@ -218,7 +218,7 @@ This also dogfoods the planning layer's cross-session linking.
 - ~~Add "test the error path" heuristic to system prompt~~ ✅ Done — "Testing discipline" section added
 - ~~Fix LLM timeout bug~~ ✅ Done — `timeout_seconds` wired to `tokio::select!` in workflow.rs (runs 8–9 exposed)
 - ~~Add "Abstraction boundaries" to system prompt~~ ✅ Done — run 12 validated (agent used public API)
-- Investigate `rig` JSON parse errors on OpenRouter responses — recurring session killer (runs 11–12)
+- ~~Investigate `rig` JSON parse errors on OpenRouter responses~~ ✅ Done — root cause: `rig-core` 0.31 can't deserialize empty tool arguments (`"arguments": ""`). Fixed in rig #1437 (Feb 25). Upgraded to `rig-core` 0.33.0 (Mar 17). Zero breaking changes, all 75 LLM tests pass
 - Implement Phase 1.5 (lesson/convention entity types in briefing)
 - Tune polling intervals
 - Add support for multi-turn conversations
