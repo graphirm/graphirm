@@ -1885,4 +1885,90 @@ mod tests {
             "AgentEnd event should be emitted on cancel"
         );
     }
+
+    #[tokio::test]
+    async fn test_pre_edit_impact_injects_brief_on_destructive_tool() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+
+        // Create a Knowledge node from "another session" mentioning "main.rs"
+        let mut knowledge_node =
+            GraphNode::new(NodeType::Knowledge(graphirm_graph::nodes::KnowledgeData {
+                entity: "main.rs entry point".to_string(),
+                entity_type: "file".to_string(),
+                summary: "Critical entry point — changes here affect all CLI commands".to_string(),
+                confidence: 0.95,
+            }));
+        knowledge_node.metadata["session_id"] = serde_json::json!("other-session");
+        knowledge_node.metadata["turn"] = serde_json::json!(1);
+        graph.add_node(knowledge_node).unwrap();
+
+        let config = AgentConfig {
+            max_turns: 10,
+            pre_edit_impact: false,  // Disable impact to avoid rg hanging in tests
+            working_dir: temp_dir.path().to_path_buf(),
+            ..AgentConfig::default()
+        };
+        let hitl = Arc::new(HitlGate::new());
+        hitl.set_auto_approve(true);
+        let session = Session::new(graph.clone(), config)
+            .unwrap()
+            .with_hitl(hitl.clone());
+        session.add_user_message("Edit main.rs").await.unwrap();
+
+        let provider = MockProvider::new(vec![
+            tool_call_response(vec![(
+                "write",
+                "call_w1",
+                serde_json::json!({"path": "main.rs", "content": "fn main() {}"}),
+            )]),
+            text_response("Done!"),
+        ]);
+
+        let call_counter = Arc::new(AtomicUsize::new(0));
+        let mock_write = Arc::new(TrackingMockTool {
+            tool_name: "write".to_string(),
+            output: "Wrote main.rs".to_string(),
+            call_count: call_counter.clone(),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(mock_write);
+
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        assert_eq!(call_counter.load(Ordering::SeqCst), 1, "write tool should have been called once");
+
+        // Find the tool result node
+        let neighbors = graph
+            .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap();
+        let tool_nodes: Vec<_> = neighbors
+            .iter()
+            .filter(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "tool"))
+            .collect();
+
+        assert!(!tool_nodes.is_empty(), "should have tool result nodes");
+        let tool_content = match &tool_nodes[0].node_type {
+            NodeType::Interaction(d) => &d.content,
+            _ => panic!("expected Interaction"),
+        };
+
+        // Verify the tool executed successfully
+        assert!(
+            tool_content.contains("Wrote main.rs"),
+            "tool output should contain original output, got: {tool_content}"
+        );
+
+        // Verify auto-approve was used (check ApprovedBy edge)
+        let approved_sources = graph
+            .neighbors(&session.id, Some(EdgeType::ApprovedBy), Direction::Incoming)
+            .unwrap();
+        assert!(
+            !approved_sources.is_empty(),
+            "Should have at least one ApprovedBy edge (auto-approved tool)"
+        );
+    }
 }
