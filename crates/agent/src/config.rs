@@ -151,6 +151,9 @@ pub struct AgentConfig {
     /// (dependent files, prior Knowledge notes, risk score) before execution.
     #[serde(default = "default_pre_edit_impact")]
     pub pre_edit_impact: bool,
+    /// When true, inject a compact repo briefing into the system prompt at session start.
+    #[serde(default = "default_repo_briefing")]
+    pub repo_briefing: bool,
 }
 
 fn default_working_dir() -> PathBuf {
@@ -166,6 +169,10 @@ fn default_soft_escalation_threshold() -> usize {
 }
 
 fn default_pre_edit_impact() -> bool {
+    true
+}
+
+fn default_repo_briefing() -> bool {
     true
 }
 
@@ -223,6 +230,7 @@ impl Default for AgentConfig {
             workspace_name: None,
             workspace_dir: None,
             pre_edit_impact: true,
+            repo_briefing: true,
         }
     }
 }
@@ -278,6 +286,8 @@ struct AgentConfigSection {
     workspace_name: Option<String>,
     #[serde(default = "default_pre_edit_impact")]
     pre_edit_impact: bool,
+    #[serde(default = "default_repo_briefing")]
+    repo_briefing: bool,
 }
 
 fn default_system_prompt() -> String {
@@ -317,6 +327,7 @@ impl AgentConfig {
             workspace_name: file.agent.workspace_name,
             workspace_dir: None,
             pre_edit_impact: file.agent.pre_edit_impact,
+            repo_briefing: file.agent.repo_briefing,
         })
     }
 
@@ -629,5 +640,25 @@ segment_filter = ["reasoning", "code"]
         "#;
         let config = AgentConfig::from_toml(toml).unwrap();
         assert!(!config.pre_edit_impact);
+    }
+
+    #[test]
+    fn repo_briefing_defaults_to_true() {
+        let config = AgentConfig::default();
+        assert!(config.repo_briefing);
+    }
+
+    #[test]
+    fn repo_briefing_can_be_disabled() {
+        let toml = r#"
+            [agent]
+            name = "test"
+            model = "test"
+            system_prompt = "test"
+            max_turns = 5
+            repo_briefing = false
+        "#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        assert!(!config.repo_briefing);
     }
 }
