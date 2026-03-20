@@ -138,7 +138,8 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 19 | Subagent workspace isolation + multi-file tools — `parent_working_dir` in `spawn_subagent`, subagents get `<workspace>/subagents/<name>-<id>/`; `diff` (file + git) and `read_many` (up to 20 files) tools, non-destructive | ✅ done |
 | 20 | Graph node search / filter — keyword + type filter pills in Toolbar; `applyFilterToNodes` stamps `hidden` on React Flow nodes; group nodes hidden when all children match; `matchCount` counter; Ctrl+F shortcut | ✅ done |
 | 21 | Session export — `GET /api/sessions/:id/export?format=markdown`; `render_session_markdown` in `crates/server/src/export.rs`; "↓ Export" button in SessionBar | ✅ done |
-|| 22 | Graph-aware tool execution — `ImpactProvider` trait, tree-sitter bash path extraction, `GraphImpactProvider` (rg + Knowledge notes), risk scoring, pre-edit hook in workflow, per-turn cache | ✅ done |
+| 22 | Graph-aware tool execution — `ImpactProvider` trait, tree-sitter bash path extraction, `GraphImpactProvider` (rg + Knowledge notes), risk scoring, pre-edit hook in workflow, per-turn cache | ✅ done |
+| 23 | `graph_diff` tool — session-aware blast radius: `git`/`paths` → dependents (rg) + stale Knowledge + risk scoring | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -254,3 +255,10 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `Arc<RwLock<StableGraph>>` — no deadlocks; acquire briefly, never across await
 - Rust version must match spoke/CI (stable, currently 1.88)
 - `OnnxExtractor` is cached process-wide via `get_or_init_onnx_extractor(model_dir)` — call this instead of `OnnxExtractor::new` directly; sessions load once per unique directory
+
+**Graph-diff tool (Phase 23):**
+- `graph_diff` non-destructive tool in `crates/tools/src/graph_diff.rs` — two modes: `git` (resolve changed files via `git diff --name-only`) and `paths` (explicit file list)
+- For each changed file: lists up to 20 dependent files via `rg --files-with-matches --fixed-strings`, queries `GraphStore.search_knowledge()` for cross-session Knowledge notes, computes risk via `compute_risk`
+- Output: structured Markdown with `##`/`###` headers, dependents list, stale knowledge ⚠ warnings ("may be invalidated"), per-file risk level (Low/Medium/High)
+- Registered in `build_tool_registry()` alongside other non-destructive tools
+- 12 tests (validation, dependents via rg, cross-session knowledge, git integration)

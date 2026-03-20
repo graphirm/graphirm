@@ -152,28 +152,10 @@ Done 2026-03-20. Before destructive tool calls (`write`, `edit`, `bash`), the ag
 Plan: `docs/plans/2026-03-20-graph-aware-tool-execution.md`
 Design: `docs/plans/2026-03-20-graph-aware-tool-execution-design.md`
 
-### Graph-Diff Tool (Session-Aware Blast Radius) — P1 · S
-
-A `graph_diff` tool: given a git diff or set of changed file paths, return which dependency
-graph edges are invalidated, the downstream blast radius, and — uniquely — which Knowledge nodes
-from prior sessions reference the changed files.
-
-"You changed `auth/tokens.py`. 14 files depend on it. Also: in session 3 you noted this module
-has a subtle race condition on token refresh — that note is now stale."
-
-The session memory dimension is what differentiates this. No other tool can surface "your prior
-knowledge about this code may be invalidated" because no other tool has a queryable knowledge
-graph of what the agent learned.
-
-**Key files:**
-- `crates/tools/src/graph_diff.rs` — new non-destructive tool
-- `crates/tools/src/lib.rs` — register `graph_diff`
-- `src/main.rs` — add to `build_tool_registry()`
-- `graphirm-eval/src/tasks/` — eval task for `graph_diff`
-
-**Useful Nodestradamus tools:**
-- `analyze_cooccurrence` — which files change together in git history (informs edge invalidation logic)
-- `get_impact file_path=crates/tools/src/lib.rs` — confirm registering a new tool is safe
+### ✅ Graph-Diff Tool (Session-Aware Blast Radius) — P1 · S
+Done 2026-03-20. `graph_diff` non-destructive tool: `git` mode (resolves changed files via `git diff --name-only`) or `paths` mode (explicit list) → per-file dependent listing (rg `--files-with-matches --fixed-strings`, capped at 20), cross-session Knowledge query with stale ⚠ warnings, risk scoring (Low/Medium/High). Reuses `compute_risk` from Phase 22. 12 unit+integration tests.
+Plan: `docs/plans/2026-03-20-graph-diff-tool.md`
+Design: `docs/plans/2026-03-20-graph-diff-tool-design.md`
 
 ### Repo Briefing on Session Start (Structural + Memory Onboarding) — P1 · M
 
