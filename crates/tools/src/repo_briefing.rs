@@ -125,16 +125,73 @@ async fn build_files_section(root: &std::path::Path) -> String {
     format!("## Files ({} total)\nTop directories:\n{}", total, top_dirs)
 }
 
-// ── Knowledge section (stub for Task 7) ──────────────────────────────────────
+// ── Knowledge section ─────────────────────────────────────────────────────────
 
-fn build_knowledge_section(_store: &GraphStore) -> String {
-    "**Knowledge:** (coming in Task 7)".to_string()
+fn build_knowledge_section(store: &GraphStore) -> String {
+    let nodes = store
+        .search_knowledge("", None, None, 10)
+        .unwrap_or_default();
+    if nodes.is_empty() {
+        return "## Knowledge\n(no knowledge nodes in graph)".to_string();
+    }
+    let mut lines = vec!["## Knowledge (recent 10)".to_string()];
+    for node in &nodes {
+        if let graphirm_graph::NodeType::Knowledge(ref kd) = node.node_type {
+            let summary = if kd.summary.is_empty() {
+                String::new()
+            } else {
+                let s = kd.summary.as_str();
+                if s.chars().count() > 100 {
+                    let truncated: String = s.chars().take(100).collect();
+                    format!(": {truncated}…")
+                } else {
+                    format!(": {s}")
+                }
+            };
+            lines.push(format!("• {} [{}]{}", kd.entity, kd.entity_type, summary));
+        }
+    }
+    lines.join("\n")
 }
 
-// ── Git section (stub for Task 7) ────────────────────────────────────────────
+// ── Git section ───────────────────────────────────────────────────────────────
 
-async fn build_git_section(_root: &std::path::Path) -> String {
-    "**Git:** (coming in Task 7)".to_string()
+async fn build_git_section(root: &std::path::Path) -> String {
+    let root_arg = root.to_str().unwrap_or(".");
+
+    let log_lines = match Command::new("git")
+        .args(["-C", root_arg, "log", "--oneline", "-10"])
+        .output()
+        .await
+    {
+        Ok(out) if out.status.success() && !out.stdout.is_empty() => {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|l| format!("  {l}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        _ => "(git not available or no commits)".to_string(),
+    };
+
+    let changed = match Command::new("git")
+        .args(["-C", root_arg, "diff", "--name-only", "HEAD"])
+        .output()
+        .await
+    {
+        Ok(out) if out.status.success() => {
+            let text = String::from_utf8_lossy(&out.stdout).into_owned();
+            let count = text.lines().filter(|l| !l.is_empty()).count();
+            if count == 0 {
+                "(none)".to_string()
+            } else {
+                format!("{count} file(s) changed")
+            }
+        }
+        _ => "(none)".to_string(),
+    };
+
+    format!("## Git (last 10 commits)\n{log_lines}\n\nUnstaged changes: {changed}")
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -174,5 +231,48 @@ mod tests {
             .expect("should not error");
         // Either "Files:" header or fallback message — just verify it's non-empty text
         assert!(!result.content.is_empty());
+    }
+
+    fn workspace_repo_root() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("graphirm-tools crate should live in workspace at crates/tools")
+            .to_path_buf()
+    }
+
+    #[tokio::test]
+    async fn execute_knowledge_section_empty_store() {
+        let ctx = make_test_context();
+        let tool = RepoBriefingTool::new();
+        let result = tool
+            .execute(serde_json::json!({"section": "knowledge"}), &ctx)
+            .await
+            .expect("ok");
+        assert!(result.content.contains("no knowledge nodes"));
+    }
+
+    #[tokio::test]
+    async fn execute_git_section_returns_string() {
+        let mut ctx = make_test_context();
+        ctx.working_dir = workspace_repo_root();
+        let tool = RepoBriefingTool::new();
+        let result = tool
+            .execute(serde_json::json!({"section": "git"}), &ctx)
+            .await
+            .expect("ok");
+        assert!(result.content.contains("Git"));
+    }
+
+    #[tokio::test]
+    async fn execute_all_sections_combines_output() {
+        let mut ctx = make_test_context();
+        ctx.working_dir = workspace_repo_root();
+        let tool = RepoBriefingTool::new();
+        let result = tool
+            .execute(serde_json::json!({"section": "all"}), &ctx)
+            .await
+            .expect("ok");
+        assert!(result.content.contains("Files") || result.content.contains("Git"));
     }
 }
