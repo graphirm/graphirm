@@ -27,7 +27,7 @@ impl Tool for GraphQueryTool {
     }
 
     fn description(&self) -> &str {
-        "Query the session graph in six modes:
+        "Query the session graph in seven modes:
 
 • bfs — BFS traversal from a start node following outgoing edges.
   To get a start node_id, call list_type first or use an ID returned by a previous tool call.
@@ -52,7 +52,10 @@ impl Tool for GraphQueryTool {
   - link_session: Link the current session to a planning node
   - update: Update a planning node's status
 
-The tool is read-only for bfs/list_type/search/semantic/neighbors modes; project mode may write to the graph."
+• stats — Report overall graph statistics: total nodes, total edges, and breakdown by node type.
+  No additional parameters are required.
+
+The tool is read-only for bfs/list_type/search/semantic/neighbors/stats modes; project mode may write to the graph."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -61,7 +64,7 @@ The tool is read-only for bfs/list_type/search/semantic/neighbors modes; project
             "properties": {
                 "mode": {
                     "type": "string",
-                    "enum": ["bfs", "list_type", "search", "semantic", "neighbors", "project"],
+                    "enum": ["bfs", "list_type", "search", "semantic", "neighbors", "project", "stats"],
                     "description": "Which query mode to run"
                 },
                 "node_id": {
@@ -168,8 +171,9 @@ The tool is read-only for bfs/list_type/search/semantic/neighbors modes; project
             "semantic" => execute_semantic(&args, ctx).await,
             "neighbors" => execute_neighbors(&args, ctx).await,
             "project" => execute_project(&args, ctx).await,
+            "stats" => execute_stats(ctx).await,
             other => Err(ToolError::InvalidArguments(format!(
-                "unknown mode '{other}'; must be one of: bfs, list_type, search, semantic, neighbors, project"
+                "unknown mode '{other}'; must be one of: bfs, list_type, search, semantic, neighbors, project, stats"
             ))),
         }
     }
@@ -825,6 +829,36 @@ async fn execute_project(
             "unknown action '{other}'; must be one of: create, list, link_session, update"
         ))),
     }
+}
+
+async fn execute_stats(ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+    let graph = ctx.graph.clone();
+
+    let (total_nodes, total_edges, counts_by_type) = tokio::task::spawn_blocking(move || {
+        let total_nodes = graph.node_count_db().map_err(|e| {
+            ToolError::ExecutionFailed(format!("Failed to get node count: {}", e))
+        })?;
+        let total_edges = graph.edge_count_db().map_err(|e| {
+            ToolError::ExecutionFailed(format!("Failed to get edge count: {}", e))
+        })?;
+        let counts_by_type = graph.node_counts_by_type().map_err(|e| {
+            ToolError::ExecutionFailed(format!("Failed to get node counts by type: {}", e))
+        })?;
+        Ok::<_, ToolError>((total_nodes, total_edges, counts_by_type))
+    })
+    .await
+    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))??;
+
+    let mut lines = Vec::new();
+    lines.push("Graph statistics:".to_string());
+    lines.push(format!("  Total nodes: {}", total_nodes));
+    lines.push(format!("  Total edges: {}", total_edges));
+    lines.push("  Breakdown by type:".to_string());
+    for (node_type, count) in counts_by_type {
+        lines.push(format!("    {}: {}", node_type, count));
+    }
+
+    Ok(ToolOutput::success(lines.join("\n")))
 }
 
 fn compact_node_summary(node: &GraphNode) -> String {
@@ -1931,5 +1965,84 @@ mod tests {
         assert!(!out.is_error);
         assert!(out.content.contains(&c2_id.to_string()));
         assert!(!out.content.contains(&c1_id.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_stats_basic() {
+        let ctx = make_test_context();
+        let tool = GraphQueryTool::new();
+
+        let result = tool
+            .execute(json!({"mode": "stats"}), &ctx)
+            .await;
+
+        assert!(result.is_ok(), "stats should return Ok, got: {result:?}");
+        let out = result.unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains("Graph statistics"));
+        assert!(out.content.contains("Total nodes"));
+        assert!(out.content.contains("Total edges"));
+        assert!(out.content.contains("Breakdown by type"));
+    }
+
+    #[tokio::test]
+    async fn test_stats_counts_match_nodes_added() {
+        let ctx = make_test_context();
+        let graph = &ctx.graph;
+
+        // The test context already has 2 nodes (agent and interaction)
+        // Add 3 more nodes of different types
+        let agent = GraphNode::new(NodeType::Agent(graphirm_graph::nodes::AgentData {
+            name: "test_agent".to_string(),
+            model: "claude".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let content = GraphNode::new(NodeType::Content(graphirm_graph::nodes::ContentData {
+            content_type: "file".to_string(),
+            path: Some("test.rs".to_string()),
+            body: "code".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let interaction = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "hello".to_string(),
+            token_count: None,
+        }));
+
+        let agent_id = agent.id.clone();
+        let content_id = content.id.clone();
+        let _interaction_id = interaction.id.clone();
+
+        graph.add_node(agent).unwrap();
+        graph.add_node(content).unwrap();
+        graph.add_node(interaction).unwrap();
+
+        // Add an edge between them
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Reads,
+                agent_id.clone(),
+                content_id.clone(),
+            ))
+            .unwrap();
+
+        let tool = GraphQueryTool::new();
+        let result = tool
+            .execute(json!({"mode": "stats"}), &ctx)
+            .await;
+
+        assert!(result.is_ok(), "stats should return Ok, got: {result:?}");
+        let out = result.unwrap();
+        assert!(!out.is_error);
+
+        // Should have 5 nodes total (2 from test context + 3 added)
+        assert!(out.content.contains("Total nodes: 5"));
+        // Should have 1 edge
+        assert!(out.content.contains("Total edges: 1"));
+        // Should list the node types
+        assert!(out.content.contains("agent"));
+        assert!(out.content.contains("content"));
+        assert!(out.content.contains("interaction"));
     }
 }

@@ -131,7 +131,7 @@ Graphirm stores this as an Interaction node. Knowledge extraction captures entit
 
 ## Phase 3: Iterate (ongoing)
 
-Thirteen dogfood runs completed 2026-03-20 (2 hung, 1 model-ID fail). Results in `docs/dogfood-findings.md`.
+Fourteen dogfood runs completed 2026-03-20 (2 hung, 1 model-ID fail). Results in `docs/dogfood-findings.md`.
 
 ### System prompt improvements discovered
 
@@ -150,6 +150,7 @@ Thirteen dogfood runs completed 2026-03-20 (2 hung, 1 model-ID fail). Results in
 | 11 (Qwen) | **Partial** | bfs-max-depth: agent bypassed GraphStore API, wrote raw SQL with private `pool` field. 2 compile errors. Fix: "Abstraction boundaries" prompt section |
 | 12 (Qwen) | **Pass (assist)** | Prompt fix worked. Agent modified graph crate `traverse()`, used public API, cargo_check passed, 20/20 tests passed. rig JSON error before graph test fix (2-line human assist) |
 | 13 (Qwen) | **Pass (assist)** | neighbors mode: 5 edits, 22 messages. Every destructive tool hung on `rg` stdin bug in impact provider. Context overflow (266k) before cargo_check. Human: rewrote execute_neighbors (borrow/format errors), fixed imports, found+fixed impact `rg` bug |
+| 14 (Qwen) | **Near-pass** | stats mode: 6 edits, 40 messages, ~3 min. rg fix confirmed — no hangs. Ran cargo_check (pass!), tests (fail → self-diagnosed → fixed). Context overflow on final turn. Human: 2 clippy nits only. Best run yet — 95% agent |
 
 ### Key insights
 
