@@ -78,7 +78,7 @@ pub async fn find_top_files(root: &Path, top_n: usize) -> Vec<(String, usize)> {
     }
 
     // 2. Count mentions for each stem (in parallel, capped)
-    let stems_to_check: Vec<String> = stems.into_iter().take(500).collect();
+    let stems_to_check: Vec<String> = stems.into_iter().take(200).collect();
     let mut results: Vec<(String, usize)> = Vec::new();
 
     for stem in stems_to_check {
@@ -210,6 +210,60 @@ pub fn build_knowledge_summary(store: &GraphStore, limit: usize) -> Option<Strin
     }
 }
 
+// ── Assembly ───────────────────────────────────────────────────────────────────
+
+/// Build the compact repo briefing injected into the system prompt at session start.
+///
+/// Returns a non-empty `String` if any data was gathered, or `None` if everything
+/// was empty (e.g. a brand-new repo with no files and no knowledge nodes).
+pub async fn build_repo_briefing(root: &Path, store: &GraphStore) -> Option<String> {
+    // 1. Language breakdown
+    let ext_map = count_files_by_extension(root, 50_000).await;
+    let lang_line = if ext_map.is_empty() {
+        String::new()
+    } else {
+        format!("**Languages:** {}", format_language_breakdown(&ext_map, 6))
+    };
+
+    // 2. Top files (cap at 200 stems to keep startup fast)
+    // We limit stems checked to 200 but show top 8
+    let top_files = find_top_files(root, 8).await;
+    let files_line = if top_files.is_empty() {
+        String::new()
+    } else {
+        let items: Vec<String> = top_files
+            .iter()
+            .map(|(name, count)| format!("{} ({})", name, count))
+            .collect();
+        format!("**Hot files:** {}", items.join(", "))
+    };
+
+    // 3. Knowledge summary (last 5 nodes)
+    let knowledge_section =
+        build_knowledge_summary(store, 5).map(|s| format!("**Recent knowledge:**\n{}", s));
+
+    // Assemble
+    let mut parts: Vec<String> = Vec::new();
+    if !lang_line.is_empty() {
+        parts.push(lang_line);
+    }
+    if !files_line.is_empty() {
+        parts.push(files_line);
+    }
+    if let Some(ks) = knowledge_section {
+        parts.push(ks);
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "\n\n---\n## Repo Briefing\n{}\n---",
+        parts.join("\n")
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +333,13 @@ mod tests {
         assert!(result.contains("workflow.rs"));
         assert!(result.contains("Main agent loop"));
         assert!(result.starts_with("• "));
+    }
+
+    #[tokio::test]
+    async fn build_repo_briefing_returns_none_for_empty_dir() {
+        let dir = tempfile::tempdir().expect("tmp dir");
+        let store = GraphStore::open_memory().expect("in-memory store");
+        let result = build_repo_briefing(dir.path(), &store).await;
+        assert!(result.is_none());
     }
 }

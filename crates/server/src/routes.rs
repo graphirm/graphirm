@@ -193,6 +193,15 @@ async fn create_session(
         config.system_prompt.push_str(&ws_context);
     }
 
+    // Inject compact repo briefing when enabled
+    if config.repo_briefing
+        && let Some(briefing) =
+            graphirm_agent::briefing::build_repo_briefing(&config.working_dir, state.graph.as_ref())
+                .await
+    {
+        config.system_prompt.push_str(&briefing);
+    }
+
     let hitl = Arc::new(HitlGate::new());
     let graph_for_session = state.graph.clone();
     let config_clone = config.clone();
