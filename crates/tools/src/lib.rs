@@ -46,6 +46,9 @@ pub struct ToolContext {
     /// Optional semantic retriever — present when the session has an active
     /// HNSW index and embedding provider. Used by `graph_query` semantic mode.
     pub knowledge_retriever: Option<Arc<dyn crate::retriever::KnowledgeRetriever>>,
+    /// Optional impact provider — present when `pre_edit_impact` is enabled.
+    /// Used by the pre-execution hook in `workflow.rs` to generate impact briefs.
+    pub impact_provider: Option<Arc<dyn crate::impact::ImpactProvider>>,
 }
 
 impl ToolContext {
@@ -196,6 +199,7 @@ pub(crate) mod tests {
             turn: 1,
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
             knowledge_retriever: None,
+            impact_provider: None,
         }
     }
 
