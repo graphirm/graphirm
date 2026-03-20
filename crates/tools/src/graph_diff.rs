@@ -173,6 +173,57 @@ fn resolve_explicit_paths(args: &serde_json::Value) -> Result<Vec<PathBuf>, Tool
     Ok(paths)
 }
 
+/// Find files that reference the given file's stem via ripgrep.
+/// Returns up to `limit` file paths, excluding the file itself.
+#[allow(dead_code)]
+async fn find_dependents(
+    path: &std::path::Path,
+    working_dir: &std::path::Path,
+    limit: usize,
+) -> Vec<PathBuf> {
+    let file_stem = match path.file_stem() {
+        Some(s) => s.to_string_lossy().to_string(),
+        None => return vec![],
+    };
+
+    let output = match Command::new("rg")
+        .args([
+            "--files-with-matches",
+            "--no-messages",
+            "--glob",
+            "!.git",
+            "--glob",
+            "!target",
+            "--glob",
+            "!node_modules",
+            &file_stem,
+            ".",
+        ])
+        .current_dir(working_dir)
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(_) => return vec![],
+    };
+
+    if !output.status.success() {
+        return vec![];
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let path_str = path.to_string_lossy();
+
+    stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.strip_prefix("./").unwrap_or(l))
+        .filter(|l| *l != path_str)
+        .take(limit)
+        .map(PathBuf::from)
+        .collect()
+}
+
 /// Placeholder — will be replaced in Task 5.
 async fn analyze_changed_files(
     changed_files: &[PathBuf],
@@ -225,5 +276,35 @@ mod tests {
         let ctx = make_test_context();
         let result = tool.execute(json!({"mode": "paths"}), &ctx).await;
         assert!(matches!(result, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn find_dependents_returns_file_names() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // Create files that reference each other
+        std::fs::write(dir.path().join("lib.rs"), "pub mod utils;").unwrap();
+        std::fs::write(dir.path().join("utils.rs"), "use crate::lib;").unwrap();
+        std::fs::write(dir.path().join("main.rs"), "mod lib;").unwrap();
+
+        let result = find_dependents(&PathBuf::from("lib.rs"), dir.path(), 20).await;
+
+        // rg should find utils.rs and main.rs referencing "lib"
+        assert!(
+            result.len() >= 1,
+            "should find at least one dependent: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_dependents_excludes_self() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("store.rs"), "fn store() {}").unwrap();
+
+        let result = find_dependents(&PathBuf::from("store.rs"), dir.path(), 20).await;
+
+        // store.rs should not list itself
+        for dep in &result {
+            assert_ne!(dep.file_name().unwrap().to_str().unwrap(), "store.rs");
+        }
     }
 }
