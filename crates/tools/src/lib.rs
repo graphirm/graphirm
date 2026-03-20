@@ -6,6 +6,7 @@ pub mod error;
 pub mod executor;
 pub mod find;
 pub mod graph_query;
+pub mod graph_diff;
 pub mod grep;
 pub mod impact;
 pub mod ls;
@@ -26,12 +27,12 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 pub use error::{ToolError, ToolResult};
-pub use retriever::{KnowledgeResult, KnowledgeRetriever};
 use graphirm_graph::GraphStore;
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::error::GraphError;
 use graphirm_graph::nodes::{GraphNode, NodeId};
 pub use registry::ToolRegistry;
+pub use retriever::{KnowledgeResult, KnowledgeRetriever};
 
 /// Context passed to every tool execution.
 #[derive(Clone)]
