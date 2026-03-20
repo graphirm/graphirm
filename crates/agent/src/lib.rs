@@ -1,5 +1,6 @@
 pub mod compact;
 pub mod config;
+pub mod impact;
 pub mod workspace;
 pub mod context;
 pub mod coordinator;
