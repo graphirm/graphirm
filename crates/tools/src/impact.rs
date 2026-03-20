@@ -100,20 +100,18 @@ pub fn extract_target_paths(tool_name: &str, args: &serde_json::Value) -> Vec<Pa
 
     match tool_name {
         "write" | "edit" => {
-            if let Some(path_val) = args_obj.get("path") {
-                if let Some(path_str) = path_val.as_str() {
-                    return vec![PathBuf::from(path_str)];
-                }
+            if let Some(path_val) = args_obj.get("path")
+                && let Some(path_str) = path_val.as_str()
+            {
+                return vec![PathBuf::from(path_str)];
             }
             vec![]
         }
         "bash" => {
-            if let Some(cmd_val) = args_obj.get("command") {
-                if let Some(cmd_str) = cmd_val.as_str() {
-                    bash_paths::extract_paths(cmd_str)
-                } else {
-                    vec![]
-                }
+            if let Some(cmd_val) = args_obj.get("command")
+                && let Some(cmd_str) = cmd_val.as_str()
+            {
+                bash_paths::extract_paths(cmd_str)
             } else {
                 vec![]
             }
