@@ -129,9 +129,9 @@ Graphirm stores this as an Interaction node. Knowledge extraction captures entit
 5. Periodically: review findings, batch improvements to system prompt / tools / agent loop
 6. Graphirm can query its own past evaluations — self-aware improvement
 
-## Phase 3: Iterate ✅ (initial round complete)
+## Phase 3: Iterate (ongoing)
 
-Four dogfood runs completed 2026-03-20. Results in `docs/dogfood-findings.md`.
+Five dogfood runs completed 2026-03-20. Results in `docs/dogfood-findings.md`.
 
 ### System prompt improvements discovered
 
@@ -141,14 +141,64 @@ Four dogfood runs completed 2026-03-20. Results in `docs/dogfood-findings.md`.
 | 2 (Qwen) | Read whole files → context overflow | Added grep-first instruction (agent ignored it) |
 | 3 (Qwen) | Same context overflow | Discovered: `read` tool already had `offset`/`limit` but system prompt didn't mention them |
 | 4 (Qwen) | **Pass** | Documented `offset`/`limit` in tool description + reinforced file reading discipline |
+| 5 (Qwen) | Dep version conflict + ownership errors in spawn_blocking | Need to document re-exports and add spawn_blocking pattern |
 
-### Key insight
+### Key insights
 
-The agent didn't need new tools — the `read` tool already supported `offset` and `limit`. The problem was purely a system prompt documentation gap. When the tool description mentioned these params and the file reading discipline section showed a concrete grep→read(offset,limit) workflow, the agent followed it perfectly.
+1. **Tool documentation gaps** (runs 1–4): The agent didn't need new tools — the `read` tool already supported `offset` and `limit`. The problem was purely a system prompt documentation gap. When the tool description mentioned these params and the file reading discipline section showed a concrete grep→read(offset,limit) workflow, the agent followed it perfectly.
+
+2. **Rust-specific pitfalls** (run 5): On a harder task (250+ lines of new code), the agent understood the domain model perfectly but failed on Rust mechanics: (a) added `petgraph = "0.6"` directly when `graphirm-graph` re-exports from 0.7, causing type mismatches; (b) moved `Arc<GraphStore>` into a closure then tried to use it in a second closure. These are systematic — the system prompt should document crate re-exports and show the `Arc::clone` pattern for spawn_blocking.
+
+### Identified system prompt fixes needed
+
+- Document that `graphirm-graph` re-exports `Direction`, `GraphEdge`, `GraphNode`, `NodeId`, `NodeType`, etc. — never add `petgraph` or `chrono` as direct deps to other crates
+- Add a spawn_blocking pattern example: `let graph = ctx.graph.clone(); let graph2 = graph.clone(); tokio::task::spawn_blocking(move || { graph.add_node(...) }); tokio::task::spawn_blocking(move || { graph2.add_edge(...) });`
+- Consider adding a "Crate dependency rules" section to the system prompt
+
+### System memory strategy (hybrid)
+
+**Problem:** Every dogfood failure adds a new section to the system prompt. The prompt
+grows linearly. Eventually the prompt itself causes context overflow.
+
+**Solution:** Hybrid approach using GLiNER2 + planning layer.
+
+1. **Keep system prompt minimal** — tool descriptions, absolute paths rule, project
+   conventions. Only invariants that apply to every session.
+2. **Store lessons as Knowledge nodes** — when Cursor sends evaluations, GLiNER2 extracts
+   entities. Use `entity_type: "lesson"` and `"convention"` (planning layer entity types).
+3. **Briefing injects relevant lessons** — at session start, `build_repo_briefing` queries
+   recent lesson/convention Knowledge nodes and injects the top-k into context under a
+   `## Lessons from past sessions` header.
+4. **Agent can self-query** — `graph_query project list entity_type=lesson` surfaces past
+   lessons on demand.
+
+**GLiNER2 is the extraction layer, the graph is the storage layer, the briefing is the
+retrieval layer.** No new pipelines needed — just routing conventions.
+
+See `docs/plans/2026-03-20-planning-layer-design.md` Phase 1.5 for implementation details.
+
+### Split-session test workflow
+
+**Problem:** Tests are always the casualty. The agent implements the feature, burns context
+fixing compile errors, then has nothing left for tests.
+
+**Solution:** Split into two sessions linked via the planning layer.
+
+1. **Implementation session** — implements the feature, calls `graph_query project
+   link_session` to declare what planning node it worked on.
+2. **Test session** — starts by querying `graph_query project list` to find what was
+   implemented, reads the code, writes tests. Fresh context budget.
+3. **Cross-session context** — the test session gets implementation context from the
+   graph (what was built, what changed), not from re-reading the whole conversation.
+
+This also dogfoods the planning layer's cross-session linking.
 
 ### Open items
 
+- Apply system prompt fixes from run 5 and re-test
+- Write unit tests for project mode (agent didn't get to this — use split session)
+- Implement Phase 1.5 (lesson/convention entity types in briefing)
+- Add `cargo_check` structured error tool (returns JSON, agent sees all errors at once)
 - Tune polling intervals
 - Add support for multi-turn conversations
 - Handle workspace ↔ repo sync (agent workspace vs `~/graphirm-repo/`)
-- Test on a real backlog item (not just struct field additions)

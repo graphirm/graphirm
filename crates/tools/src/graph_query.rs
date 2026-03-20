@@ -1,6 +1,7 @@
 use async_trait::async_trait;
-use graphirm_graph::edges::EdgeType;
-use graphirm_graph::nodes::{GraphNode, NodeId, NodeType};
+use graphirm_graph::edges::{EdgeType, GraphEdge};
+use graphirm_graph::nodes::{GraphNode, KnowledgeData, NodeId, NodeType};
+use graphirm_graph::Direction;
 use serde_json::json;
 
 use crate::{Tool, ToolContext, ToolError, ToolOutput};
@@ -26,7 +27,7 @@ impl Tool for GraphQueryTool {
     }
 
     fn description(&self) -> &str {
-        "Query the session graph in four modes:
+        "Query the session graph in five modes:
 
 • bfs — BFS traversal from a start node following outgoing edges.
   To get a start node_id, call list_type first or use an ID returned by a previous tool call.
@@ -42,7 +43,13 @@ impl Tool for GraphQueryTool {
   Returns results ranked by cosine similarity (highest first).
   Requires an embedding provider to be configured (e.g. DEEPSEEK_API_KEY or local-embed feature).
 
-The tool is read-only — it never mutates the graph."
+• project — Project planning operations for creating and managing planning Knowledge nodes:
+  - create: Create a new planning node (epic, story, criterion, or decision)
+  - list: List planning nodes with optional filtering
+  - link_session: Link the current session to a planning node
+  - update: Update a planning node's status
+
+The tool is read-only for bfs/list_type/search/semantic modes; project mode may write to the graph."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -51,7 +58,7 @@ The tool is read-only — it never mutates the graph."
             "properties": {
                 "mode": {
                     "type": "string",
-                    "enum": ["bfs", "list_type", "search", "semantic"],
+                    "enum": ["bfs", "list_type", "search", "semantic", "project"],
                     "description": "Which query mode to run"
                 },
                 "node_id": {
@@ -99,6 +106,32 @@ The tool is read-only — it never mutates the graph."
                     "type": "integer",
                     "minimum": 1,
                     "description": "Maximum results to return (default: 50 for bfs, 20 for list_type, 10 for search)"
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["create", "list", "link_session", "update"],
+                    "description": "Action to perform in project mode"
+                },
+                "entity": {
+                    "type": "string",
+                    "description": "Entity name for create action"
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Summary/description for create action"
+                },
+                "parent_id": {
+                    "type": "string",
+                    "description": "Parent planning node ID for create action (optional)"
+                },
+                "planning_node_id": {
+                    "type": "string",
+                    "description": "Planning node ID for link_session action"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["open", "in_progress", "done"],
+                    "description": "Status for update action"
                 }
             },
             "required": ["mode"]
@@ -119,8 +152,9 @@ The tool is read-only — it never mutates the graph."
             "list_type" => execute_list_type(&args, ctx).await,
             "search" => execute_search(&args, ctx).await,
             "semantic" => execute_semantic(&args, ctx).await,
+            "project" => execute_project(&args, ctx).await,
             other => Err(ToolError::InvalidArguments(format!(
-                "unknown mode '{other}'; must be one of: bfs, list_type, search, semantic"
+                "unknown mode '{other}'; must be one of: bfs, list_type, search, semantic, project"
             ))),
         }
     }
@@ -389,6 +423,256 @@ async fn execute_semantic(
     }
 
     Ok(ToolOutput::success(lines.join("\n")))
+}
+
+async fn execute_project(
+    args: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<ToolOutput, ToolError> {
+    let action = args["action"].as_str().ok_or_else(|| {
+        ToolError::InvalidArguments("'action' is required for project mode".into())
+    })?;
+
+    match action {
+        "create" => {
+            let entity = args["entity"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidArguments("'entity' is required".into()))?
+                .to_string();
+            let summary = args["summary"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidArguments("'summary' is required".into()))?
+                .to_string();
+            let entity_type = args["entity_type"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidArguments("'entity_type' is required".into()))?
+                .to_string();
+
+            match entity_type.as_str() {
+                "epic" | "story" | "criterion" | "decision" => {}
+                other => {
+                    return Err(ToolError::InvalidArguments(format!(
+                        "unknown entity_type '{other}'; must be one of: epic, story, criterion, decision"
+                    )));
+                }
+            }
+
+            let parent_id = args["parent_id"].as_str().map(|s| NodeId(s.to_string()));
+            let agent_id = ctx.agent_id.clone();
+            let graph = ctx.graph.clone();
+
+            let mut node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity,
+                entity_type: entity_type.clone(),
+                summary,
+                confidence: 0.5,
+            }));
+
+            let meta = node
+                .metadata
+                .as_object_mut()
+                .expect("metadata should be object");
+            meta.insert("planning".to_string(), serde_json::json!(true));
+            meta.insert("status".to_string(), serde_json::json!("open"));
+            meta.insert(
+                "session_id".to_string(),
+                serde_json::json!(agent_id.to_string()),
+            );
+
+            let new_node_id = node.id.clone();
+            let new_node_id_ret = new_node_id.clone();
+
+            tokio::task::spawn_blocking(move || {
+                graph
+                    .add_node(node)
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+
+                if let Some(pid) = parent_id {
+                    graph
+                        .add_edge(GraphEdge::new(
+                            EdgeType::Contains,
+                            pid,
+                            new_node_id.clone(),
+                        ))
+                        .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                }
+
+                Ok::<(), ToolError>(())
+            })
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))??;
+
+            Ok(ToolOutput::success(format!(
+                "Created planning {entity_type} node: {new_node_id_ret}"
+            )))
+        }
+
+        "list" => {
+            let entity_type_filter = args["entity_type"].as_str().map(|s| s.to_string());
+            let parent_id = args["parent_id"].as_str().map(|s| NodeId(s.to_string()));
+            let graph = ctx.graph.clone();
+
+            let nodes = tokio::task::spawn_blocking(move || {
+                let all_knowledge = graph.list_nodes_by_type("knowledge", None, None, 1000)?;
+
+                let mut planning_nodes: Vec<GraphNode> = all_knowledge
+                    .into_iter()
+                    .filter(|n| n.metadata.get("planning").and_then(|v| v.as_bool()) == Some(true))
+                    .collect();
+
+                if let Some(et) = &entity_type_filter {
+                    planning_nodes.retain(|n| {
+                        matches!(&n.node_type, NodeType::Knowledge(kd) if kd.entity_type == *et)
+                    });
+                }
+
+                if let Some(pid) = &parent_id {
+                    let children = graph
+                        .neighbors(pid, Some(EdgeType::Contains), Direction::Outgoing)
+                        .unwrap_or_default();
+                    let child_ids: std::collections::HashSet<_> =
+                        children.iter().map(|n| &n.id).collect();
+                    planning_nodes.retain(|n| child_ids.contains(&n.id));
+                }
+
+                Ok::<Vec<GraphNode>, graphirm_graph::error::GraphError>(planning_nodes)
+            })
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+
+            let mut lines = Vec::new();
+            lines.push(format!(
+                "Planning nodes ({} result{}):",
+                nodes.len(),
+                if nodes.len() == 1 { "" } else { "s" }
+            ));
+            for node in &nodes {
+                if let NodeType::Knowledge(kd) = &node.node_type {
+                    let status = node
+                        .metadata
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    lines.push(format!(
+                        "  [{id}] {entity} ({entity_type}) status={status}: {summary}",
+                        id = node.id,
+                        entity = kd.entity,
+                        entity_type = kd.entity_type,
+                        summary = truncate(&kd.summary, 100),
+                    ));
+                }
+            }
+            if nodes.is_empty() {
+                lines.push("  (no planning nodes)".to_string());
+            }
+
+            Ok(ToolOutput::success(lines.join("\n")))
+        }
+
+        "link_session" => {
+            let planning_node_id_str = args["planning_node_id"].as_str().ok_or_else(|| {
+                ToolError::InvalidArguments("'planning_node_id' is required".into())
+            })?;
+            let planning_node_id = NodeId(planning_node_id_str.to_string());
+            let agent_id = ctx.agent_id.clone();
+            let graph = ctx.graph.clone();
+
+            let graph_check = graph.clone();
+            let pid_check = planning_node_id.clone();
+            let aid_check = agent_id.clone();
+            let edge_exists = tokio::task::spawn_blocking(move || {
+                let edges = graph_check
+                    .edges_for_node(&pid_check)
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                Ok::<bool, ToolError>(
+                    edges
+                        .iter()
+                        .any(|e| e.edge_type == EdgeType::DerivedFrom && e.source == aid_check),
+                )
+            })
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))??;
+
+            if edge_exists {
+                return Ok(ToolOutput::success(format!(
+                    "Session already linked to planning node {planning_node_id}"
+                )));
+            }
+
+            let pid_for_msg = planning_node_id.clone();
+            tokio::task::spawn_blocking(move || {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::DerivedFrom,
+                        agent_id,
+                        planning_node_id,
+                    ))
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))
+            })
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))??;
+
+            Ok(ToolOutput::success(format!(
+                "Linked session to planning node {pid_for_msg}"
+            )))
+        }
+
+        "update" => {
+            let node_id_str = args["node_id"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidArguments("'node_id' is required".into()))?
+                .to_string();
+            let status = args["status"]
+                .as_str()
+                .ok_or_else(|| ToolError::InvalidArguments("'status' is required".into()))?
+                .to_string();
+
+            match status.as_str() {
+                "open" | "in_progress" | "done" => {}
+                other => {
+                    return Err(ToolError::InvalidArguments(format!(
+                        "unknown status '{other}'; must be one of: open, in_progress, done"
+                    )));
+                }
+            }
+
+            let node_id = NodeId(node_id_str);
+            let node_id_for_msg = node_id.clone();
+            let status_for_msg = status.clone();
+            let graph = ctx.graph.clone();
+
+            tokio::task::spawn_blocking(move || {
+                let mut node = graph
+                    .get_node(&node_id)
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                if node.metadata.get("planning").and_then(|v| v.as_bool()) != Some(true) {
+                    return Err(ToolError::ExecutionFailed(
+                        "Node is not a planning node (missing metadata.planning = true)".into(),
+                    ));
+                }
+                let meta = node
+                    .metadata
+                    .as_object_mut()
+                    .expect("metadata should be object");
+                meta.insert("status".to_string(), serde_json::json!(status));
+                graph
+                    .update_node(&node_id, node)
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                Ok::<(), ToolError>(())
+            })
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))??;
+
+            Ok(ToolOutput::success(format!(
+                "Updated planning node {node_id_for_msg} status to {status_for_msg}"
+            )))
+        }
+
+        other => Err(ToolError::InvalidArguments(format!(
+            "unknown action '{other}'; must be one of: create, list, link_session, update"
+        ))),
+    }
 }
 
 fn compact_node_summary(node: &GraphNode) -> String {
