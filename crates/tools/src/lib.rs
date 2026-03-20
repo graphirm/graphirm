@@ -7,6 +7,7 @@ pub mod executor;
 pub mod find;
 pub mod graph_query;
 pub mod grep;
+pub mod impact;
 pub mod ls;
 pub mod permissions;
 pub mod read;
