@@ -157,26 +157,10 @@ Done 2026-03-20. `graph_diff` non-destructive tool: `git` mode (resolves changed
 Plan: `docs/plans/2026-03-20-graph-diff-tool.md`
 Design: `docs/plans/2026-03-20-graph-diff-tool-design.md`
 
-### Repo Briefing on Session Start (Structural + Memory Onboarding) — P1 · M
-
-When a session starts in a workspace, Graphirm automatically generates a structured briefing:
-top files by PageRank, detected communities, entry points (from Nodestradamus), PLUS any
-relevant knowledge from prior sessions in this repo (from the graph memory).
-
-Injected directly into the session's system prompt — not a file the agent has to read. Always
-current. A cold start on a familiar repo is not a cold start: the agent arrives knowing both
-the architecture and its own history with the codebase.
-
-**Key files:**
-- `crates/agent/src/briefing.rs` — new module: `generate_repo_briefing(workspace, session_id)`
-- `crates/agent/src/workflow.rs` — call briefing on session init, inject into context
-- `crates/agent/src/config.rs` — `repo_briefing: bool` (default true when Nodestradamus available)
-- `crates/server/src/routes.rs` — `GET /api/sessions/{id}/briefing` for web UI
-
-**Useful Nodestradamus tools:**
-- `analyze_graph algorithm=pagerank` — top files to surface in the briefing
-- `analyze_graph algorithm=communities summary_only=true` — module groups for briefing narrative
-- `get_impact file_path=crates/agent/src/workflow.rs` — safe injection point
+### ✅ Repo Briefing on Session Start (Structural + Memory Onboarding) — P1 · M
+Done 2026-03-20. Two-tier briefing: (1) compact summary auto-injected into every session's system prompt — language breakdown (file-extension counts via async dir walk), top files by rg mention-count, recent knowledge nodes from the graph; (2) on-demand `repo_briefing` tool returning detailed files (rg --files + dir breakdown), knowledge (10 recent nodes), and git sections (`git log --oneline -10`, unstaged diff count). `repo_briefing: bool` config flag (default true). Non-fatal throughout. 10 unit+integration tests.
+Plan: `docs/plans/2026-03-20-repo-briefing.md`
+Design: `docs/plans/2026-03-20-repo-briefing-design.md`
 
 ### Session Flow Traces (Queryable Agent Decision History) — P2 · M
 

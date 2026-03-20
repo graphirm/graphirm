@@ -140,6 +140,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 21 | Session export — `GET /api/sessions/:id/export?format=markdown`; `render_session_markdown` in `crates/server/src/export.rs`; "↓ Export" button in SessionBar | ✅ done |
 | 22 | Graph-aware tool execution — `ImpactProvider` trait, tree-sitter bash path extraction, `GraphImpactProvider` (rg + Knowledge notes), risk scoring, pre-edit hook in workflow, per-turn cache | ✅ done |
 | 23 | `graph_diff` tool — session-aware blast radius: `git`/`paths` → dependents (rg) + stale Knowledge + risk scoring | ✅ done |
+| 24 | Repo briefing on session start — compact auto-injected summary (language breakdown, top files, recent knowledge) + on-demand `repo_briefing` tool (files/knowledge/git sections) | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -230,6 +231,14 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `GET /api/sessions/:id/export?format=markdown` — fetches subgraph (depth 10), renders, returns `text/markdown; charset=utf-8` with `Content-Disposition: attachment; filename="session-<name>.md"`; `format!=markdown` → 400; unknown session → 404
 - `ExportQuery` in `crates/server/src/types.rs` with `format` defaulting to `"markdown"`
 - "↓ Export" button in `SessionBar` — `window.open(url, '_blank')` triggers browser download
+
+**Repo briefing on session start (Phase 24):**
+- `crates/agent/src/briefing.rs` — `count_files_by_extension` (async dir walk, skips hidden/target/node_modules), `format_language_breakdown`, `collect_stems`, `find_top_files` (rg `--count --fixed-strings`, stems capped at 200), `count_mentions`, `build_knowledge_summary` (empty-string query → all nodes, `•` bullet format), `build_repo_briefing` (assembles all three sections, injected under `## Repo Briefing` header)
+- `crates/agent/src/config.rs` — `repo_briefing: bool` (default `true`), `#[serde(default = "default_repo_briefing")]`
+- `crates/server/src/routes.rs` — after workspace setup in `create_session`, calls `graphirm_agent::briefing::build_repo_briefing(&config.working_dir, state.graph.as_ref()).await` and appends result to `config.system_prompt` when `config.repo_briefing` is true
+- `crates/tools/src/repo_briefing.rs` — `RepoBriefingTool` with `section` param (`all`/`files`/`knowledge`/`git`); files section uses `rg --files` + top-dir breakdown; knowledge section queries 10 recent nodes; git section runs `git log --oneline -10` + `git diff --name-only HEAD`; registered in `build_tool_registry()`
+- 10 tests total: 4 formatting unit tests (empty map, sort order, truncation, stem uniqueness), 2 knowledge tests (empty store, format), 1 briefing assembly test (empty dir → None), 3 tool integration tests (name/params, knowledge empty, git section)
+- Plan: `docs/plans/2026-03-20-repo-briefing.md`
 
 **Graph node search / filter (Phase 20):**
 - `NodeFilter` interface (`query: string`, `types: Set<string>`) + `EMPTY_FILTER` exported from `crates/web-app/src/hooks/useGraphData.ts`
