@@ -784,6 +784,9 @@ fn build_tool_registry() -> ToolRegistry {
         graphirm_tools::repo_briefing::RepoBriefingTool::new(),
     ));
     registry.register(Arc::new(graphirm_tools::graph_diff::GraphDiffTool::new()));
+    registry.register(Arc::new(
+        graphirm_tools::session_trace::SessionTraceTool::new(),
+    ));
 
     // Load script-based plugins from ~/.graphirm/plugins/ or GRAPHIRM_PLUGINS_DIR
     let plugins_dir = std::env::var("GRAPHIRM_PLUGINS_DIR")
