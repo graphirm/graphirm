@@ -227,3 +227,20 @@ This also dogfoods the planning layer's cross-session linking.
 - Tune polling intervals
 - Add support for multi-turn conversations
 - Handle workspace ↔ repo sync (agent workspace vs `~/graphirm-repo/`)
+
+### Ideas: context overflow mitigation (graph-native)
+
+**Strong candidates (build in order):**
+
+1. **Structural sub-nodes on first read** — `read` tool parses file into structural sub-nodes (one Content node per function/struct/impl/test, linked via `Contains` edges). Metadata: `symbol_name`, `symbol_type`, `line_start`, `line_end`. Agent navigates code via graph traversal, same as session graph. On re-read, checks for existing Content node for same path with newer mtime — returns outline from graph instead of re-reading disk. Agent drills in with `offset`/`limit`. Foundation for everything else. ~150 lines Rust, regex-based, no tree-sitter.
+
+2. **Per-symbol fingerprinting** — Shazam-style: on first read, compute SHA256 per function/struct block and store as metadata on structural sub-nodes. On re-read, diff fingerprints against current file on disk. Match → "unchanged, here's the outline." Partial mismatch → return only changed sections at full resolution + outline for the rest. Agent never loads 2048 lines to discover 30 lines changed. ~150 lines Rust on top of #1.
+
+3. **Adaptive context decay** — `build_context` uses graph edge timestamps + `Reads`/`Modifies` edges to set resolution per Content node. Recent/modified → full body. Stale (>N turns, unmodified) → signature only (from structural sub-nodes). Mechanical: `read` auto-truncates files over M lines, appending outline. This is how you tune #1 and #2, not a standalone feature.
+
+**Other ideas (lower priority):**
+
+- **`outline` tool** — standalone tool (~100 lines) returning function/struct/class signatures with line numbers. Simpler than #1 but doesn't create graph nodes. Useful as a stepping stone.
+- **Context budget awareness** — inject remaining token budget into system context each turn. Agent can conserve as budget shrinks. Orthogonal to the above — helps with overall context management but doesn't prevent wasteful reads.
+
+**Prior art:** Aider repo-map (tree-sitter outline, graph-ranked, ~1k tokens); Claude Code compaction (3-layer: micro/auto/manual, summarizes at 95% window); OpenCode smart context (outlines classes, strips comments, import graph). Graphirm's advantage: the graph already tracks reads/modifies/timestamps — structural sub-nodes + fingerprinting make context management graph-native rather than bolted-on.
