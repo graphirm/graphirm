@@ -575,7 +575,7 @@ impl GraphStore {
         start: &NodeId,
         edge_types: &[EdgeType],
         max_depth: usize,
-    ) -> Result<Vec<GraphNode>, GraphError> {
+    ) -> Result<Vec<(GraphNode, usize)>, GraphError> {
         use std::collections::{HashSet, VecDeque};
 
         let mut visited = HashSet::new();
@@ -622,7 +622,7 @@ impl GraphStore {
             for nid in neighbor_ids {
                 if visited.insert(nid.clone()) {
                     let node = self.get_node(&nid)?;
-                    result.push(node);
+                    result.push((node, depth + 1));
                     queue.push_back((nid, depth + 1));
                 }
             }
@@ -1809,7 +1809,8 @@ mod tests {
 
         let depth1 = store.traverse(&a_id, &[EdgeType::Contains], 1).unwrap();
         assert_eq!(depth1.len(), 1);
-        assert_eq!(depth1[0].id, b_id);
+        assert_eq!(depth1[0].0.id, b_id);
+        assert_eq!(depth1[0].1, 1);
 
         let depth2 = store.traverse(&a_id, &[EdgeType::Contains], 2).unwrap();
         assert_eq!(depth2.len(), 2);
@@ -1859,7 +1860,7 @@ mod tests {
 
         let result = store.traverse(&a_id, &[EdgeType::RespondsTo], 5).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, b_id);
+        assert_eq!(result[0].0.id, b_id);
     }
 
     #[test]

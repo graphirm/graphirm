@@ -131,7 +131,7 @@ Graphirm stores this as an Interaction node. Knowledge extraction captures entit
 
 ## Phase 3: Iterate (ongoing)
 
-Nine dogfood runs completed 2026-03-20 (2 hung). Results in `docs/dogfood-findings.md`.
+Twelve dogfood runs completed 2026-03-20 (2 hung, 1 model-ID fail). Results in `docs/dogfood-findings.md`.
 
 ### System prompt improvements discovered
 
@@ -146,6 +146,9 @@ Nine dogfood runs completed 2026-03-20 (2 hung). Results in `docs/dogfood-findin
 | 7 (Qwen) | **Partial** | cargo_check tool structure perfect (trait, registration, 9 tests, clippy/fmt clean). Two bugs: (a) early return on non-zero exit meant errors never parsed; (b) JSON struct expected top-level fields but cargo nests in `message`. Tests only covered clean path — no error path test |
 | 8 (Qwen) | **Hung** | grep context_lines task. Agent read file, wrote correct param schema + execute logic to grep.rs, then LLM call hung forever. Session stuck at "running" — exposed dead `timeout_seconds` config |
 | 9 (Qwen) | **Hung** | Same task, fresh session. Same hang point after file read. Confirmed: OpenRouter/Qwen streaming hangs on tool-call generation for file edits |
+| 10 (Qwen) | **Fail** | Model ID `openrouter/qwen/qwen3-coder-next` sent to API without prefix stripping. Cause: explicit `model` in curl. Instant 400 |
+| 11 (Qwen) | **Partial** | bfs-max-depth: agent bypassed GraphStore API, wrote raw SQL with private `pool` field. 2 compile errors. Fix: "Abstraction boundaries" prompt section |
+| 12 (Qwen) | **Pass (assist)** | Prompt fix worked. Agent modified graph crate `traverse()`, used public API, cargo_check passed, 20/20 tests passed. rig JSON error before graph test fix (2-line human assist) |
 
 ### Key insights
 
@@ -157,7 +160,11 @@ Nine dogfood runs completed 2026-03-20 (2 hung). Results in `docs/dogfood-findin
 
 4. **External format knowledge gaps** (run 7): The agent implemented a tool that parses `cargo check --message-format=json` output, but didn't know the actual JSON envelope format (`{"reason":"compiler-message","message":{...}}`). It assumed diagnostic fields (`level`, `message`) were at the top level. Also assumed non-zero exit code = failure, but `cargo check` returns 101 for compilation errors (which is the tool's primary use case). Tests only validated the "no errors" path. Lesson: when a tool parses external tool output, the system prompt should document the format or instruct the agent to inspect real output first.
 
-5. **LLM timeout is critical infrastructure** (runs 8–9): `timeout_seconds = 300` was in the config but never wired to code. The LLM call in `workflow.rs` used `tokio::select!` with only a cancellation token — no time-based arm. When OpenRouter/Qwen hung during tool-call generation, the session stayed "running" forever. Fix: added `tokio::time::sleep(llm_timeout)` as a third `select!` arm; session transitions to `"error"` on timeout. Also discovered the agent successfully wrote code to `grep.rs` before hanging — partial work was silently lost.
+5. **Abstraction boundaries must be explicit** (runs 11–12): Without an explicit "use the public API" rule, the agent happily accessed `graph.pool` (private) and imported `rusqlite` (not a dependency). After adding an "Abstraction boundaries" section to the system prompt, the agent correctly modified `traverse()` in `graphirm-graph` to return depth info, then called the updated method from the tool. One prompt section eliminated an entire category of architectural mistakes.
+
+6. **`rig` JSON parse errors are a recurring failure mode** (runs 11–12): The `rig` Rust LLM library fails to deserialize certain OpenRouter responses (`data did not match any variant of untagged enum ApiResponse`). This kills sessions mid-work. Not a timeout — the response arrives but can't be parsed. Needs investigation: retry logic, or pinning a `rig` version that handles OpenRouter's response format.
+
+7. **LLM timeout is critical infrastructure** (runs 8–9): `timeout_seconds = 300` was in the config but never wired to code. The LLM call in `workflow.rs` used `tokio::select!` with only a cancellation token — no time-based arm. When OpenRouter/Qwen hung during tool-call generation, the session stayed "running" forever. Fix: added `tokio::time::sleep(llm_timeout)` as a third `select!` arm; session transitions to `"error"` on timeout. Also discovered the agent successfully wrote code to `grep.rs` before hanging — partial work was silently lost.
 
 ### Identified system prompt fixes needed
 
@@ -210,6 +217,8 @@ This also dogfoods the planning layer's cross-session linking.
 - ~~Add `cargo_check` structured error tool~~ ✅ Done — agent built structure (run 7), Cursor fixed JSON parsing bugs
 - ~~Add "test the error path" heuristic to system prompt~~ ✅ Done — "Testing discipline" section added
 - ~~Fix LLM timeout bug~~ ✅ Done — `timeout_seconds` wired to `tokio::select!` in workflow.rs (runs 8–9 exposed)
+- ~~Add "Abstraction boundaries" to system prompt~~ ✅ Done — run 12 validated (agent used public API)
+- Investigate `rig` JSON parse errors on OpenRouter responses — recurring session killer (runs 11–12)
 - Implement Phase 1.5 (lesson/convention entity types in briefing)
 - Tune polling intervals
 - Add support for multi-turn conversations

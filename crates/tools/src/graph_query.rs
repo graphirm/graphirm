@@ -71,6 +71,12 @@ The tool is read-only for bfs/list_type/search/semantic modes; project mode may 
                     "maximum": 10,
                     "description": "BFS max depth (required for bfs mode, capped at 10)"
                 },
+                "max_depth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "Optional override for BFS max depth. When provided, limits traversal depth; when omitted, uses the 'depth' parameter."
+                },
                 "edge_types": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -166,10 +172,18 @@ async fn execute_bfs(args: &serde_json::Value, ctx: &ToolContext) -> Result<Tool
         .ok_or_else(|| ToolError::InvalidArguments("'node_id' is required for bfs mode".into()))?;
     let node_id = NodeId(node_id_str.to_string());
 
+    // Use max_depth when provided, otherwise use depth parameter
     let raw_depth = args["depth"]
         .as_u64()
         .ok_or_else(|| ToolError::InvalidArguments("'depth' is required for bfs mode".into()))?;
     let depth = (raw_depth as usize).min(10);
+    
+    // max_depth is optional - when provided, it overrides depth
+    let max_depth = if let Some(raw_max_depth) = args["max_depth"].as_u64() {
+        (raw_max_depth as usize).min(10)
+    } else {
+        depth
+    };
 
     let limit = args["limit"].as_u64().unwrap_or(50) as usize;
 
@@ -209,7 +223,7 @@ async fn execute_bfs(args: &serde_json::Value, ctx: &ToolContext) -> Result<Tool
             ))
         })?;
         let nodes = graph
-            .traverse(&node_id_clone, &edge_types, depth)
+            .traverse(&node_id_clone, &edge_types, max_depth)
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         Ok::<_, ToolError>((start, nodes))
     })
@@ -218,7 +232,7 @@ async fn execute_bfs(args: &serde_json::Value, ctx: &ToolContext) -> Result<Tool
 
     let mut lines = Vec::new();
     lines.push(format!(
-        "BFS from {} (type: {}) depth={depth} edge_types={}:",
+        "BFS from {} (type: {}) depth={max_depth} edge_types={}:",
         node_id,
         start_node.node_type.type_name(),
         if args["edge_types"].is_null() || !args["edge_types"].is_array() {
@@ -236,8 +250,8 @@ async fn execute_bfs(args: &serde_json::Value, ctx: &ToolContext) -> Result<Tool
 
     let shown = traversed.iter().take(limit);
     let total = traversed.len();
-    for node in shown {
-        lines.push(format!("  {}", compact_node_summary(node)));
+    for (node, depth_level) in shown {
+        lines.push(format!("  [depth={depth_level}] {}", compact_node_summary(node)));
     }
     if total > limit {
         lines.push(format!(
@@ -1439,5 +1453,121 @@ mod tests {
             node.metadata.get("status"),
             Some(&serde_json::json!("done"))
         );
+    }
+
+    #[tokio::test]
+    async fn bfs_respects_max_depth_parameter() {
+        let ctx = make_test_context();
+        let graph = &ctx.graph;
+
+        // Create a chain: parent -> child -> grandchild -> great_grandchild
+        let parent = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "parent".to_string(),
+            token_count: None,
+        }));
+        let child = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "child".to_string(),
+            token_count: None,
+        }));
+        let grandchild = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "grandchild".to_string(),
+            token_count: None,
+        }));
+        let great_grandchild = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "great_grandchild".to_string(),
+            token_count: None,
+        }));
+
+        let parent_id = parent.id.clone();
+        let child_id = child.id.clone();
+        let grandchild_id = grandchild.id.clone();
+        let great_grandchild_id = great_grandchild.id.clone();
+
+        graph.add_node(parent).unwrap();
+        graph.add_node(child).unwrap();
+        graph.add_node(grandchild).unwrap();
+        graph.add_node(great_grandchild).unwrap();
+
+        // parent -> child -> grandchild -> great_grandchild
+        graph
+            .add_edge(graphirm_graph::edges::GraphEdge::new(
+                graphirm_graph::edges::EdgeType::Contains,
+                parent_id.clone(),
+                child_id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(graphirm_graph::edges::GraphEdge::new(
+                graphirm_graph::edges::EdgeType::Contains,
+                child_id.clone(),
+                grandchild_id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(graphirm_graph::edges::GraphEdge::new(
+                graphirm_graph::edges::EdgeType::Contains,
+                grandchild_id.clone(),
+                great_grandchild_id.clone(),
+            ))
+            .unwrap();
+
+        let tool = GraphQueryTool::new();
+
+        // Test max_depth=1: should only reach child
+        let out = tool
+            .execute(
+                json!({
+                    "mode": "bfs",
+                    "node_id": parent_id.to_string(),
+                    "depth": 10,
+                    "max_depth": 1
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains(&child_id.to_string()));
+        assert!(!out.content.contains(&grandchild_id.to_string()));
+        assert!(out.content.contains("[depth=1]"));
+
+        // Test max_depth=2: should reach child and grandchild
+        let out = tool
+            .execute(
+                json!({
+                    "mode": "bfs",
+                    "node_id": parent_id.to_string(),
+                    "depth": 10,
+                    "max_depth": 2
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains(&child_id.to_string()));
+        assert!(out.content.contains(&grandchild_id.to_string()));
+        assert!(!out.content.contains(&great_grandchild_id.to_string()));
+
+        // Test without max_depth (uses depth): should reach all
+        let out = tool
+            .execute(
+                json!({
+                    "mode": "bfs",
+                    "node_id": parent_id.to_string(),
+                    "depth": 3
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains(&child_id.to_string()));
+        assert!(out.content.contains(&grandchild_id.to_string()));
+        assert!(out.content.contains(&great_grandchild_id.to_string()));
     }
 }

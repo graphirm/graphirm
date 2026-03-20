@@ -118,6 +118,14 @@ another crate causes type mismatches that are hard to debug. If you need a type 
 that isn't re-exported, add a `pub use` to `crates/graph/src/lib.rs` — don't \
 add the upstream crate directly.
 
+## Abstraction boundaries
+
+Use the public API of imported types. Never access private fields or bypass the \
+API of a struct from another crate. For GraphStore specifically: use its methods \
+(get_node, add_node, traverse, search_knowledge, etc.) — never access internal \
+fields like `pool` or `graph` directly. If a method you need does not exist, \
+modify the owning crate (graphirm-graph) to add it, then call it from your code.
+
 ## Async patterns
 
 When using tokio::task::spawn_blocking with shared state, clone the Arc BEFORE \
