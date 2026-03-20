@@ -49,6 +49,10 @@ impl Tool for GrepTool {
                 "case_insensitive": {
                     "type": "boolean",
                     "description": "Whether to search case-insensitively (default: false)"
+                },
+                "context_lines": {
+                    "type": "integer",
+                    "description": "Number of context lines to show before and after each match (maps to rg -C N). Default: 0 (no context)."
                 }
             },
             "required": ["pattern"]
@@ -85,6 +89,12 @@ impl Tool for GrepTool {
 
         if let Some(include) = args["include"].as_str() {
             cmd.arg("--glob").arg(include);
+        }
+
+        if let Some(n) = args["context_lines"].as_i64()
+            && n > 0
+        {
+            cmd.arg("-C").arg(n.to_string());
         }
 
         cmd.arg(pattern).arg(&search_path);
@@ -222,6 +232,24 @@ mod tests {
             node.metadata.get("session_id"),
             Some(&serde_json::json!(ctx.agent_id.to_string()))
         );
+    }
+
+    #[tokio::test]
+    async fn grep_with_context_lines() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("lines.txt");
+        let content: String = (1..=10).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(&file, &content).unwrap();
+
+        let tool = GrepTool::new();
+        let ctx = make_ctx_with_dir(&dir);
+        let out = tool
+            .execute(json!({"pattern": "line 5", "context_lines": 2}), &ctx)
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains("line 3"), "should show 2 lines before");
+        assert!(out.content.contains("line 7"), "should show 2 lines after");
     }
 
     #[tokio::test]

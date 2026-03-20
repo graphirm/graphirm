@@ -862,8 +862,9 @@ pub async fn run_agent_loop(
 
         events.emit(AgentEvent::TurnStart { turn_index: turn });
 
-        // Race the LLM call against the cancellation token so in-flight requests
-        // are interrupted promptly rather than waiting for the provider to respond.
+        // Race the LLM call against cancellation and a per-turn timeout so
+        // hung provider connections don't leave the session stuck forever.
+        let llm_timeout = std::time::Duration::from_secs(session.agent_config.timeout_seconds);
         let (response, response_id) = tokio::select! {
             result = stream_and_record(session, llm, tools, events) => result?,
             _ = cancel.cancelled() => {
@@ -874,6 +875,17 @@ pub async fn run_agent_loop(
                     node_ids: all_node_ids,
                 });
                 return Err(AgentError::Cancelled);
+            }
+            _ = tokio::time::sleep(llm_timeout) => {
+                tracing::error!(turn, timeout_secs = session.agent_config.timeout_seconds, "LLM call timed out");
+                let _ = session.set_status("error").await;
+                events.emit(AgentEvent::AgentEnd {
+                    agent_id: session.id.clone(),
+                    node_ids: all_node_ids,
+                });
+                return Err(AgentError::Workflow(
+                    format!("LLM call timed out after {}s at turn {turn}", session.agent_config.timeout_seconds)
+                ));
             }
         };
         all_node_ids.push(response_id.clone());

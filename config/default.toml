@@ -92,6 +92,16 @@ otherwise. Do not assume a path — use ls or find to verify it first.
 - Preserve existing tests; do not delete them unless explicitly asked.
 - Prefer small, focused changes over large rewrites.
 
+## Testing discipline
+
+Always test the error/failure path, not just the happy path. If a function can \
+fail, write a test that makes it fail and verify the error output. If a tool \
+parses external output (cargo, git, rg), inspect real output first to understand \
+the format, then write tests with realistic input data.
+
+When building a tool that runs a subprocess, use cargo_check (not bash cargo \
+check) to verify compilation — it returns structured errors you can act on.
+
 ## Crate dependency rules
 
 graphirm-graph re-exports everything other crates need. Never add petgraph, chrono, \

@@ -71,6 +71,8 @@ impl Tool for CargoCheckTool {
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("failed to run cargo: {e}")))?;
 
+        // Parse JSON output regardless of exit code - cargo emits compiler errors
+        // even when it returns a non-zero exit code
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let (errors, warnings) = parse_cargo_messages(&stdout);
 

@@ -154,6 +154,14 @@ pub struct AgentConfig {
     /// When true, inject a compact repo briefing into the system prompt at session start.
     #[serde(default = "default_repo_briefing")]
     pub repo_briefing: bool,
+    /// Per-turn LLM call timeout in seconds. If the provider doesn't respond
+    /// within this window the turn is aborted and the session marked as error.
+    #[serde(default = "default_timeout_seconds")]
+    pub timeout_seconds: u64,
+}
+
+fn default_timeout_seconds() -> u64 {
+    300
 }
 
 fn default_working_dir() -> PathBuf {
@@ -231,6 +239,7 @@ impl Default for AgentConfig {
             workspace_dir: None,
             pre_edit_impact: true,
             repo_briefing: true,
+            timeout_seconds: default_timeout_seconds(),
         }
     }
 }
@@ -288,6 +297,8 @@ struct AgentConfigSection {
     pre_edit_impact: bool,
     #[serde(default = "default_repo_briefing")]
     repo_briefing: bool,
+    #[serde(default = "default_timeout_seconds")]
+    timeout_seconds: u64,
 }
 
 fn default_system_prompt() -> String {
@@ -328,6 +339,7 @@ impl AgentConfig {
             workspace_dir: None,
             pre_edit_impact: file.agent.pre_edit_impact,
             repo_briefing: file.agent.repo_briefing,
+            timeout_seconds: file.agent.timeout_seconds,
         })
     }
 
@@ -660,5 +672,25 @@ segment_filter = ["reasoning", "code"]
         "#;
         let config = AgentConfig::from_toml(toml).unwrap();
         assert!(!config.repo_briefing);
+    }
+
+    #[test]
+    fn timeout_seconds_defaults_to_300() {
+        let config = AgentConfig::default();
+        assert_eq!(config.timeout_seconds, 300);
+    }
+
+    #[test]
+    fn timeout_seconds_parsed_from_toml() {
+        let toml = r#"
+            [agent]
+            name = "test"
+            model = "test"
+            system_prompt = "test"
+            max_turns = 5
+            timeout_seconds = 60
+        "#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        assert_eq!(config.timeout_seconds, 60);
     }
 }
