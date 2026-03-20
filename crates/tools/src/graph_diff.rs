@@ -473,4 +473,90 @@ mod tests {
             assert_ne!(dep.file_name().unwrap().to_str().unwrap(), "store.rs");
         }
     }
+
+    #[tokio::test]
+    async fn git_mode_finds_changed_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        // Init git repo
+        let _ = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output();
+        let _ = std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(dir.path())
+            .output();
+        let _ = std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(dir.path())
+            .output();
+
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
+        let _ = std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output();
+        let _ = std::process::Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(dir.path())
+            .output();
+
+        // Modify the file
+        std::fs::write(dir.path().join("a.rs"), "fn a() { /* changed */ }").unwrap();
+
+        let mut ctx = make_test_context();
+        ctx.working_dir = dir.path().to_path_buf();
+
+        let tool = GraphDiffTool::new();
+        let out = tool.execute(json!({"mode": "git"}), &ctx).await.unwrap();
+
+        assert!(!out.is_error);
+        assert!(
+            out.content.contains("a.rs"),
+            "should detect changed file a.rs: {}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn git_mode_no_changes_returns_no_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        let _ = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output();
+        let _ = std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(dir.path())
+            .output();
+        let _ = std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(dir.path())
+            .output();
+
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
+        let _ = std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output();
+        let _ = std::process::Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(dir.path())
+            .output();
+
+        let mut ctx = make_test_context();
+        ctx.working_dir = dir.path().to_path_buf();
+
+        let tool = GraphDiffTool::new();
+        let out = tool.execute(json!({"mode": "git"}), &ctx).await.unwrap();
+
+        assert!(!out.is_error);
+        assert!(
+            out.content.contains("No changed files"),
+            "should report no changes: {}",
+            out.content
+        );
+    }
 }
