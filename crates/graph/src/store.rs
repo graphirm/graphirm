@@ -660,6 +660,54 @@ impl GraphStore {
         Ok(thread)
     }
 
+    /// Return all `Interaction` nodes for a session, ordered chronologically (oldest first).
+    ///
+    /// Filters on `metadata.session_id` (JSON string). Returns an empty vector when no
+    /// interactions exist for that session.
+    pub fn get_session_chain(&self, session_id: &str) -> Result<Vec<GraphNode>, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, data, metadata, created_at, updated_at
+             FROM nodes
+             WHERE node_type = 'interaction'
+               AND json_extract(metadata, '$.session_id') = ?1
+             ORDER BY created_at ASC, id ASC",
+        )?;
+
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut nodes = Vec::with_capacity(rows.len());
+        for (id_str, data, meta_str, created_at_str, updated_at_str) in rows {
+            let node_type_val: NodeType = serde_json::from_str(&data)?;
+            let metadata: serde_json::Value = serde_json::from_str(&meta_str)
+                .unwrap_or(serde_json::Value::Object(Default::default()));
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                .map_err(|e| GraphError::NodeNotFound(format!("bad timestamp: {e}")))?
+                .with_timezone(&chrono::Utc);
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at_str)
+                .map_err(|e| GraphError::NodeNotFound(format!("bad timestamp: {e}")))?
+                .with_timezone(&chrono::Utc);
+            nodes.push(GraphNode {
+                id: NodeId(id_str),
+                node_type: node_type_val,
+                metadata,
+                created_at,
+                updated_at,
+            });
+        }
+        Ok(nodes)
+    }
+
     /// Extract a subgraph rooted at `root` up to `depth` hops (following all outgoing edges).
     /// Returns the root node plus all reachable nodes, and all edges between them.
     pub fn subgraph(
@@ -1666,6 +1714,48 @@ mod tests {
         let thread = store.conversation_thread(&id).unwrap();
         assert_eq!(thread.len(), 1);
         assert_eq!(thread[0].id, id);
+    }
+
+    #[test]
+    fn get_session_chain_returns_chronological_interactions() {
+        let store = GraphStore::open_memory().unwrap();
+        let session_id = "test-session-abc";
+
+        let mut msg1 = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "first message".to_string(),
+            token_count: None,
+        }));
+        msg1.metadata["session_id"] = serde_json::json!(session_id);
+        let id1 = store.add_node(msg1).unwrap();
+
+        let mut msg2 = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "response".to_string(),
+            token_count: None,
+        }));
+        msg2.metadata["session_id"] = serde_json::json!(session_id);
+        let id2 = store.add_node(msg2).unwrap();
+
+        let mut other = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "other session".to_string(),
+            token_count: None,
+        }));
+        other.metadata["session_id"] = serde_json::json!("other-session");
+        store.add_node(other).unwrap();
+
+        let chain = store.get_session_chain(session_id).unwrap();
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].id, id1);
+        assert_eq!(chain[1].id, id2);
+    }
+
+    #[test]
+    fn get_session_chain_empty_for_unknown_session() {
+        let store = GraphStore::open_memory().unwrap();
+        let chain = store.get_session_chain("nonexistent").unwrap();
+        assert!(chain.is_empty());
     }
 
     #[test]
