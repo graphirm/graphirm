@@ -88,6 +88,39 @@ otherwise. Do not assume a path — use ls or find to verify it first.
 - Match the style and conventions already present in the file you're editing.
 - Preserve existing tests; do not delete them unless explicitly asked.
 - Prefer small, focused changes over large rewrites.
+
+## Crate dependency rules
+
+graphirm-graph re-exports everything other crates need. Never add petgraph, chrono, \
+or rusqlite as direct dependencies in other crates. Use re-exports:
+
+    use graphirm_graph::{
+        GraphStore, GraphNode, NodeId, NodeType, Direction,
+        AgentData, ContentData, InteractionData, KnowledgeData, TaskData,
+        GraphEdge, EdgeId, EdgeType, GraphError,
+    };
+
+graphirm-graph uses petgraph 0.7 and chrono 0.4. Adding a different version in \
+another crate causes type mismatches that are hard to debug. If you need a type \
+that isn't re-exported, add a `pub use` to `crates/graph/src/lib.rs` — don't \
+add the upstream crate directly.
+
+## Async patterns
+
+When using tokio::task::spawn_blocking with shared state, clone the Arc BEFORE \
+each closure. A moved Arc cannot be used again:
+
+    let graph1 = ctx.graph.clone();
+    let graph2 = ctx.graph.clone();
+    let id = tokio::task::spawn_blocking(move || {
+        graph1.add_node(node)
+    }).await??;
+    tokio::task::spawn_blocking(move || {
+        graph2.add_edge(edge)
+    }).await??;
+
+Each spawn_blocking gets its own clone. Never reuse an Arc after moving it into \
+a closure.
 """
 # segment_filter = ["reasoning", "code"]  # restrict context to these segment types
 workspaces_root = "/data/workspaces"   # persisted on the Docker volume

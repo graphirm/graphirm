@@ -131,7 +131,7 @@ Graphirm stores this as an Interaction node. Knowledge extraction captures entit
 
 ## Phase 3: Iterate (ongoing)
 
-Five dogfood runs completed 2026-03-20. Results in `docs/dogfood-findings.md`.
+Six dogfood runs completed 2026-03-20. Results in `docs/dogfood-findings.md`.
 
 ### System prompt improvements discovered
 
@@ -142,6 +142,7 @@ Five dogfood runs completed 2026-03-20. Results in `docs/dogfood-findings.md`.
 | 3 (Qwen) | Same context overflow | Discovered: `read` tool already had `offset`/`limit` but system prompt didn't mention them |
 | 4 (Qwen) | **Pass** | Documented `offset`/`limit` in tool description + reinforced file reading discipline |
 | 5 (Qwen) | Dep version conflict + ownership errors in spawn_blocking | Need to document re-exports and add spawn_blocking pattern |
+| 6 (Qwen) | **Pass** | System prompt fixes validated — agent used graphirm_graph re-exports, proper Arc cloning, no petgraph/chrono added. 5 tests, 18 tool calls, all checks pass |
 
 ### Key insights
 
@@ -149,11 +150,13 @@ Five dogfood runs completed 2026-03-20. Results in `docs/dogfood-findings.md`.
 
 2. **Rust-specific pitfalls** (run 5): On a harder task (250+ lines of new code), the agent understood the domain model perfectly but failed on Rust mechanics: (a) added `petgraph = "0.6"` directly when `graphirm-graph` re-exports from 0.7, causing type mismatches; (b) moved `Arc<GraphStore>` into a closure then tried to use it in a second closure. These are systematic — the system prompt should document crate re-exports and show the `Arc::clone` pattern for spawn_blocking.
 
+3. **System prompt fixes work** (run 6): After adding "Crate dependency rules" and "Async patterns" sections to the system prompt, the agent correctly used `graphirm_graph::` re-exports and cloned `Arc` before `spawn_blocking` closures. No petgraph/chrono added to Cargo.toml. The agent also fixed String borrow issues independently (a new pattern not in the prompt), showing the crate dep section generalised well.
+
 ### Identified system prompt fixes needed
 
-- Document that `graphirm-graph` re-exports `Direction`, `GraphEdge`, `GraphNode`, `NodeId`, `NodeType`, etc. — never add `petgraph` or `chrono` as direct deps to other crates
-- Add a spawn_blocking pattern example: `let graph = ctx.graph.clone(); let graph2 = graph.clone(); tokio::task::spawn_blocking(move || { graph.add_node(...) }); tokio::task::spawn_blocking(move || { graph2.add_edge(...) });`
-- Consider adding a "Crate dependency rules" section to the system prompt
+- ~~Document that `graphirm-graph` re-exports `Direction`, `GraphEdge`, `GraphNode`, `NodeId`, `NodeType`, etc.~~ ✅ Done (run 6 validated)
+- ~~Add a spawn_blocking pattern example~~ ✅ Done (run 6 validated)
+- ~~Add a "Crate dependency rules" section to the system prompt~~ ✅ Done (run 6 validated)
 
 ### System memory strategy (hybrid)
 
@@ -195,8 +198,8 @@ This also dogfoods the planning layer's cross-session linking.
 
 ### Open items
 
-- Apply system prompt fixes from run 5 and re-test
-- Write unit tests for project mode (agent didn't get to this — use split session)
+- ~~Apply system prompt fixes from run 5 and re-test~~ ✅ Done — run 6 pass
+- ~~Write unit tests for project mode~~ ✅ Done — agent wrote 5 tests in run 6
 - Implement Phase 1.5 (lesson/convention entity types in briefing)
 - Add `cargo_check` structured error tool (returns JSON, agent sees all errors at once)
 - Tune polling intervals

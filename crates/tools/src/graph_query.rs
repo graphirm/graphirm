@@ -1,7 +1,7 @@
 use async_trait::async_trait;
+use graphirm_graph::Direction;
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{GraphNode, KnowledgeData, NodeId, NodeType};
-use graphirm_graph::Direction;
 use serde_json::json;
 
 use crate::{Tool, ToolContext, ToolError, ToolOutput};
@@ -489,11 +489,7 @@ async fn execute_project(
 
                 if let Some(pid) = parent_id {
                     graph
-                        .add_edge(GraphEdge::new(
-                            EdgeType::Contains,
-                            pid,
-                            new_node_id.clone(),
-                        ))
+                        .add_edge(GraphEdge::new(EdgeType::Contains, pid, new_node_id.clone()))
                         .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
                 }
 
@@ -1135,5 +1131,313 @@ mod tests {
         assert!(out.content.contains("Node B"));
         // Node C was cut by limit=2
         assert!(!out.content.contains("Node C"));
+    }
+
+    #[tokio::test]
+    async fn test_project_create() {
+        let ctx = make_test_context();
+        let tool = GraphQueryTool::new();
+
+        let result = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "create",
+                    "entity": "Test Epic",
+                    "summary": "A test epic",
+                    "entity_type": "epic"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(result.is_ok(), "create should return Ok, got: {result:?}");
+        let out = result.unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains("Created planning epic node"));
+
+        // Extract node ID from output and verify metadata
+        let node_id_str = out.content.split("node: ").nth(1).unwrap().to_string();
+        let node_id = NodeId(node_id_str);
+
+        let graph = ctx.graph.clone();
+        let node = tokio::task::spawn_blocking(move || graph.get_node(&node_id))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            node.metadata.get("planning"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            node.metadata.get("status"),
+            Some(&serde_json::json!("open"))
+        );
+        if let NodeType::Knowledge(kd) = &node.node_type {
+            assert_eq!(kd.entity_type, "epic");
+            assert_eq!(kd.entity, "Test Epic");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_project_create_with_parent() {
+        let ctx = make_test_context();
+        let tool = GraphQueryTool::new();
+
+        // Create parent epic
+        let parent_result = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "create",
+                    "entity": "Parent Epic",
+                    "summary": "Parent epic",
+                    "entity_type": "epic"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!parent_result.is_error);
+
+        let parent_id_str = parent_result
+            .content
+            .split("node: ")
+            .nth(1)
+            .unwrap()
+            .to_string();
+        let parent_id_str_clone = parent_id_str.clone();
+        let parent_id = NodeId(parent_id_str);
+
+        // Create child story with parent_id
+        let child_result = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "create",
+                    "entity": "Child Story",
+                    "summary": "Child story",
+                    "entity_type": "story",
+                    "parent_id": parent_id_str_clone
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!child_result.is_error);
+
+        // Verify Contains edge exists from parent to child
+        let graph = ctx.graph.clone();
+        let child_id_str = child_result
+            .content
+            .split("node: ")
+            .nth(1)
+            .unwrap()
+            .to_string();
+        let child_id = NodeId(child_id_str);
+
+        let edges = tokio::task::spawn_blocking(move || graph.edges_for_node(&parent_id))
+            .await
+            .unwrap()
+            .unwrap();
+
+        let contains_edge_exists = edges
+            .iter()
+            .any(|e| e.edge_type == EdgeType::Contains && e.target == child_id);
+        assert!(
+            contains_edge_exists,
+            "Contains edge should exist from parent to child"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_project_list() {
+        let ctx = make_test_context();
+        let tool = GraphQueryTool::new();
+
+        // Create two planning nodes
+        let epic_result = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "create",
+                    "entity": "Epic One",
+                    "summary": "First epic",
+                    "entity_type": "epic"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!epic_result.is_error);
+
+        let story_result = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "create",
+                    "entity": "Story One",
+                    "summary": "First story",
+                    "entity_type": "story"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!story_result.is_error);
+
+        // List all planning nodes
+        let list_all_result = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "list"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!list_all_result.is_error);
+        assert!(list_all_result.content.contains("Epic One"));
+        assert!(list_all_result.content.contains("Story One"));
+
+        // List with entity_type filter
+        let list_story_result = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "list",
+                    "entity_type": "story"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!list_story_result.is_error);
+        assert!(!list_story_result.content.contains("Epic One"));
+        assert!(list_story_result.content.contains("Story One"));
+    }
+
+    #[tokio::test]
+    async fn test_project_link_session() {
+        let ctx = make_test_context();
+        let tool = GraphQueryTool::new();
+
+        // Create a planning node
+        let planning_result = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "create",
+                    "entity": "Planning Node",
+                    "summary": "A planning node",
+                    "entity_type": "criterion"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!planning_result.is_error);
+
+        let planning_node_id_str = planning_result
+            .content
+            .split("node: ")
+            .nth(1)
+            .unwrap()
+            .to_string();
+        let planning_node_id_str_clone = planning_node_id_str.clone();
+        let planning_node_id = NodeId(planning_node_id_str);
+
+        // Link session to planning node
+        let link_result = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "link_session",
+                    "planning_node_id": planning_node_id_str_clone
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!link_result.is_error);
+        assert!(link_result.content.contains("Linked session"));
+
+        // Verify DerivedFrom edge exists from agent to planning node
+        let graph = ctx.graph.clone();
+        let agent_id = ctx.agent_id.clone();
+
+        let edges = tokio::task::spawn_blocking(move || graph.edges_for_node(&planning_node_id))
+            .await
+            .unwrap()
+            .unwrap();
+
+        let derived_from_exists = edges
+            .iter()
+            .any(|e| e.edge_type == EdgeType::DerivedFrom && e.source == agent_id);
+        assert!(
+            derived_from_exists,
+            "DerivedFrom edge should exist from agent to planning node"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_project_update() {
+        let ctx = make_test_context();
+        let tool = GraphQueryTool::new();
+
+        // Create a planning node
+        let create_result = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "create",
+                    "entity": "Update Test",
+                    "summary": "Testing update",
+                    "entity_type": "decision"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!create_result.is_error);
+
+        let node_id_str = create_result
+            .content
+            .split("node: ")
+            .nth(1)
+            .unwrap()
+            .to_string();
+        let node_id_str_clone = node_id_str.clone();
+        let node_id = NodeId(node_id_str);
+
+        // Update status to done
+        let update_result = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "update",
+                    "node_id": node_id_str_clone,
+                    "status": "done"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!update_result.is_error);
+        assert!(update_result.content.contains("Updated planning node"));
+
+        // Verify status changed to done
+        let graph = ctx.graph.clone();
+        let node = tokio::task::spawn_blocking(move || graph.get_node(&node_id))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            node.metadata.get("status"),
+            Some(&serde_json::json!("done"))
+        );
     }
 }
