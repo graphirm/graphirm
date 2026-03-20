@@ -7,7 +7,7 @@ use graphirm_graph::GraphStore;
 use serde_json::json;
 use tokio::process::Command;
 
-use crate::{Tool, ToolContext, ToolError, ToolOutput};
+use crate::{Tool, ToolContext, ToolError, ToolOutput, impact::compute_risk};
 
 pub struct GraphDiffTool;
 
@@ -88,7 +88,8 @@ impl Tool for GraphDiffTool {
             .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("'mode' is required".into()))?;
 
-        let limit = args["limit"].as_u64().unwrap_or(20) as usize;
+        let limit = args["limit"].as_u64().unwrap_or(20).min(50) as usize;
+        let limit = limit.max(1);
 
         let changed_files = match mode {
             "git" => resolve_git_changed_files(&args, ctx).await?,
@@ -176,7 +177,6 @@ fn resolve_explicit_paths(args: &serde_json::Value) -> Result<Vec<PathBuf>, Tool
 
 /// Find files that reference the given file's stem via ripgrep.
 /// Returns up to `limit` file paths, excluding the file itself.
-#[allow(dead_code)]
 async fn find_dependents(
     path: &std::path::Path,
     working_dir: &std::path::Path,
@@ -226,7 +226,6 @@ async fn find_dependents(
         .collect()
 }
 
-#[allow(dead_code)]
 struct StaleNote {
     session_id: String,
     entity: String,
@@ -234,7 +233,6 @@ struct StaleNote {
 }
 
 /// Find Knowledge nodes from other sessions that mention this file's stem.
-#[allow(dead_code)]
 fn find_stale_knowledge(
     path: &std::path::Path,
     graph: &GraphStore,
@@ -278,18 +276,59 @@ fn find_stale_knowledge(
     notes
 }
 
-/// Placeholder — will be replaced in Task 5.
 async fn analyze_changed_files(
     changed_files: &[PathBuf],
-    _ctx: &ToolContext,
-    _limit: usize,
+    ctx: &ToolContext,
+    limit: usize,
 ) -> String {
     let mut lines = vec![format!("## Changed Files ({})", changed_files.len())];
+    let session_id = ctx.agent_id.to_string();
+
     for path in changed_files {
-        lines.push(format!("\n### {} — Risk: Low", path.display()));
-        lines.push("Analysis not yet implemented.".to_string());
+        let dependents = find_dependents(path, &ctx.working_dir, limit).await;
+        let stale_notes = find_stale_knowledge(path, &ctx.graph, &session_id);
+
+        let dep_count = dependents.len();
+        let has_notes = !stale_notes.is_empty();
+        let risk = compute_risk(Some(dep_count), has_notes);
+
+        lines.push(format!("\n### {} — Risk: {}", path.display(), risk));
+
+        if dependents.is_empty() {
+            lines.push("No dependents found.".to_string());
+        } else {
+            lines.push(format!("Dependents ({dep_count}):"));
+            for dep in &dependents {
+                lines.push(format!("  {}", dep.display()));
+            }
+        }
+
+        if stale_notes.is_empty() {
+            lines.push("No prior knowledge references.".to_string());
+        } else {
+            lines.push(format!("Stale Knowledge ({}):", stale_notes.len()));
+            for note in &stale_notes {
+                let summary = truncate(&note.summary, 80);
+                let session_short = truncate(&note.session_id, 12);
+                lines.push(format!(
+                    "  \u{26a0} [session {session_short}] \"{entity} — {summary}\" — may be invalidated",
+                    entity = note.entity,
+                ));
+            }
+        }
     }
+
     lines.join("\n")
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    let mut chars = s.chars();
+    let truncated: String = chars.by_ref().take(max).collect();
+    if chars.next().is_some() {
+        format!("{truncated}\u{2026}")
+    } else {
+        truncated
+    }
 }
 
 #[cfg(test)]
@@ -393,6 +432,33 @@ mod tests {
         let notes = find_stale_knowledge(&PathBuf::from("src/store.rs"), &ctx.graph, &session_id);
 
         assert!(notes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn paths_mode_produces_formatted_output() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("lib.rs"), "pub fn hello() {}").unwrap();
+        std::fs::write(dir.path().join("main.rs"), "use lib::hello;").unwrap();
+
+        let mut ctx = make_test_context();
+        ctx.working_dir = dir.path().to_path_buf();
+
+        let tool = GraphDiffTool::new();
+        let out = tool
+            .execute(json!({"mode": "paths", "paths": ["lib.rs"]}), &ctx)
+            .await
+            .unwrap();
+
+        assert!(!out.is_error);
+        assert!(out.content.contains("Changed Files"));
+        assert!(out.content.contains("lib.rs"));
+        assert!(out.content.contains("Risk:"));
+    }
+
+    #[tokio::test]
+    async fn not_destructive() {
+        let tool = GraphDiffTool::new();
+        assert!(!tool.is_destructive());
     }
 
     #[tokio::test]
