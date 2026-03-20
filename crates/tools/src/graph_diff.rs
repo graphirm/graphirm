@@ -190,6 +190,7 @@ async fn find_dependents(
         .args([
             "--files-with-matches",
             "--no-messages",
+            "--fixed-strings",
             "--glob",
             "!.git",
             "--glob",
@@ -290,7 +291,7 @@ mod tests {
 
         // rg should find utils.rs and main.rs referencing "lib"
         assert!(
-            result.len() >= 1,
+            !result.is_empty(),
             "should find at least one dependent: {result:?}"
         );
     }
