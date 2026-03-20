@@ -316,6 +316,7 @@ async fn execute_tools_parallel(
         turn: session.current_turn(),
         turn_pos_counter: session.turn_position_counter(),
         knowledge_retriever,
+        impact_provider: None,
     };
 
     // Partition tool calls: destructive ones go through sequential HITL approval,

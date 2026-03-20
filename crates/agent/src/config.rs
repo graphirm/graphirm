@@ -147,6 +147,10 @@ pub struct AgentConfig {
     /// Distinct from `working_dir` to avoid false positives when workspace resolution is unavailable.
     #[serde(default)]
     pub workspace_dir: Option<PathBuf>,
+    /// When true, destructive tool calls receive a structural impact brief
+    /// (dependent files, prior Knowledge notes, risk score) before execution.
+    #[serde(default = "default_pre_edit_impact")]
+    pub pre_edit_impact: bool,
 }
 
 fn default_working_dir() -> PathBuf {
@@ -159,6 +163,10 @@ fn default_soft_escalation_turn() -> u32 {
 
 fn default_soft_escalation_threshold() -> usize {
     2
+}
+
+fn default_pre_edit_impact() -> bool {
+    true
 }
 
 impl Default for AgentConfig {
@@ -214,6 +222,7 @@ impl Default for AgentConfig {
             segment_filter: None,
             workspace_name: None,
             workspace_dir: None,
+            pre_edit_impact: true,
         }
     }
 }
@@ -267,6 +276,8 @@ struct AgentConfigSection {
     // Set at runtime by the server after resolving workspaces_root; not read from TOML.
     #[serde(default)]
     workspace_name: Option<String>,
+    #[serde(default = "default_pre_edit_impact")]
+    pre_edit_impact: bool,
 }
 
 fn default_system_prompt() -> String {
@@ -305,6 +316,7 @@ impl AgentConfig {
             segment_filter: file.agent.segment_filter,
             workspace_name: file.agent.workspace_name,
             workspace_dir: None,
+            pre_edit_impact: file.agent.pre_edit_impact,
         })
     }
 
@@ -597,5 +609,25 @@ segment_filter = ["reasoning", "code"]
             config.segment_filter,
             Some(vec!["reasoning".to_string(), "code".to_string()])
         );
+    }
+
+    #[test]
+    fn pre_edit_impact_defaults_to_true() {
+        let config = AgentConfig::default();
+        assert!(config.pre_edit_impact);
+    }
+
+    #[test]
+    fn pre_edit_impact_can_be_disabled() {
+        let toml = r#"
+            [agent]
+            name = "test"
+            model = "test"
+            system_prompt = "test"
+            max_turns = 5
+            pre_edit_impact = false
+        "#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        assert!(!config.pre_edit_impact);
     }
 }
