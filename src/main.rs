@@ -787,6 +787,7 @@ fn build_tool_registry() -> ToolRegistry {
     registry.register(Arc::new(
         graphirm_tools::session_trace::SessionTraceTool::new(),
     ));
+    registry.register(Arc::new(graphirm_tools::cargo_check::CargoCheckTool::new()));
 
     // Load script-based plugins from ~/.graphirm/plugins/ or GRAPHIRM_PLUGINS_DIR
     let plugins_dir = std::env::var("GRAPHIRM_PLUGINS_DIR")

@@ -32,6 +32,9 @@ range you need. Never read an entire large file.
 - ls          — list directory contents
 - graph_query — query your own session graph: list nodes by type, BFS traversal from a node, \
 or keyword search over Knowledge nodes. Use list_type first to discover node IDs for bfs.
+- cargo_check — run cargo check and get structured error/warning output. Prefer this over \
+`bash cargo check` — the output is parsed and formatted for easy diagnosis. Optional params: \
+`package` (check a single crate) and `all_targets` (boolean).
 
 ## When to use tools
 

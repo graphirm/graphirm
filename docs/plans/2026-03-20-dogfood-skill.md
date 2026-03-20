@@ -131,7 +131,7 @@ Graphirm stores this as an Interaction node. Knowledge extraction captures entit
 
 ## Phase 3: Iterate (ongoing)
 
-Six dogfood runs completed 2026-03-20. Results in `docs/dogfood-findings.md`.
+Seven dogfood runs completed 2026-03-20. Results in `docs/dogfood-findings.md`.
 
 ### System prompt improvements discovered
 
@@ -143,6 +143,7 @@ Six dogfood runs completed 2026-03-20. Results in `docs/dogfood-findings.md`.
 | 4 (Qwen) | **Pass** | Documented `offset`/`limit` in tool description + reinforced file reading discipline |
 | 5 (Qwen) | Dep version conflict + ownership errors in spawn_blocking | Need to document re-exports and add spawn_blocking pattern |
 | 6 (Qwen) | **Pass** | System prompt fixes validated — agent used graphirm_graph re-exports, proper Arc cloning, no petgraph/chrono added. 5 tests, 18 tool calls, all checks pass |
+| 7 (Qwen) | **Partial** | cargo_check tool structure perfect (trait, registration, 9 tests, clippy/fmt clean). Two bugs: (a) early return on non-zero exit meant errors never parsed; (b) JSON struct expected top-level fields but cargo nests in `message`. Tests only covered clean path — no error path test |
 
 ### Key insights
 
@@ -151,6 +152,8 @@ Six dogfood runs completed 2026-03-20. Results in `docs/dogfood-findings.md`.
 2. **Rust-specific pitfalls** (run 5): On a harder task (250+ lines of new code), the agent understood the domain model perfectly but failed on Rust mechanics: (a) added `petgraph = "0.6"` directly when `graphirm-graph` re-exports from 0.7, causing type mismatches; (b) moved `Arc<GraphStore>` into a closure then tried to use it in a second closure. These are systematic — the system prompt should document crate re-exports and show the `Arc::clone` pattern for spawn_blocking.
 
 3. **System prompt fixes work** (run 6): After adding "Crate dependency rules" and "Async patterns" sections to the system prompt, the agent correctly used `graphirm_graph::` re-exports and cloned `Arc` before `spawn_blocking` closures. No petgraph/chrono added to Cargo.toml. The agent also fixed String borrow issues independently (a new pattern not in the prompt), showing the crate dep section generalised well.
+
+4. **External format knowledge gaps** (run 7): The agent implemented a tool that parses `cargo check --message-format=json` output, but didn't know the actual JSON envelope format (`{"reason":"compiler-message","message":{...}}`). It assumed diagnostic fields (`level`, `message`) were at the top level. Also assumed non-zero exit code = failure, but `cargo check` returns 101 for compilation errors (which is the tool's primary use case). Tests only validated the "no errors" path. Lesson: when a tool parses external tool output, the system prompt should document the format or instruct the agent to inspect real output first.
 
 ### Identified system prompt fixes needed
 
@@ -200,8 +203,9 @@ This also dogfoods the planning layer's cross-session linking.
 
 - ~~Apply system prompt fixes from run 5 and re-test~~ ✅ Done — run 6 pass
 - ~~Write unit tests for project mode~~ ✅ Done — agent wrote 5 tests in run 6
+- ~~Add `cargo_check` structured error tool~~ ✅ Done — agent built structure (run 7), Cursor fixed JSON parsing bugs
 - Implement Phase 1.5 (lesson/convention entity types in briefing)
-- Add `cargo_check` structured error tool (returns JSON, agent sees all errors at once)
+- Add "test the error path" heuristic to system prompt
 - Tune polling intervals
 - Add support for multi-turn conversations
 - Handle workspace ↔ repo sync (agent workspace vs `~/graphirm-repo/`)

@@ -41,7 +41,7 @@ graphirm-vscode/            # VS Code / Cursor extension (TypeScript)
 | `src/main.rs` | CLI: `chat`, `graph`, `serve`, `export-corpus`, `label-explore`, `schema-suggest`, `predict-spans`, `validate-agreement` |
 | `crates/graph/` | `GraphStore`, node/edge types, PageRank, BFS, HNSW vector index |
 | `crates/llm/` | `LlmProvider` trait, Anthropic/OpenAI/DeepSeek/Ollama/OpenRouter impls, `MockProvider` |
-| `crates/tools/` | `Tool` trait, `ToolRegistry`, parallel executor, bash/read/write/edit/grep/find/ls/graph_query/diff/read_many |
+| `crates/tools/` | `Tool` trait, `ToolRegistry`, parallel executor, bash/read/write/edit/grep/find/ls/graph_query/diff/read_many/cargo_check |
 | `crates/agent/` | `run_agent_loop`, `build_context`, `Coordinator`, `HitlGate`, knowledge extraction |
 | `crates/tui/` | `App`, chat panel, graph explorer, input handling |
 | `crates/server/` | axum routes, SSE streaming, `AppState`, `SessionHandle`, SDK, static file serving |

@@ -1,5 +1,6 @@
 pub mod bash;
 pub mod bash_paths;
+pub mod cargo_check;
 pub mod diff;
 pub mod edit;
 pub mod error;
