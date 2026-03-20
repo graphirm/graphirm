@@ -1,5 +1,6 @@
 //! Repo briefing — compact summary injected at session start.
 
+use graphirm_graph::{GraphStore, NodeType};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tokio::fs;
@@ -163,9 +164,56 @@ pub async fn count_mentions(root: &Path, stem: &str) -> usize {
     }
 }
 
+// ── Knowledge summary ──────────────────────────────────────────────────────────
+
+/// Query the graph for recent Knowledge nodes and return a compact summary string.
+/// Returns at most `limit` nodes, formatted as "• <entity>: <summary>" lines.
+/// Returns `None` if the store has no Knowledge nodes.
+///
+/// Uses `search_knowledge` with an empty query: keyword matching treats `""` as matching
+/// every node, and rows are ordered by `created_at` descending, so results are the
+/// most recently created Knowledge entries.
+pub fn build_knowledge_summary(store: &GraphStore, limit: usize) -> Option<String> {
+    let nodes = store
+        .search_knowledge("", None, None, limit)
+        .unwrap_or_default();
+
+    if nodes.is_empty() {
+        return None;
+    }
+
+    let lines: Vec<String> = nodes
+        .iter()
+        .filter_map(|n| {
+            if let NodeType::Knowledge(ref kd) = n.node_type {
+                let summary = kd.summary.trim();
+                if summary.is_empty() {
+                    Some(format!("• {}", kd.entity))
+                } else {
+                    let truncated = if summary.chars().count() > 120 {
+                        format!("{}…", summary.chars().take(120).collect::<String>())
+                    } else {
+                        summary.to_string()
+                    };
+                    Some(format!("• {}: {}", kd.entity, truncated))
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use graphirm_graph::{GraphNode, GraphStore, KnowledgeData, NodeType};
     use std::collections::HashMap;
 
     #[test]
@@ -206,5 +254,30 @@ mod tests {
         map.insert("lib".to_string(), 5); // same key, overwrites
         assert_eq!(map.len(), 1);
         assert_eq!(*map.get("lib").unwrap(), 5);
+    }
+
+    #[test]
+    fn knowledge_summary_empty_store() {
+        let store = GraphStore::open_memory().expect("in-memory store");
+        assert!(build_knowledge_summary(&store, 5).is_none());
+    }
+
+    #[test]
+    fn knowledge_summary_formats_nodes() {
+        let store = GraphStore::open_memory().expect("in-memory store");
+
+        let mut node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "workflow.rs".to_string(),
+            entity_type: "file".to_string(),
+            summary: "Main agent loop".to_string(),
+            confidence: 1.0,
+        }));
+        node.metadata["session_id"] = serde_json::json!("test");
+        store.add_node(node).expect("insert");
+
+        let result = build_knowledge_summary(&store, 5).expect("should have nodes");
+        assert!(result.contains("workflow.rs"));
+        assert!(result.contains("Main agent loop"));
+        assert!(result.starts_with("• "));
     }
 }
