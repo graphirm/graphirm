@@ -780,6 +780,7 @@ fn build_tool_registry() -> ToolRegistry {
     registry.register(Arc::new(graphirm_tools::graph_query::GraphQueryTool));
     registry.register(Arc::new(graphirm_tools::diff::DiffTool::new()));
     registry.register(Arc::new(graphirm_tools::read_many::ReadManyTool::new()));
+    registry.register(Arc::new(graphirm_tools::graph_diff::GraphDiffTool::new()));
 
     // Load script-based plugins from ~/.graphirm/plugins/ or GRAPHIRM_PLUGINS_DIR
     let plugins_dir = std::env::var("GRAPHIRM_PLUGINS_DIR")
@@ -980,7 +981,10 @@ async fn run_serve(db_path: &Path, host: String, port: u16) -> Result<(), Graphi
     let config_path = std::path::Path::new("config/default.toml");
     let agent_config = if config_path.exists() {
         graphirm_agent::AgentConfig::from_file(config_path).unwrap_or_else(|e| {
-            tracing::warn!("Failed to load {}: {e}; using defaults", config_path.display());
+            tracing::warn!(
+                "Failed to load {}: {e}; using defaults",
+                config_path.display()
+            );
             graphirm_agent::AgentConfig::default()
         })
     } else {
