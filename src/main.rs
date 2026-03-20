@@ -780,6 +780,9 @@ fn build_tool_registry() -> ToolRegistry {
     registry.register(Arc::new(graphirm_tools::graph_query::GraphQueryTool));
     registry.register(Arc::new(graphirm_tools::diff::DiffTool::new()));
     registry.register(Arc::new(graphirm_tools::read_many::ReadManyTool::new()));
+    registry.register(Arc::new(
+        graphirm_tools::repo_briefing::RepoBriefingTool::new(),
+    ));
     registry.register(Arc::new(graphirm_tools::graph_diff::GraphDiffTool::new()));
 
     // Load script-based plugins from ~/.graphirm/plugins/ or GRAPHIRM_PLUGINS_DIR

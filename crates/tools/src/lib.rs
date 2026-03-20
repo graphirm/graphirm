@@ -14,6 +14,7 @@ pub mod permissions;
 pub mod read;
 pub mod read_many;
 pub mod registry;
+pub mod repo_briefing;
 pub mod retriever;
 pub mod script;
 pub mod write;
