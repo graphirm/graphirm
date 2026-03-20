@@ -1,3 +1,4 @@
+pub mod briefing;
 pub mod compact;
 pub mod config;
 pub mod context;
