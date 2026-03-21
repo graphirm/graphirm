@@ -210,6 +210,68 @@ pub fn build_knowledge_summary(store: &GraphStore, limit: usize) -> Option<Strin
     }
 }
 
+/// Query the graph for lesson and convention Knowledge nodes and return a compact summary string.
+/// Returns at most `limit` nodes (combined from both types), formatted as "- [lesson] entity: summary"
+/// or "- [convention] entity: summary" lines.
+/// Returns `None` if the store has no lesson or convention nodes.
+///
+/// Fetches both lesson and convention nodes separately, merges them, sorts by created_at descending,
+/// and truncates to `limit` total nodes.
+pub fn build_lessons_summary(store: &GraphStore, limit: usize) -> Option<String> {
+    // Fetch lesson nodes
+    let mut lesson_nodes = store
+        .search_knowledge("", Some("lesson"), None, limit)
+        .unwrap_or_default();
+
+    // Fetch convention nodes
+    let mut convention_nodes = store
+        .search_knowledge("", Some("convention"), None, limit)
+        .unwrap_or_default();
+
+    // Merge both vectors
+    lesson_nodes.append(&mut convention_nodes);
+
+    // Sort by created_at descending — `GraphNode.created_at` is `DateTime<Utc>` (Ord)
+    lesson_nodes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    // Truncate to limit
+    lesson_nodes.truncate(limit);
+
+    if lesson_nodes.is_empty() {
+        return None;
+    }
+
+    let lines: Vec<String> = lesson_nodes
+        .iter()
+        .filter_map(|n| {
+            if let NodeType::Knowledge(ref kd) = n.node_type {
+                let summary = kd.summary.trim();
+                let tag = if kd.entity_type == "lesson" {
+                    "[lesson]"
+                } else if kd.entity_type == "convention" {
+                    "[convention]"
+                } else {
+                    return None;
+                };
+                let truncated = if summary.chars().count() > 120 {
+                    format!("{}…", summary.chars().take(120).collect::<String>())
+                } else {
+                    summary.to_string()
+                };
+                Some(format!("- {} {}: {}", tag, kd.entity, truncated))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
 // ── Assembly ───────────────────────────────────────────────────────────────────
 
 /// Build the compact repo briefing injected into the system prompt at session start.
@@ -242,6 +304,10 @@ pub async fn build_repo_briefing(root: &Path, store: &GraphStore) -> Option<Stri
     let knowledge_section =
         build_knowledge_summary(store, 5).map(|s| format!("**Recent knowledge:**\n{}", s));
 
+    // 4. Lessons and conventions (last 10 nodes)
+    let lessons_section =
+        build_lessons_summary(store, 10).map(|s| format!("**Lessons from past sessions:**\n{}", s));
+
     // Assemble
     let mut parts: Vec<String> = Vec::new();
     if !lang_line.is_empty() {
@@ -252,6 +318,9 @@ pub async fn build_repo_briefing(root: &Path, store: &GraphStore) -> Option<Stri
     }
     if let Some(ks) = knowledge_section {
         parts.push(ks);
+    }
+    if let Some(ls) = lessons_section {
+        parts.push(ls);
     }
 
     if parts.is_empty() {
@@ -341,5 +410,57 @@ mod tests {
         let store = GraphStore::open_memory().expect("in-memory store");
         let result = build_repo_briefing(dir.path(), &store).await;
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn lessons_summary_empty_store() {
+        let store = GraphStore::open_memory().expect("in-memory store");
+        assert!(build_lessons_summary(&store, 10).is_none());
+    }
+
+    #[test]
+    fn lessons_summary_formats_lesson_and_convention() {
+        let store = GraphStore::open_memory().expect("in-memory store");
+
+        let mut lesson_node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "async_pattern".to_string(),
+            entity_type: "lesson".to_string(),
+            summary: "Use tokio::task::spawn_blocking for async operations".to_string(),
+            confidence: 1.0,
+        }));
+        lesson_node.metadata["session_id"] = serde_json::json!("test");
+
+        let mut convention_node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "import_style".to_string(),
+            entity_type: "convention".to_string(),
+            summary: "Always use graphirm_graph re-exports".to_string(),
+            confidence: 1.0,
+        }));
+        convention_node.metadata["session_id"] = serde_json::json!("test");
+
+        store.add_node(lesson_node).expect("insert");
+        store.add_node(convention_node).expect("insert");
+
+        let result = build_lessons_summary(&store, 10).expect("should have nodes");
+        assert!(result.contains("async_pattern"));
+        assert!(result.contains("import_style"));
+        assert!(result.contains("[lesson]"));
+        assert!(result.contains("[convention]"));
+    }
+
+    #[test]
+    fn lessons_summary_excludes_non_lesson_types() {
+        let store = GraphStore::open_memory().expect("in-memory store");
+
+        let mut node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "workflow.rs".to_string(),
+            entity_type: "file".to_string(),
+            summary: "Main agent loop".to_string(),
+            confidence: 1.0,
+        }));
+        node.metadata["session_id"] = serde_json::json!("test");
+        store.add_node(node).expect("insert");
+
+        assert!(build_lessons_summary(&store, 10).is_none());
     }
 }

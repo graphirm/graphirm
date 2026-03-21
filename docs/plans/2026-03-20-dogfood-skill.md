@@ -151,6 +151,7 @@ Fourteen dogfood runs completed 2026-03-20 (2 hung, 1 model-ID fail). Results in
 | 12 (Qwen) | **Pass (assist)** | Prompt fix worked. Agent modified graph crate `traverse()`, used public API, cargo_check passed, 20/20 tests passed. rig JSON error before graph test fix (2-line human assist) |
 | 13 (Qwen) | **Pass (assist)** | neighbors mode: 5 edits, 22 messages. Every destructive tool hung on `rg` stdin bug in impact provider. Context overflow (266k) before cargo_check. Human: rewrote execute_neighbors (borrow/format errors), fixed imports, found+fixed impact `rg` bug |
 | 14 (Qwen) | **Near-pass** | stats mode: 6 edits, 40 messages, ~3 min. rg fix confirmed — no hangs. Ran cargo_check (pass!), tests (fail → self-diagnosed → fixed). Context overflow on final turn. Human: 2 clippy nits only. Best run yet — 95% agent |
+| 15 (Qwen) | **Partial** | lesson-briefing: `build_lessons_summary` + 3 tests, wired into `build_repo_briefing`. Sort bug: `metadata.get("created_at")` instead of `GraphNode.created_at` (top-level `DateTime<Utc>`). 1-line reviewer fix. 31 tool calls, 64 msgs, no context overflow. ~95% agent |
 
 ### Key insights
 
@@ -223,7 +224,7 @@ This also dogfoods the planning layer's cross-session linking.
 - ~~Fix LLM timeout bug~~ ✅ Done — `timeout_seconds` wired to `tokio::select!` in workflow.rs (runs 8–9 exposed)
 - ~~Add "Abstraction boundaries" to system prompt~~ ✅ Done — run 12 validated (agent used public API)
 - ~~Investigate `rig` JSON parse errors on OpenRouter responses~~ ✅ Done — root cause: `rig-core` 0.31 can't deserialize empty tool arguments (`"arguments": ""`). Fixed in rig #1437 (Feb 25). Upgraded to `rig-core` 0.33.0 (Mar 17). Zero breaking changes, all 75 LLM tests pass
-- Implement Phase 1.5 (lesson/convention entity types in briefing)
+- ~~Implement Phase 1.5 (lesson/convention entity types in briefing)~~ ✅ Done — `build_lessons_summary` in `briefing.rs`, wired into `build_repo_briefing`, 3 tests (dogfood run 15)
 - Tune polling intervals
 - Add support for multi-turn conversations
 - Handle workspace ↔ repo sync (agent workspace vs `~/graphirm-repo/`)
@@ -238,9 +239,36 @@ This also dogfoods the planning layer's cross-session linking.
 
 3. **Adaptive context decay** — `build_context` uses graph edge timestamps + `Reads`/`Modifies` edges to set resolution per Content node. Recent/modified → full body. Stale (>N turns, unmodified) → signature only (from structural sub-nodes). Mechanical: `read` auto-truncates files over M lines, appending outline. This is how you tune #1 and #2, not a standalone feature.
 
-**Other ideas (lower priority):**
+**Quick win:**
 
-- **`outline` tool** — standalone tool (~100 lines) returning function/struct/class signatures with line numbers. Simpler than #1 but doesn't create graph nodes. Useful as a stepping stone.
-- **Context budget awareness** — inject remaining token budget into system context each turn. Agent can conserve as budget shrinks. Orthogonal to the above — helps with overall context management but doesn't prevent wasteful reads.
+- **File size convention** — enforce max ~500 lines per file as a project convention. Split `graph_query.rs` (2048 lines) into `graph_query/mod.rs` + per-mode files. Split `store.rs` (2293 lines) similarly. 88% token reduction for the dogfooding case with zero infrastructure. Doesn't help with external codebases but eliminates the immediate problem.
+
+**Other ideas (scored):**
+
+| Idea | Side | Token savings | Effort | Graph-native? | Standalone? | Score |
+|------|------|---------------|--------|---------------|-------------|-------|
+| `max_tokens` cap (1000-1500/turn) | Output | High (~15% of total context) | 1 line config | No | Yes | 9/10 |
+| Tool call deduplication | Input | High (eliminates re-reads) | Low (~50 lines) | Yes | Yes | 9/10 |
+| "Act, don't narrate" system prompt | Output | Medium (~5-10%) | 2 sentences | No | Yes | 8/10 |
+| Auto-truncate `read` at 300 lines | Input | Medium (~10-15%) | Low (~30 lines) | No | Yes | 8/10 |
+| Tool output compression | Input | Medium (20-30% of non-file tokens) | Low (~30 lines/tool) | No | Yes | 7/10 |
+| Strip assistant prose from history | Output | Medium (~20% of accumulated history) | Medium (~60 lines in `build_context`) | No | Yes | 7/10 |
+| Tool output diffing (graph-backed) | Both | High (compounds per repeated call) | Medium (~60-80 lines/tool) | Yes — diff prior Content nodes | Yes | 8/10 |
+| Edit-without-read | Input | Medium (skips full read before edit) | Zero (system prompt only) | No | Fragile | 6/10 |
+| Working set vs reference | Input | High (stale reads → outline) | Medium (~100 lines) | Yes | Needs #1 | 6/10 |
+| `outline` tool | Input | Medium (first read) | Low (~100 lines) | No | Stepping stone | 5/10 |
+| Context budget awareness | Both | Low (guidance only) | Low (inject token count) | No | Orthogonal | 4/10 |
+
+**Prerequisite: node lifecycle management**
+
+Tool output diffing, structural sub-nodes, and fingerprinting all create Content nodes. Without lifecycle management, the graph bloats — 100+ nodes per session, thousands across sessions, mostly stale. Node tiers:
+
+| Tier | Examples | Lifespan | After expiry |
+|------|----------|----------|-------------|
+| Ephemeral | cargo_check output, grep results, ls output | Keep last N per tool per session | Delete (diff computed, raw output no longer needed) |
+| Session | File reads, edit diffs, tool output diffs | Session duration | Archive or delete at session end |
+| Persistent | Knowledge, Interactions, Agent nodes | Forever | Never pruned |
+
+Options: `tier` metadata field on Content nodes (or inferred from `content_type`); keep-last-N for tool diffing (exactly 1 cargo_check node exists at any time — previous deleted after diff); session-end cleanup hook for session-tier nodes; optional TTL (`expires_at`) for time-based expiry.
 
 **Prior art:** Aider repo-map (tree-sitter outline, graph-ranked, ~1k tokens); Claude Code compaction (3-layer: micro/auto/manual, summarizes at 95% window); OpenCode smart context (outlines classes, strips comments, import graph). Graphirm's advantage: the graph already tracks reads/modifies/timestamps — structural sub-nodes + fingerprinting make context management graph-native rather than bolted-on.
