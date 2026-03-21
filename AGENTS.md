@@ -147,6 +147,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 26 | Context auto-compaction trigger — `select_nodes_for_compaction` in `compact.rs`, `compaction_threshold` field in `ContextConfig`, hook in `stream_and_record` (sync, non-fatal); 4 new unit tests | ✅ done |
 | 27 | Web-app design system — spacing/typography/surface tokens in `theme.css`, light/dark theme via `useTheme` hook (`localStorage` + system preference), theme toggle in Toolbar, edge colors DRYed to CSS variables with theme-aware cache in `LabelledEdge.tsx` | ✅ done |
 | 26 | Read auto-truncate — files > 300 lines auto-truncated when no `offset`/`limit` provided; appends "Use offset and limit" notice; `MAX_AUTO_LINES` const in `read.rs` | ✅ done |
+| 28 | SQLite performance indices — `idx_nodes_created_at`, `idx_edges_created_at`, `idx_nodes_session_id` (json_extract), `idx_nodes_type_created` composite; all `CREATE INDEX IF NOT EXISTS`, safe on existing DBs | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -252,6 +253,15 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `crates/agent/src/workflow.rs` — after `build_context` returns, `stream_and_record` checks `enable_compaction`, runs selection in `spawn_blocking`, then awaits `compact_context` synchronously (non-fatal: errors are `tracing::warn!` and skipped)
 - Enable via `enable_compaction = true` in `[context]` section of `config/default.toml`; tune with `compaction_threshold` (0.0–1.0)
 - 4 new unit tests: below-threshold returns empty, above-threshold returns oldest, skips compacted, respects min_nodes
+
+**SQLite performance indices (Phase 28):**
+- `crates/graph/src/store.rs` — four indices added to `init_schema()` after the existing `idx_nodes_type`:
+  - `idx_nodes_created_at ON nodes(created_at)` — covers `ORDER BY created_at` in agent/knowledge queries
+  - `idx_edges_created_at ON edges(created_at)` — same for edge timeline queries
+  - `idx_nodes_session_id ON nodes(json_extract(metadata, '$.session_id'))` — covers `WHERE session_id = ?` filter used in conversation thread + context engine
+  - `idx_nodes_type_created ON nodes(node_type, created_at)` — composite index for the hottest pattern: `WHERE node_type = ? ORDER BY created_at` (context engine, `list_by_type`, knowledge retrieval)
+- All use `CREATE INDEX IF NOT EXISTS` — safe on existing databases, applied on next open
+- No API or public function changes; additive only
 
 **Web-app design system + light/dark theme (Phase 27):**
 - `web-app/src/styles/theme.css` — spacing scale (`--space-1` through `--space-8`), typography (`--font-sans`, `--font-mono`, `--text-xs/sm/base/lg/xl`, `--line-height`), surfaces (`--surface-0` through `--surface-3`), semantic colors (`--info`, `--warning`), additional edge color variables; `[data-theme="light"]` block overrides all color tokens for light theme; `body` font-family/size updated to use variables

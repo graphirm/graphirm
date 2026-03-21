@@ -102,16 +102,18 @@ Phase 12 exports sessions as Agent Trace JSON. The reverse — importing a trace
 - `find_similar file_path=crates/server/src/export.rs` — reusable serialization patterns
 - `semantic_analysis mode=search query="how is session state restored from graph"` — find anchor code
 
-### Performance: pagination + query caching — P3 · M
-The context engine traverses the full graph on every request. On sessions with 1k+ nodes this is measurable. Add:
+### ✅ SQLite performance indices — P3 · S
+Done 2026-03-21. Four indices added to `GraphStore.init_schema()` targeting the hottest query patterns: `idx_nodes_created_at`, `idx_edges_created_at`, `idx_nodes_session_id` (`json_extract(metadata, '$.session_id')`), `idx_nodes_type_created` composite on `(node_type, created_at)`. All `CREATE INDEX IF NOT EXISTS` — safe on existing databases. 71 graph tests pass. 100% agent.
+
+### Performance: query caching — P3 · M
+SQLite indices are done (Phase 28). Remaining work:
 - Offset/limit on all list endpoints
-- SQLite indices on `session_id`, `node_type`, `created_at`
 - In-memory TTL cache for frequent read queries (session list, node-by-id)
 
-**Bottleneck analysis (Nodestradamus):** `multi.rs` (betweenness 0.0037) brokers the most data flow — a cache in the `GraphStore` methods it calls has outsized impact. `context.rs` (91 call-sites) and `store.rs` (74 call-sites) are the two highest-traffic modules and the top targets for SQLite indices and caching.
+**Bottleneck analysis (Nodestradamus):** `multi.rs` (betweenness 0.0037) brokers the most data flow — a cache in the `GraphStore` methods it calls has outsized impact. `context.rs` (91 call-sites) and `store.rs` (74 call-sites) are the top targets for caching.
 
 **Useful Nodestradamus tools:**
-- `analyze_graph algorithm=pagerank` — rank modules by call traffic to prioritise index/cache targets
+- `analyze_graph algorithm=pagerank` — rank modules by call traffic to prioritise cache targets
 - `analyze_graph algorithm=betweenness` — identify chokepoints where caching has max payoff
 - `codebase_health checks=["bottlenecks"]` — run before/after to measure structural improvement
 
