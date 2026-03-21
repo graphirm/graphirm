@@ -261,6 +261,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Threshold gate: empty briefs (0 deps, no notes) are suppressed — no noise
 - `ImpactBrief` persisted as `Content` node with `content_type: "impact_brief"`, linked via `Reads` edge
 - `pre_edit_impact: bool` in `AgentConfig` (default `true`)
+- `max_output_tokens: Option<u32>` in `AgentConfig` — limits LLM response tokens per turn (separate from `max_tokens` which controls context window budget); falls back to `max_tokens`, then 8192; default.toml sets 1500
 - All analysis is non-fatal — tool always executes regardless of impact analysis success
 - 40 unit tests + 1 integration test, all passing
 - `Arc<RwLock<StableGraph>>` — no deadlocks; acquire briefly, never across await

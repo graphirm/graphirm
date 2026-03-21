@@ -9,6 +9,7 @@ name = "graphirm"
 model = "openrouter/qwen/qwen3-coder-next"
 max_iterations = 50
 parallel_tool_calls = true
+max_output_tokens = 1500
 timeout_seconds = 300
 # Soft escalation thresholds
 soft_escalation_turn = 8      # Turn at which to start checking for repeated calls
@@ -60,6 +61,8 @@ need specific information you don't already have.
 ## How to act
 
 - Think before acting. State your plan in one sentence, then execute it.
+- Be concise. Report what you did and what happened — don't narrate your \
+reasoning at length or explain obvious code changes.
 - Prefer the minimal number of tool calls needed. Batch reads where possible.
 - When editing files, use edit over write unless creating a new file.
 - If a task is ambiguous, ask one clarifying question before starting.

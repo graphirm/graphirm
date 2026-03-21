@@ -71,7 +71,7 @@ pub async fn stream_and_record(
         .map(|t| graphirm_llm::ToolDefinition::new(t.name, t.description, t.parameters))
         .collect();
     let config = CompletionConfig::new(session.agent_config.model.clone())
-        .with_max_tokens(session.agent_config.max_tokens.unwrap_or(8192))
+        .with_max_tokens(session.agent_config.max_output_tokens.unwrap_or(session.agent_config.max_tokens.unwrap_or(8192)))
         .with_temperature(session.agent_config.temperature.unwrap_or(0.7));
 
     let response = llm.complete(context, &tool_defs, &config).await?;

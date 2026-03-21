@@ -102,6 +102,9 @@ pub struct AgentConfig {
     pub system_prompt: String,
     pub max_turns: u32,
     pub max_tokens: Option<u32>,
+    /// Maximum output tokens for LLM completions. `None` means no limit.
+    /// This is separate from max_tokens which controls context window budget.
+    pub max_output_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub tools: Vec<String>,
     /// Working directory for file and shell tools. Defaults to the current
@@ -223,6 +226,7 @@ impl Default for AgentConfig {
             .to_string(),
             max_turns: 50,
             max_tokens: Some(8192),
+            max_output_tokens: None,
             temperature: Some(0.7),
             tools: vec![],
             working_dir: default_working_dir(),
@@ -268,6 +272,8 @@ struct AgentConfigSection {
     max_turns: u32,
     #[serde(default)]
     max_tokens: Option<u32>,
+    #[serde(default)]
+    max_output_tokens: Option<u32>,
     #[serde(default)]
     temperature: Option<f32>,
     #[serde(default)]
@@ -323,6 +329,7 @@ impl AgentConfig {
             system_prompt: file.agent.system_prompt,
             max_turns: file.agent.max_turns,
             max_tokens: file.agent.max_tokens,
+            max_output_tokens: file.agent.max_output_tokens,
             temperature: file.agent.temperature,
             tools: file.agent.tools,
             working_dir: file.agent.working_dir,
@@ -379,6 +386,7 @@ mod tests {
             system_prompt = "You are a coding assistant."
             max_turns = 10
             max_tokens = 4096
+            max_output_tokens = 1500
             temperature = 0.5
             tools = ["bash", "read", "write"]
             working_dir = "/tmp/project"
@@ -389,6 +397,7 @@ mod tests {
         assert_eq!(config.model, "claude-sonnet-4-20250514");
         assert_eq!(config.max_turns, 10);
         assert_eq!(config.max_tokens, Some(4096));
+        assert_eq!(config.max_output_tokens, Some(1500));
         assert_eq!(config.temperature, Some(0.5));
         assert_eq!(config.tools, vec!["bash", "read", "write"]);
         assert_eq!(config.working_dir, PathBuf::from("/tmp/project"));
