@@ -57,11 +57,51 @@ pub async fn stream_and_record(
     };
     let graph_ref = session.graph.clone();
     let session_id_ref = session.id.clone();
+    // Snapshot compaction settings before context_config is moved into the closure.
+    let enable_compaction = context_config.enable_compaction;
+    let max_tok = context_config.max_tokens;
+    let compaction_threshold = context_config.compaction_threshold;
+    let guaranteed_recent = context_config.guaranteed_recent_turns;
+
     let window = tokio::task::spawn_blocking(move || {
         crate::context::build_context(&graph_ref, &session_id_ref, &context_config)
     })
     .await
     .map_err(|e| AgentError::Join(e.to_string()))??;
+
+    // Auto-compaction: runs after context is built, before LLM call.
+    // Non-fatal — errors are logged and skipped.
+    if enable_compaction {
+        let graph_c = session.graph.clone();
+        let agent_c = session.id.clone();
+        let nodes = tokio::task::spawn_blocking(move || {
+            crate::compact::select_nodes_for_compaction(
+                &graph_c,
+                &agent_c,
+                max_tok,
+                compaction_threshold,
+                guaranteed_recent,
+                2,
+            )
+        })
+        .await;
+        match nodes {
+            Ok(Ok(ids)) if !ids.is_empty() => {
+                tracing::info!(count = ids.len(), "auto-compacting old context nodes");
+                let compact_cfg = crate::compact::CompactionConfig {
+                    model: String::new(),
+                    ..Default::default()
+                };
+                if let Err(e) =
+                    crate::compact::compact_context(&session.graph, llm, ids, &compact_cfg).await
+                {
+                    tracing::warn!("auto-compaction failed (non-fatal): {e}");
+                }
+            }
+            _ => {}
+        }
+    }
+
     let mut context = Vec::with_capacity(1 + window.messages.len());
     context.push(window.system);
     context.extend(window.messages);
@@ -71,7 +111,12 @@ pub async fn stream_and_record(
         .map(|t| graphirm_llm::ToolDefinition::new(t.name, t.description, t.parameters))
         .collect();
     let config = CompletionConfig::new(session.agent_config.model.clone())
-        .with_max_tokens(session.agent_config.max_output_tokens.unwrap_or(session.agent_config.max_tokens.unwrap_or(8192)))
+        .with_max_tokens(
+            session
+                .agent_config
+                .max_output_tokens
+                .unwrap_or(session.agent_config.max_tokens.unwrap_or(8192)),
+        )
         .with_temperature(session.agent_config.temperature.unwrap_or(0.7));
 
     let response = llm.complete(context, &tool_defs, &config).await?;

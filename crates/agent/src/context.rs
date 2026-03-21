@@ -84,6 +84,10 @@ pub struct ContextConfig {
     // TODO(phase-6-followup): auto-trigger compact_context when enable_compaction=true
     #[serde(default = "default_enable_compaction")]
     pub enable_compaction: bool,
+    /// Threshold ratio (0.0-1.0) of max_tokens that triggers auto-compaction.
+    /// When context exceeds this ratio, older nodes are selected for compaction.
+    #[serde(default = "default_compaction_threshold")]
+    pub compaction_threshold: f64,
     /// When set, assistant Interaction nodes with segments are reconstructed using
     /// only the segment types in this list. `None` includes all content (default behavior).
     #[serde(default)]
@@ -108,6 +112,9 @@ fn default_recency_decay() -> f64 {
 fn default_enable_compaction() -> bool {
     false
 }
+fn default_compaction_threshold() -> f64 {
+    0.80
+}
 
 impl Default for ContextConfig {
     fn default() -> Self {
@@ -119,6 +126,7 @@ impl Default for ContextConfig {
             recency_decay: 0.1,
             edge_weights: EdgeWeights::default(),
             enable_compaction: false,
+            compaction_threshold: 0.80,
             segment_filter: None,
         }
     }
@@ -385,7 +393,7 @@ pub fn score_graph_distance(node_id: &NodeId, distances: &HashMap<NodeId, usize>
 }
 
 /// Find the most recent Interaction node linked to the agent via Produces.
-fn find_current_turn(
+pub fn find_current_turn(
     graph: &GraphStore,
     agent_id: &NodeId,
 ) -> Result<Option<GraphNode>, AgentError> {
@@ -475,10 +483,7 @@ pub fn build_context(
     use crate::compact::is_compacted;
 
     if config.enable_compaction {
-        tracing::warn!(
-            "ContextConfig.enable_compaction = true but auto-compaction is not yet implemented \
-             (phase-6-followup). Nodes will not be compacted automatically."
-        );
+        tracing::debug!("enable_compaction is set — compaction handled by workflow");
     }
 
     let system_msg = LlmMessage::system(&config.system_prompt);

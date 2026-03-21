@@ -6,6 +6,11 @@ use graphirm_llm::{CompletionConfig, LlmMessage, LlmProvider};
 use crate::context::{estimate_tokens, estimate_tokens_str, get_text_content};
 use crate::error::AgentError;
 
+#[cfg(test)]
+use chrono::Duration;
+#[cfg(test)]
+use graphirm_graph::{AgentData, InteractionData};
+
 #[derive(Debug, Clone)]
 pub struct CompactionConfig {
     pub model: String,
@@ -161,10 +166,52 @@ pub fn is_compacted(node: &GraphNode) -> bool {
         .unwrap_or(false)
 }
 
+/// Select nodes for compaction when context exceeds `threshold_ratio` of `max_tokens`.
+///
+/// Returns node IDs of older conversation messages (excluding the most recent
+/// `guaranteed_recent_turns`) that should be compacted. Returns empty Vec if
+/// compaction is not needed.
+pub fn select_nodes_for_compaction(
+    graph: &GraphStore,
+    agent_id: &NodeId,
+    max_tokens: usize,
+    threshold_ratio: f64,
+    guaranteed_recent_turns: usize,
+    min_nodes_to_compact: usize,
+) -> Result<Vec<NodeId>, AgentError> {
+    use crate::context::{estimate_tokens, find_current_turn};
+    // Get the leaf turn node
+    let current_turn = match find_current_turn(graph, agent_id)? {
+        Some(n) => n,
+        None => return Ok(vec![]),
+    };
+    // Walk back through conversation thread (newest-first)
+    let thread = graph
+        .conversation_thread(&current_turn.id)
+        .map_err(AgentError::Graph)?;
+    // Filter out already-compacted
+    let candidates: Vec<&graphirm_graph::GraphNode> =
+        thread.iter().filter(|n| !is_compacted(n)).collect();
+    // Estimate total tokens
+    let total_tokens: usize = candidates.iter().map(|n| estimate_tokens(n)).sum();
+    let threshold = (max_tokens as f64 * threshold_ratio) as usize;
+    if total_tokens < threshold {
+        return Ok(vec![]);
+    }
+    // Skip the `guaranteed_recent_turns` newest nodes
+    let skip = guaranteed_recent_turns.min(candidates.len());
+    let eligible: Vec<NodeId> = candidates[skip..].iter().map(|n| n.id.clone()).collect();
+    if eligible.len() < min_nodes_to_compact {
+        return Ok(vec![]);
+    }
+    Ok(eligible)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphirm_graph::{GraphNode, InteractionData, NodeType};
+    use chrono::Utc;
+    use graphirm_graph::{AgentData, GraphEdge, GraphNode, InteractionData, NodeType};
     use graphirm_llm::MockProvider;
 
     #[test]
@@ -271,5 +318,257 @@ mod tests {
         }));
         node.metadata = serde_json::json!({"compacted": true});
         assert!(is_compacted(&node));
+    }
+
+    #[test]
+    fn select_nodes_below_threshold_returns_empty() {
+        let graph = GraphStore::open_memory().unwrap();
+
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test-agent".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("You are helpful.".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        // Create 5 short messages (each ~2 words = ~3 tokens)
+        let mut prev_id: Option<NodeId> = None;
+        for i in 0..5 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: role.to_string(),
+                content: format!("Message {i}"), // 2 words
+                token_count: None,
+            }));
+            node.created_at = Utc::now() - Duration::hours(5 - i as i64);
+            node.updated_at = node.created_at;
+            let node_id = node.id.clone();
+            graph.add_node(node).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    node_id.clone(),
+                ))
+                .unwrap();
+            if let Some(pid) = &prev_id {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        node_id.clone(),
+                        pid.clone(),
+                    ))
+                    .unwrap();
+            }
+            prev_id = Some(node_id);
+        }
+
+        // High max_tokens with 0.80 threshold = 102400 tokens, but total is only ~15 tokens
+        let nodes = select_nodes_for_compaction(
+            &graph, &agent_id, 128_000, // max_tokens
+            0.80,    // threshold_ratio
+            2,       // guaranteed_recent_turns
+            2,       // min_nodes_to_compact
+        )
+        .unwrap();
+        assert!(nodes.is_empty(), "Should return empty when below threshold");
+    }
+
+    #[test]
+    fn select_nodes_above_threshold_returns_oldest() {
+        let graph = GraphStore::open_memory().unwrap();
+
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test-agent".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("You are helpful.".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        // Create 10 messages with more tokens each (10 words each = ~14 tokens)
+        let mut prev_id: Option<NodeId> = None;
+        for i in 0..10 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            let content = if i % 2 == 0 {
+                format!("Message {i} about Rust programming language and development")
+            } else {
+                format!("Response {i} to user query about Rust programming language")
+            };
+            // 10 words each → ~14 tokens each
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: role.to_string(),
+                content,
+                token_count: None,
+            }));
+            node.created_at = Utc::now() - Duration::hours(10 - i as i64);
+            node.updated_at = node.created_at;
+            let node_id = node.id.clone();
+            graph.add_node(node).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    node_id.clone(),
+                ))
+                .unwrap();
+            if let Some(pid) = &prev_id {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        node_id.clone(),
+                        pid.clone(),
+                    ))
+                    .unwrap();
+            }
+            prev_id = Some(node_id);
+        }
+
+        // Low max_tokens with 0.80 threshold = 80 tokens
+        // 10 nodes × ~14 tokens = ~140 tokens > threshold → should select oldest
+        let nodes = select_nodes_for_compaction(
+            &graph, &agent_id, 100,  // max_tokens (low to trigger compaction, threshold = 80)
+            0.80, // threshold_ratio
+            2,    // guaranteed_recent_turns
+            2,    // min_nodes_to_compact
+        )
+        .unwrap();
+        // Should select oldest 6 nodes (10 - 2 guaranteed = 8 eligible, but only need 2+)
+        assert!(
+            !nodes.is_empty(),
+            "Should return nodes when above threshold"
+        );
+        assert!(
+            nodes.len() >= 2,
+            "Should return at least min_nodes_to_compact"
+        );
+    }
+
+    #[test]
+    fn select_nodes_skips_already_compacted() {
+        let graph = GraphStore::open_memory().unwrap();
+
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test-agent".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("You are helpful.".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        // Create 10 messages
+        let mut prev_id: Option<NodeId> = None;
+        for i in 0..10 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: role.to_string(),
+                content: format!("Message {i} about Rust programming language and development"),
+                token_count: None,
+            }));
+            node.created_at = Utc::now() - Duration::hours(10 - i as i64);
+            node.updated_at = node.created_at;
+            if i < 3 {
+                node.metadata = serde_json::json!({"compacted": true});
+            }
+            let node_id = node.id.clone();
+            graph.add_node(node).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    node_id.clone(),
+                ))
+                .unwrap();
+            if let Some(pid) = &prev_id {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        node_id.clone(),
+                        pid.clone(),
+                    ))
+                    .unwrap();
+            }
+            prev_id = Some(node_id);
+        }
+
+        let nodes = select_nodes_for_compaction(
+            &graph, &agent_id, 200,  // max_tokens
+            0.80, // threshold_ratio
+            2,    // guaranteed_recent_turns
+            2,    // min_nodes_to_compact
+        )
+        .unwrap();
+        // Should NOT include compacted nodes (0, 1, 2)
+        for node_id in &nodes {
+            let node = graph.get_node(node_id).unwrap();
+            assert!(
+                !is_compacted(&node),
+                "Compacted node {node_id} should not be selected"
+            );
+        }
+    }
+
+    #[test]
+    fn select_nodes_respects_min_nodes() {
+        let graph = GraphStore::open_memory().unwrap();
+
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test-agent".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("You are helpful.".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        // Create 5 messages
+        let mut prev_id: Option<NodeId> = None;
+        for i in 0..5 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: role.to_string(),
+                content: format!("Message {i} about Rust programming language and development"),
+                token_count: None,
+            }));
+            node.created_at = Utc::now() - Duration::hours(5 - i as i64);
+            node.updated_at = node.created_at;
+            let node_id = node.id.clone();
+            graph.add_node(node).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    node_id.clone(),
+                ))
+                .unwrap();
+            if let Some(pid) = &prev_id {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        node_id.clone(),
+                        pid.clone(),
+                    ))
+                    .unwrap();
+            }
+            prev_id = Some(node_id);
+        }
+
+        // Set min_nodes_to_compact to 4, but with guaranteed_recent_turns=3,
+        // only 2 nodes are eligible (5 - 3 = 2), so should return empty
+        let nodes = select_nodes_for_compaction(
+            &graph, &agent_id, 200,  // max_tokens
+            0.80, // threshold_ratio
+            3,    // guaranteed_recent_turns (leaves only 2 eligible)
+            4,    // min_nodes_to_compact (more than eligible)
+        )
+        .unwrap();
+        assert!(
+            nodes.is_empty(),
+            "Should return empty when too few eligible nodes"
+        );
     }
 }
