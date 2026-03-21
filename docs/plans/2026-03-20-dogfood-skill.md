@@ -131,7 +131,7 @@ Graphirm stores this as an Interaction node. Knowledge extraction captures entit
 
 ## Phase 3: Iterate (ongoing)
 
-Fourteen dogfood runs completed 2026-03-20 (2 hung, 1 model-ID fail). Results in `docs/dogfood-findings.md`.
+Seventeen dogfood runs completed (2 hung, 1 model-ID fail, 3 consecutive passes). Results in `docs/dogfood-findings.md`.
 
 ### System prompt improvements discovered
 
@@ -153,6 +153,7 @@ Fourteen dogfood runs completed 2026-03-20 (2 hung, 1 model-ID fail). Results in
 | 14 (Qwen) | **Near-pass** | stats mode: 6 edits, 40 messages, ~3 min. rg fix confirmed — no hangs. Ran cargo_check (pass!), tests (fail → self-diagnosed → fixed). Context overflow on final turn. Human: 2 clippy nits only. Best run yet — 95% agent |
 | 15 (Qwen) | **Partial** | lesson-briefing: `build_lessons_summary` + 3 tests, wired into `build_repo_briefing`. Sort bug: `metadata.get("created_at")` instead of `GraphNode.created_at` (top-level `DateTime<Utc>`). 1-line reviewer fix. 31 tool calls, 64 msgs, no context overflow. ~95% agent |
 | 16 (Qwen) | **Pass** | max-output-tokens: Added `max_output_tokens: Option<u32>` to AgentConfig (4 locations), wired fallback chain in workflow.rs, set 1500 in default.toml, updated test. Zero bugs. 28 msgs. First clean pass with no reviewer fixes. 100% agent |
+| 17 (Qwen) | **Pass** | read-auto-truncate: `MAX_AUTO_LINES=300` const, detection flags, truncation logic + notice, 2 tests. Self-fixed compile error. Ran `cargo fmt` globally (reformatted unrelated `graph_query.rs` — reverted by reviewer). Notice text missing "Use offset and limit" guidance (reviewer 1-word add). Third consecutive pass. ~98% agent |
 
 ### Key insights
 

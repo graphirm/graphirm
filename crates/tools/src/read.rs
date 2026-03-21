@@ -5,6 +5,8 @@ use serde_json::json;
 
 use crate::{Tool, ToolContext, ToolError, ToolOutput};
 
+const MAX_AUTO_LINES: usize = 300;
+
 pub struct ReadTool;
 
 impl ReadTool {
@@ -69,25 +71,42 @@ impl Tool for ReadTool {
             ToolError::ExecutionFailed(format!("failed to read '{}': {}", full_path.display(), e))
         })?;
 
+        let offset_provided = args["offset"].as_u64().is_some();
+        let limit_provided = args["limit"].as_u64().is_some();
         let offset = args["offset"].as_u64().unwrap_or(1).max(1) as usize;
         let limit = args["limit"].as_u64().map(|l| l as usize);
 
         let lines: Vec<&str> = content.lines().collect();
         let start = offset.saturating_sub(1);
-        let end = match limit {
-            Some(l) => (start + l).min(lines.len()),
-            None => lines.len(),
+
+        // Auto-truncate if neither offset nor limit was provided and file is large
+        let truncated = !offset_provided && !limit_provided && lines.len() > MAX_AUTO_LINES;
+        let end = if truncated {
+            MAX_AUTO_LINES.min(lines.len())
+        } else {
+            match limit {
+                Some(l) => (start + l).min(lines.len()),
+                None => lines.len(),
+            }
         };
 
         let selected: Vec<&str> = lines.get(start..end).unwrap_or(&[]).to_vec();
 
         let width = end.to_string().len().max(4);
-        let formatted = selected
+        let mut formatted = selected
             .iter()
             .enumerate()
             .map(|(i, line)| format!("{:>width$}|{}", start + i + 1, line, width = width))
             .collect::<Vec<_>>()
             .join("\n");
+
+        if truncated {
+            formatted.push_str(&format!(
+                "\n... (file has {} lines, showing first {}. Use offset and limit to read specific sections)",
+                lines.len(),
+                MAX_AUTO_LINES
+            ));
+        }
 
         let node = GraphNode::new(NodeType::Content(ContentData {
             content_type: "file".to_string(),
@@ -207,5 +226,47 @@ mod tests {
             .unwrap();
         assert!(!out.is_error);
         assert!(out.content.contains("absolute content"));
+    }
+
+    #[tokio::test]
+    async fn read_auto_truncates_large_file() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("large.txt");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        for i in 1..=500 {
+            writeln!(f, "line {i}").unwrap();
+        }
+
+        let tool = ReadTool::new();
+        let ctx = make_ctx_with_dir(&dir);
+        let out = tool
+            .execute(json!({"path": "large.txt"}), &ctx)
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains("line 1"));
+        assert!(out.content.contains("line 300"));
+        assert!(!out.content.contains("line 301"));
+        assert!(out.content.contains("showing first 300"));
+    }
+
+    #[tokio::test]
+    async fn read_no_truncate_with_explicit_limit() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("large.txt");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        for i in 1..=500 {
+            writeln!(f, "line {i}").unwrap();
+        }
+
+        let tool = ReadTool::new();
+        let ctx = make_ctx_with_dir(&dir);
+        let out = tool
+            .execute(json!({"path": "large.txt", "limit": 500}), &ctx)
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains("line 500"));
+        assert!(!out.content.contains("showing first 300"));
     }
 }

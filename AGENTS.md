@@ -114,6 +114,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - New LLM provider → implement `LlmProvider` trait in `crates/llm/`
 - `bash`, `write`, `edit` are destructive tools — subject to HITL gate (unless auto-approve is enabled)
 - `read`, `grep`, `find`, `ls`, `graph_query` are non-destructive — always run without confirmation
+- `read` auto-truncates files > 300 lines when no `offset`/`limit` is provided — returns first 300 lines + notice; callers should use `offset`/`limit` for targeted reads
 - Auto-approve: `POST /api/sessions/{id}/auto-approve` with `{ "enabled": true }` — skips HITL gating for all destructive tools in that session
 - Per-session workspaces: set `workspaces_root` in `[agent]` config; `POST /api/sessions` accepts optional `"workspace"` name (defaults to sanitized session name); workspace directory is auto-created; workspace name persisted in Agent node metadata and restored on restart; response includes `workspace` and `workspace_path` when active
 - Config lives in `config/default.toml`; `AgentConfig` is loaded from it at startup; `workspaces_root` in `[agent]` — optional root; when set, each session gets an isolated subdirectory `<root>/<workspace>/`
@@ -143,6 +144,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 24 | Repo briefing on session start — compact auto-injected summary (language breakdown, top files, recent knowledge) + on-demand `repo_briefing` tool (files/knowledge/git sections) | ✅ done |
 | 25 | Session flow traces — `session_trace` tool: `search` mode (Knowledge-anchored semantic or keyword fallback → ranked interaction traces per session) + `replay` mode (full chronological chain); `get_session_chain` in GraphStore; `compact`/`full` detail | ✅ done |
 | 25.5 | Lesson/convention briefing — `build_lessons_summary` queries `lesson`/`convention` Knowledge nodes, injects under `## Lessons from past sessions` in repo briefing | ✅ done |
+| 26 | Read auto-truncate — files > 300 lines auto-truncated when no `offset`/`limit` provided; appends "Use offset and limit" notice; `MAX_AUTO_LINES` const in `read.rs` | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
