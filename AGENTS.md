@@ -144,6 +144,8 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 24 | Repo briefing on session start — compact auto-injected summary (language breakdown, top files, recent knowledge) + on-demand `repo_briefing` tool (files/knowledge/git sections) | ✅ done |
 | 25 | Session flow traces — `session_trace` tool: `search` mode (Knowledge-anchored semantic or keyword fallback → ranked interaction traces per session) + `replay` mode (full chronological chain); `get_session_chain` in GraphStore; `compact`/`full` detail | ✅ done |
 | 25.5 | Lesson/convention briefing — `build_lessons_summary` queries `lesson`/`convention` Knowledge nodes, injects under `## Lessons from past sessions` in repo briefing | ✅ done |
+| 26 | Context auto-compaction trigger — `select_nodes_for_compaction` in `compact.rs`, `compaction_threshold` field in `ContextConfig`, hook in `stream_and_record` (sync, non-fatal); 4 new unit tests | ✅ done |
+| 27 | Web-app design system — spacing/typography/surface tokens in `theme.css`, light/dark theme via `useTheme` hook (`localStorage` + system preference), theme toggle in Toolbar, edge colors DRYed to CSS variables with theme-aware cache in `LabelledEdge.tsx` | ✅ done |
 | 26 | Read auto-truncate — files > 300 lines auto-truncated when no `offset`/`limit` provided; appends "Use offset and limit" notice; `MAX_AUTO_LINES` const in `read.rs` | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
@@ -243,6 +245,19 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `crates/tools/src/repo_briefing.rs` — `RepoBriefingTool` with `section` param (`all`/`files`/`knowledge`/`git`); files section uses `rg --files` + top-dir breakdown; knowledge section queries 10 recent nodes; git section runs `git log --oneline -10` + `git diff --name-only HEAD`; registered in `build_tool_registry()`
 - 13 tests total: 4 formatting unit tests (empty map, sort order, truncation, stem uniqueness), 2 knowledge tests (empty store, format), 3 lessons tests (empty store, both types format, exclusion filter), 1 briefing assembly test (empty dir → None), 3 tool integration tests (name/params, knowledge empty, git section)
 - Plan: `docs/plans/2026-03-20-repo-briefing.md`
+
+**Context auto-compaction (Phase 26):**
+- `crates/agent/src/compact.rs` — `select_nodes_for_compaction(graph, agent_id, max_tokens, threshold_ratio, guaranteed_recent_turns, min_nodes_to_compact)`: walks conversation thread via `conversation_thread`, filters out already-compacted nodes via `is_compacted`, compares total token estimate to threshold, skips newest `guaranteed_recent_turns` nodes, returns oldest eligible IDs
+- `crates/agent/src/context.rs` — `compaction_threshold: f64` added to `ContextConfig` (`#[serde(default)]`, default `0.80`); `tracing::debug!` replaces prior `tracing::warn!` stub
+- `crates/agent/src/workflow.rs` — after `build_context` returns, `stream_and_record` checks `enable_compaction`, runs selection in `spawn_blocking`, then awaits `compact_context` synchronously (non-fatal: errors are `tracing::warn!` and skipped)
+- Enable via `enable_compaction = true` in `[context]` section of `config/default.toml`; tune with `compaction_threshold` (0.0–1.0)
+- 4 new unit tests: below-threshold returns empty, above-threshold returns oldest, skips compacted, respects min_nodes
+
+**Web-app design system + light/dark theme (Phase 27):**
+- `web-app/src/styles/theme.css` — spacing scale (`--space-1` through `--space-8`), typography (`--font-sans`, `--font-mono`, `--text-xs/sm/base/lg/xl`, `--line-height`), surfaces (`--surface-0` through `--surface-3`), semantic colors (`--info`, `--warning`), additional edge color variables; `[data-theme="light"]` block overrides all color tokens for light theme; `body` font-family/size updated to use variables
+- `web-app/src/hooks/useTheme.ts` — `useTheme()` hook: reads `localStorage` key `graphirm-theme`, falls back to `prefers-color-scheme`, sets `data-theme` attribute on `<html>`, persists on change
+- `web-app/src/components/Toolbar.tsx` — theme toggle button (☀/◉) using `useTheme`; no new deps
+- `web-app/src/components/edges/LabelledEdge.tsx` — `EDGE_COLORS` constant removed; replaced with `getEdgeColor(edgeType)` that reads `--edge-<type>` CSS variable via `getComputedStyle`, caches per-theme to avoid per-render DOM queries
 
 **Graph node search / filter (Phase 20):**
 - `NodeFilter` interface (`query: string`, `types: Set<string>`) + `EMPTY_FILTER` exported from `crates/web-app/src/hooks/useGraphData.ts`

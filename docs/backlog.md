@@ -31,6 +31,10 @@ Done 2026-03-18. `cargo fmt --check`, `cargo clippy --all-features -D warnings`,
 
 ## UI (web-app)
 
+### ✅ Design system + light/dark theme — P3 · S
+Done 2026-03-21. Expanded design tokens in `theme.css` (spacing scale, typography scale, surface layers, semantic colors, all edge color variables). Light/dark theme via `useTheme` hook (`localStorage` + `prefers-color-scheme`, sets `data-theme` on `<html>`). Toggle button (☀/◉) in Toolbar. Edge colors DRYed — `EDGE_COLORS` map removed from `LabelledEdge.tsx`, replaced with `getEdgeColor()` reading CSS variables via `getComputedStyle` with theme-aware cache. Clean build, 100% agent.
+Plan: `docs/plans/2026-03-22-research-driven-improvements.md`
+
 ### ✅ Workspace selector in SessionBar — P2 · S
 Done 2026-03-18. "+ New" button expands an inline form with session name + workspace inputs. Enter submits, Escape cancels, promise awaited before closing.
 
@@ -53,6 +57,10 @@ Plan: `docs/plans/2026-03-19-export-session.md`
 ---
 
 ## Agent Capability
+
+### ✅ Context auto-compaction trigger — P2 · S
+Done 2026-03-21. `select_nodes_for_compaction` in `compact.rs` — walks conversation thread, filters already-compacted nodes, compares token estimate to `compaction_threshold` (default 0.80), skips `guaranteed_recent_turns` newest, returns oldest eligible IDs when `>= min_nodes_to_compact`. Hook in `stream_and_record`: runs selection in `spawn_blocking` then awaits `compact_context` synchronously; non-fatal (errors logged, skipped). `compaction_threshold: f64` added to `ContextConfig`. 4 new unit tests. Enable: `enable_compaction = true` in `[context]` config.
+Plan: `docs/plans/2026-03-22-research-driven-improvements.md`
 
 ### ✅ Workspace context injection at session start — P2 · S
 Done 2026-03-18. `build_workspace_context` in `routes.rs` lists up to 20 sorted entries and appends `## Active Workspace` block to `config.system_prompt` at session creation time. Non-fatal, warns on errors.
