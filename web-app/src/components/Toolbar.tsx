@@ -1,5 +1,6 @@
 import { type RefObject } from 'react';
 import type { LayoutMode, NodeFilter } from '../hooks/useGraphData';
+import { useTheme } from '../hooks/useTheme';
 import styles from './Toolbar.module.css';
 
 const NODE_TYPE_OPTIONS = ['Interaction', 'Agent', 'Content', 'Task', 'Knowledge'] as const;
@@ -33,6 +34,7 @@ export function Toolbar({
   totalCount,
   searchInputRef,
 }: ToolbarProps) {
+  const { theme, toggle: toggleTheme } = useTheme();
   const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
 
   function toggleType(t: string) {
@@ -98,6 +100,15 @@ export function Toolbar({
 
       <button className="secondary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={onAddAnnotation}>
         + Note
+      </button>
+
+      <button
+        onClick={toggleTheme}
+        className={styles.toolbarBtn}
+        title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+        style={{ marginLeft: 'auto' }}
+      >
+        {theme === 'dark' ? '☀' : '◉'}
       </button>
     </div>
   );

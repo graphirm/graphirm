@@ -2,23 +2,22 @@ import { BaseEdge, EdgeLabelRenderer, getBezierPath, getSmoothStepPath } from '@
 import type { EdgeProps } from '@xyflow/react';
 import type { EdgeType } from '../../types/graph';
 
-const EDGE_COLORS: Record<string, string> = {
-  responds_to: '#ffffff44',
-  reads: '#3b82f688',
-  modifies: '#f9731688',
-  produces: '#4ade8088',
-  depends_on: '#a855f788',
-  spawned_by: '#ec489988',
-  contains: '#4ade8044',
-  summarizes: '#ce93d844',
-  delegates_to: '#fbbf2488',
-  follows_up: '#ffffff33',
-  steers: '#0e639c88',
-  relates_to: '#ffffff22',
-  derived_from: '#ce93d866',
-  approved_by: '#16a34a88',
-  rejected_by: '#dc262688',
-};
+let _colorCache: Record<string, string> = {};
+let _cacheTheme = '';
+
+function getEdgeColor(edgeType: string): string {
+  const currentTheme = document.documentElement.getAttribute('data-theme') ?? 'dark';
+  if (currentTheme !== _cacheTheme) {
+    _colorCache = {};
+    _cacheTheme = currentTheme;
+  }
+  if (!_colorCache[edgeType]) {
+    const varName = `--edge-${edgeType.replace(/_/g, '-')}`;
+    const val = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    _colorCache[edgeType] = val || 'rgba(255,255,255,0.13)';
+  }
+  return _colorCache[edgeType];
+}
 
 const STROKE_WIDTH: Record<string, number> = {
   depends_on: 2.5,
@@ -45,7 +44,7 @@ export function LabelledEdge({
   markerEnd,
 }: EdgeProps & { data?: { edge_type?: EdgeType } }) {
   const edgeType = (data?.edge_type ?? label ?? '') as EdgeType;
-  const color = EDGE_COLORS[edgeType] ?? '#ffffff22';
+  const color = getEdgeColor(edgeType);
   const strokeWidth = STROKE_WIDTH[edgeType] ?? 1.5;
   const useSmooth = SMOOTH_STEP_TYPES.includes(edgeType);
 

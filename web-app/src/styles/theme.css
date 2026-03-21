@@ -35,6 +35,45 @@
   /* Transitions */
   --transition-fast: 0.12s ease;
   --transition-medium: 0.2s ease;
+
+  /* Spacing scale (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Typography */
+  --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-base: 13px;
+  --text-lg: 15px;
+  --text-xl: 18px;
+  --line-height: 1.5;
+
+  /* Surfaces (layered backgrounds) */
+  --surface-0: #1e1e1e;
+  --surface-1: #252526;
+  --surface-2: #2d2d2d;
+  --surface-3: #3c3c3c;
+
+  /* Semantic colors */
+  --info: #3b82f6;
+  --warning: #f59e0b;
+
+  /* Additional edge colors */
+  --edge-contains: #4ade8044;
+  --edge-summarizes: #ce93d844;
+  --edge-delegates-to: #fbbf2488;
+  --edge-follows-up: #ffffff33;
+  --edge-steers: #0e639c88;
+  --edge-relates-to: #ffffff22;
+  --edge-derived-from: #ce93d866;
+  --edge-approved-by: #16a34a88;
+  --edge-rejected-by: #dc262688;
 }
 
 * {
@@ -46,8 +85,8 @@
 body {
   background: var(--bg);
   color: var(--fg);
-  font-family: 'Segoe UI', system-ui, sans-serif;
-  font-size: 13px;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
   height: 100vh;
   overflow: hidden;
 }
@@ -120,4 +159,43 @@ select {
   padding-left: 8px;
   color: var(--fg-muted);
   margin: 4px 0;
+}
+
+/* Light theme overrides */
+[data-theme="light"] {
+  --bg: #ffffff;
+  --fg: #1e1e1e;
+  --fg-muted: #6b7280;
+  --border: #e5e7eb;
+  --border-hover: #d1d5db;
+  --accent: #2563eb;
+  --accent-fg: #fff;
+  --danger: #dc2626;
+  --success: #16a34a;
+  --node-interaction: #2196f3;
+  --node-content: #4caf50;
+  --node-task: #ff9800;
+  --node-knowledge: #9c27b0;
+  --node-agent: #f44336;
+  --node-annotation: #f59e0b;
+  --edge-responds-to: #00000022;
+  --edge-reads: #3b82f666;
+  --edge-modifies: #f97316aa;
+  --edge-produces: #22c55eaa;
+  --edge-depends-on: #a855f7aa;
+  --edge-spawned-by: #ec4899aa;
+  --edge-default: #00000011;
+  --surface-0: #ffffff;
+  --surface-1: #f9fafb;
+  --surface-2: #f3f4f6;
+  --surface-3: #e5e7eb;
+  --info: #2563eb;
+  --warning: #d97706;
+}
+
+[data-theme="light"] .markdown-body code {
+  background: #f3f4f6;
+}
+[data-theme="light"] .markdown-body pre {
+  background: #f3f4f6;
 }
