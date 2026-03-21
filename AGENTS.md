@@ -148,6 +148,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 27 | Web-app design system — spacing/typography/surface tokens in `theme.css`, light/dark theme via `useTheme` hook (`localStorage` + system preference), theme toggle in Toolbar, edge colors DRYed to CSS variables with theme-aware cache in `LabelledEdge.tsx` | ✅ done |
 | 26 | Read auto-truncate — files > 300 lines auto-truncated when no `offset`/`limit` provided; appends "Use offset and limit" notice; `MAX_AUTO_LINES` const in `read.rs` | ✅ done |
 | 28 | SQLite performance indices — `idx_nodes_created_at`, `idx_edges_created_at`, `idx_nodes_session_id` (json_extract), `idx_nodes_type_created` composite; all `CREATE INDEX IF NOT EXISTS`, safe on existing DBs | ✅ done |
+| 29 | Node-by-id TTL cache — `node_cache: Arc<RwLock<HashMap<NodeId, (GraphNode, Instant)>>>` in `GraphStore`; 60 s TTL; populated in `get_node`, invalidated in `update_node`; no public API changes | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -253,6 +254,13 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `crates/agent/src/workflow.rs` — after `build_context` returns, `stream_and_record` checks `enable_compaction`, runs selection in `spawn_blocking`, then awaits `compact_context` synchronously (non-fatal: errors are `tracing::warn!` and skipped)
 - Enable via `enable_compaction = true` in `[context]` section of `config/default.toml`; tune with `compaction_threshold` (0.0–1.0)
 - 4 new unit tests: below-threshold returns empty, above-threshold returns oldest, skips compacted, respects min_nodes
+
+**Node-by-id TTL cache (Phase 29):**
+- `crates/graph/src/store.rs` — `node_cache: Arc<RwLock<HashMap<NodeId, (GraphNode, Instant)>>>` added to `GraphStore` struct; initialized in both `open()` and `open_memory()`
+- `const NODE_CACHE_TTL: Duration = Duration::from_secs(60)` — module-level constant
+- `get_node`: checks cache first (scoped read-lock + let-chain `&&` for TTL check); on miss queries SQLite and populates cache (scoped write-lock)
+- `update_node`: after successful `UPDATE`, removes entry from cache — ensures no stale reads
+- No public API or signature changes; no new crate dependencies; all lock errors → `GraphError::LockPoisoned`
 
 **SQLite performance indices (Phase 28):**
 - `crates/graph/src/store.rs` — four indices added to `init_schema()` after the existing `idx_nodes_type`:

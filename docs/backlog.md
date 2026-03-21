@@ -105,10 +105,13 @@ Phase 12 exports sessions as Agent Trace JSON. The reverse — importing a trace
 ### ✅ SQLite performance indices — P3 · S
 Done 2026-03-21. Four indices added to `GraphStore.init_schema()` targeting the hottest query patterns: `idx_nodes_created_at`, `idx_edges_created_at`, `idx_nodes_session_id` (`json_extract(metadata, '$.session_id')`), `idx_nodes_type_created` composite on `(node_type, created_at)`. All `CREATE INDEX IF NOT EXISTS` — safe on existing databases. 71 graph tests pass. 100% agent.
 
-### Performance: query caching — P3 · M
-SQLite indices are done (Phase 28). Remaining work:
+### ✅ Node-by-id TTL cache — P3 · S
+Done 2026-03-21. `node_cache: Arc<RwLock<HashMap<NodeId, (GraphNode, Instant)>>>` added to `GraphStore`. 60 s TTL. `get_node` checks cache before hitting SQLite; populates on miss. `update_node` evicts the entry on write. No public API changes, no new deps. 71 tests pass, clippy clean. 100% agent.
+
+### Performance: remaining — P3 · M
+SQLite indices (Phase 28) and node-by-id cache (Phase 29) are done. Remaining:
 - Offset/limit on all list endpoints
-- In-memory TTL cache for frequent read queries (session list, node-by-id)
+- In-memory TTL cache for session list (`get_agent_nodes`) and `list_nodes_by_type`
 
 **Bottleneck analysis (Nodestradamus):** `multi.rs` (betweenness 0.0037) brokers the most data flow — a cache in the `GraphStore` methods it calls has outsized impact. `context.rs` (91 call-sites) and `store.rs` (74 call-sites) are the top targets for caching.
 

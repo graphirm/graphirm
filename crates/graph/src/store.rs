@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use r2d2::Pool;
@@ -17,7 +17,10 @@ pub struct GraphStore {
     pool: Pool<SqliteConnectionManager>,
     graph: Arc<RwLock<StableGraph<NodeId, EdgeId>>>,
     node_indices: Arc<RwLock<HashMap<NodeId, NodeIndex>>>,
+    node_cache: Arc<RwLock<HashMap<NodeId, (GraphNode, Instant)>>>,
 }
+
+const NODE_CACHE_TTL: Duration = Duration::from_secs(60);
 
 impl GraphStore {
     pub fn open(path: &str) -> Result<Self, GraphError> {
@@ -35,6 +38,7 @@ impl GraphStore {
             pool,
             graph: Arc::new(RwLock::new(StableGraph::new())),
             node_indices: Arc::new(RwLock::new(HashMap::new())),
+            node_cache: Arc::new(RwLock::new(HashMap::new())),
         };
         store.init_schema()?;
         store.rebuild_graph()?;
@@ -55,6 +59,7 @@ impl GraphStore {
             pool,
             graph: Arc::new(RwLock::new(StableGraph::new())),
             node_indices: Arc::new(RwLock::new(HashMap::new())),
+            node_cache: Arc::new(RwLock::new(HashMap::new())),
         };
         store.init_schema()?;
         Ok(store)
@@ -176,6 +181,17 @@ impl GraphStore {
     }
 
     pub fn get_node(&self, id: &NodeId) -> Result<GraphNode, GraphError> {
+        // Check cache first
+        {
+            let cache = self.node_cache.read().map_err(|_| GraphError::LockPoisoned)?;
+            if let Some((node, instant)) = cache.get(id)
+                && instant.elapsed() < NODE_CACHE_TTL
+            {
+                return Ok(node.clone());
+            }
+        }
+
+        // Cache miss, query SQLite
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
             "SELECT id, data, metadata, created_at, updated_at FROM nodes WHERE id = ?1",
@@ -205,13 +221,21 @@ impl GraphStore {
             .map_err(|e| GraphError::NodeNotFound(format!("bad timestamp: {e}")))?
             .with_timezone(&chrono::Utc);
 
-        Ok(GraphNode {
+        let node = GraphNode {
             id: NodeId(id_str),
             node_type,
             metadata,
             created_at,
             updated_at,
-        })
+        };
+
+        // Update cache
+        {
+            let mut cache = self.node_cache.write().map_err(|_| GraphError::LockPoisoned)?;
+            cache.insert(id.clone(), (node.clone(), Instant::now()));
+        }
+
+        Ok(node)
     }
 
     /// Return all Agent nodes from the graph, ordered by creation time (newest first).
@@ -306,6 +330,11 @@ impl GraphStore {
         if rows == 0 {
             return Err(GraphError::NodeNotFound(id.0.clone()));
         }
+
+        // Invalidate cache entry
+        let mut cache = self.node_cache.write().map_err(|_| GraphError::LockPoisoned)?;
+        cache.remove(id);
+
         Ok(())
     }
 
