@@ -94,6 +94,10 @@ impl GraphStore {
             CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
             CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(edge_type);
             CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(node_type);
+            CREATE INDEX IF NOT EXISTS idx_nodes_created_at ON nodes(created_at);
+            CREATE INDEX IF NOT EXISTS idx_edges_created_at ON edges(created_at);
+            CREATE INDEX IF NOT EXISTS idx_nodes_session_id ON nodes(json_extract(metadata, '$.session_id'));
+            CREATE INDEX IF NOT EXISTS idx_nodes_type_created ON nodes(node_type, created_at);
             ",
         )?;
         Ok(())
