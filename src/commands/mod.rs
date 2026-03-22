@@ -1,8 +1,8 @@
 pub mod chat;
 pub mod export;
-pub mod graph;
 #[cfg(feature = "local-extraction")]
 pub mod gliner;
+pub mod graph;
 pub mod import;
 pub mod knowledge;
 pub mod model;
@@ -73,6 +73,7 @@ pub fn build_tool_registry() -> ToolRegistry {
         graphirm_tools::session_trace::SessionTraceTool::new(),
     ));
     registry.register(Arc::new(graphirm_tools::cargo_check::CargoCheckTool::new()));
+    registry.register(Arc::new(graphirm_tools::submit::SubmitTool::new()));
 
     let plugins_dir = std::env::var("GRAPHIRM_PLUGINS_DIR")
         .map(std::path::PathBuf::from)

@@ -44,4 +44,4 @@ Cursor evaluation log for graphirm agent sessions. One row per completed task.
 
 ## Open investigations
 
-- **Qwen submit-tool quirk:** Sessions using Qwen via OpenRouter sometimes end with status "failed" when the model attempts to call a non-existent `submit` tool to signal task completion. Work is complete and tests pass. Root cause and fix (e.g. register a no-op submit tool, or adjust prompts) need investigation.
+- ~~**Qwen submit-tool quirk:**~~ **Resolved.** Added no-op `submit` tool (`crates/tools/src/submit.rs`) — models that call it now get success instead of "Tool not found", so sessions no longer end in "failed" status.

@@ -19,6 +19,7 @@ pub mod repo_briefing;
 pub mod retriever;
 pub mod script;
 pub mod session_trace;
+pub mod submit;
 pub mod write;
 
 use std::path::PathBuf;
