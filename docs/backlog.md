@@ -2,7 +2,7 @@
 
 Single source of truth for planned work. Completed items are recorded in `docs/completion-log.md` and `AGENTS.md` — not here.
 
-**Current state:** Phases 0–19 complete. See `AGENTS.md` → Current State table.
+**Current state:** Phases 0–30 complete. See `AGENTS.md` → Current State table.
 
 ---
 
