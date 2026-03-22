@@ -900,12 +900,56 @@ impl GraphStore {
     ) -> Result<Vec<GraphNode>, GraphError> {
         let conn = self.pool.get()?;
 
-        let base_query = "SELECT id, data, metadata, created_at, updated_at \
-                          FROM nodes WHERE node_type = ?1 ORDER BY created_at DESC";
-        let mut stmt = conn.prepare(base_query)?;
+        // Fast path: no filters - push limit into SQL
+        if session_id.is_none() && metadata_filter.is_none() {
+            let mut stmt = conn.prepare(
+                "SELECT id, data, metadata, created_at, updated_at \
+                 FROM nodes WHERE node_type = ?1 ORDER BY created_at DESC LIMIT ?2",
+            )?;
+
+            let rows: Vec<(String, String, String, String, String)> = stmt
+                .query_map(params![node_type, limit as i64], |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut results = Vec::with_capacity(rows.len());
+            for (id_str, data, meta_str, created_at_str, updated_at_str) in rows {
+                let node_type_val: NodeType = serde_json::from_str(&data)?;
+                let metadata: serde_json::Value = serde_json::from_str(&meta_str)
+                    .unwrap_or(serde_json::Value::Object(Default::default()));
+                let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now());
+                let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at_str)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now());
+                results.push(GraphNode {
+                    id: NodeId(id_str),
+                    node_type: node_type_val,
+                    metadata,
+                    created_at,
+                    updated_at,
+                });
+            }
+            return Ok(results);
+        }
+
+        // Filtered path: fetch with safety cap, apply Rust-side filtering
+        let safety_cap = limit * 10;
+        let mut stmt = conn.prepare(
+            "SELECT id, data, metadata, created_at, updated_at \
+             FROM nodes WHERE node_type = ?1 ORDER BY created_at DESC LIMIT ?2",
+        )?;
 
         let rows: Vec<(String, String, String, String, String)> = stmt
-            .query_map([node_type], |row| {
+            .query_map(params![node_type, safety_cap as i64], |row| {
                 Ok((
                     row.get(0)?,
                     row.get(1)?,
