@@ -2,7 +2,7 @@
 
 Single source of truth for planned work. Completed items are recorded in `docs/completion-log.md` and `AGENTS.md` — not here.
 
-**Current state:** Phases 0–30 complete. See `AGENTS.md` → Current State table.
+**Current state:** Phases 0–32 complete. See `AGENTS.md` → Current State table.
 
 ---
 
@@ -102,17 +102,10 @@ Done 2026-03-21. Four indices added to `GraphStore.init_schema()` targeting the 
 ### ✅ Node-by-id TTL cache — P3 · S
 Done 2026-03-21. `node_cache: Arc<RwLock<HashMap<NodeId, (GraphNode, Instant)>>>` added to `GraphStore`. 60 s TTL. `get_node` checks cache before hitting SQLite; populates on miss. `update_node` evicts the entry on write. No public API changes, no new deps. 71 tests pass, clippy clean. 100% agent.
 
-### Performance: remaining — P3 · M
-SQLite indices (Phase 28) and node-by-id cache (Phase 29) are done. Remaining:
-- Offset/limit on all list endpoints
-- In-memory TTL cache for session list (`get_agent_nodes`) and `list_nodes_by_type`
-
-**Bottleneck analysis (Nodestradamus):** `multi.rs` (betweenness 0.0037) brokers the most data flow — a cache in the `GraphStore` methods it calls has outsized impact. `context.rs` (91 call-sites) and `store.rs` (74 call-sites) are the top targets for caching.
-
-**Useful Nodestradamus tools:**
-- `analyze_graph algorithm=pagerank` — rank modules by call traffic to prioritise cache targets
-- `analyze_graph algorithm=betweenness` — identify chokepoints where caching has max payoff
-- `codebase_health checks=["bottlenecks"]` — run before/after to measure structural improvement
+### ✅ Performance: remaining — P3 · M
+Done 2026-03-22. Two improvements shipped:
+- **Phase 31** — `list_nodes_by_type` fast path: when called with no filters (session_id=None, metadata_filter=None), the SQL `LIMIT` is pushed into the query (`SELECT … LIMIT ?2`) so SQLite returns only the needed rows. Filtered path gets a `limit * 10` safety cap to avoid unbounded table scans.
+- **Phase 32** — `get_agent_nodes` TTL cache: `agent_nodes_cache: Arc<RwLock<Option<(Vec<…>, Instant)>>>` added to `GraphStore`; 30 s TTL; invalidated in `add_node` and `update_node` when the node type is `"agent"`. Both `open()` and `open_memory()` initialize to `None`. 71 tests pass, clippy clean. Primarily agent (Task 1 100%, Task 2 95% — one collapsible-if clippy fix applied manually).
 
 ---
 

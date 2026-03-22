@@ -150,6 +150,8 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 28 | SQLite performance indices — `idx_nodes_created_at`, `idx_edges_created_at`, `idx_nodes_session_id` (json_extract), `idx_nodes_type_created` composite; all `CREATE INDEX IF NOT EXISTS`, safe on existing DBs | ✅ done |
 | 29 | Node-by-id TTL cache — `node_cache: Arc<RwLock<HashMap<NodeId, (GraphNode, Instant)>>>` in `GraphStore`; 60 s TTL; populated in `get_node`, invalidated in `update_node`; no public API changes | ✅ done |
 | 30 | Cursor transcript import — `graphirm import-cursor <path>` ingests Cursor `.txt` transcripts into the graph; state-machine parser in `crates/agent/src/import/cursor.rs`; idempotent via `source_file` metadata | ✅ done |
+| 31 | `list_nodes_by_type` SQL LIMIT fast path — no-filter calls push `LIMIT ?2` into SQL; filtered path gets `limit * 10` safety cap; eliminates full-table scans on common unfiltered queries | ✅ done |
+| 32 | `get_agent_nodes` TTL cache — 30 s `agent_nodes_cache` in `GraphStore`; invalidated on agent node write; reduces repeated SQLite scans during session restore | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -255,6 +257,13 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `crates/agent/src/workflow.rs` — after `build_context` returns, `stream_and_record` checks `enable_compaction`, runs selection in `spawn_blocking`, then awaits `compact_context` synchronously (non-fatal: errors are `tracing::warn!` and skipped)
 - Enable via `enable_compaction = true` in `[context]` section of `config/default.toml`; tune with `compaction_threshold` (0.0–1.0)
 - 4 new unit tests: below-threshold returns empty, above-threshold returns oldest, skips compacted, respects min_nodes
+
+**`list_nodes_by_type` SQL LIMIT fast path + `get_agent_nodes` TTL cache (Phases 31–32):**
+- `list_nodes_by_type` fast path: when `session_id.is_none() && metadata_filter.is_none()`, uses `SELECT … LIMIT ?2` — SQLite returns only the needed rows, avoiding full-table scans; filtered path now has `limit * 10` safety cap
+- `agent_nodes_cache: Arc<RwLock<Option<(Vec<(GraphNode, AgentData)>, Instant)>>>` added to `GraphStore`; `AGENT_NODES_CACHE_TTL = 30s`; both `open()` and `open_memory()` initialize to `None`
+- `get_agent_nodes`: scoped read-lock check (`if let Some((cached, ts)) = &*cache && ts.elapsed() < AGENT_NODES_CACHE_TTL`); populates on miss under write-lock
+- Invalidated in `add_node` and `update_node` when `node_type.type_name() == "agent"` — uses let-chain `&&` to collapse nested if (clippy compliant)
+- 71 graph tests pass; clippy clean; zero new deps
 
 **Cursor transcript import (Phase 30):**
 - `crates/agent/src/import/mod.rs` + `crates/agent/src/import/cursor.rs` — new `import` sub-module in `graphirm-agent`
