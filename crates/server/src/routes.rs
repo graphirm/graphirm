@@ -22,9 +22,9 @@ use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
     AnnotationRequest, AutoApproveRequest, CreateKnowledgeRequest, CreateSessionRequest,
-    ExportQuery, GraphResponse, HealthResponse, NodeAction, NodeActionRequest, PromptRequest,
-    RenameSessionRequest, SessionId, SessionResponse, SessionStatus, SseEvent, SseEventType,
-    SubgraphQuery,
+    ExportQuery, GraphResponse, HealthResponse, NodeAction, NodeActionRequest, PinnedKnowledgeQuery,
+    PromptRequest, RenameSessionRequest, SessionId, SessionResponse, SessionStatus, SseEvent,
+    SseEventType, SubgraphQuery,
 };
 
 /// Build a brief workspace context block to inject into the system prompt.
@@ -118,6 +118,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/graph/{session_id}/annotate", post(create_annotation))
         .route("/api/knowledge", post(create_knowledge))
+        .route("/api/knowledge/pinned", get(list_pinned_knowledge))
         // HITL pause / resume / auto-approve
         .route("/api/sessions/{id}/pause", post(pause_session))
         .route("/api/sessions/{id}/resume", post(resume_session))
@@ -918,6 +919,25 @@ async fn create_knowledge(
         .map_err(|_| ServerError::Internal("Node vanished after insert".to_string()))?;
 
     Ok(Json(node))
+}
+
+/// `GET /api/knowledge/pinned` — return all pinned Knowledge nodes.
+///
+/// These are global rules/conventions that should always surface regardless of recency.
+/// Uses `GraphStore::list_pinned_knowledge(limit)` to fetch from the database.
+async fn list_pinned_knowledge(
+    State(state): State<AppState>,
+    Query(query): Query<PinnedKnowledgeQuery>,
+) -> Result<Json<Vec<GraphNode>>, ServerError> {
+    let graph = state.graph.clone();
+    let nodes = tokio::task::spawn_blocking(move || {
+        graph.list_pinned_knowledge(query.limit)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))?
+    .map_err(ServerError::Graph)?;
+
+    Ok(Json(nodes))
 }
 
 /// `POST /api/sessions/:id/pause`

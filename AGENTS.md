@@ -118,7 +118,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Auto-approve: `POST /api/sessions/{id}/auto-approve` with `{ "enabled": true }` — skips HITL gating for all destructive tools in that session
 - Per-session workspaces: set `workspaces_root` in `[agent]` config; `POST /api/sessions` accepts optional `"workspace"` name (defaults to sanitized session name); workspace directory is auto-created; workspace name persisted in Agent node metadata and restored on restart; response includes `workspace` and `workspace_path` when active
 - Config lives in `config/default.toml`; `AgentConfig` is loaded from it at startup; `workspaces_root` in `[agent]` — optional root; when set, each session gets an isolated subdirectory `<root>/<workspace>/`
-- Pinned Knowledge nodes: `POST /api/knowledge` with `"pinned": true` creates global convention/rule nodes that always surface in `repo_briefing` regardless of recency; `list_pinned_knowledge(limit)` in GraphStore; `build_pinned_summary` in briefing
+- Pinned Knowledge nodes: `POST /api/knowledge` with `"pinned": true` creates global convention/rule nodes that always surface in `repo_briefing` regardless of recency; `GET /api/knowledge/pinned` lists them (optional `?limit=N`); `list_pinned_knowledge(limit)` in GraphStore; `build_pinned_summary` in briefing
 - API keys via env vars: `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`
 
 ---
@@ -153,7 +153,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 30 | Cursor transcript import — `graphirm import-cursor <path>` ingests Cursor `.txt` transcripts into the graph; state-machine parser in `crates/agent/src/import/cursor.rs`; idempotent via `source_file` metadata | ✅ done |
 | 31 | `list_nodes_by_type` SQL LIMIT fast path — no-filter calls push `LIMIT ?2` into SQL; filtered path gets `limit * 10` safety cap; eliminates full-table scans on common unfiltered queries | ✅ done |
 | 32 | `get_agent_nodes` TTL cache — 30 s `agent_nodes_cache` in `GraphStore`; invalidated on agent node write; reduces repeated SQLite scans during session restore | ✅ done |
-| 33 | Pinned Knowledge nodes — `pinned` metadata flag, `list_pinned_knowledge` in GraphStore, `build_pinned_summary` in briefing, `POST /api/knowledge` endpoint for direct creation | ✅ done |
+| 33 | Pinned Knowledge nodes — `pinned` metadata flag, `list_pinned_knowledge` in GraphStore, `build_pinned_summary` in briefing, `POST /api/knowledge` + `GET /api/knowledge/pinned` endpoints | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -309,8 +309,10 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `crates/graph/src/store.rs` — `list_pinned_knowledge(limit)`: `SELECT … WHERE node_type = 'knowledge' AND json_extract(metadata, '$.pinned') = 1 ORDER BY created_at ASC LIMIT ?1`; 3 tests
 - `crates/agent/src/briefing.rs` — `build_pinned_summary(store, limit)`: formats pinned nodes as `- [pinned] entity: summary`; wired into `build_repo_briefing` between knowledge and lessons sections; 3 tests
 - `crates/server/src/routes.rs` — `POST /api/knowledge`: creates Knowledge nodes directly via API; `CreateKnowledgeRequest` in `types.rs` with `entity`, `entity_type`, `summary`, `confidence` (default 1.0), `pinned` (default false), `session_id` (optional); 1 deserialization test
+- `GET /api/knowledge/pinned`: returns all pinned Knowledge nodes as JSON array; `PinnedKnowledgeQuery` in `types.rs` with optional `limit` (default 50); handler uses `spawn_blocking` + `list_pinned_knowledge`; 1 deserialization test
 - Pinned nodes are global (not session-scoped) and always surfaced in repo briefing regardless of recency — used for coding conventions that the agent should always follow
 - Manage via API: `curl -X POST http://localhost:3000/api/knowledge -d '{"entity": "rule-name", "entity_type": "convention", "summary": "...", "pinned": true}'`
+- List pinned rules: `curl http://localhost:3000/api/knowledge/pinned` (or `?limit=10`)
 
 **Risk areas:**
 

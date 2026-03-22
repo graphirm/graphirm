@@ -321,6 +321,18 @@ pub struct CreateKnowledgeRequest {
     pub session_id: Option<String>,
 }
 
+/// Query parameters for `GET /api/knowledge/pinned`.
+#[derive(Debug, Deserialize)]
+pub struct PinnedKnowledgeQuery {
+    /// Maximum number of pinned knowledge nodes to return (default: 50).
+    #[serde(default = "default_pinned_limit")]
+    pub limit: usize,
+}
+
+fn default_pinned_limit() -> usize {
+    50
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,5 +505,18 @@ mod tests {
         assert!(req.confidence.is_none());
         assert!(!req.pinned);
         assert!(req.session_id.is_none());
+    }
+
+    #[test]
+    fn pinned_knowledge_query_deserialize() {
+        // With limit
+        let json = r#"{"limit": 10}"#;
+        let q: PinnedKnowledgeQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(q.limit, 10);
+
+        // Without limit (uses default)
+        let json = r#"{}"#;
+        let q: PinnedKnowledgeQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(q.limit, 50);
     }
 }
