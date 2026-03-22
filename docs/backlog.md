@@ -127,6 +127,35 @@ Done 2026-03-22. Split `main.rs` from 1267 → 321 lines (75% reduction). 8 comm
 ### ✅ Cross-project dogfood setup (Nodestradamus100) — P2 · S
 Done 2026-03-22. Deployed Graphirm binary to Nodestradamus100 always-on machine (`91.98.94.217:5555`). Created `dogfood-ndstrms` Cursor skill for delegating Nodestradamus100 tasks. Smoke test passed: agent read BACKLOG.md, ran pytest, self-corrected on timeout, produced correct summary. First cross-project dogfood validated end-to-end.
 
+---
+
+## Nodestradamus100 (via dogfood-ndstrms)
+
+Cross-project work delegated to Graphirm on `91.98.94.217:5555`. Use the `dogfood-ndstrms` Cursor skill.
+
+### Implement remaining 5 validation gates — P1 · L
+5 gates still use placeholder implementations. Each gate follows the `BaseValidationGate` pattern (see existing: `CrossFileDuplicatePrecisionGate`, `WithinFileSectionUtilityGate`, `LanguageIdentificationAccuracyGate`). Ground truth data goes in `tests/data/ground_truth/`.
+
+**Gates to implement (in suggested order):**
+1. **Import detection recall** — parse actual imports, compare to ground truth. Well-defined, testable.
+2. **Keyword extraction** — pattern validation with ground truth data.
+3. **Within-file similarity ratio** — implement actual similarity analysis.
+4. **Cross-repo stability** — community analysis across repositories.
+5. **Baseline correlation** — Spearman correlation with gold standard rankings.
+
+**Example Cursor prompt:**
+> Use the dogfood-ndstrms skill to implement the "import detection recall" validation gate on the Nodestradamus100 machine. Read the existing real gate implementations to understand the BaseValidationGate pattern, implement ImportDetectionRecallGate with ground truth data, write tests, and run pytest to verify.
+
+### Verify layer integration (2, 2.5, 3, 4) — P1 · M
+BACKLOG.md flags that layer integration may be superficial. Verify each layer produces meaningful output in the end-to-end pipeline, not just passes tests in isolation.
+
+### Increase test coverage to >50% — P2 · L
+Currently at 3-12% coverage. Add unit tests for all components, integration tests for all layers, validation tests with real repositories.
+
+---
+
+## Refactoring / Code Health (Graphirm)
+
 ### Break TUI circular dependencies — P3 · M
 All 14 cycles detected by Nodestradamus are in `crates/tui/` between `app.rs` ↔ `ui.rs` ↔ `events.rs`. Extract a shared `AppState` struct that both `ui.rs` and `events.rs` import without importing each other. TUI works fine — this is hygiene.
 
