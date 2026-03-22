@@ -13,14 +13,18 @@ use crate::edges::{EdgeId, EdgeType, GraphEdge};
 use crate::error::GraphError;
 use crate::nodes::{GraphNode, NodeId, NodeType};
 
+type AgentNodesCacheEntry = (Vec<(GraphNode, crate::nodes::AgentData)>, Instant);
+
 pub struct GraphStore {
     pool: Pool<SqliteConnectionManager>,
     graph: Arc<RwLock<StableGraph<NodeId, EdgeId>>>,
     node_indices: Arc<RwLock<HashMap<NodeId, NodeIndex>>>,
     node_cache: Arc<RwLock<HashMap<NodeId, (GraphNode, Instant)>>>,
+    agent_nodes_cache: Arc<RwLock<Option<AgentNodesCacheEntry>>>,
 }
 
 const NODE_CACHE_TTL: Duration = Duration::from_secs(60);
+const AGENT_NODES_CACHE_TTL: Duration = Duration::from_secs(30);
 
 impl GraphStore {
     pub fn open(path: &str) -> Result<Self, GraphError> {
@@ -39,6 +43,7 @@ impl GraphStore {
             graph: Arc::new(RwLock::new(StableGraph::new())),
             node_indices: Arc::new(RwLock::new(HashMap::new())),
             node_cache: Arc::new(RwLock::new(HashMap::new())),
+            agent_nodes_cache: Arc::new(RwLock::new(None)),
         };
         store.init_schema()?;
         store.rebuild_graph()?;
@@ -60,6 +65,7 @@ impl GraphStore {
             graph: Arc::new(RwLock::new(StableGraph::new())),
             node_indices: Arc::new(RwLock::new(HashMap::new())),
             node_cache: Arc::new(RwLock::new(HashMap::new())),
+            agent_nodes_cache: Arc::new(RwLock::new(None)),
         };
         store.init_schema()?;
         Ok(store)
@@ -169,6 +175,13 @@ impl GraphStore {
             ],
         )?;
 
+        // Invalidate agent cache if this is an agent node
+        if node.node_type.type_name() == "agent"
+            && let Ok(mut cache) = self.agent_nodes_cache.write()
+        {
+            *cache = None;
+        }
+
         let mut graph = self.graph.write().map_err(|_| GraphError::LockPoisoned)?;
         let mut indices = self
             .node_indices
@@ -248,6 +261,20 @@ impl GraphStore {
     ///
     /// Used during server startup to restore sessions from the persistent graph.
     pub fn get_agent_nodes(&self) -> Result<Vec<(GraphNode, crate::nodes::AgentData)>, GraphError> {
+        // Check cache first
+        {
+            let cache = self
+                .agent_nodes_cache
+                .read()
+                .map_err(|_| GraphError::LockPoisoned)?;
+            if let Some((cached, ts)) = &*cache
+                && ts.elapsed() < AGENT_NODES_CACHE_TTL
+            {
+                return Ok(cached.clone());
+            }
+        }
+
+        // Cache miss, query SQLite
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
             "SELECT id, data, metadata, created_at, updated_at
@@ -298,6 +325,15 @@ impl GraphStore {
             result.push((node, agent_data));
         }
 
+        // Update cache
+        {
+            let mut cache = self
+                .agent_nodes_cache
+                .write()
+                .map_err(|_| GraphError::LockPoisoned)?;
+            *cache = Some((result.clone(), Instant::now()));
+        }
+
         Ok(result)
     }
 
@@ -343,6 +379,13 @@ impl GraphStore {
             .write()
             .map_err(|_| GraphError::LockPoisoned)?;
         cache.remove(id);
+
+        // Invalidate agent cache if this is an agent node
+        if node.node_type.type_name() == "agent"
+            && let Ok(mut cache) = self.agent_nodes_cache.write()
+        {
+            *cache = None;
+        }
 
         Ok(())
     }
