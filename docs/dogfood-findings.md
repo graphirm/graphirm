@@ -44,6 +44,7 @@ Cursor evaluation log for graphirm agent sessions. One row per completed task.
 | 2026-03-22 | ndstrms:a8ae3e58 | quality-metrics-repo-processing | pass | P1. Added quality_metrics to TreeMetricsCalculator: code_level_edge_count, structural_edge_count, chunks_per_file, quality_level (superficial/structural_only/meaningful). test_quality_metrics_present_and_classified asserts full-pipeline metrics. 6 tests pass. Committed b17ec10 on ndstrms. |
 | 2026-03-22 | ndstrms:423f39c0 | v2-insights-extractor | pass | Phase 1 v2 insight layer (plan). `src/nodestradamus/insights/` RepoInsightExtractor: hotspots (PageRank), cycles (SCC), duplicate_clusters (similarity), dead_code_candidates, coupling. `tests/test_insights/test_extractor.py` 6 passed. Commit 756c2aa; session completed; evaluation sent. |
 | 2026-03-22 | ndstrms:c376f813 | v2-insights-persistence | pass | `persistence.py`: `graph_to_serializable`, `save_repo_insights` → `graph.json`, `metrics.json`, `insights.json`, `summary.md`. `tests/test_insights/test_persistence.py`; `pytest tests/test_insights/` 16 passed. Commit a85f60c pushed. Session status `failed` on empty final assistant turn after successful push; evaluation sent. |
+| 2026-03-22 | ndstrms:9c91b6e3 | v2-insights-batch-cli | pass | Phase 2: `pipeline/full_graph.py` `run_full_graph_pipeline`, `insights/batch.py`, CLI `nodestradamus insights batch-cache`, `test_batch.py`, test_extractor refactor. `pytest tests/test_insights/` 19 pass; `test_repo_processing_depth` 6 pass. Commit c63033a pushed; evaluation sent. |
 
 ## Open investigations
 
