@@ -1146,6 +1146,55 @@ impl GraphStore {
         Ok(results)
     }
 
+    /// Return all pinned Knowledge nodes (metadata["pinned"] = true), ordered by creation time (oldest first).
+    ///
+    /// These are global rules/conventions that should always surface regardless of recency.
+    pub fn list_pinned_knowledge(&self, limit: usize) -> Result<Vec<GraphNode>, GraphError> {
+        let conn = self.pool.get()?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, data, metadata, created_at, updated_at \
+             FROM nodes WHERE node_type = 'knowledge' AND json_extract(metadata, '$.pinned') = 1 \
+             ORDER BY created_at ASC LIMIT ?1",
+        )?;
+
+        let rows: Vec<(String, String, String, String, String)> = stmt
+            .query_map([limit as i64], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut results = Vec::with_capacity(rows.len());
+        for (id_str, data, meta_str, created_at_str, updated_at_str) in rows {
+            let node_type_val: NodeType = serde_json::from_str(&data)?;
+            let NodeType::Knowledge(ref _kd) = node_type_val else {
+                continue;
+            };
+            let metadata: serde_json::Value = serde_json::from_str(&meta_str)
+                .unwrap_or(serde_json::Value::Object(Default::default()));
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            results.push(GraphNode {
+                id: NodeId(id_str),
+                node_type: node_type_val,
+                metadata,
+                created_at,
+                updated_at,
+            });
+        }
+        Ok(results)
+    }
+
     /// Store an embedding vector for a node. Overwrites any existing embedding.
     // Bytes are stored in native-endian order via bytemuck::cast_slice.
     // This is correct for single-machine SQLite but will silently corrupt
@@ -2418,5 +2467,82 @@ mod tests {
 
         let all = store.get_all_embeddings().unwrap();
         assert!(all.iter().all(|(id, _)| *id != node_id));
+    }
+
+    #[test]
+    fn list_pinned_knowledge_empty_store() {
+        let store = GraphStore::open_memory().unwrap();
+        let nodes = store.list_pinned_knowledge(10).unwrap();
+        assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn list_pinned_knowledge_returns_only_pinned() {
+        let store = GraphStore::open_memory().unwrap();
+
+        // k1: pinned
+        let mut k1 = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "rule-a".to_string(),
+            entity_type: "convention".to_string(),
+            summary: "Always use absolute paths".to_string(),
+            confidence: 1.0,
+        }));
+        k1.metadata["pinned"] = serde_json::json!(true);
+        store.add_node(k1).unwrap();
+
+        // k2: not pinned (has session_id instead)
+        let mut k2 = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "workflow.rs".to_string(),
+            entity_type: "file".to_string(),
+            summary: "Agent loop".to_string(),
+            confidence: 0.9,
+        }));
+        k2.metadata["session_id"] = serde_json::json!("s1");
+        store.add_node(k2).unwrap();
+
+        // k3: pinned
+        let mut k3 = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "rule-b".to_string(),
+            entity_type: "convention".to_string(),
+            summary: "Never unwrap in production".to_string(),
+            confidence: 1.0,
+        }));
+        k3.metadata["pinned"] = serde_json::json!(true);
+        store.add_node(k3).unwrap();
+
+        let nodes = store.list_pinned_knowledge(10).unwrap();
+        assert_eq!(nodes.len(), 2);
+        let entities: Vec<&str> = nodes
+            .iter()
+            .map(|n| {
+                if let NodeType::Knowledge(ref kd) = n.node_type {
+                    kd.entity.as_str()
+                } else {
+                    unreachable!()
+                }
+            })
+            .collect();
+        assert!(entities.contains(&"rule-a"));
+        assert!(entities.contains(&"rule-b"));
+    }
+
+    #[test]
+    fn list_pinned_knowledge_respects_limit() {
+        let store = GraphStore::open_memory().unwrap();
+
+        // Create 3 pinned nodes
+        for i in 1..=3 {
+            let mut node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: format!("rule-{}", i),
+                entity_type: "convention".to_string(),
+                summary: "Test rule".to_string(),
+                confidence: 1.0,
+            }));
+            node.metadata["pinned"] = serde_json::json!(true);
+            store.add_node(node).unwrap();
+        }
+
+        let nodes = store.list_pinned_knowledge(2).unwrap();
+        assert_eq!(nodes.len(), 2);
     }
 }

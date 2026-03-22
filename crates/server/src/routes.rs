@@ -21,9 +21,10 @@ use crate::middleware::request_logging;
 use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
-    AnnotationRequest, AutoApproveRequest, CreateSessionRequest, ExportQuery, GraphResponse,
-    HealthResponse, NodeAction, NodeActionRequest, PromptRequest, RenameSessionRequest, SessionId,
-    SessionResponse, SessionStatus, SseEvent, SseEventType, SubgraphQuery,
+    AnnotationRequest, AutoApproveRequest, CreateKnowledgeRequest, CreateSessionRequest,
+    ExportQuery, GraphResponse, HealthResponse, NodeAction, NodeActionRequest, PromptRequest,
+    RenameSessionRequest, SessionId, SessionResponse, SessionStatus, SseEvent, SseEventType,
+    SubgraphQuery,
 };
 
 /// Build a brief workspace context block to inject into the system prompt.
@@ -116,6 +117,7 @@ pub fn create_router(state: AppState) -> Router {
             post(node_action),
         )
         .route("/api/graph/{session_id}/annotate", post(create_annotation))
+        .route("/api/knowledge", post(create_knowledge))
         // HITL pause / resume / auto-approve
         .route("/api/sessions/{id}/pause", post(pause_session))
         .route("/api/sessions/{id}/resume", post(resume_session))
@@ -865,6 +867,52 @@ async fn create_annotation(
     // Return the created node.
     let graph = state.graph.clone();
     let node = tokio::task::spawn_blocking(move || graph.get_node(&annotation_id))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(|_| ServerError::Internal("Node vanished after insert".to_string()))?;
+
+    Ok(Json(node))
+}
+
+/// `POST /api/knowledge` — create a global Knowledge node directly via the API.
+///
+/// Unlike `create_annotation`, this endpoint is NOT session-scoped. It creates
+/// knowledge nodes that exist independently of any session.
+async fn create_knowledge(
+    State(state): State<AppState>,
+    Json(body): Json<CreateKnowledgeRequest>,
+) -> Result<Json<GraphNode>, ServerError> {
+    use graphirm_graph::KnowledgeData;
+
+    let mut metadata = serde_json::Map::new();
+    if body.pinned {
+        metadata.insert("pinned".to_string(), serde_json::json!(true));
+    }
+    if let Some(sid) = &body.session_id {
+        metadata.insert("session_id".to_string(), serde_json::json!(sid));
+    }
+
+    let knowledge_node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+        entity: body.entity,
+        entity_type: body.entity_type,
+        summary: body.summary,
+        confidence: body.confidence.unwrap_or(1.0),
+    }));
+    let knowledge_node = GraphNode {
+        metadata: serde_json::Value::Object(metadata),
+        ..knowledge_node
+    };
+
+    let graph = state.graph.clone();
+    let node_to_store = knowledge_node.clone();
+    let knowledge_id = tokio::task::spawn_blocking(move || graph.add_node(node_to_store))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(ServerError::Graph)?;
+
+    // Return the created node by fetching it back.
+    let graph = state.graph.clone();
+    let node = tokio::task::spawn_blocking(move || graph.get_node(&knowledge_id))
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?
         .map_err(|_| ServerError::Internal("Node vanished after insert".to_string()))?;

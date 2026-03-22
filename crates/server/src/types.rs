@@ -307,6 +307,20 @@ pub struct AnnotationRequest {
     pub position: Option<AnnotationPosition>,
 }
 
+/// `POST /api/knowledge` request body.
+#[derive(Debug, Deserialize)]
+pub struct CreateKnowledgeRequest {
+    pub entity: String,
+    pub entity_type: String,
+    pub summary: String,
+    #[serde(default)]
+    pub confidence: Option<f64>,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,5 +470,28 @@ mod tests {
         let json = r#"{}"#;
         let q: SubgraphQuery = serde_json::from_str(json).unwrap();
         assert!(q.depth.is_none());
+    }
+
+    #[test]
+    fn create_knowledge_request_deserialize() {
+        // Full body with all fields
+        let json = r#"{"entity": "TestEntity", "entity_type": "test", "summary": "Test summary", "confidence": 0.95, "pinned": true, "session_id": "abc-123"}"#;
+        let req: CreateKnowledgeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.entity, "TestEntity");
+        assert_eq!(req.entity_type, "test");
+        assert_eq!(req.summary, "Test summary");
+        assert_eq!(req.confidence, Some(0.95));
+        assert!(req.pinned);
+        assert_eq!(req.session_id, Some("abc-123".to_string()));
+
+        // Minimal body (only required fields) — verify defaults
+        let json = r#"{"entity": "Minimal", "entity_type": "test", "summary": "Minimal summary"}"#;
+        let req: CreateKnowledgeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.entity, "Minimal");
+        assert_eq!(req.entity_type, "test");
+        assert_eq!(req.summary, "Minimal summary");
+        assert!(req.confidence.is_none());
+        assert!(!req.pinned);
+        assert!(req.session_id.is_none());
     }
 }

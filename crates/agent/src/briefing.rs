@@ -272,6 +272,42 @@ pub fn build_lessons_summary(store: &GraphStore, limit: usize) -> Option<String>
     }
 }
 
+// ── Pinned summary ─────────────────────────────────────────────────────────────
+
+/// Query the graph for pinned Knowledge nodes and return a compact summary string.
+/// Returns at most `limit` nodes, formatted as "- [pinned] entity: summary" lines.
+/// Returns `None` if the store has no pinned Knowledge nodes.
+pub fn build_pinned_summary(store: &GraphStore, limit: usize) -> Option<String> {
+    let nodes = store.list_pinned_knowledge(limit).unwrap_or_default();
+
+    if nodes.is_empty() {
+        return None;
+    }
+
+    let lines: Vec<String> = nodes
+        .iter()
+        .filter_map(|n| {
+            if let NodeType::Knowledge(ref kd) = n.node_type {
+                let summary = kd.summary.trim();
+                let truncated = if summary.chars().count() > 120 {
+                    format!("{}…", summary.chars().take(120).collect::<String>())
+                } else {
+                    summary.to_string()
+                };
+                Some(format!("- [pinned] {}: {}", kd.entity, truncated))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
 // ── Assembly ───────────────────────────────────────────────────────────────────
 
 /// Build the compact repo briefing injected into the system prompt at session start.
@@ -308,6 +344,10 @@ pub async fn build_repo_briefing(root: &Path, store: &GraphStore) -> Option<Stri
     let lessons_section =
         build_lessons_summary(store, 10).map(|s| format!("**Lessons from past sessions:**\n{}", s));
 
+    // 5. Pinned rules (last 25 nodes)
+    let pinned_section =
+        build_pinned_summary(store, 25).map(|s| format!("**Pinned rules:**\n{}", s));
+
     // Assemble
     let mut parts: Vec<String> = Vec::new();
     if !lang_line.is_empty() {
@@ -318,6 +358,9 @@ pub async fn build_repo_briefing(root: &Path, store: &GraphStore) -> Option<Stri
     }
     if let Some(ks) = knowledge_section {
         parts.push(ks);
+    }
+    if let Some(ps) = pinned_section {
+        parts.push(ps);
     }
     if let Some(ls) = lessons_section {
         parts.push(ls);
@@ -462,5 +505,71 @@ mod tests {
         store.add_node(node).expect("insert");
 
         assert!(build_lessons_summary(&store, 10).is_none());
+    }
+
+    #[test]
+    fn pinned_summary_empty_store() {
+        let store = GraphStore::open_memory().expect("in-memory store");
+        assert!(build_pinned_summary(&store, 10).is_none());
+    }
+
+    #[test]
+    fn pinned_summary_formats_pinned_nodes() {
+        let store = GraphStore::open_memory().expect("in-memory store");
+
+        let mut pinned_node1 = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "async_pattern".to_string(),
+            entity_type: "rule".to_string(),
+            summary: "Use tokio::task::spawn_blocking for async operations".to_string(),
+            confidence: 1.0,
+        }));
+        pinned_node1.metadata["session_id"] = serde_json::json!("test");
+        pinned_node1.metadata["pinned"] = serde_json::json!(true);
+
+        let mut pinned_node2 = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "import_style".to_string(),
+            entity_type: "rule".to_string(),
+            summary: "Always use graphirm_graph re-exports".to_string(),
+            confidence: 1.0,
+        }));
+        pinned_node2.metadata["session_id"] = serde_json::json!("test");
+        pinned_node2.metadata["pinned"] = serde_json::json!(true);
+
+        store.add_node(pinned_node1).expect("insert");
+        store.add_node(pinned_node2).expect("insert");
+
+        let result = build_pinned_summary(&store, 10).expect("should have nodes");
+        assert!(result.contains("async_pattern"));
+        assert!(result.contains("import_style"));
+        assert!(result.contains("[pinned]"));
+    }
+
+    #[test]
+    fn pinned_summary_excludes_unpinned() {
+        let store = GraphStore::open_memory().expect("in-memory store");
+
+        let mut pinned_node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "pinned_rule".to_string(),
+            entity_type: "rule".to_string(),
+            summary: "This is a pinned rule".to_string(),
+            confidence: 1.0,
+        }));
+        pinned_node.metadata["session_id"] = serde_json::json!("test");
+        pinned_node.metadata["pinned"] = serde_json::json!(true);
+
+        let mut unpinned_node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "unpinned_rule".to_string(),
+            entity_type: "rule".to_string(),
+            summary: "This is not pinned".to_string(),
+            confidence: 1.0,
+        }));
+        unpinned_node.metadata["session_id"] = serde_json::json!("test");
+
+        store.add_node(pinned_node).expect("insert");
+        store.add_node(unpinned_node).expect("insert");
+
+        let result = build_pinned_summary(&store, 10).expect("should have nodes");
+        assert!(result.contains("pinned_rule"));
+        assert!(!result.contains("unpinned_rule"));
     }
 }
