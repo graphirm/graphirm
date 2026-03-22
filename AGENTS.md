@@ -149,6 +149,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 26 | Read auto-truncate — files > 300 lines auto-truncated when no `offset`/`limit` provided; appends "Use offset and limit" notice; `MAX_AUTO_LINES` const in `read.rs` | ✅ done |
 | 28 | SQLite performance indices — `idx_nodes_created_at`, `idx_edges_created_at`, `idx_nodes_session_id` (json_extract), `idx_nodes_type_created` composite; all `CREATE INDEX IF NOT EXISTS`, safe on existing DBs | ✅ done |
 | 29 | Node-by-id TTL cache — `node_cache: Arc<RwLock<HashMap<NodeId, (GraphNode, Instant)>>>` in `GraphStore`; 60 s TTL; populated in `get_node`, invalidated in `update_node`; no public API changes | ✅ done |
+| 30 | Cursor transcript import — `graphirm import-cursor <path>` ingests Cursor `.txt` transcripts into the graph; state-machine parser in `crates/agent/src/import/cursor.rs`; idempotent via `source_file` metadata | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -254,6 +255,15 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `crates/agent/src/workflow.rs` — after `build_context` returns, `stream_and_record` checks `enable_compaction`, runs selection in `spawn_blocking`, then awaits `compact_context` synchronously (non-fatal: errors are `tracing::warn!` and skipped)
 - Enable via `enable_compaction = true` in `[context]` section of `config/default.toml`; tune with `compaction_threshold` (0.0–1.0)
 - 4 new unit tests: below-threshold returns empty, above-threshold returns oldest, skips compacted, respects min_nodes
+
+**Cursor transcript import (Phase 30):**
+- `crates/agent/src/import/mod.rs` + `crates/agent/src/import/cursor.rs` — new `import` sub-module in `graphirm-agent`
+- `ParsedTurn { role, content, thinking }` + `ParsedTranscript { source_file, turns }` — parser output types
+- `parse_transcript(source_file, text)` — line-by-line state machine; handles `user:/<user_query>`, `A:`, `[Thinking]`/`[/Thinking]`, `[Tool call]`, `[Tool result]`; tool blocks discarded; thinking preserved; trailing whitespace normalised
+- `ImportResult { agent_id, turns_written, skipped }` + `write_transcript(store, transcript)` — idempotency via `find_imported_agent` (checks `source_file` in Agent node metadata); creates synthetic `Agent` node, then per-turn `Interaction` nodes with `Produces` + `RespondsTo` edges; `session_id` set on every Interaction
+- `src/main.rs` — `Commands::ImportCursor { path, dry_run }` variant; handler accepts single `.txt` file or directory; `--dry-run` prints turn counts without writing
+- 8 unit tests; zero new crate dependencies; `cargo clippy -D warnings` clean
+- Usage: `graphirm import-cursor ~/.cursor/projects/…/agent-transcripts/` (imports all `.txt` files); re-import is a no-op
 
 **Node-by-id TTL cache (Phase 29):**
 - `crates/graph/src/store.rs` — `node_cache: Arc<RwLock<HashMap<NodeId, (GraphNode, Instant)>>>` added to `GraphStore` struct; initialized in both `open()` and `open_memory()`

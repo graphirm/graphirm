@@ -183,7 +183,10 @@ impl GraphStore {
     pub fn get_node(&self, id: &NodeId) -> Result<GraphNode, GraphError> {
         // Check cache first
         {
-            let cache = self.node_cache.read().map_err(|_| GraphError::LockPoisoned)?;
+            let cache = self
+                .node_cache
+                .read()
+                .map_err(|_| GraphError::LockPoisoned)?;
             if let Some((node, instant)) = cache.get(id)
                 && instant.elapsed() < NODE_CACHE_TTL
             {
@@ -231,7 +234,10 @@ impl GraphStore {
 
         // Update cache
         {
-            let mut cache = self.node_cache.write().map_err(|_| GraphError::LockPoisoned)?;
+            let mut cache = self
+                .node_cache
+                .write()
+                .map_err(|_| GraphError::LockPoisoned)?;
             cache.insert(id.clone(), (node.clone(), Instant::now()));
         }
 
@@ -332,7 +338,10 @@ impl GraphStore {
         }
 
         // Invalidate cache entry
-        let mut cache = self.node_cache.write().map_err(|_| GraphError::LockPoisoned)?;
+        let mut cache = self
+            .node_cache
+            .write()
+            .map_err(|_| GraphError::LockPoisoned)?;
         cache.remove(id);
 
         Ok(())

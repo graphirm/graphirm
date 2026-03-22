@@ -81,6 +81,18 @@ enum Commands {
         all_roles: bool,
     },
 
+    /// Import Cursor agent transcript file(s) into the graph.
+    ///
+    /// Accepts a single .txt transcript file or a directory of .txt files.
+    /// Idempotent — re-importing the same file is a no-op.
+    ImportCursor {
+        /// Path to a .txt transcript file or a directory containing .txt files
+        path: PathBuf,
+        /// Print what would be imported without writing to the graph
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Run GLiNER2 over a corpus JSONL with candidate labels and output a statistics report.
     #[cfg(feature = "local-extraction")]
     LabelExplore {
@@ -212,6 +224,53 @@ async fn main() -> Result<(), GraphirmError> {
                 .with_env_filter("warn")
                 .init();
             run_export_corpus(&db_path, out, limit, all_roles)?;
+        }
+        Commands::ImportCursor { path, dry_run } => {
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter("warn")
+                .init();
+            let store = graphirm_graph::GraphStore::open(
+                db_path
+                    .to_str()
+                    .ok_or_else(|| GraphirmError::Config("non-UTF8 db path".to_string()))?,
+            )?;
+            let files: Vec<PathBuf> = if path.is_dir() {
+                std::fs::read_dir(&path)?
+                    .filter_map(|e: std::io::Result<std::fs::DirEntry>| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().is_some_and(|ext| ext == "txt"))
+                    .collect()
+            } else {
+                vec![path]
+            };
+            if files.is_empty() {
+                println!("No .txt files found.");
+                return Ok(());
+            }
+            for file in &files {
+                let text = std::fs::read_to_string(file)?;
+                let source_name = file
+                    .file_name()
+                    .and_then(|n: &std::ffi::OsStr| n.to_str())
+                    .unwrap_or("unknown");
+                let transcript =
+                    graphirm_agent::import::cursor::parse_transcript(source_name, &text);
+                if dry_run {
+                    println!(
+                        "[dry-run] {} — {} turns",
+                        source_name,
+                        transcript.turns.len()
+                    );
+                    continue;
+                }
+                let result = graphirm_agent::import::cursor::write_transcript(&store, &transcript)?;
+                if result.skipped {
+                    println!("Already imported, skipping: {source_name}");
+                } else {
+                    println!("Imported {} turns from {source_name}", result.turns_written);
+                }
+            }
         }
         #[cfg(feature = "local-extraction")]
         Commands::LabelExplore {

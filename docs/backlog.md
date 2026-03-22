@@ -92,15 +92,9 @@ Plan: `docs/plans/2026-03-18-p2-sse-knowledge-plugins.md`
 Done 2026-03-19. `ScriptTool` loads `plugin.toml` manifests from `~/.graphirm/plugins/` (or `GRAPHIRM_PLUGINS_DIR`). Each plugin defines name, description, `command`, `destructive` flag, and JSON Schema parameters. Args passed as `GRAPHIRM_ARGS` (JSON) + `GRAPHIRM_ARG_<KEY>` env vars. `is_destructive()` added to `Tool` trait; overridden in `bash`/`write`/`edit` and respected by HITL gate alongside the built-in name list. Example plugin at `examples/plugins/hello/`.
 Plan: `docs/plans/2026-03-18-p2-sse-knowledge-plugins.md`
 
-### Agent Trace ingestion (import) — P3 · M
-Phase 12 exports sessions as Agent Trace JSON. The reverse — importing a trace from another agent (Claude, OpenCode, Aider) into the Graphirm graph — is not yet implemented. Useful for consolidating work done outside Graphirm.
-
-**Key files (Nodestradamus):** `store.rs` has 74 downstream callers — import code must respect node creation order assumed by `context.rs`, `workflow.rs`, and `multi.rs`. Mirror the existing `export_session` path in `crates/server/src/export.rs`. `restore_sessions_from_graph` is the other anchor (session state rebuild from persisted graph).
-
-**Useful Nodestradamus tools:**
-- `get_impact file_path=crates/graph/src/store.rs` — blast radius of GraphStore changes
-- `find_similar file_path=crates/server/src/export.rs` — reusable serialization patterns
-- `semantic_analysis mode=search query="how is session state restored from graph"` — find anchor code
+### ✅ Agent Trace ingestion — Cursor import — P3 · M
+Done 2026-03-22. `graphirm import-cursor <path>` imports Cursor `.txt` transcript files (one per conversation) into the graph as `Agent` + `Interaction` nodes with `Produces` and `RespondsTo` edges. Accepts a single file or a directory. Idempotent — re-importing the same file is a no-op (checked via `source_file` on the synthetic Agent node). Thinking blocks preserved in `metadata["thinking"]`; tool call/result blocks stripped. Parser: `crates/agent/src/import/cursor.rs` — state machine, 8 unit tests, zero new deps. 100% agent (parser + write function) + manual fix (trailing-newline edge case).
+Plan: `docs/plans/2026-03-21-agent-trace-ingestion.md`
 
 ### ✅ SQLite performance indices — P3 · S
 Done 2026-03-21. Four indices added to `GraphStore.init_schema()` targeting the hottest query patterns: `idx_nodes_created_at`, `idx_edges_created_at`, `idx_nodes_session_id` (`json_extract(metadata, '$.session_id')`), `idx_nodes_type_created` composite on `(node_type, created_at)`. All `CREATE INDEX IF NOT EXISTS` — safe on existing databases. 71 graph tests pass. 100% agent.

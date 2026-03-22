@@ -190,7 +190,7 @@ async fn execute_bfs(args: &serde_json::Value, ctx: &ToolContext) -> Result<Tool
         .as_u64()
         .ok_or_else(|| ToolError::InvalidArguments("'depth' is required for bfs mode".into()))?;
     let depth = (raw_depth as usize).min(10);
-    
+
     // max_depth is optional - when provided, it overrides depth
     let max_depth = if let Some(raw_max_depth) = args["max_depth"].as_u64() {
         (raw_max_depth as usize).min(10)
@@ -264,7 +264,10 @@ async fn execute_bfs(args: &serde_json::Value, ctx: &ToolContext) -> Result<Tool
     let shown = traversed.iter().take(limit);
     let total = traversed.len();
     for (node, depth_level) in shown {
-        lines.push(format!("  [depth={depth_level}] {}", compact_node_summary(node)));
+        lines.push(format!(
+            "  [depth={depth_level}] {}",
+            compact_node_summary(node)
+        ));
     }
     if total > limit {
         lines.push(format!(
@@ -456,9 +459,9 @@ async fn execute_neighbors(
     args: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<ToolOutput, ToolError> {
-    let node_id_str = args["node_id"]
-        .as_str()
-        .ok_or_else(|| ToolError::InvalidArguments("'node_id' is required for neighbors mode".into()))?;
+    let node_id_str = args["node_id"].as_str().ok_or_else(|| {
+        ToolError::InvalidArguments("'node_id' is required for neighbors mode".into())
+    })?;
     let node_id = NodeId(node_id_str.to_string());
 
     let direction_str = args["direction"].as_str().unwrap_or("all");
@@ -835,12 +838,12 @@ async fn execute_stats(ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
     let graph = ctx.graph.clone();
 
     let (total_nodes, total_edges, counts_by_type) = tokio::task::spawn_blocking(move || {
-        let total_nodes = graph.node_count_db().map_err(|e| {
-            ToolError::ExecutionFailed(format!("Failed to get node count: {}", e))
-        })?;
-        let total_edges = graph.edge_count_db().map_err(|e| {
-            ToolError::ExecutionFailed(format!("Failed to get edge count: {}", e))
-        })?;
+        let total_nodes = graph
+            .node_count_db()
+            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to get node count: {}", e)))?;
+        let total_edges = graph
+            .edge_count_db()
+            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to get edge count: {}", e)))?;
         let counts_by_type = graph.node_counts_by_type().map_err(|e| {
             ToolError::ExecutionFailed(format!("Failed to get node counts by type: {}", e))
         })?;
@@ -1884,7 +1887,9 @@ mod tests {
             .await
             .unwrap();
         assert!(!out.is_error);
-        assert!(out.content.contains("(no neighbors)") || !out.content.contains(&parent_id.to_string()));
+        assert!(
+            out.content.contains("(no neighbors)") || !out.content.contains(&parent_id.to_string())
+        );
     }
 
     #[tokio::test]
@@ -1972,9 +1977,7 @@ mod tests {
         let ctx = make_test_context();
         let tool = GraphQueryTool::new();
 
-        let result = tool
-            .execute(json!({"mode": "stats"}), &ctx)
-            .await;
+        let result = tool.execute(json!({"mode": "stats"}), &ctx).await;
 
         assert!(result.is_ok(), "stats should return Ok, got: {result:?}");
         let out = result.unwrap();
@@ -2028,9 +2031,7 @@ mod tests {
             .unwrap();
 
         let tool = GraphQueryTool::new();
-        let result = tool
-            .execute(json!({"mode": "stats"}), &ctx)
-            .await;
+        let result = tool.execute(json!({"mode": "stats"}), &ctx).await;
 
         assert!(result.is_ok(), "stats should return Ok, got: {result:?}");
         let out = result.unwrap();

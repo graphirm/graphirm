@@ -9,6 +9,7 @@ pub mod escalation;
 pub mod event;
 pub mod hitl;
 pub mod impact;
+pub mod import;
 pub mod knowledge;
 pub mod multi;
 pub mod session;
@@ -26,6 +27,10 @@ pub use delegate::SubagentTool;
 pub use error::AgentError;
 pub use event::{AgentEvent, EventBus};
 pub use hitl::{HitlDecision, HitlGate, is_destructive_tool};
+pub use import::{
+    cursor::ParsedTranscript, cursor::ParsedTurn, cursor::parse_transcript,
+    cursor::write_transcript,
+};
 pub use multi::{
     AgentRegistry, LlmFactory, SubagentHandle, collect_subagent_results, spawn_subagent,
     wait_for_dependencies, wait_for_subagents,
