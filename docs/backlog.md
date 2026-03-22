@@ -2,7 +2,7 @@
 
 Single source of truth for planned work. Completed items are recorded in `docs/completion-log.md` and `AGENTS.md` — not here.
 
-**Current state:** Phases 0–33 complete. See `AGENTS.md` → Current State table.
+**Current state:** Phases 0–34 complete. See `AGENTS.md` → Current State table.
 
 ---
 
@@ -109,6 +109,10 @@ Done 2026-03-22. Two improvements shipped:
 
 ### ✅ Pinned Knowledge nodes + CLI — P2 · S
 Done 2026-03-22. `pinned` metadata flag on Knowledge nodes; `list_pinned_knowledge(limit)` in GraphStore; `build_pinned_summary` in briefing (always surfaces regardless of recency); `POST /api/knowledge` + `GET /api/knowledge/pinned` endpoints; `graphirm knowledge list/pin/unpin` CLI subcommand. Coding conventions migrated from system prompt to graph-native pinned nodes.
+
+### ✅ Model router — P2 · M
+Done 2026-03-22. Automatic per-turn cheap/smart model selection. `ModelRouter` evaluates ordered rules (`first_turn`, `error_recovery`, `high_complexity`, `tool_only_turn`, `stuck_detection`) against graph-derived session signals. Routing decisions stored on Interaction node metadata for cost analysis. Same-provider constraint (both tiers via OpenRouter). Config: `[agent.routing]` in TOML.
+Plan: `docs/plans/2026-03-22-model-router.md`
 
 ---
 

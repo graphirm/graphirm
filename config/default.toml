@@ -149,6 +149,38 @@ a closure.
 # segment_filter = ["reasoning", "code"]  # restrict context to these segment types
 workspaces_root = "/data/workspaces"   # persisted on the Docker volume
 
+# Two-tier model routing — uncomment to enable automatic cheap/smart selection.
+# When enabled, the router evaluates rules per turn and selects the appropriate model.
+# When disabled (default), `model` above is used for every turn.
+# Both models must use the same provider backend (e.g. both via openrouter).
+#
+# [agent.routing]
+# cheap = "openrouter/deepseek/deepseek-chat"
+# smart = "openrouter/anthropic/claude-sonnet-4"
+# default_tier = "cheap"
+#
+# [[agent.routing.rules]]
+# type = "first_turn"
+# tier = "smart"
+#
+# [[agent.routing.rules]]
+# type = "error_recovery"
+# tier = "smart"
+#
+# [[agent.routing.rules]]
+# type = "high_complexity"
+# min_tokens = 200
+# tier = "smart"
+#
+# [[agent.routing.rules]]
+# type = "tool_only_turn"
+# tier = "cheap"
+#
+# [[agent.routing.rules]]
+# type = "stuck_detection"
+# turn = 15
+# tier = "smart"
+
 [knowledge]
 # Knowledge layer thresholds and settings for Phase 9
 enabled = true

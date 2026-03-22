@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AgentError;
 use crate::knowledge::extraction::ExtractionConfig;
+use crate::router::ModelRoutingConfig;
 
 /// Configuration for the embedding provider used by cross-session memory.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -161,6 +162,10 @@ pub struct AgentConfig {
     /// within this window the turn is aborted and the session marked as error.
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: u64,
+    /// Two-tier model routing. When `Some`, the router selects between cheap and
+    /// smart models per turn. When `None`, `model` is used for every turn.
+    #[serde(default)]
+    pub model_routing: Option<ModelRoutingConfig>,
 }
 
 fn default_timeout_seconds() -> u64 {
@@ -244,6 +249,7 @@ impl Default for AgentConfig {
             pre_edit_impact: true,
             repo_briefing: true,
             timeout_seconds: default_timeout_seconds(),
+            model_routing: None,
         }
     }
 }
@@ -305,6 +311,8 @@ struct AgentConfigSection {
     repo_briefing: bool,
     #[serde(default = "default_timeout_seconds")]
     timeout_seconds: u64,
+    #[serde(default)]
+    routing: Option<ModelRoutingConfig>,
 }
 
 fn default_system_prompt() -> String {
@@ -347,6 +355,7 @@ impl AgentConfig {
             pre_edit_impact: file.agent.pre_edit_impact,
             repo_briefing: file.agent.repo_briefing,
             timeout_seconds: file.agent.timeout_seconds,
+            model_routing: file.agent.routing,
         })
     }
 
@@ -701,5 +710,36 @@ segment_filter = ["reasoning", "code"]
         "#;
         let config = AgentConfig::from_toml(toml).unwrap();
         assert_eq!(config.timeout_seconds, 60);
+    }
+
+    #[test]
+    fn model_routing_parsed_from_toml() {
+        let toml = r#"
+            [agent]
+            name = "test"
+            model = "fallback-model"
+            system_prompt = "test"
+            max_turns = 5
+
+            [agent.routing]
+            cheap = "deepseek/deepseek-chat"
+            smart = "anthropic/claude-sonnet-4"
+            default_tier = "cheap"
+
+            [[agent.routing.rules]]
+            type = "first_turn"
+            tier = "smart"
+        "#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        let routing = config.model_routing.unwrap();
+        assert_eq!(routing.cheap, "deepseek/deepseek-chat");
+        assert_eq!(routing.smart, "anthropic/claude-sonnet-4");
+        assert_eq!(routing.rules.len(), 1);
+    }
+
+    #[test]
+    fn model_routing_absent_by_default() {
+        let config = AgentConfig::default();
+        assert!(config.model_routing.is_none());
     }
 }

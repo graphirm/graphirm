@@ -110,7 +110,64 @@ pub async fn stream_and_record(
         .into_iter()
         .map(|t| graphirm_llm::ToolDefinition::new(t.name, t.description, t.parameters))
         .collect();
-    let config = CompletionConfig::new(session.agent_config.model.clone())
+
+    // Model routing: select cheap or smart model based on session signals.
+    let (selected_model, routing_meta) = if let Some(ref routing) = session.agent_config.model_routing {
+        let turn_number = session.current_turn();
+        let graph_c = session.graph.clone();
+        let session_id = session.id.0.clone();
+        let (last_tool_errored, last_response_tool_only, user_msg_tokens) =
+            tokio::task::spawn_blocking(move || {
+                let chain = graph_c.get_session_chain(&session_id).unwrap_or_default();
+                let last_assistant = chain.iter().rev().find(|n| {
+                    matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "assistant")
+                });
+                let tool_errored = chain.iter().rev().any(|n| {
+                    matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "tool_result")
+                        && n.metadata.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false)
+                });
+                let tool_only = last_assistant
+                    .map(|n| {
+                        n.metadata.get("tool_calls").is_some()
+                            && matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.content.trim().is_empty())
+                    })
+                    .unwrap_or(false);
+                let user_tokens = chain.iter().rev()
+                    .find(|n| matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "user"))
+                    .map(|n| match &n.node_type {
+                        graphirm_graph::nodes::NodeType::Interaction(i) => i.content.len() / 4,
+                        _ => 0,
+                    })
+                    .unwrap_or(0);
+                (tool_errored, tool_only, user_tokens)
+            })
+            .await
+            .unwrap_or((false, false, 0));
+
+        let signals = crate::router::TurnSignals {
+            turn_number,
+            last_tool_errored,
+            last_response_tool_only,
+            user_message_tokens: user_msg_tokens,
+        };
+        let router = crate::router::ModelRouter::new(routing);
+        let (model, tier, rule) = router.select(&signals);
+        tracing::info!(
+            model = model,
+            tier = ?tier,
+            rule = rule,
+            turn = turn_number,
+            "model router selected"
+        );
+        (
+            model.to_string(),
+            Some((format!("{tier:?}").to_lowercase(), rule.to_string())),
+        )
+    } else {
+        (session.agent_config.model.clone(), None)
+    };
+
+    let config = CompletionConfig::new(&selected_model)
         .with_max_tokens(
             session
                 .agent_config
@@ -153,6 +210,12 @@ pub async fn stream_and_record(
         "usage_output".to_string(),
         serde_json::json!(response.usage.output_tokens),
     );
+
+    if let Some((ref tier_str, ref rule_str)) = routing_meta {
+        metadata.insert("model_tier".to_string(), serde_json::json!(tier_str));
+        metadata.insert("model_selected".to_string(), serde_json::json!(&selected_model));
+        metadata.insert("routing_rule".to_string(), serde_json::json!(rule_str));
+    }
 
     let mut interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
         role: "assistant".to_string(),

@@ -207,6 +207,18 @@ async fn create_session(
         config.system_prompt.push_str(&briefing);
     }
 
+    // Validate model routing: both tiers must use the same provider backend.
+    if let Some(ref routing) = config.model_routing
+        && !routing.same_provider()
+    {
+        tracing::warn!(
+            cheap = %routing.cheap,
+            smart = %routing.smart,
+            "model routing tiers use different providers — routing disabled, using single model"
+        );
+        config.model_routing = None;
+    }
+
     let hitl = Arc::new(HitlGate::new());
     let graph_for_session = state.graph.clone();
     let config_clone = config.clone();

@@ -12,6 +12,7 @@ pub mod impact;
 pub mod import;
 pub mod knowledge;
 pub mod multi;
+pub mod router;
 pub mod session;
 pub mod workflow;
 pub mod workspace;
@@ -35,6 +36,7 @@ pub use multi::{
     AgentRegistry, LlmFactory, SubagentHandle, collect_subagent_results, spawn_subagent,
     wait_for_dependencies, wait_for_subagents,
 };
+pub use router::{ModelRouter, ModelRoutingConfig, ModelTier, RoutingRule, TurnSignals};
 pub use session::{Session, SessionMetadata, SessionStatus};
 pub use workflow::run_agent_loop;
 

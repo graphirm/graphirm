@@ -119,6 +119,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Per-session workspaces: set `workspaces_root` in `[agent]` config; `POST /api/sessions` accepts optional `"workspace"` name (defaults to sanitized session name); workspace directory is auto-created; workspace name persisted in Agent node metadata and restored on restart; response includes `workspace` and `workspace_path` when active
 - Config lives in `config/default.toml`; `AgentConfig` is loaded from it at startup; `workspaces_root` in `[agent]` — optional root; when set, each session gets an isolated subdirectory `<root>/<workspace>/`
 - Pinned Knowledge nodes: `POST /api/knowledge` with `"pinned": true` creates global convention/rule nodes that always surface in `repo_briefing` regardless of recency; `GET /api/knowledge/pinned` lists them (optional `?limit=N`); `list_pinned_knowledge(limit)` in GraphStore; `build_pinned_summary` in briefing
+- Model routing: `[agent.routing]` in TOML with `cheap`/`smart` model strings and `[[agent.routing.rules]]`; `ModelRouter` selects per turn based on `TurnSignals` (turn number, tool errors, message complexity); both tiers must use the same provider backend; routing decisions stored as metadata on Interaction nodes
 - API keys via env vars: `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`
 
 ---
@@ -154,6 +155,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 31 | `list_nodes_by_type` SQL LIMIT fast path — no-filter calls push `LIMIT ?2` into SQL; filtered path gets `limit * 10` safety cap; eliminates full-table scans on common unfiltered queries | ✅ done |
 | 32 | `get_agent_nodes` TTL cache — 30 s `agent_nodes_cache` in `GraphStore`; invalidated on agent node write; reduces repeated SQLite scans during session restore | ✅ done |
 | 33 | Pinned Knowledge nodes — `pinned` metadata flag, `list_pinned_knowledge` in GraphStore, `build_pinned_summary` in briefing, `POST /api/knowledge` + `GET /api/knowledge/pinned` endpoints | ✅ done |
+| 34 | Model router — automatic per-turn cheap/smart model selection via `ModelRouter` with configurable rules | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -313,6 +315,16 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Pinned nodes are global (not session-scoped) and always surfaced in repo briefing regardless of recency — used for coding conventions that the agent should always follow
 - Manage via API: `curl -X POST http://localhost:3000/api/knowledge -d '{"entity": "rule-name", "entity_type": "convention", "summary": "...", "pinned": true}'`
 - List pinned rules: `curl http://localhost:3000/api/knowledge/pinned` (or `?limit=10`)
+
+**Model router (Phase 34):**
+- `crates/agent/src/router.rs` — `ModelRoutingConfig`, `ModelTier`, `RoutingRule`, `TurnSignals`, `ModelRouter`
+- Five built-in rules: `first_turn`, `error_recovery`, `high_complexity`, `tool_only_turn`, `stuck_detection`
+- Rules evaluated in declaration order; first match wins; unmatched → `default_tier`
+- Routing decision stamped on Interaction node metadata: `model_tier`, `model_selected`, `routing_rule`
+- `AgentConfig.model_routing: Option<ModelRoutingConfig>` — absent = single-model (backward compatible)
+- Same-provider constraint enforced in `create_session`: mismatched providers fall back to single-model with warning
+- Config: `[agent.routing]` section in TOML with `cheap`, `smart`, `default_tier`, and `[[agent.routing.rules]]` array
+- 11 unit tests (all rule types, default fallback, empty rules, first-match priority, TOML deserialization, same_provider checks)
 
 **Risk areas:**
 
