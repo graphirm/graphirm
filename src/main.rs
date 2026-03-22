@@ -54,6 +54,12 @@ enum Commands {
         action: ModelAction,
     },
 
+    /// Manage pinned Knowledge nodes (conventions, rules)
+    Knowledge {
+        #[command(subcommand)]
+        action: KnowledgeAction,
+    },
+
     /// Start the HTTP API server
     Serve {
         /// Host to bind to
@@ -160,6 +166,31 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum KnowledgeAction {
+    /// List all pinned Knowledge nodes
+    List {
+        /// Max nodes to show
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+    },
+    /// Create a new pinned Knowledge node (convention/rule)
+    Pin {
+        /// Entity name (kebab-case identifier, e.g. "no-unwrap-rule")
+        entity: String,
+        /// Summary text of the rule/convention
+        summary: String,
+        /// Entity type (default: "convention")
+        #[arg(long, default_value = "convention")]
+        entity_type: String,
+    },
+    /// Remove the pinned flag from a Knowledge node by ID
+    Unpin {
+        /// Node ID (UUID) of the Knowledge node to unpin
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum GraphAction {
     /// Show node and edge counts by type
     Stats,
@@ -213,6 +244,59 @@ async fn main() -> Result<(), GraphirmError> {
                 .with_env_filter("info")
                 .init();
             run_model_command(action).await?;
+        }
+        Commands::Knowledge { action } => {
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter("warn")
+                .init();
+            let store = graphirm_graph::GraphStore::open(
+                db_path
+                    .to_str()
+                    .ok_or_else(|| GraphirmError::Config("non-UTF8 db path".to_string()))?,
+            )?;
+            match action {
+                KnowledgeAction::List { limit } => {
+                    let nodes = store.list_pinned_knowledge(limit)?;
+                    if nodes.is_empty() {
+                        println!("No pinned knowledge nodes.");
+                    } else {
+                        for node in &nodes {
+                            if let graphirm_graph::NodeType::Knowledge(ref kd) = node.node_type {
+                                println!("{}  [{}] {}: {}", node.id.0, kd.entity_type, kd.entity, kd.summary);
+                            }
+                        }
+                        println!("\n{} pinned node(s)", nodes.len());
+                    }
+                }
+                KnowledgeAction::Pin { entity, summary, entity_type } => {
+                    let mut metadata = serde_json::Map::new();
+                    metadata.insert("pinned".to_string(), serde_json::json!(true));
+                    let node = graphirm_graph::GraphNode::new(
+                        graphirm_graph::NodeType::Knowledge(graphirm_graph::KnowledgeData {
+                            entity: entity.clone(),
+                            entity_type,
+                            summary,
+                            confidence: 1.0,
+                        }),
+                    );
+                    let node = graphirm_graph::GraphNode {
+                        metadata: serde_json::Value::Object(metadata),
+                        ..node
+                    };
+                    let id = store.add_node(node)?;
+                    println!("Pinned: {} ({})", entity, id.0);
+                }
+                KnowledgeAction::Unpin { id } => {
+                    let node_id = graphirm_graph::NodeId(id);
+                    let mut node = store.get_node(&node_id)?;
+                    if let Some(obj) = node.metadata.as_object_mut() {
+                        obj.remove("pinned");
+                    }
+                    store.update_node(&node_id, node)?;
+                    println!("Unpinned: {}", node_id.0);
+                }
+            }
         }
         Commands::ExportCorpus {
             out,

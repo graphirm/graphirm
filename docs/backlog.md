@@ -2,7 +2,7 @@
 
 Single source of truth for planned work. Completed items are recorded in `docs/completion-log.md` and `AGENTS.md` — not here.
 
-**Current state:** Phases 0–32 complete. See `AGENTS.md` → Current State table.
+**Current state:** Phases 0–33 complete. See `AGENTS.md` → Current State table.
 
 ---
 
@@ -107,6 +107,22 @@ Done 2026-03-22. Two improvements shipped:
 - **Phase 31** — `list_nodes_by_type` fast path: when called with no filters (session_id=None, metadata_filter=None), the SQL `LIMIT` is pushed into the query (`SELECT … LIMIT ?2`) so SQLite returns only the needed rows. Filtered path gets a `limit * 10` safety cap to avoid unbounded table scans.
 - **Phase 32** — `get_agent_nodes` TTL cache: `agent_nodes_cache: Arc<RwLock<Option<(Vec<…>, Instant)>>>` added to `GraphStore`; 30 s TTL; invalidated in `add_node` and `update_node` when the node type is `"agent"`. Both `open()` and `open_memory()` initialize to `None`. 71 tests pass, clippy clean. Primarily agent (Task 1 100%, Task 2 95% — one collapsible-if clippy fix applied manually).
 
+### ✅ Pinned Knowledge nodes + CLI — P2 · S
+Done 2026-03-22. `pinned` metadata flag on Knowledge nodes; `list_pinned_knowledge(limit)` in GraphStore; `build_pinned_summary` in briefing (always surfaces regardless of recency); `POST /api/knowledge` + `GET /api/knowledge/pinned` endpoints; `graphirm knowledge list/pin/unpin` CLI subcommand. Coding conventions migrated from system prompt to graph-native pinned nodes.
+
+---
+
+## Refactoring / Code Health
+
+### Clean up stale `.worktrees/` — P3 · S
+Stale worktrees from old feature branches (phase-4, 5, 7, 8) pollute Nodestradamus analysis and waste disk. Prune any not actively in use via `git worktree list` + `git worktree remove`.
+
+### Extract CLI handlers from `main.rs` into `src/commands/` — P3 · S
+`main.rs` is ~1200 lines and growing with every CLI subcommand. The `match cli.command` block now has 10+ arms, each 20-80 lines. Extract each handler into `src/commands/{chat,graph,knowledge,import,serve,export}.rs` with a thin dispatch in `main()`. Mechanical refactor, good dogfood candidate.
+
+### Break TUI circular dependencies — P3 · M
+All 14 cycles detected by Nodestradamus are in `crates/tui/` between `app.rs` ↔ `ui.rs` ↔ `events.rs`. Extract a shared `AppState` struct that both `ui.rs` and `events.rs` import without importing each other. TUI works fine — this is hygiene.
+
 ---
 
 ## Enterprise / Scale
@@ -201,3 +217,4 @@ re-index on every change.
 | 13 | Interactive whiteboard (React + React Flow, node expansion, grouping, steer-from-node, annotations, keyboard shortcuts, auto-approve) |
 | 14 | Per-session workspaces (`workspaces_root`, named dirs, graph persistence, restart restore) |
 | 19 | Subagent workspace isolation + diff/read_many tools |
+| 20–33 | Graph search/filter, session export, graph-aware tools, graph_diff, repo briefing, session traces, lessons briefing, auto-compaction, design system, read truncate, SQLite indices, node cache, cursor import, SQL fast paths, agent cache, pinned knowledge |
