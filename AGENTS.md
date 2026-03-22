@@ -156,6 +156,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 32 | `get_agent_nodes` TTL cache — 30 s `agent_nodes_cache` in `GraphStore`; invalidated on agent node write; reduces repeated SQLite scans during session restore | ✅ done |
 | 33 | Pinned Knowledge nodes — `pinned` metadata flag, `list_pinned_knowledge` in GraphStore, `build_pinned_summary` in briefing, `POST /api/knowledge` + `GET /api/knowledge/pinned` endpoints | ✅ done |
 | 34 | Model router — automatic per-turn cheap/smart model selection via `ModelRouter` with configurable rules | ✅ done |
+| 35 | `main.rs` extraction — split into `src/commands/` modules (1267→321 lines); cross-project dogfood setup (Graphirm deployed on Nodestradamus100 machine, `dogfood-ndstrms` skill) | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 

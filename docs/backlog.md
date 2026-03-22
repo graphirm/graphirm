@@ -2,7 +2,7 @@
 
 Single source of truth for planned work. Completed items are recorded in `docs/completion-log.md` and `AGENTS.md` — not here.
 
-**Current state:** Phases 0–34 complete. See `AGENTS.md` → Current State table.
+**Current state:** Phases 0–35 complete. See `AGENTS.md` → Current State table.
 
 ---
 
@@ -118,11 +118,14 @@ Plan: `docs/plans/2026-03-22-model-router.md`
 
 ## Refactoring / Code Health
 
-### Clean up stale `.worktrees/` — P3 · S
-Stale worktrees from old feature branches (phase-4, 5, 7, 8) pollute Nodestradamus analysis and waste disk. Prune any not actively in use via `git worktree list` + `git worktree remove`.
+### ✅ Clean up stale `.worktrees/` — P3 · S
+Done 2026-03-22. Removed 6 stale worktrees (detached HEADs + old feature branches).
 
-### Extract CLI handlers from `main.rs` into `src/commands/` — P3 · S
-`main.rs` is ~1200 lines and growing with every CLI subcommand. The `match cli.command` block now has 10+ arms, each 20-80 lines. Extract each handler into `src/commands/{chat,graph,knowledge,import,serve,export}.rs` with a thin dispatch in `main()`. Mechanical refactor, good dogfood candidate.
+### ✅ Extract CLI handlers from `main.rs` into `src/commands/` — P3 · S
+Done 2026-03-22. Split `main.rs` from 1267 → 321 lines (75% reduction). 8 command modules: `chat`, `graph`, `knowledge`, `import`, `export`, `model`, `serve`, `gliner`. Shared utilities in `commands/mod.rs`.
+
+### ✅ Cross-project dogfood setup (Nodestradamus100) — P2 · S
+Done 2026-03-22. Deployed Graphirm binary to Nodestradamus100 always-on machine (`91.98.94.217:5555`). Created `dogfood-ndstrms` Cursor skill for delegating Nodestradamus100 tasks. Smoke test passed: agent read BACKLOG.md, ran pytest, self-corrected on timeout, produced correct summary. First cross-project dogfood validated end-to-end.
 
 ### Break TUI circular dependencies — P3 · M
 All 14 cycles detected by Nodestradamus are in `crates/tui/` between `app.rs` ↔ `ui.rs` ↔ `events.rs`. Extract a shared `AppState` struct that both `ui.rs` and `events.rs` import without importing each other. TUI works fine — this is hygiene.
