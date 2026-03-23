@@ -50,6 +50,7 @@ Cursor evaluation log for graphirm agent sessions. One row per completed task.
 | 2026-03-23 | ndstrms:42a0466e | pipeline-fixes-3 | pass | 3 fixes in one session: (1) `.git/` exclusion — `dirs[:]=` filter in `walk()` + path-parts check in `_should_skip_file`; (2) cache dedup — `iter_cached_repo_entries` uses `seen` dict by `repo_path`, keeps latest `last_accessed`; (3) embedding truncation — char_limit 4x→3x tokens, `MAX_TEXT_LENGTH` 10000→24000. 98 tests pass; 6 pre-existing API-key failures unrelated. Commit 59b24a6. 100% agent. |
 
 | 2026-03-23 | ndstrms:manual | fix-file-tree-skip | pass | False-positive `.cache` path in `_should_skip_file` caused zero FILE/CHUNK nodes across all 30 batch repos. `parts` check removed (redundant with `dirs[:]=` filter). Commit 481bc55. Re-batch in progress. |
+| 2026-03-23 | ndstrms:0a40864e | perf-optimizations | pass | All 3 tasks in one session: (1) sort repos small-to-large via `du -sb` in `iter_cached_repo_entries`; (2) parallel chunking — ThreadPoolExecutor Phase 1 Rust reads + serial Phase 2 graph writes; (3) TokenRateLimiter sliding 60s window + ThreadPoolExecutor(10) for concurrent embedding batches + `tokens_per_minute` in EmbeddingConfig. Self-corrected failed edit, correctly skipped pre-existing test failures. 4 files, 213 lines. Commit 646b838. 100% agent. |
 
 ## Open investigations
 
