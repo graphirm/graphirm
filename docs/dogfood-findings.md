@@ -57,6 +57,8 @@ Cursor evaluation log for graphirm agent sessions. One row per completed task.
 | 2026-03-23 | ndstrms:a6daa07f | tfidf-weight-fix | A- | Fix TFIDF_SIMILAR edges never persisted to graph (computed but only added to temp copy for metrics). Agent added Edge/EdgeType import + 13-line loop after layer15_results in full_graph.py; added integration test. All tests pass. Secondary bugs fixed by Cursor post-session: (1) Ruby/Java inherits queries (superclass field names); (2) import_resolver.py `name:` field on import_clause is impossible in tree-sitter-js grammar — was silently aborting all JS file parses. Commits cbc186d, 8dfbe3e. ~85% agent, ~15% Cursor. |
 | 2026-03-23 | ndstrms:28b30c00 | phase3-study | fail | Session failed at 31 messages (context overflow after extensive data exploration). Cursor wrote generate_phase3_report.py directly: 14-repo corpus table, structural coverage (10/14), 141 cycles, 20 hotspots in alembic, coverage gaps, next steps. Commit 2076e07. TypeScript parser fix (language_typescript() API) also discovered and fixed (commit fc3a77a). |
 
+| 2026-03-24 | ndstrms:6333a40f | fix-insights-display-cap | pass | display_name strips cache prefix + formats symbol:file:name correctly; max_cycles=100 param separate from top_n; total_found now pre-cap (was reporting max 20). 21 tests pass. One issue: agent committed batch_output/ generated JSON (178 files, 6.7M lines) — gitignore missing that dir; Cursor added it and cleaned up. |
+
 ## Open investigations
 
 - ~~**Qwen submit-tool quirk:**~~ **Resolved.** Added no-op `submit` tool (`crates/tools/src/submit.rs`) — models that call it now get success instead of "Tool not found", so sessions no longer end in "failed" status.
