@@ -27,14 +27,14 @@ enum Commands {
         session: Option<String>,
 
         /// Model in "provider/model" format.
-        /// Cloud examples:  openrouter/qwen/qwen3-coder-next (default)
+        /// Cloud examples:  openrouter/qwen/qwen3-coder:free (default)
         ///                  anthropic/claude-sonnet-4-20250514
         ///                  deepseek/deepseek-chat
         ///                  openai/gpt-4o
         /// Local (Ollama):  ollama/qwen2.5:72b
         ///                  ollama/qwen3:70b
         ///                  ollama/llama3.2
-        #[arg(short, long, default_value = "openrouter/qwen/qwen3-coder-next")]
+        #[arg(short, long, default_value = "openrouter/qwen/qwen3-coder:free")]
         model: String,
     },
 

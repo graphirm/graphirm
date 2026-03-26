@@ -1,7 +1,7 @@
 //! OpenRouter provider — OpenAI-compatible API gateway.
 //!
 //! Supports any model available on OpenRouter via the `openrouter/<vendor/model>`
-//! prefix, e.g. `openrouter/qwen/qwen3-coder-next`.
+//! prefix, e.g. `openrouter/qwen/qwen3-coder:free`.
 //!
 //! API docs: https://openrouter.ai/docs
 

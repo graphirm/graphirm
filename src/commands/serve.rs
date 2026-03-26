@@ -31,7 +31,7 @@ pub async fn run(db_path: &Path, host: String, port: u16) -> Result<(), Graphirm
     };
 
     let model_spec = std::env::var("GRAPHIRM_MODEL")
-        .unwrap_or_else(|_| "openrouter/qwen/qwen3-coder-next".to_string());
+        .unwrap_or_else(|_| "openrouter/qwen/qwen3-coder:free".to_string());
     let (provider_name, model_name) = graphirm_llm::factory::parse_model_string(&model_spec)
         .map_err(|e| GraphirmError::Config(e.to_string()))?;
     let api_key = super::api_key_for_provider(provider_name)?;

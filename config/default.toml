@@ -1,12 +1,12 @@
 [model]
 provider = "openrouter"
-name = "qwen/qwen3-coder-next"
+name = "qwen/qwen3-coder:free"
 temperature = 0.7
 max_tokens = 8192
 
 [agent]
 name = "graphirm"
-model = "openrouter/qwen/qwen3-coder-next"
+model = "openrouter/qwen/qwen3-coder:free"
 max_iterations = 50
 parallel_tool_calls = true
 max_output_tokens = 1500
@@ -156,7 +156,7 @@ workspaces_root = "/data/workspaces"   # persisted on the Docker volume
 #
 # [agent.routing]
 # cheap = "openrouter/deepseek/deepseek-chat"
-# smart = "openrouter/qwen/qwen3-coder-next"
+# smart = "openrouter/qwen/qwen3-coder:free"
 # default_tier = "cheap"
 #
 # [[agent.routing.rules]]

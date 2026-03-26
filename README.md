@@ -84,7 +84,7 @@ Set `GRAPHIRM_MODEL=<provider>/<model>` or pass `--model` at runtime.
 | DeepSeek (default) | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat` |
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-opus-4-5` |
 | OpenAI | `OPENAI_API_KEY` | `openai/gpt-4o` |
-| OpenRouter | `OPENROUTER_API_KEY` | `openrouter/qwen/qwen3-coder-next` |
+| OpenRouter | `OPENROUTER_API_KEY` | `openrouter/qwen/qwen3-coder:free` |
 | Ollama (local) | — | `ollama/qwen2.5:72b` |
 | 17+ more via rig-core | varies | see rig-core docs |
 
