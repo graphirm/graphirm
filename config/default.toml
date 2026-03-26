@@ -156,7 +156,7 @@ workspaces_root = "/data/workspaces"   # persisted on the Docker volume
 #
 # [agent.routing]
 # cheap = "openrouter/deepseek/deepseek-chat"
-# smart = "openrouter/anthropic/claude-sonnet-4"
+# smart = "openrouter/qwen/qwen3-coder-next"
 # default_tier = "cheap"
 #
 # [[agent.routing.rules]]
