@@ -82,17 +82,19 @@ pub fn candidates_from_config(
             .collect();
     }
     // Fall back to routing config tiers with zero pricing (cost estimation disabled).
+    // Use model_for_tier() to strip any provider prefix (e.g. "openrouter/vendor/model"
+    // becomes "vendor/model"), consistent with how the legacy router path strips prefixes.
     if let Some(rc) = routing_config {
         return vec![
             ModelCandidate {
-                model: rc.cheap.clone(),
+                model: rc.model_for_tier(ModelTier::Cheap).to_string(),
                 tier: ModelTier::Cheap,
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
                 avg_latency_ms: None,
             },
             ModelCandidate {
-                model: rc.smart.clone(),
+                model: rc.model_for_tier(ModelTier::Smart).to_string(),
                 tier: ModelTier::Smart,
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
