@@ -232,7 +232,8 @@ pub async fn spawn_subagent(
     let scoped_tools = build_scoped_tools(base_tools, &agent_config);
 
     // Create LLM provider via factory
-    let llm = (llm_factory)(&agent_config.model);
+    let llm: std::sync::Arc<dyn LlmProvider> =
+        std::sync::Arc::from((llm_factory)(&agent_config.model));
 
     let events_clone = events.clone();
     let agent_name_owned = agent_name.to_string();
@@ -249,7 +250,7 @@ pub async fn spawn_subagent(
     let join_handle = tokio::spawn(async move {
         let result = run_agent_loop(
             &session,
-            llm.as_ref(),
+            llm,
             &scoped_tools,
             &events_clone,
             &cancel,

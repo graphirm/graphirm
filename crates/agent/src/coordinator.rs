@@ -91,10 +91,11 @@ impl Coordinator {
         }
         primary_tools.register(Arc::new(delegate));
 
-        let llm = (self.llm_factory)(&primary_config.model);
+        let llm: Arc<dyn graphirm_llm::LlmProvider> =
+            Arc::from((self.llm_factory)(&primary_config.model));
         run_agent_loop(
             &session,
-            llm.as_ref(),
+            llm,
             &primary_tools,
             &self.events,
             &cancel,

@@ -23,7 +23,7 @@ use crate::session::Session;
 /// NodeId of the recorded response node.
 pub async fn stream_and_record(
     session: &Session,
-    llm: &dyn LlmProvider,
+    llm: Arc<dyn LlmProvider>,
     tools: &ToolRegistry,
     events: &EventBus,
 ) -> Result<(LlmResponse, NodeId), AgentError> {
@@ -93,7 +93,7 @@ pub async fn stream_and_record(
                     ..Default::default()
                 };
                 if let Err(e) =
-                    crate::compact::compact_context(&session.graph, llm, ids, &compact_cfg).await
+                    crate::compact::compact_context(&session.graph, llm.as_ref(), ids, &compact_cfg).await
                 {
                     tracing::warn!("auto-compaction failed (non-fatal): {e}");
                 }
@@ -112,7 +112,85 @@ pub async fn stream_and_record(
         .collect();
 
     // Model routing: select cheap or smart model based on session signals.
-    let (selected_model, routing_meta) = if let Some(ref routing) = session.agent_config.model_routing {
+    // Prefer adaptive strategy when configured; fall back to legacy static router.
+    let (selected_model, routing_outcome) = if let Some(ref ar_config) =
+        session.agent_config.adaptive_routing
+    {
+        let t_route_start = std::time::Instant::now();
+        let turn_number = session.current_turn();
+        let graph_c = session.graph.clone();
+        let session_id = session.id.0.clone();
+
+        let (last_tool_errored, last_response_tool_only, user_msg_tokens) =
+            tokio::task::spawn_blocking(move || {
+                let chain = graph_c.get_session_chain(&session_id).unwrap_or_default();
+                let last_assistant = chain.iter().rev().find(|n| {
+                    matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "assistant")
+                });
+                let tool_errored = chain.iter().rev().any(|n| {
+                    matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "tool_result")
+                        && n.metadata.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false)
+                });
+                let tool_only = last_assistant
+                    .map(|n| {
+                        n.metadata.get("tool_calls").is_some()
+                            && matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.content.trim().is_empty())
+                    })
+                    .unwrap_or(false);
+                let user_tokens = chain
+                    .iter()
+                    .rev()
+                    .find(|n| matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "user"))
+                    .map(|n| match &n.node_type {
+                        graphirm_graph::nodes::NodeType::Interaction(i) => i.content.len() / 4,
+                        _ => 0,
+                    })
+                    .unwrap_or(0);
+                (tool_errored, tool_only, user_tokens)
+            })
+            .await
+            .unwrap_or((false, false, 0));
+
+        let signals = crate::router::TurnSignals {
+            turn_number,
+            last_tool_errored,
+            last_response_tool_only,
+            user_message_tokens: user_msg_tokens,
+        };
+
+        let objective = ar_config
+            .objective
+            .as_ref()
+            .map(|o| o.to_weights())
+            .unwrap_or_default();
+
+        let candidates = crate::strategy::builder::candidates_from_config(
+            &ar_config.candidates,
+            session.agent_config.model_routing.as_ref(),
+        );
+
+        let strategy = crate::strategy::builder::build_strategy(
+            ar_config,
+            session.agent_config.model_routing.as_ref(),
+            llm.clone(),
+        );
+
+        let decision = strategy.select(&signals, &candidates, &objective).await;
+        let routing_decision_ms = t_route_start.elapsed().as_millis() as u64;
+
+        tracing::info!(
+            model = &decision.model,
+            tier = ?decision.tier,
+            strategy = decision.strategy_name,
+            reason = &decision.reason,
+            confidence = decision.confidence,
+            routing_ms = routing_decision_ms,
+            "adaptive router selected"
+        );
+
+        (decision.model.clone(), Some((decision, routing_decision_ms)))
+    } else if let Some(ref routing) = session.agent_config.model_routing {
+        // Legacy static router — preserved for backward compat.
         let turn_number = session.current_turn();
         let graph_c = session.graph.clone();
         let session_id = session.id.0.clone();
@@ -132,7 +210,9 @@ pub async fn stream_and_record(
                             && matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.content.trim().is_empty())
                     })
                     .unwrap_or(false);
-                let user_tokens = chain.iter().rev()
+                let user_tokens = chain
+                    .iter()
+                    .rev()
                     .find(|n| matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "user"))
                     .map(|n| match &n.node_type {
                         graphirm_graph::nodes::NodeType::Interaction(i) => i.content.len() / 4,
@@ -143,7 +223,6 @@ pub async fn stream_and_record(
             })
             .await
             .unwrap_or((false, false, 0));
-
         let signals = crate::router::TurnSignals {
             turn_number,
             last_tool_errored,
@@ -152,17 +231,16 @@ pub async fn stream_and_record(
         };
         let router = crate::router::ModelRouter::new(routing);
         let (model, tier, rule) = router.select(&signals);
-        tracing::info!(
-            model = model,
-            tier = ?tier,
-            rule = rule,
-            turn = turn_number,
-            "model router selected"
-        );
-        (
-            model.to_string(),
-            Some((format!("{tier:?}").to_lowercase(), rule.to_string())),
-        )
+        tracing::info!(model, tier = ?tier, rule, turn = turn_number, "legacy model router selected");
+        // Wrap in adaptive RoutingDecision for unified metadata path.
+        let decision = crate::strategy::RoutingDecision {
+            model: model.to_string(),
+            tier,
+            confidence: 1.0,
+            reason: format!("rule:{rule}"),
+            strategy_name: "rule_router".to_string(),
+        };
+        (model.to_string(), Some((decision, 0u64)))
     } else {
         (session.agent_config.model.clone(), None)
     };
@@ -211,10 +289,22 @@ pub async fn stream_and_record(
         serde_json::json!(response.usage.output_tokens),
     );
 
-    if let Some((ref tier_str, ref rule_str)) = routing_meta {
-        metadata.insert("model_tier".to_string(), serde_json::json!(tier_str));
+    if let Some((ref decision, decision_ms)) = routing_outcome {
+        metadata.insert(
+            "model_tier".to_string(),
+            serde_json::json!(format!("{:?}", decision.tier).to_lowercase()),
+        );
         metadata.insert("model_selected".to_string(), serde_json::json!(&selected_model));
-        metadata.insert("routing_rule".to_string(), serde_json::json!(rule_str));
+        metadata.insert(
+            "routing_strategy".to_string(),
+            serde_json::json!(&decision.strategy_name),
+        );
+        metadata.insert("routing_reason".to_string(), serde_json::json!(&decision.reason));
+        metadata.insert(
+            "routing_confidence".to_string(),
+            serde_json::json!(decision.confidence),
+        );
+        metadata.insert("routing_decision_ms".to_string(), serde_json::json!(decision_ms));
     }
 
     let mut interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
@@ -906,7 +996,7 @@ async fn emit_graph_update(
 /// 4. Repeat until no tool calls, max_turns is reached, or cancelled
 pub async fn run_agent_loop(
     session: &Session,
-    llm: &dyn LlmProvider,
+    llm: Arc<dyn LlmProvider>,
     tools: &ToolRegistry,
     events: &EventBus,
     cancel: &CancellationToken,
@@ -974,7 +1064,7 @@ pub async fn run_agent_loop(
         // hung provider connections don't leave the session stuck forever.
         let llm_timeout = std::time::Duration::from_secs(session.agent_config.timeout_seconds);
         let (response, response_id) = tokio::select! {
-            result = stream_and_record(session, llm, tools, events) => result?,
+            result = stream_and_record(session, llm.clone(), tools, events) => result?,
             _ = cancel.cancelled() => {
                 info!("Agent loop cancelled during LLM call at turn {}", turn);
                 let _ = session.set_status("cancelled").await;
@@ -1005,7 +1095,7 @@ pub async fn run_agent_loop(
             if let Some(ref extraction_config) = session.agent_config.extraction {
                 let extraction_future = crate::knowledge::extraction::post_turn_extract(
                     session.graph.clone(),
-                    llm,
+                    llm.as_ref(),
                     extraction_config,
                     &response_id,
                     &session.id,
@@ -1297,11 +1387,11 @@ mod tests {
 
         session.add_user_message("What is 2+2?").await.unwrap();
 
-        let provider = MockProvider::new(vec![text_response("The answer is 4.")]);
+        let provider = Arc::new(MockProvider::new(vec![text_response("The answer is 4.")]));
         let tools = ToolRegistry::new();
         let bus = EventBus::new();
 
-        let (response, node_id) = stream_and_record(&session, &provider, &tools, &bus)
+        let (response, node_id) = stream_and_record(&session, provider.clone(), &tools, &bus)
             .await
             .unwrap();
 
@@ -1328,13 +1418,13 @@ mod tests {
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("What is 2+2?").await.unwrap();
 
-        let provider = MockProvider::new(vec![text_response("4")]);
+        let provider = Arc::new(MockProvider::new(vec![text_response("4")]));
         let tools = ToolRegistry::new();
         let mut bus = EventBus::new();
         let mut rx = bus.subscribe();
         let token = CancellationToken::new();
 
-        run_agent_loop(&session, &provider, &tools, &bus, &token)
+        run_agent_loop(&session, provider.clone(), &tools, &bus, &token)
             .await
             .unwrap();
 
@@ -1370,14 +1460,14 @@ mod tests {
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("List files").await.unwrap();
 
-        let provider = MockProvider::new(vec![
+        let provider = Arc::new(MockProvider::new(vec![
             tool_call_response(vec![(
                 "bash",
                 "call_1",
                 serde_json::json!({"command": "ls"}),
             )]),
             text_response("Here are your files: src/ Cargo.toml"),
-        ]);
+        ]));
 
         let mock_bash = Arc::new(MockTool {
             tool_name: "bash".to_string(),
@@ -1390,7 +1480,7 @@ mod tests {
         let mut rx = bus.subscribe();
         let token = CancellationToken::new();
 
-        run_agent_loop(&session, &provider, &tools, &bus, &token)
+        run_agent_loop(&session, provider.clone(), &tools, &bus, &token)
             .await
             .unwrap();
 
@@ -1467,14 +1557,14 @@ mod tests {
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("Echo a message").await.unwrap();
 
-        let provider = MockProvider::new(vec![
+        let provider = Arc::new(MockProvider::new(vec![
             tool_call_response(vec![(
                 "bash",
                 "call_1",
                 serde_json::json!({"command": "printf tracked"}),
             )]),
             text_response("Done."),
-        ]);
+        ]));
 
         let mut tools = ToolRegistry::new();
         tools.register(Arc::new(graphirm_tools::bash::BashTool::new()));
@@ -1482,7 +1572,7 @@ mod tests {
         let bus = EventBus::new();
         let token = CancellationToken::new();
 
-        run_agent_loop(&session, &provider, &tools, &bus, &token)
+        run_agent_loop(&session, provider.clone(), &tools, &bus, &token)
             .await
             .unwrap();
 
@@ -1538,13 +1628,13 @@ mod tests {
             .await
             .unwrap();
 
-        let provider = MockProvider::new(vec![
+        let provider = Arc::new(MockProvider::new(vec![
             tool_call_response(vec![
                 ("ls", "call_ls", serde_json::json!({"path": "."})),
                 ("find", "call_find", serde_json::json!({"pattern": "*.txt"})),
             ]),
             text_response("Done."),
-        ]);
+        ]));
 
         let mut tools = ToolRegistry::new();
         tools.register(Arc::new(graphirm_tools::ls::LsTool::new()));
@@ -1553,7 +1643,7 @@ mod tests {
         let bus = EventBus::new();
         let token = CancellationToken::new();
 
-        run_agent_loop(&session, &provider, &tools, &bus, &token)
+        run_agent_loop(&session, provider.clone(), &tools, &bus, &token)
             .await
             .unwrap();
 
@@ -1611,7 +1701,7 @@ mod tests {
             .await
             .unwrap();
 
-        let provider = MockProvider::new(vec![
+        let provider = Arc::new(MockProvider::new(vec![
             tool_call_response(vec![(
                 "bash",
                 "c1",
@@ -1627,7 +1717,7 @@ mod tests {
                 "c3",
                 serde_json::json!({"command": "echo 3"}),
             )]),
-        ]);
+        ]));
 
         let mock_bash = Arc::new(MockTool {
             tool_name: "bash".to_string(),
@@ -1640,7 +1730,7 @@ mod tests {
         let mut rx = bus.subscribe();
         let token = CancellationToken::new();
 
-        let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
+        let result = run_agent_loop(&session, provider.clone(), &tools, &bus, &token).await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1691,14 +1781,14 @@ mod tests {
             .with_hitl(hitl.clone());
         session.add_user_message("Write a file").await.unwrap();
 
-        let provider = MockProvider::new(vec![
+        let provider = Arc::new(MockProvider::new(vec![
             tool_call_response(vec![(
                 "write",
                 "call_w1",
                 serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
             )]),
             text_response("Done!"),
-        ]);
+        ]));
 
         let call_counter = Arc::new(AtomicUsize::new(0));
         let mock_write = Arc::new(TrackingMockTool {
@@ -1730,7 +1820,7 @@ mod tests {
             }
         });
 
-        let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
+        let result = run_agent_loop(&session, provider.clone(), &tools, &bus, &token).await;
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
         assert_eq!(
             provider.call_count(),
@@ -1769,7 +1859,7 @@ mod tests {
             .with_hitl(hitl.clone());
         session.add_user_message("Write a file").await.unwrap();
 
-        let provider = MockProvider::new(vec![
+        let provider = Arc::new(MockProvider::new(vec![
             tool_call_response(vec![(
                 "write",
                 "call_w1",
@@ -1777,7 +1867,7 @@ mod tests {
             )]),
             // Loop continues after rejection and calls LLM again.
             text_response("I was rejected, moving on."),
-        ]);
+        ]));
 
         let call_counter = Arc::new(AtomicUsize::new(0));
         let mock_write = Arc::new(TrackingMockTool {
@@ -1807,7 +1897,7 @@ mod tests {
             }
         });
 
-        let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
+        let result = run_agent_loop(&session, provider.clone(), &tools, &bus, &token).await;
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
         assert_eq!(provider.call_count(), 2, "LLM should be called twice");
 
@@ -1860,7 +1950,7 @@ mod tests {
         session.add_user_message("Hello").await.unwrap();
 
         // No tool calls — just a simple text response after the pause clears.
-        let provider = MockProvider::new(vec![text_response("All good.")]);
+        let provider = Arc::new(MockProvider::new(vec![text_response("All good.")]));
         let tools = ToolRegistry::new();
         let mut bus = EventBus::new();
         let mut rx = bus.subscribe();
@@ -1883,7 +1973,7 @@ mod tests {
             }
         });
 
-        let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
+        let result = run_agent_loop(&session, provider.clone(), &tools, &bus, &token).await;
         assert!(
             result.is_ok(),
             "Expected loop to complete after resume, got: {:?}",
@@ -1924,14 +2014,14 @@ mod tests {
         session.add_user_message("Write a file").await.unwrap();
 
         // LLM requests a destructive tool (write), then returns a text response.
-        let provider = MockProvider::new(vec![
+        let provider = Arc::new(MockProvider::new(vec![
             tool_call_response(vec![(
                 "write",
                 "call_w1",
                 serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
             )]),
             text_response("Done!"),
-        ]);
+        ]));
 
         let mock_write = Arc::new(MockTool {
             tool_name: "write".to_string(),
@@ -1944,7 +2034,7 @@ mod tests {
         let token = CancellationToken::new();
 
         // Without HITL the loop should complete without hanging on a gate.
-        let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
+        let result = run_agent_loop(&session, provider.clone(), &tools, &bus, &token).await;
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
         assert_eq!(provider.call_count(), 2);
     }
@@ -1959,7 +2049,7 @@ mod tests {
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("Start working").await.unwrap();
 
-        let provider = MockProvider::new(vec![
+        let provider = Arc::new(MockProvider::new(vec![
             tool_call_response(vec![(
                 "bash",
                 "c1",
@@ -1971,7 +2061,7 @@ mod tests {
                 serde_json::json!({"command": "echo 2"}),
             )]),
             text_response("done"),
-        ]);
+        ]));
 
         let mock_bash = Arc::new(MockTool {
             tool_name: "bash".to_string(),
@@ -1990,7 +2080,7 @@ mod tests {
             cancel_token.cancel();
         });
 
-        let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
+        let result = run_agent_loop(&session, provider.clone(), &tools, &bus, &token).await;
 
         assert!(
             matches!(result, Err(AgentError::Cancelled)) || result.is_ok(),
@@ -2040,14 +2130,14 @@ mod tests {
             .with_hitl(hitl.clone());
         session.add_user_message("Edit main.rs").await.unwrap();
 
-        let provider = MockProvider::new(vec![
+        let provider = Arc::new(MockProvider::new(vec![
             tool_call_response(vec![(
                 "write",
                 "call_w1",
                 serde_json::json!({"path": "main.rs", "content": "fn main() {}"}),
             )]),
             text_response("Done!"),
-        ]);
+        ]));
 
         let call_counter = Arc::new(AtomicUsize::new(0));
         let mock_write = Arc::new(TrackingMockTool {
@@ -2061,7 +2151,7 @@ mod tests {
         let bus = EventBus::new();
         let token = CancellationToken::new();
 
-        let result = run_agent_loop(&session, &provider, &tools, &bus, &token).await;
+        let result = run_agent_loop(&session, provider.clone(), &tools, &bus, &token).await;
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
         assert_eq!(
             call_counter.load(Ordering::SeqCst),

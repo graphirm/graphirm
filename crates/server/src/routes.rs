@@ -22,9 +22,9 @@ use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
     AnnotationRequest, AutoApproveRequest, CreateKnowledgeRequest, CreateSessionRequest,
-    ExportQuery, GraphResponse, HealthResponse, NodeAction, NodeActionRequest, PinnedKnowledgeQuery,
-    PromptRequest, RenameSessionRequest, SessionId, SessionResponse, SessionStatus, SseEvent,
-    SseEventType, SubgraphQuery,
+    ExportQuery, GraphResponse, HealthResponse, NodeAction, NodeActionRequest,
+    PinnedKnowledgeQuery, PromptRequest, RenameSessionRequest, SessionId, SessionResponse,
+    SessionStatus, SseEvent, SseEventType, SubgraphQuery,
 };
 
 /// Build a brief workspace context block to inject into the system prompt.
@@ -438,7 +438,7 @@ async fn prompt_session(
     let bg_key = key.clone();
 
     let join_handle = tokio::spawn(async move {
-        let result = run_agent_loop(&session, llm.as_ref(), &tools, &event_bus, &cancel).await;
+        let result = run_agent_loop(&session, llm.clone(), &tools, &event_bus, &cancel).await;
 
         // Update status. Do NOT clear join_handle here — storing the handle
         // into the session map happens after this task is spawned, so clearing
@@ -942,12 +942,10 @@ async fn list_pinned_knowledge(
     Query(query): Query<PinnedKnowledgeQuery>,
 ) -> Result<Json<Vec<GraphNode>>, ServerError> {
     let graph = state.graph.clone();
-    let nodes = tokio::task::spawn_blocking(move || {
-        graph.list_pinned_knowledge(query.limit)
-    })
-    .await
-    .map_err(|e| ServerError::Internal(e.to_string()))?
-    .map_err(ServerError::Graph)?;
+    let nodes = tokio::task::spawn_blocking(move || graph.list_pinned_knowledge(query.limit))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(ServerError::Graph)?;
 
     Ok(Json(nodes))
 }
