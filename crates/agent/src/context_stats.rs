@@ -78,14 +78,14 @@ mod tests {
 
     #[test]
     fn context_stats_field_access() {
-        let mut stats = ContextStats::default();
-
-        stats.knowledge_count = 10;
-        stats.cross_session_links_count = 5;
-        stats.pinned_conventions_count = 2;
-        stats.graph_token_percentage = 75.3;
-        stats.repo_briefing_included = true;
-        stats.compaction_triggered = true;
+        let stats = ContextStats {
+            knowledge_count: 10,
+            cross_session_links_count: 5,
+            pinned_conventions_count: 2,
+            graph_token_percentage: 75.3,
+            repo_briefing_included: true,
+            compaction_triggered: true,
+        };
 
         assert_eq!(stats.knowledge_count, 10);
         assert_eq!(stats.cross_session_links_count, 5);

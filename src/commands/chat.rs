@@ -13,7 +13,7 @@ pub async fn run(model: String, db_path: &Path) -> Result<(), GraphirmError> {
     let api_key = super::api_key_for_provider(provider_name)?;
     let provider = graphirm_llm::factory::create_provider(provider_name, &api_key)
         .map_err(|e| GraphirmError::Config(e.to_string()))?;
-    let provider = Arc::new(provider);
+    let provider: Arc<dyn graphirm_llm::LlmProvider> = Arc::from(provider);
 
     let graph = Arc::new(graphirm_graph::GraphStore::open(
         db_path.to_str().unwrap_or("graph.db"),
@@ -39,6 +39,7 @@ pub async fn run(model: String, db_path: &Path) -> Result<(), GraphirmError> {
     let session_agent = session.clone();
     let event_bus_agent = event_bus.clone();
     let cancel_agent = cancel.clone();
+    let llm = provider.clone();
 
     tokio::spawn(async move {
         while trigger_rx.recv().await.is_some() {
@@ -47,7 +48,7 @@ pub async fn run(model: String, db_path: &Path) -> Result<(), GraphirmError> {
             }
             if let Err(e) = graphirm_agent::run_agent_loop(
                 &session_agent,
-                provider.as_ref().as_ref(),
+                llm.clone(),
                 &tools,
                 &event_bus_agent,
                 &cancel_agent,

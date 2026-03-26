@@ -63,8 +63,8 @@ pub async fn stream_and_record(
     let compaction_threshold = context_config.compaction_threshold;
     let guaranteed_recent = context_config.guaranteed_recent_turns;
 
-    let window = tokio::task::spawn_blocking(move || {
-        crate::context::build_context(&graph_ref, &session_id_ref, &context_config)
+    let (window, mut context_stats) = tokio::task::spawn_blocking(move || {
+        crate::context::build_context_with_stats(&graph_ref, &session_id_ref, &context_config)
     })
     .await
     .map_err(|e| AgentError::Join(e.to_string()))??;
@@ -92,10 +92,18 @@ pub async fn stream_and_record(
                     model: String::new(),
                     ..Default::default()
                 };
-                if let Err(e) =
-                    crate::compact::compact_context(&session.graph, llm.as_ref(), ids, &compact_cfg).await
+                match crate::compact::compact_context(
+                    &session.graph,
+                    llm.as_ref(),
+                    ids,
+                    &compact_cfg,
+                )
+                .await
                 {
-                    tracing::warn!("auto-compaction failed (non-fatal): {e}");
+                    Err(e) => tracing::warn!("auto-compaction failed (non-fatal): {e}"),
+                    Ok(_) => {
+                        context_stats.compaction_triggered = true;
+                    }
                 }
             }
             _ => {}
@@ -287,6 +295,12 @@ pub async fn stream_and_record(
     metadata.insert(
         "usage_output".to_string(),
         serde_json::json!(response.usage.output_tokens),
+    );
+
+    // Add context_stats to metadata
+    metadata.insert(
+        "context_stats".to_string(),
+        serde_json::to_value(&context_stats).unwrap_or(serde_json::Value::Null),
     );
 
     if let Some((ref decision, decision_ms)) = routing_outcome {

@@ -618,7 +618,7 @@ mod tests {
             .add_node(knowledge_node("Stale node", "Embedded with old model"))
             .unwrap();
         // Store a 32-dim embedding but retriever expects 64-dim.
-        graph.set_embedding(&node_id, &vec![0.1f32; 32]).unwrap();
+        graph.set_embedding(&node_id, &[0.1f32; 32]).unwrap();
 
         let retriever = MemoryRetriever::new(graph.clone(), vector_index, llm, 64);
         let count = retriever.hydrate_from_graph().await.unwrap();

@@ -22,8 +22,9 @@ pub mod workspace;
 pub use compact::{CompactionConfig, CompactionResult, compact_context, is_compacted};
 pub use config::{AgentConfig, AgentMode, Permission};
 pub use context::{
-    ContextConfig, ContextWindow, EdgeWeights, ScoredNode, build_context, build_subagent_context,
-    estimate_tokens, estimate_tokens_str, fit_to_budget, score_node, score_recency,
+    ContextConfig, ContextWindow, EdgeWeights, ScoredNode, build_context, build_context_with_stats,
+    build_subagent_context, estimate_tokens, estimate_tokens_str, fit_to_budget, score_node,
+    score_recency,
 };
 pub use context_stats::ContextStats;
 pub use coordinator::Coordinator;

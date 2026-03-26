@@ -12,6 +12,7 @@ use graphirm_graph::{AgentData, ContentData, GraphEdge, InteractionData, Knowled
 use graphirm_graph::{Direction, EdgeType, GraphNode, GraphStore, NodeId, NodeType};
 use graphirm_llm::LlmMessage;
 
+use crate::context_stats::ContextStats;
 use crate::error::AgentError;
 
 /// Maximum BFS traversal depth when computing graph-distance scores.
@@ -464,6 +465,69 @@ fn collect_context_nodes(
     Ok(context_nodes)
 }
 
+fn count_cross_session_relates_to(
+    graph: &GraphStore,
+    node_id: &NodeId,
+    current_session: &str,
+) -> Result<u32, AgentError> {
+    let neighbors = graph
+        .neighbors(node_id, Some(EdgeType::RelatesTo), Direction::Outgoing)
+        .map_err(|e| AgentError::Context(e.to_string()))?;
+    let mut count = 0u32;
+    for n in neighbors {
+        if let Some(sid) = n.metadata.get("session_id").and_then(|v| v.as_str())
+            && sid != current_session
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Telemetry for supplemental graph nodes (Content/Knowledge) selected into the LLM window.
+fn compute_context_stats(
+    ctx_nodes: &[GraphNode],
+    config: &ContextConfig,
+    graph: &GraphStore,
+    current_session: &str,
+) -> Result<ContextStats, AgentError> {
+    let mut knowledge_count = 0u32;
+    let mut pinned_conventions_count = 0u32;
+    let mut cross_session_links_count = 0u32;
+    let mut supplemental_tokens = 0usize;
+
+    for node in ctx_nodes {
+        supplemental_tokens = supplemental_tokens.saturating_add(estimate_tokens(node));
+        if matches!(node.node_type, NodeType::Knowledge(_)) {
+            knowledge_count += 1;
+            if node
+                .metadata
+                .get("pinned")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                pinned_conventions_count += 1;
+            }
+            cross_session_links_count = cross_session_links_count.saturating_add(
+                count_cross_session_relates_to(graph, &node.id, current_session)?,
+            );
+        }
+    }
+
+    let max_t = config.max_tokens.max(1);
+    let graph_token_percentage =
+        ((supplemental_tokens as f64) / (max_t as f64) * 100.0_f64).min(100.0_f64);
+
+    Ok(ContextStats {
+        knowledge_count,
+        cross_session_links_count,
+        pinned_conventions_count,
+        graph_token_percentage,
+        repo_briefing_included: config.system_prompt.contains("## Repo Briefing"),
+        compaction_triggered: false,
+    })
+}
+
 /// Build a relevance-scored context window from the session graph.
 ///
 /// Algorithm:
@@ -480,6 +544,15 @@ pub fn build_context(
     agent_id: &NodeId,
     config: &ContextConfig,
 ) -> Result<ContextWindow, AgentError> {
+    build_context_with_stats(graph, agent_id, config).map(|(w, _)| w)
+}
+
+/// Same as [`build_context`], plus [`ContextStats`] for graph-context utilization telemetry.
+pub fn build_context_with_stats(
+    graph: &GraphStore,
+    agent_id: &NodeId,
+    config: &ContextConfig,
+) -> Result<(ContextWindow, ContextStats), AgentError> {
     use crate::compact::is_compacted;
 
     if config.enable_compaction {
@@ -492,11 +565,18 @@ pub fn build_context(
     let current_turn = match find_current_turn(graph, agent_id)? {
         Some(node) => node,
         None => {
-            return Ok(ContextWindow {
-                system: system_msg,
-                messages: vec![],
-                total_tokens: system_tokens,
-            });
+            let stats = ContextStats {
+                repo_briefing_included: config.system_prompt.contains("## Repo Briefing"),
+                ..ContextStats::default()
+            };
+            return Ok((
+                ContextWindow {
+                    system: system_msg,
+                    messages: vec![],
+                    total_tokens: system_tokens,
+                },
+                stats,
+            ));
         }
     };
 
@@ -587,6 +667,8 @@ pub fn build_context(
     conv_older.sort_by(|a, b| a.created_at.cmp(&b.created_at));
     ctx_nodes.sort_by(|a, b| a.created_at.cmp(&b.created_at));
 
+    let stats = compute_context_stats(&ctx_nodes, config, graph, &agent_id.0)?;
+
     // guaranteed_recent is newest-first from conversation_thread, reverse for chronological
     let mut recent_chrono: Vec<GraphNode> = guaranteed_recent;
     recent_chrono.reverse();
@@ -603,11 +685,14 @@ pub fn build_context(
 
     let total_tokens = system_tokens + guaranteed_tokens + selected_tokens;
 
-    Ok(ContextWindow {
-        system: system_msg,
-        messages,
-        total_tokens,
-    })
+    Ok((
+        ContextWindow {
+            system: system_msg,
+            messages,
+            total_tokens,
+        },
+        stats,
+    ))
 }
 
 /// Build a scoped LLM message context for a subagent.
@@ -1362,6 +1447,386 @@ mod tests {
             all_text.contains("main.rs") || all_text.contains("fixed()"),
             "Context should include the modified file content"
         );
+    }
+
+    #[test]
+    fn build_context_with_stats_empty_no_briefing() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let (_window, stats) =
+            super::build_context_with_stats(&graph, &agent_id, &ContextConfig::default()).unwrap();
+        assert_eq!(stats.knowledge_count, 0);
+        assert_eq!(stats.cross_session_links_count, 0);
+        assert_eq!(stats.pinned_conventions_count, 0);
+        assert!(!stats.repo_briefing_included);
+        assert!(!stats.compaction_triggered);
+    }
+
+    #[test]
+    fn build_context_with_stats_repo_briefing_flag() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let config = ContextConfig {
+            system_prompt: "sys\n\n---\n## Repo Briefing\nhello\n---".to_string(),
+            ..ContextConfig::default()
+        };
+        let (_window, stats) = super::build_context_with_stats(&graph, &agent_id, &config).unwrap();
+        assert!(stats.repo_briefing_included);
+    }
+
+    #[test]
+    fn build_context_with_stats_counts_knowledge_in_supplemental() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let mut user_msg = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "Remember this".to_string(),
+            token_count: None,
+        }));
+        user_msg.metadata["session_id"] = serde_json::json!(&agent_id.0);
+        let user_id = user_msg.id.clone();
+        graph.add_node(user_msg).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id.clone(),
+                user_id.clone(),
+            ))
+            .unwrap();
+
+        let mut kn = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "fact".to_string(),
+            entity_type: "note".to_string(),
+            summary: "Important fact about the module.".to_string(),
+            confidence: 1.0,
+        }));
+        kn.metadata["session_id"] = serde_json::json!(&agent_id.0);
+        let kn_id = kn.id.clone();
+        graph.add_node(kn).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Reads,
+                user_id.clone(),
+                kn_id,
+            ))
+            .unwrap();
+
+        let config = ContextConfig {
+            max_tokens: 10_000,
+            system_prompt: "Help.".to_string(),
+            guaranteed_recent_turns: 2,
+            ..ContextConfig::default()
+        };
+        let (_window, stats) = super::build_context_with_stats(&graph, &agent_id, &config).unwrap();
+        assert_eq!(stats.knowledge_count, 1);
+        assert!(stats.graph_token_percentage > 0.0);
+    }
+
+    #[test]
+    fn build_context_with_stats_pinned_knowledge() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let mut user_msg = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "Go".to_string(),
+            token_count: None,
+        }));
+        user_msg.metadata["session_id"] = serde_json::json!(&agent_id.0);
+        let user_id = user_msg.id.clone();
+        graph.add_node(user_msg).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id.clone(),
+                user_id.clone(),
+            ))
+            .unwrap();
+
+        let mut kn = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "rule".to_string(),
+            entity_type: "convention".to_string(),
+            summary: "Always run fmt.".to_string(),
+            confidence: 1.0,
+        }));
+        kn.metadata["session_id"] = serde_json::json!(&agent_id.0);
+        kn.metadata["pinned"] = serde_json::json!(true);
+        let kn_id = kn.id.clone();
+        graph.add_node(kn).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Reads,
+                user_id,
+                kn_id,
+            ))
+            .unwrap();
+
+        let config = ContextConfig {
+            max_tokens: 10_000,
+            system_prompt: "Help.".to_string(),
+            guaranteed_recent_turns: 2,
+            ..ContextConfig::default()
+        };
+        let (_window, stats) = super::build_context_with_stats(&graph, &agent_id, &config).unwrap();
+        assert_eq!(stats.pinned_conventions_count, 1);
+        assert_eq!(stats.knowledge_count, 1);
+    }
+
+    #[test]
+    fn build_context_with_stats_cross_session_relates_to() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let mut user_msg = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "Hi".to_string(),
+            token_count: None,
+        }));
+        user_msg.metadata["session_id"] = serde_json::json!(&agent_id.0);
+        let user_id = user_msg.id.clone();
+        graph.add_node(user_msg).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id.clone(),
+                user_id.clone(),
+            ))
+            .unwrap();
+
+        let mut local = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "local".to_string(),
+            entity_type: "note".to_string(),
+            summary: "Local note".to_string(),
+            confidence: 1.0,
+        }));
+        local.metadata["session_id"] = serde_json::json!(&agent_id.0);
+        let local_id = local.id.clone();
+
+        let mut other = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "other".to_string(),
+            entity_type: "note".to_string(),
+            summary: "Other session".to_string(),
+            confidence: 1.0,
+        }));
+        other.metadata["session_id"] = serde_json::json!("session-other");
+        let other_id = other.id.clone();
+
+        graph.add_node(local).unwrap();
+        graph.add_node(other).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RelatesTo,
+                local_id.clone(),
+                other_id,
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Reads,
+                user_id,
+                local_id,
+            ))
+            .unwrap();
+
+        let config = ContextConfig {
+            max_tokens: 10_000,
+            system_prompt: "Help.".to_string(),
+            guaranteed_recent_turns: 2,
+            ..ContextConfig::default()
+        };
+        let (_window, stats) = super::build_context_with_stats(&graph, &agent_id, &config).unwrap();
+        assert_eq!(stats.cross_session_links_count, 1);
+    }
+
+    #[test]
+    fn build_context_with_stats_two_knowledge_nodes_selected() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let mut user_msg = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "Hi".to_string(),
+            token_count: None,
+        }));
+        user_msg.metadata["session_id"] = serde_json::json!(&agent_id.0);
+        let user_id = user_msg.id.clone();
+        graph.add_node(user_msg).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id.clone(),
+                user_id.clone(),
+            ))
+            .unwrap();
+
+        for i in 0..2 {
+            let mut kn = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: format!("k{i}"),
+                entity_type: "note".to_string(),
+                summary: format!("Summary {i}"),
+                confidence: 1.0,
+            }));
+            kn.metadata["session_id"] = serde_json::json!(&agent_id.0);
+            let kn_id = kn.id.clone();
+            graph.add_node(kn).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Reads,
+                    user_id.clone(),
+                    kn_id,
+                ))
+                .unwrap();
+        }
+
+        let config = ContextConfig {
+            max_tokens: 10_000,
+            system_prompt: "Help.".to_string(),
+            guaranteed_recent_turns: 2,
+            max_content_nodes: 20,
+            ..ContextConfig::default()
+        };
+        let (_window, stats) = super::build_context_with_stats(&graph, &agent_id, &config).unwrap();
+        assert_eq!(stats.knowledge_count, 2);
+    }
+
+    #[test]
+    fn build_context_with_stats_content_supplemental_tokens() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let mut user_msg = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "Read file".to_string(),
+            token_count: None,
+        }));
+        user_msg.metadata["session_id"] = serde_json::json!(&agent_id.0);
+        let user_id = user_msg.id.clone();
+        graph.add_node(user_msg).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id.clone(),
+                user_id.clone(),
+            ))
+            .unwrap();
+
+        let file = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".to_string(),
+            path: Some("x.rs".to_string()),
+            body: "fn x() {}".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        let file_id = file.id.clone();
+        graph.add_node(file).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Reads,
+                user_id,
+                file_id,
+            ))
+            .unwrap();
+
+        let config = ContextConfig {
+            max_tokens: 10_000,
+            system_prompt: "Help.".to_string(),
+            guaranteed_recent_turns: 2,
+            ..ContextConfig::default()
+        };
+        let (_window, stats) = super::build_context_with_stats(&graph, &agent_id, &config).unwrap();
+        assert_eq!(stats.knowledge_count, 0);
+        assert!(stats.graph_token_percentage > 0.0);
+    }
+
+    #[test]
+    fn build_context_matches_build_context_with_stats_window() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let mut user_msg = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            token_count: None,
+        }));
+        user_msg.metadata["session_id"] = serde_json::json!(&agent_id.0);
+        let user_id = user_msg.id.clone();
+        graph.add_node(user_msg).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id.clone(),
+                user_id,
+            ))
+            .unwrap();
+
+        let config = ContextConfig {
+            max_tokens: 5000,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 2,
+            ..ContextConfig::default()
+        };
+        let w1 = super::build_context(&graph, &agent_id, &config).unwrap();
+        let (w2, _stats) = super::build_context_with_stats(&graph, &agent_id, &config).unwrap();
+        assert_eq!(w1.total_tokens, w2.total_tokens);
+        assert_eq!(w1.messages.len(), w2.messages.len());
     }
 
     #[test]

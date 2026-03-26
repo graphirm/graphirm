@@ -8,8 +8,6 @@ use crate::error::AgentError;
 
 #[cfg(test)]
 use chrono::Duration;
-#[cfg(test)]
-use graphirm_graph::{AgentData, InteractionData};
 
 #[derive(Debug, Clone)]
 pub struct CompactionConfig {

@@ -205,7 +205,7 @@ async fn test_segment_filter_excludes_non_matching_types() {
         ..ContextConfig::default()
     };
 
-    let window = build_context(&*store, &agent_id, &config).unwrap();
+    let window = build_context(&store, &agent_id, &config).unwrap();
 
     // Find the assistant message in the context window
     let assistant_msg = window
