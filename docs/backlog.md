@@ -152,6 +152,10 @@ BACKLOG.md flags that layer integration may be superficial. Verify each layer pr
 ### Increase test coverage to >50% — P2 · L
 Currently at 3-12% coverage. Add unit tests for all components, integration tests for all layers, validation tests with real repositories.
 
+### Adaptive model router (A/B routing, token tracking, composite objective) — P1 · L
+Replace the static rule-based router (Phase 34) with an adaptive routing framework. `RoutingStrategy` trait with three implementations: `RuleRouter` (backward compat), `PromptRouter` (cheap LLM classifier), `ExperimentRouter` (A/B wrapper). Per-turn `TurnOutcome` tracking (latency, tokens, errors, escalation, user rating). `SessionScore` aggregation with composite objective (cost/quality/speed) tunable via presets (`balanced`, `cost_focused`, `quality_first`, `speed`). Phase 1 ships prompt-based router + tracking infra; Phase 2 adds statistical/learned router once data exists.
+Design: `docs/plans/2026-03-26-adaptive-model-router-design.md`
+
 ---
 
 ## Refactoring / Code Health (Graphirm)
@@ -239,6 +243,52 @@ re-index on every change.
 **Useful Nodestradamus tools:**
 - `codebase_health` — validate that analysis results are consistent before persisting
 - `get_impact file_path=crates/graph/src/store.rs` — blast radius of adding `RepoAnalysis` node type
+
+---
+
+## Strategic Gaps (derived from competitive scoring 2026-03-22)
+
+Scored Graphirm, Nodestradamus100, and Understand-Anything across 15 dimensions.
+Items below target the dimensions where we score lowest relative to business impact.
+See chat for full scoring table.
+
+### Ndstrms-backed static analysis integration — P1 · L
+**Score gap:** Static analysis 2/10, Analytical depth 5/10, Impact analysis 6/10
+Wire Nodestradamus MCP tools as Graphirm's code understanding backend. When the agent starts
+a session in a repo, call `analyze_deps` + `codebase_health` automatically, persist results
+as Knowledge nodes, and surface them in `repo_briefing`, `graph_diff`, and pre-edit impact hooks.
+Replaces the current `rg`-only dependent discovery with real dependency graph traversal.
+Subsumes the existing "Any-Repo Instant Analysis" item below.
+
+### Ndstrms analysis dashboard (web) — P2 · L
+**Score gap:** Ndstrms Visualization 1/10
+Build a read-only dashboard (could live in `web-app/` or separate) that renders Ndstrms
+analysis results — dependency graph, PageRank hotspots, community clusters, cycle warnings.
+This makes Ndstrms sellable as a standalone product. Could share React Flow + dagre infra
+with Graphirm's existing whiteboard.
+
+### Public demo mode — P1 · M
+**Score gap:** Onboarding 3/10, Community 1/10
+`graphirm.ai/?demo` loads a pre-recorded session (static JSON, no API key) so visitors
+see the graph whiteboard, chat pane, and knowledge extraction without setup. Deploy to
+Cloudflare Pages. Existing backlog item — promoting to P1 given competitive context.
+
+### First-run guided experience — P2 · M
+**Score gap:** Onboarding 3/10
+On first `graphirm chat` or first web session, detect empty graph and offer a guided
+walkthrough: "I'll analyze this repo and show you what I find." Auto-runs repo briefing,
+highlights key files, creates initial Knowledge nodes. Inspired by UA's guided tours
+but powered by Ndstrms analysis instead of LLM-for-everything.
+
+### API versioning (`/api/v1/`) — P2 · M
+**Score gap:** Production readiness 5/10
+Already in backlog below — confirmed as prerequisite for any third-party integration
+or Ndstrms dashboard consuming Graphirm's API.
+
+### Open-source launch prep — P2 · M
+**Score gap:** Community 1/10
+README rewrite with screenshots/GIFs, `CONTRIBUTING.md`, issue templates, license audit,
+clean commit history, GitHub topics/description. Required before any public visibility push.
 
 ---
 
