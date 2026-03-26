@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::{Json, Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
@@ -23,8 +23,8 @@ use crate::state::{AppState, SessionHandle};
 use crate::types::{
     AnnotationRequest, AutoApproveRequest, CreateKnowledgeRequest, CreateSessionRequest,
     ExportQuery, GraphResponse, HealthResponse, NodeAction, NodeActionRequest,
-    PinnedKnowledgeQuery, PromptRequest, RenameSessionRequest, SessionId, SessionResponse,
-    SessionStatus, SseEvent, SseEventType, SubgraphQuery,
+    PinnedKnowledgeQuery, PromptRequest, RateTurnRequest, RenameSessionRequest, SessionId,
+    SessionResponse, SessionStatus, SseEvent, SseEventType, StrategyReport, SubgraphQuery,
 };
 
 /// Build a brief workspace context block to inject into the system prompt.
@@ -119,6 +119,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/graph/{session_id}/annotate", post(create_annotation))
         .route("/api/knowledge", post(create_knowledge))
         .route("/api/knowledge/pinned", get(list_pinned_knowledge))
+        .route(
+            "/api/sessions/{id}/turns/{turn_id}/rating",
+            patch(rate_turn),
+        )
+        .route("/api/routing/report", get(routing_report))
         // HITL pause / resume / auto-approve
         .route("/api/sessions/{id}/pause", post(pause_session))
         .route("/api/sessions/{id}/resume", post(resume_session))
@@ -948,6 +953,116 @@ async fn list_pinned_knowledge(
         .map_err(ServerError::Graph)?;
 
     Ok(Json(nodes))
+}
+
+/// `PATCH /api/sessions/:id/turns/:turn_id/rating` — store a 1–5 user rating on an Interaction node.
+async fn rate_turn(
+    State(state): State<AppState>,
+    Path((_session_id, turn_id)): Path<(String, String)>,
+    Json(body): Json<RateTurnRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if body.rating == 0 || body.rating > 5 {
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    let graph = state.graph.clone();
+    let node_id = NodeId(turn_id.clone());
+    tokio::task::spawn_blocking(move || {
+        let mut node = graph.get_node(&node_id).map_err(|_| StatusCode::NOT_FOUND)?;
+        if let serde_json::Value::Object(ref mut map) = node.metadata {
+            map.insert("user_rating".to_string(), serde_json::json!(body.rating));
+        }
+        graph.update_node(&node_id, node).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        Ok::<_, StatusCode>(())
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `GET /api/routing/report` — aggregate per-strategy routing statistics across all sessions.
+async fn routing_report(State(state): State<AppState>) -> Json<Vec<StrategyReport>> {
+    let graph = state.graph.clone();
+    let reports = tokio::task::spawn_blocking(move || build_routing_report(&graph))
+        .await
+        .unwrap_or_default();
+    Json(reports)
+}
+
+/// Query all Interaction nodes, group by `routing_strategy` metadata, and aggregate stats.
+fn build_routing_report(graph: &graphirm_graph::GraphStore) -> Vec<StrategyReport> {
+    use std::collections::HashMap;
+
+    let nodes = match graph.list_nodes_by_type("interaction", None, None, 10_000) {
+        Ok(nodes) => nodes,
+        Err(_) => return vec![],
+    };
+
+    // strategy_name → (turn_count, input_tokens, output_tokens, latency_ms, tool_errors, ratings)
+    let mut groups: HashMap<String, (u32, u64, u64, u64, u32, Vec<f64>)> = HashMap::new();
+
+    for node in &nodes {
+        let meta = &node.metadata;
+        let strategy = match meta.get("routing_strategy").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let input = meta
+            .get("usage_input")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let output = meta
+            .get("usage_output")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let latency = meta
+            .get("routing_decision_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let has_error = meta
+            .get("tool_errors")
+            .and_then(|v| v.as_u64())
+            .map(|e| e > 0)
+            .unwrap_or(false);
+        let rating = meta
+            .get("user_rating")
+            .and_then(|v| v.as_f64());
+
+        let entry = groups.entry(strategy).or_insert((0, 0, 0, 0, 0, vec![]));
+        entry.0 += 1;
+        entry.1 += input;
+        entry.2 += output;
+        entry.3 += latency;
+        if has_error {
+            entry.4 += 1;
+        }
+        if let Some(r) = rating {
+            entry.5.push(r);
+        }
+    }
+
+    let mut reports: Vec<StrategyReport> = groups
+        .into_iter()
+        .map(|(strategy_name, (count, input, output, latency, errors, ratings))| {
+            let n = count as f64;
+            let avg_user_rating = if ratings.is_empty() {
+                None
+            } else {
+                Some(ratings.iter().sum::<f64>() / ratings.len() as f64)
+            };
+            StrategyReport {
+                strategy_name,
+                turn_count: count,
+                avg_input_tokens: input as f64 / n,
+                avg_output_tokens: output as f64 / n,
+                avg_latency_ms: latency as f64 / n,
+                error_rate: errors as f64 / n,
+                avg_user_rating,
+            }
+        })
+        .collect();
+    reports.sort_by(|a, b| b.turn_count.cmp(&a.turn_count));
+    reports
 }
 
 /// `POST /api/sessions/:id/pause`

@@ -333,6 +333,25 @@ fn default_pinned_limit() -> usize {
     50
 }
 
+/// Request body for `PATCH /api/sessions/:id/turns/:turn_id/rating`.
+#[derive(Debug, Deserialize)]
+pub struct RateTurnRequest {
+    /// User satisfaction rating for this turn (1 = worst, 5 = best).
+    pub rating: u8,
+}
+
+/// Per-strategy aggregated statistics returned by `GET /api/routing/report`.
+#[derive(Debug, Serialize)]
+pub struct StrategyReport {
+    pub strategy_name: String,
+    pub turn_count: u32,
+    pub avg_input_tokens: f64,
+    pub avg_output_tokens: f64,
+    pub avg_latency_ms: f64,
+    pub error_rate: f64,
+    pub avg_user_rating: Option<f64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,5 +537,28 @@ mod tests {
         let json = r#"{}"#;
         let q: PinnedKnowledgeQuery = serde_json::from_str(json).unwrap();
         assert_eq!(q.limit, 50);
+    }
+
+    #[test]
+    fn rate_turn_request_deserializes() {
+        let json = r#"{"rating": 4}"#;
+        let req: RateTurnRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.rating, 4);
+    }
+
+    #[test]
+    fn strategy_report_serializes() {
+        let r = StrategyReport {
+            strategy_name: "experiment:prompt_router".into(),
+            turn_count: 10,
+            avg_input_tokens: 500.0,
+            avg_output_tokens: 200.0,
+            avg_latency_ms: 1200.0,
+            error_rate: 0.1,
+            avg_user_rating: Some(4.2),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("experiment:prompt_router"));
+        assert!(json.contains("\"turn_count\":10"));
     }
 }
