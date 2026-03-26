@@ -152,8 +152,8 @@ workspaces_root = "/data/workspaces"   # persisted on the Docker volume
 # Two-tier model routing — used by [agent.adaptive_routing] strategy = "rules".
 # Both models must use the same provider backend (e.g. both via openrouter).
 [agent.routing]
-cheap = "qwen/qwen3-coder:free"
-smart = "qwen/qwen3-coder-plus"
+cheap = "openrouter/qwen/qwen3-coder:free"
+smart = "openrouter/qwen/qwen3-coder-plus"
 default_tier = "cheap"
 
 [[agent.routing.rules]]

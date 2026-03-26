@@ -159,12 +159,16 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 35 | `main.rs` extraction — split into `src/commands/` modules (1267→321 lines); cross-project dogfood setup (Graphirm deployed on Nodestradamus100 machine, `dogfood-ndstrms` skill) | ✅ done |
 | 36 | Adaptive model router — `RoutingStrategy` trait, `RuleRouter`, `PromptRouter`, `ExperimentRouter`, per-turn `TurnOutcome` tracking, composite `ObjectiveWeights` presets (cost_focused/quality_first/speed/balanced), A/B split config, `PATCH /api/sessions/:id/turns/:turn_id/rating`, `GET /api/routing/report` | ✅ done |
 | 37 | Graph context utilization telemetry — `ContextStats`, `build_context_with_stats`, metadata on assistant turns, `context_report` tool, `GET /api/sessions/:id/context-report` HTTP endpoint | ✅ done |
+| 38 | ModelRouter provider-prefix normalization — `model_for_tier` strips leading `provider/` segment; routing config now accepts `openrouter/vendor/model` format (consistent with `agent.model`); `same_provider` still correct; 2 tests updated | ✅ done |
+| 39 | Phase 37 telemetry validation — real-session query of `GET /api/sessions/{id}/context-report` to verify `context_stats` fields are non-zero end-to-end | ⏳ planned |
+| 40 | Agent continuity improvements — (a) turn-budget / "keep going" system-prompt injection for text-only turn failures; (b) `enable_compaction = true` by default; (c) cross-session knowledge surfacing threshold tuning | ⏳ planned |
+| 41 | Spoke deploy — Hetzner VM via Consoul, push binary, configure API keys, validate end-to-end on remote | ⏳ planned |
 
 **Phase 37 — Graph Context Utilization Telemetry:**
 - **Phase 37a (foundation):** `ContextStats` struct with 6 fields (knowledge_count, cross_session_links_count, pinned_conventions_count, graph_token_percentage, repo_briefing_included, compaction_triggered); Serialize/Deserialize; 4 unit tests; registered as public module in `graphirm-agent` (commit 69faf79)
 - **Phase 37b (integration):** `build_context_with_stats` returns `(ContextWindow, ContextStats)`; `build_context` wraps and discards stats (backward compatible); `stream_and_record` persists `context_stats` JSON on assistant `Interaction` metadata; `compaction_triggered` set when auto-compaction succeeds; 8 new unit tests in `context.rs`
 - **Phase 37c (reporting):** `ContextReportTool` and `GET /api/sessions/:id/context-report` endpoint for correlation analysis
-- **Strategy:** Split into focused sub-phases to allow dogfood iteration; Phase 37a passed (graphirm autonomous execution); Phase 37b implemented in-repo (workflow had partial tuple wiring; completed + tests); Phase 37c pending
+- **Strategy:** Split into focused sub-phases to allow dogfood iteration; Phase 37a passed (graphirm autonomous execution); Phase 37b implemented in-repo; Phase 37c implemented directly (agent emitted text-only turn without writing files)
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 

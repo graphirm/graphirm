@@ -48,12 +48,24 @@ fn default_tier() -> ModelTier {
 }
 
 impl ModelRoutingConfig {
-    /// Resolve a tier to its concrete model string.
+    /// Resolve a tier to its concrete model ID, stripping the leading provider
+    /// prefix if present.
+    ///
+    /// The routing config uses the same `"provider/model"` format as `agent.model`
+    /// (e.g. `"openrouter/qwen/qwen3-coder:free"`). Since the provider has already
+    /// been selected at session creation, only the model portion is passed to the
+    /// LLM provider — identical to how `parse_model_string` works for the main model.
+    ///
+    /// Examples:
+    /// - `"openrouter/qwen/qwen3-coder:free"` → `"qwen/qwen3-coder:free"`
+    /// - `"deepseek/deepseek-chat"` → `"deepseek-chat"`
+    /// - `"just-a-model"` → `"just-a-model"` (no prefix, returned as-is)
     pub fn model_for_tier(&self, tier: ModelTier) -> &str {
-        match tier {
+        let raw = match tier {
             ModelTier::Cheap => &self.cheap,
             ModelTier::Smart => &self.smart,
-        }
+        };
+        raw.split_once('/').map(|x| x.1).unwrap_or(raw.as_str())
     }
 
     /// Check whether both tiers use the same provider backend.
@@ -139,8 +151,8 @@ mod tests {
 
     fn test_config() -> ModelRoutingConfig {
         ModelRoutingConfig {
-            cheap: "deepseek/deepseek-chat".into(),
-            smart: "anthropic/claude-sonnet-4".into(),
+            cheap: "openrouter/deepseek/deepseek-chat".into(),
+            smart: "openrouter/anthropic/claude-sonnet-4".into(),
             default_tier: ModelTier::Cheap,
             rules: vec![
                 RoutingRule::FirstTurn {
@@ -175,7 +187,7 @@ mod tests {
             user_message_tokens: 50,
         };
         let (model, tier, rule) = router.select(&signals);
-        assert_eq!(model, "anthropic/claude-sonnet-4");
+        assert_eq!(model, "anthropic/claude-sonnet-4"); // openrouter/ prefix stripped
         assert_eq!(tier, ModelTier::Smart);
         assert_eq!(rule, "first_turn");
     }
@@ -206,7 +218,7 @@ mod tests {
             user_message_tokens: 20,
         };
         let (model, tier, rule) = router.select(&signals);
-        assert_eq!(model, "deepseek/deepseek-chat");
+        assert_eq!(model, "deepseek/deepseek-chat"); // openrouter/ prefix stripped
         assert_eq!(tier, ModelTier::Cheap);
         assert_eq!(rule, "tool_only_turn");
     }
@@ -252,7 +264,7 @@ mod tests {
             user_message_tokens: 50,
         };
         let (model, tier, rule) = router.select(&signals);
-        assert_eq!(model, "deepseek/deepseek-chat");
+        assert_eq!(model, "deepseek/deepseek-chat"); // openrouter/ prefix stripped
         assert_eq!(tier, ModelTier::Cheap);
         assert_eq!(rule, "default");
     }
@@ -326,6 +338,34 @@ mod tests {
         assert_eq!(cfg.smart, "anthropic/claude-sonnet-4");
         assert_eq!(cfg.default_tier, ModelTier::Cheap);
         assert_eq!(cfg.rules.len(), 5);
+    }
+
+    #[test]
+    fn model_for_tier_strips_provider_prefix() {
+        let cfg = ModelRoutingConfig {
+            cheap: "openrouter/qwen/qwen3-coder:free".into(),
+            smart: "openrouter/anthropic/claude-sonnet-4".into(),
+            default_tier: ModelTier::Cheap,
+            rules: vec![],
+        };
+        assert_eq!(cfg.model_for_tier(ModelTier::Cheap), "qwen/qwen3-coder:free");
+        assert_eq!(
+            cfg.model_for_tier(ModelTier::Smart),
+            "anthropic/claude-sonnet-4"
+        );
+    }
+
+    #[test]
+    fn model_for_tier_no_prefix_passthrough() {
+        // Model strings without a leading provider/ segment are returned as-is.
+        let cfg = ModelRoutingConfig {
+            cheap: "just-a-model".into(),
+            smart: "another-model".into(),
+            default_tier: ModelTier::Cheap,
+            rules: vec![],
+        };
+        assert_eq!(cfg.model_for_tier(ModelTier::Cheap), "just-a-model");
+        assert_eq!(cfg.model_for_tier(ModelTier::Smart), "another-model");
     }
 
     #[test]
