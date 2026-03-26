@@ -155,8 +155,8 @@ workspaces_root = "/data/workspaces"   # persisted on the Docker volume
 # Both models must use the same provider backend (e.g. both via openrouter).
 #
 # [agent.routing]
-# cheap = "openrouter/deepseek/deepseek-chat"
-# smart = "openrouter/qwen/qwen3-coder:free"
+# cheap = "openrouter/qwen/qwen3-coder:free"
+# smart = "openrouter/qwen/qwen3-coder-next"
 # default_tier = "cheap"
 #
 # [[agent.routing.rules]]
@@ -202,12 +202,12 @@ workspaces_root = "/data/workspaces"   # persisted on the Docker volume
 #
 # # For prompt-based classifier:
 # # [agent.adaptive_routing.prompt]
-# # classifier_model = "openrouter/deepseek/deepseek-chat"
+# # classifier_model = "openrouter/qwen/qwen3-coder:free"
 # # timeout_seconds = 3
 #
 # # Model pricing for cost estimation (optional):
 # # [[agent.adaptive_routing.candidates]]
-# # model = "openrouter/deepseek/deepseek-chat"
+# # model = "openrouter/qwen/qwen3-coder:free"
 # # tier = "cheap"
 # # cost_per_1k_input = 0.00014
 # # cost_per_1k_output = 0.00028
