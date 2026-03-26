@@ -73,10 +73,7 @@ pub async fn run_label_explore(
     Ok(())
 }
 
-pub fn run_schema_suggest(
-    report_path: PathBuf,
-    out: Option<PathBuf>,
-) -> Result<(), GraphirmError> {
+pub fn run_schema_suggest(report_path: PathBuf, out: Option<PathBuf>) -> Result<(), GraphirmError> {
     let json = std::fs::read_to_string(&report_path).map_err(|e| {
         GraphirmError::Config(format!("read report {}: {}", report_path.display(), e))
     })?;
