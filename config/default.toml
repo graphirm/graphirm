@@ -149,68 +149,66 @@ a closure.
 # segment_filter = ["reasoning", "code"]  # restrict context to these segment types
 workspaces_root = "/data/workspaces"   # persisted on the Docker volume
 
-# Two-tier model routing — uncomment to enable automatic cheap/smart selection.
-# When enabled, the router evaluates rules per turn and selects the appropriate model.
-# When disabled (default), `model` above is used for every turn.
+# Two-tier model routing — used by [agent.adaptive_routing] strategy = "rules".
 # Both models must use the same provider backend (e.g. both via openrouter).
-#
-# [agent.routing]
-# cheap = "openrouter/qwen/qwen3-coder:free"
-# smart = "openrouter/qwen/qwen3-coder-next"
-# default_tier = "cheap"
-#
-# [[agent.routing.rules]]
-# type = "first_turn"
-# tier = "smart"
-#
-# [[agent.routing.rules]]
-# type = "error_recovery"
-# tier = "smart"
-#
-# [[agent.routing.rules]]
-# type = "high_complexity"
-# min_tokens = 200
-# tier = "smart"
-#
-# [[agent.routing.rules]]
-# type = "tool_only_turn"
-# tier = "cheap"
-#
-# [[agent.routing.rules]]
-# type = "stuck_detection"
-# turn = 15
-# tier = "smart"
+[agent.routing]
+cheap = "openrouter/qwen/qwen3-coder:free"
+smart = "openrouter/qwen/qwen3-coder-next"
+default_tier = "cheap"
+
+[[agent.routing.rules]]
+type = "first_turn"
+tier = "smart"
+
+[[agent.routing.rules]]
+type = "error_recovery"
+tier = "smart"
+
+[[agent.routing.rules]]
+type = "high_complexity"
+min_tokens = 200
+tier = "smart"
+
+[[agent.routing.rules]]
+type = "tool_only_turn"
+tier = "cheap"
+
+[[agent.routing.rules]]
+type = "stuck_detection"
+turn = 15
+tier = "smart"
 
 # Adaptive model routing — strategy-based model selection with A/B testing.
-# Uncomment to enable. strategy: "rules" (default, backward compat) | "prompt" | "experiment"
+# strategy: "rules" | "prompt" | "experiment"
+[agent.adaptive_routing]
+strategy = "rules"
+
+[agent.adaptive_routing.objective]
+preset = "balanced"   # cost_focused | quality_first | speed | balanced
+
+# For A/B experiment (uncomment to enable):
+# [agent.adaptive_routing.experiment]
+# strategy_a = "rules"
+# strategy_b = "prompt"
+# split = 0.5
+
+# For prompt-based classifier (uncomment to enable):
+# [agent.adaptive_routing.prompt]
+# classifier_model = "openrouter/qwen/qwen3-coder:free"
+# timeout_seconds = 3
+
+# Model pricing for cost estimation (optional):
+# [[agent.adaptive_routing.candidates]]
+# model = "openrouter/qwen/qwen3-coder:free"
+# tier = "cheap"
+# cost_per_1k_input = 0.0
+# cost_per_1k_output = 0.0
 #
-# [agent.adaptive_routing]
-# strategy = "rules"
-#
-# [agent.adaptive_routing.objective]
-# preset = "balanced"   # cost_focused | quality_first | speed | balanced
-# # Or specify weights directly:
-# # cost_weight = 0.4
-# # quality_weight = 0.4
-# # speed_weight = 0.2
-#
-# # For A/B experiment:
-# # [agent.adaptive_routing.experiment]
-# # strategy_a = "rules"
-# # strategy_b = "prompt"
-# # split = 0.5
-#
-# # For prompt-based classifier:
-# # [agent.adaptive_routing.prompt]
-# # classifier_model = "openrouter/qwen/qwen3-coder:free"
-# # timeout_seconds = 3
-#
-# # Model pricing for cost estimation (optional):
-# # [[agent.adaptive_routing.candidates]]
-# # model = "openrouter/qwen/qwen3-coder:free"
-# # tier = "cheap"
-# # cost_per_1k_input = 0.00014
-# # cost_per_1k_output = 0.00028
+# [[agent.adaptive_routing.candidates]]
+# model = "openrouter/qwen/qwen3-coder-next"
+# tier = "smart"
+# cost_per_1k_input = 0.002
+# cost_per_1k_output = 0.006
 
 [knowledge]
 # Knowledge layer thresholds and settings for Phase 9
