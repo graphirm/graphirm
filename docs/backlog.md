@@ -24,6 +24,9 @@ Plan: `docs/plans/2026-03-16-coolify-spoke-deployment.md`
 ### ✅ Chunk metrics during Layer 1 (ndstrms item 23) — P2 · S
 Done 2026-03-26. Agent implemented per-chunk metrics in Layer 1: `comment_ratio`, `avg_line_length`, `blank_line_ratio`. Rust struct `ChunkMetrics` with multi-language comment detection (Python #, C++ //, C /* */). Metrics extracted in orchestrator and stored in chunk nodes. Commit: `346f804` on ndstrms.
 
+### ✅ Persist language on chunk/file in graph export (ndstrms item 24) — P2 · S
+Done 2026-03-26. Canonical `language` on CHUNK with `identified_language` kept; FILE nodes get majority language from enriched chunks; `_ensure_language_attributes` backfills from `LanguageIdentifier` when there are no semantic candidates so `graph.json` always has language where paths exist. Tests: `tests/test_language_persistence.py`. Commit: `aa98893` on ndstrms.
+
 ### ✅ Wire `workspaces_root` on running server — P1 · S
 Done 2026-03-18. Set `workspaces_root = "/data/workspaces"` in `config/default.toml` — on the Docker volume so workspaces survive redeployments.
 
