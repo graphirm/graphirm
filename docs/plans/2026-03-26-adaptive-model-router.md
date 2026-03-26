@@ -25,11 +25,11 @@
 
 ## Success Criteria
 
-- [ ] `cargo test -p graphirm-agent` passes with all new unit tests green
-- [ ] `cargo clippy -- -D warnings` clean
-- [ ] `strategy = "experiment"` in `config/default.toml` routes turns alternately via rules and prompt, and both strategies write distinct `routing_strategy` metadata
-- [ ] `GET /api/routing/report` returns per-strategy composite scores
-- [ ] `PATCH /api/sessions/:id/turns/:turn_id/rating` writes `user_rating` to Interaction node
+- [x] `cargo test -p graphirm-agent` passes with all new unit tests green
+- [x] `cargo clippy -- -D warnings` clean
+- [x] `strategy = "experiment"` in `config/default.toml` routes turns alternately via rules and prompt, and both strategies write distinct `routing_strategy` metadata
+- [x] `GET /api/routing/report` returns per-strategy composite scores
+- [x] `PATCH /api/sessions/:id/turns/:turn_id/rating` writes `user_rating` to Interaction node
 
 ---
 
@@ -1389,7 +1389,7 @@ preset = "balanced"
 Add row for Phase 36:
 
 ```
-| 36 | Adaptive model router — `RoutingStrategy` trait, `PromptRouter`, `ExperimentRouter`, per-turn `TurnOutcome` tracking, composite objective presets, A/B report API | 🚧 in progress |
+| 36 | Adaptive model router — `RoutingStrategy` trait, `PromptRouter`, `ExperimentRouter`, per-turn `TurnOutcome` tracking, composite objective presets, A/B report API | ✅ done |
 ```
 
 **Step 3: Final verification**

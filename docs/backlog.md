@@ -152,8 +152,8 @@ BACKLOG.md flags that layer integration may be superficial. Verify each layer pr
 ### Increase test coverage to >50% — P2 · L
 Currently at 3-12% coverage. Add unit tests for all components, integration tests for all layers, validation tests with real repositories.
 
-### Adaptive model router (A/B routing, token tracking, composite objective) — P1 · L
-Replace the static rule-based router (Phase 34) with an adaptive routing framework. `RoutingStrategy` trait with three implementations: `RuleRouter` (backward compat), `PromptRouter` (cheap LLM classifier), `ExperimentRouter` (A/B wrapper). Per-turn `TurnOutcome` tracking (latency, tokens, errors, escalation, user rating). `SessionScore` aggregation with composite objective (cost/quality/speed) tunable via presets (`balanced`, `cost_focused`, `quality_first`, `speed`). Phase 1 ships prompt-based router + tracking infra; Phase 2 adds statistical/learned router once data exists.
+### ~~Adaptive model router (A/B routing, token tracking, composite objective)~~ — ✅ done Phase 36
+~~Replace the static rule-based router (Phase 34) with an adaptive routing framework.~~ Shipped: `RoutingStrategy` trait, `RuleRouter`, `PromptRouter`, `ExperimentRouter`, per-turn `TurnOutcome` metadata on Interaction nodes, `ObjectiveWeights` presets, `PATCH /rating` + `GET /routing/report` API. Phase 2 (statistical/learned router) remains as future work once data exists.
 Design: `docs/plans/2026-03-26-adaptive-model-router-design.md`
 
 ---
