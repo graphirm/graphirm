@@ -30,6 +30,9 @@ Done 2026-03-26. Canonical `language` on CHUNK with `identified_language` kept; 
 ### ✅ Cross-file-only default for TF-IDF similarity edges (ndstrms item 25) — P2 · S
 Done 2026-03-27. `cross_file_only: bool = True` added to `Layer15Config` and `Layer15Orchestrator`. Same-file edges computed internally for dominance/metrics but filtered from returned `similarity_edges` by default. Parameter threaded through `run_full_graph_pipeline()` as `layer15_cross_file_only`. 85 tests pass. Commit: `9fac65a` on ndstrms.
 
+### ✅ Higher default similarity threshold for semantic edges (ndstrms item 26) — P2 · S
+Done 2026-03-27. Default raised from `0.6` → `0.75` in `add_semantic_edges()` and `run_full_graph_pipeline()`. `inspect.signature()` test added to verify default. 48 tests pass. First clean dogfood run with new scope-boundary prompt — no out-of-scope files. Commit: `a14efb1` on ndstrms.
+
 ### ✅ Wire `workspaces_root` on running server — P1 · S
 Done 2026-03-18. Set `workspaces_root = "/data/workspaces"` in `config/default.toml` — on the Docker volume so workspaces survive redeployments.
 
