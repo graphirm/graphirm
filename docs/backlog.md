@@ -33,6 +33,9 @@ Done 2026-03-27. `cross_file_only: bool = True` added to `Layer15Config` and `La
 ### ✅ Higher default similarity threshold for semantic edges (ndstrms item 26) — P2 · S
 Done 2026-03-27. Default raised from `0.6` → `0.75` in `add_semantic_edges()` and `run_full_graph_pipeline()`. `inspect.signature()` test added to verify default. 48 tests pass. First clean dogfood run with new scope-boundary prompt — no out-of-scope files. Commit: `a14efb1` on ndstrms.
 
+### ✅ Store embedding model name on semantic edges (ndstrms item 27) — P3 · S
+Done 2026-03-27. `model_name: str = "codestral"` param added to `add_semantic_edges()` and threaded through `run_full_graph_pipeline()` as `semantic_model_name`. Both hardcoded `"codestral"` literals replaced with the variable. Model was already stored in edge attributes via `GraphBuilder.add_semantic_edge()`. 49 tests pass. Commit: `d0bafde` on ndstrms.
+
 ### ✅ Wire `workspaces_root` on running server — P1 · S
 Done 2026-03-18. Set `workspaces_root = "/data/workspaces"` in `config/default.toml` — on the Docker volume so workspaces survive redeployments.
 
