@@ -166,6 +166,84 @@ pub struct AgentConfig {
     /// smart models per turn. When `None`, `model` is used for every turn.
     #[serde(default)]
     pub model_routing: Option<ModelRoutingConfig>,
+    /// Adaptive model routing framework. When `Some`, replaces the static `model_routing` path
+    /// with a strategy-based selection (rules, prompt classifier, or A/B experiment).
+    #[serde(default)]
+    pub adaptive_routing: Option<AdaptiveRoutingConfig>,
+}
+
+/// Objective weights for composite score optimisation.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct AdaptiveObjectiveConfig {
+    pub preset: Option<String>,
+    pub cost_weight: Option<f64>,
+    pub quality_weight: Option<f64>,
+    pub speed_weight: Option<f64>,
+}
+
+impl AdaptiveObjectiveConfig {
+    pub fn to_weights(&self) -> crate::strategy::ObjectiveWeights {
+        if let Some(ref p) = self.preset {
+            crate::strategy::ObjectiveWeights::preset(p)
+        } else {
+            crate::strategy::ObjectiveWeights {
+                cost_weight: self.cost_weight.unwrap_or(0.4),
+                quality_weight: self.quality_weight.unwrap_or(0.4),
+                speed_weight: self.speed_weight.unwrap_or(0.2),
+            }
+        }
+    }
+}
+
+/// Configuration for the A/B experiment strategy.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExperimentConfig {
+    pub strategy_a: String,
+    pub strategy_b: String,
+    #[serde(default = "default_split")]
+    pub split: f64,
+}
+
+fn default_split() -> f64 {
+    0.5
+}
+
+/// Configuration for the prompt-based LLM classifier strategy.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PromptRouterConfig {
+    pub classifier_model: String,
+    #[serde(default = "default_classifier_timeout")]
+    pub timeout_seconds: u64,
+}
+
+fn default_classifier_timeout() -> u64 {
+    3
+}
+
+/// A single model candidate with pricing metadata.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelCandidateConfig {
+    pub model: String,
+    pub tier: String, // "cheap" or "smart"
+    pub cost_per_1k_input: f64,
+    pub cost_per_1k_output: f64,
+    pub avg_latency_ms: Option<u64>,
+}
+
+/// Top-level adaptive routing configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AdaptiveRoutingConfig {
+    #[serde(default = "default_adaptive_strategy")]
+    pub strategy: String,
+    pub objective: Option<AdaptiveObjectiveConfig>,
+    pub experiment: Option<ExperimentConfig>,
+    pub prompt: Option<PromptRouterConfig>,
+    #[serde(default)]
+    pub candidates: Vec<ModelCandidateConfig>,
+}
+
+fn default_adaptive_strategy() -> String {
+    "rules".into()
 }
 
 fn default_timeout_seconds() -> u64 {
@@ -250,6 +328,7 @@ impl Default for AgentConfig {
             repo_briefing: true,
             timeout_seconds: default_timeout_seconds(),
             model_routing: None,
+            adaptive_routing: None,
         }
     }
 }
@@ -313,6 +392,8 @@ struct AgentConfigSection {
     timeout_seconds: u64,
     #[serde(default)]
     routing: Option<ModelRoutingConfig>,
+    #[serde(default)]
+    adaptive_routing: Option<AdaptiveRoutingConfig>,
 }
 
 fn default_system_prompt() -> String {
@@ -356,6 +437,7 @@ impl AgentConfig {
             repo_briefing: file.agent.repo_briefing,
             timeout_seconds: file.agent.timeout_seconds,
             model_routing: file.agent.routing,
+            adaptive_routing: file.agent.adaptive_routing,
         })
     }
 
@@ -741,5 +823,35 @@ segment_filter = ["reasoning", "code"]
     fn model_routing_absent_by_default() {
         let config = AgentConfig::default();
         assert!(config.model_routing.is_none());
+    }
+
+    #[test]
+    fn adaptive_routing_config_parses() {
+        let toml = r#"
+            [agent]
+            name = "test"
+            model = "fallback"
+            system_prompt = "test"
+            max_turns = 5
+
+            [agent.adaptive_routing]
+            strategy = "experiment"
+
+            [agent.adaptive_routing.objective]
+            preset = "cost_focused"
+
+            [agent.adaptive_routing.experiment]
+            strategy_a = "rules"
+            strategy_b = "prompt"
+            split = 0.6
+
+            [agent.adaptive_routing.prompt]
+            classifier_model = "deepseek/deepseek-chat"
+        "#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        let ar = config.adaptive_routing.unwrap();
+        assert_eq!(ar.strategy, "experiment");
+        assert_eq!(ar.objective.as_ref().unwrap().preset.as_deref(), Some("cost_focused"));
+        assert!((ar.experiment.as_ref().unwrap().split - 0.6).abs() < 1e-9);
     }
 }

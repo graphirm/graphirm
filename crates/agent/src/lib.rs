@@ -14,6 +14,7 @@ pub mod knowledge;
 pub mod multi;
 pub mod router;
 pub mod session;
+pub mod strategy;
 pub mod workflow;
 pub mod workspace;
 
@@ -37,6 +38,10 @@ pub use multi::{
     wait_for_dependencies, wait_for_subagents,
 };
 pub use router::{ModelRouter, ModelRoutingConfig, ModelTier, RoutingRule, TurnSignals};
+pub use strategy::{
+    ObjectiveWeights, RoutingDecision, RoutingStrategy, SessionScore, TurnOutcome,
+    compute_session_score,
+};
 pub use session::{Session, SessionMetadata, SessionStatus};
 pub use workflow::run_agent_loop;
 
