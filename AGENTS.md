@@ -157,6 +157,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 33 | Pinned Knowledge nodes — `pinned` metadata flag, `list_pinned_knowledge` in GraphStore, `build_pinned_summary` in briefing, `POST /api/knowledge` + `GET /api/knowledge/pinned` endpoints | ✅ done |
 | 34 | Model router — automatic per-turn cheap/smart model selection via `ModelRouter` with configurable rules | ✅ done |
 | 35 | `main.rs` extraction — split into `src/commands/` modules (1267→321 lines); cross-project dogfood setup (Graphirm deployed on Nodestradamus100 machine, `dogfood-ndstrms` skill) | ✅ done |
+| 36 | Adaptive model router — `RoutingStrategy` trait, `RuleRouter`, `PromptRouter`, `ExperimentRouter`, per-turn `TurnOutcome` tracking, composite `ObjectiveWeights` presets (cost_focused/quality_first/speed/balanced), A/B split config, `PATCH /api/sessions/:id/turns/:turn_id/rating`, `GET /api/routing/report` | ✅ done |
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
@@ -326,6 +327,20 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Same-provider constraint enforced in `create_session`: mismatched providers fall back to single-model with warning
 - Config: `[agent.routing]` section in TOML with `cheap`, `smart`, `default_tier`, and `[[agent.routing.rules]]` array
 - 11 unit tests (all rule types, default fallback, empty rules, first-match priority, TOML deserialization, same_provider checks)
+
+**Adaptive model router (Phase 36):**
+- `crates/agent/src/strategy/mod.rs` — `RoutingStrategy` async_trait, `ModelCandidate`, `RoutingDecision`, `ObjectiveWeights` (presets: `balanced`/`cost_focused`/`quality_first`/`speed`), `TurnOutcome`, `SessionScore`, `compute_session_score`
+- `crates/agent/src/strategy/rule_router.rs` — `RuleRouter`: wraps existing `ModelRouter`, backward-compat
+- `crates/agent/src/strategy/prompt_router.rs` — `PromptRouter`: sends cheap-LLM classification call, 3 s timeout, falls back to `Cheap` on any error
+- `crates/agent/src/strategy/experiment.rs` — `ExperimentRouter`: random-split A/B wrapper; tags decisions `experiment:<strategy_name>` for distinguishable metadata
+- `crates/agent/src/strategy/builder.rs` — `build_strategy(config, routing_config, llm)`, `candidates_from_config` — construct from `AdaptiveRoutingConfig`
+- `crates/agent/src/config.rs` — `AdaptiveRoutingConfig`, `AdaptiveObjectiveConfig`, `ExperimentConfig`, `PromptRouterConfig`, `ModelCandidateConfig`; `adaptive_routing: Option<AdaptiveRoutingConfig>` in `AgentConfig`
+- `crates/agent/src/workflow.rs` — `stream_and_record` + `run_agent_loop` now take `Arc<dyn LlmProvider>`; adaptive path selected when `adaptive_routing` is `Some`, legacy `model_routing` path preserved
+- Routing metadata on each Interaction node: `routing_strategy`, `routing_reason`, `routing_confidence`, `routing_decision_ms`, `model_selected`, `model_tier`
+- `PATCH /api/sessions/:id/turns/:turn_id/rating` — store 1–5 user rating in Interaction node metadata
+- `GET /api/routing/report` — aggregate per-strategy stats (tokens, latency, error_rate, avg_user_rating) across all sessions
+- Config: `[agent.adaptive_routing]` section in `config/default.toml` (commented out); activate with `strategy = "rules"/"prompt"/"experiment"`
+- 10 new unit tests across strategy modules; 2 new server type tests; all 266 agent + 104 server tests pass
 
 **Risk areas:**
 

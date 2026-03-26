@@ -998,8 +998,9 @@ fn build_routing_report(graph: &graphirm_graph::GraphStore) -> Vec<StrategyRepor
         Err(_) => return vec![],
     };
 
-    // strategy_name → (turn_count, input_tokens, output_tokens, latency_ms, tool_errors, ratings)
-    let mut groups: HashMap<String, (u32, u64, u64, u64, u32, Vec<f64>)> = HashMap::new();
+    /// (turn_count, input_tokens, output_tokens, latency_ms, tool_errors, ratings)
+    type Bucket = (u32, u64, u64, u64, u32, Vec<f64>);
+    let mut groups: HashMap<String, Bucket> = HashMap::new();
 
     for node in &nodes {
         let meta = &node.metadata;
