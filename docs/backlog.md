@@ -139,8 +139,8 @@ Done (prior sessions). All 8 `BaseValidationGate` subclasses in `src/nodestradam
 ### ✅ MCP batch insights server — P1 · M
 Done 2026-03-26. `src/nodestradamus/mcp/` module with `FastMCP` server exposing 8 tools over stdio: `list_repos`, `get_hotspots`, `get_cycles`, `get_duplicates`, `get_dead_code`, `get_coupling`, `search_repos`, `batch_summary`. `InsightsLoader` reads from `batch_output/` (overridable via `NDSTRMS_BATCH_DIR` env). `ndstrms-mcp` CLI entry in `pyproject.toml`. 25 tests pass. Human-readable string output per tool. Commit: `8b92032 feat(mcp): batch insights MCP server with 8 tools`.
 
-### Verify layer integration (2, 2.5, 3, 4) — P1 · M
-BACKLOG.md flags that layer integration may be superficial. Verify each layer produces meaningful output in the end-to-end pipeline, not just passes tests in isolation.
+### ✅ Verify layer integration (2, 2.5, 3, 4) — P1 · M
+Done 2026-03-26. Audit confirmed tests were superficial (import/instantiation only). Added 3 meaningful test classes: `TestLayer25MetadataOnGraph` (CHUNK nodes have language metadata), `TestLayer3StructuralEdges` (REFERENCE/CALLS/INHERITS edges produced), `TestLayer4CondensationDAG` (DAG has fewer nodes than input). 18/18 tests pass (was 15). `docs/layer-integration-audit.md` written with per-layer before/after status. Commit: `c5a342b test(integration): meaningful output assertions for layers 2.5, 3, 4`.
 
 ### Increase test coverage to >50% — P2 · L
 Currently at ~2% coverage. Add unit tests for all components, integration tests for all layers, validation tests with real repositories.
