@@ -158,6 +158,9 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 34 | Model router — automatic per-turn cheap/smart model selection via `ModelRouter` with configurable rules | ✅ done |
 | 35 | `main.rs` extraction — split into `src/commands/` modules (1267→321 lines); cross-project dogfood setup (Graphirm deployed on Nodestradamus100 machine, `dogfood-ndstrms` skill) | ✅ done |
 | 36 | Adaptive model router — `RoutingStrategy` trait, `RuleRouter`, `PromptRouter`, `ExperimentRouter`, per-turn `TurnOutcome` tracking, composite `ObjectiveWeights` presets (cost_focused/quality_first/speed/balanced), A/B split config, `PATCH /api/sessions/:id/turns/:turn_id/rating`, `GET /api/routing/report` | ✅ done |
+| 37 | Graph context utilization telemetry — instrumented `context_stats` metadata on Interaction nodes (Knowledge count, cross-session links, pinned conventions, % graph tokens, repo briefing flag, compaction trigger); correlation analysis with tool error rates and user ratings; `GET /api/sessions/:id/context-report` endpoint | ⏳ backlog |
+
+
 
 **Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
 
