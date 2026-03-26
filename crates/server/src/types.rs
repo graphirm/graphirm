@@ -352,6 +352,19 @@ pub struct StrategyReport {
     pub avg_user_rating: Option<f64>,
 }
 
+/// Graph context utilisation report returned by `GET /api/sessions/{id}/context-report`.
+#[derive(Debug, Serialize)]
+pub struct ContextReportRow {
+    pub session_id: String,
+    pub turns_with_stats: usize,
+    pub avg_knowledge_count: f64,
+    pub avg_graph_token_pct: f64,
+    pub avg_pinned_count: f64,
+    pub avg_cross_session_links: f64,
+    pub compaction_triggered_count: usize,
+    pub briefing_included_count: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

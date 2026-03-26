@@ -21,10 +21,11 @@ use crate::middleware::request_logging;
 use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
-    AnnotationRequest, AutoApproveRequest, CreateKnowledgeRequest, CreateSessionRequest,
-    ExportQuery, GraphResponse, HealthResponse, NodeAction, NodeActionRequest,
-    PinnedKnowledgeQuery, PromptRequest, RateTurnRequest, RenameSessionRequest, SessionId,
-    SessionResponse, SessionStatus, SseEvent, SseEventType, StrategyReport, SubgraphQuery,
+    AnnotationRequest, AutoApproveRequest, ContextReportRow, CreateKnowledgeRequest,
+    CreateSessionRequest, ExportQuery, GraphResponse, HealthResponse, NodeAction,
+    NodeActionRequest, PinnedKnowledgeQuery, PromptRequest, RateTurnRequest,
+    RenameSessionRequest, SessionId, SessionResponse, SessionStatus, SseEvent, SseEventType,
+    StrategyReport, SubgraphQuery,
 };
 
 /// Build a brief workspace context block to inject into the system prompt.
@@ -99,6 +100,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions/{id}/abort", post(abort_session))
         .route("/api/sessions/{id}/messages", get(get_messages))
         .route("/api/sessions/{id}/export", get(export_session))
+        .route(
+            "/api/sessions/{id}/context-report",
+            get(context_report_handler),
+        )
         .route("/api/sessions/{id}/children", get(get_children))
         // Graph queries
         .route("/api/graph/{session_id}", get(get_session_graph))
@@ -978,6 +983,60 @@ async fn rate_turn(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
 
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `GET /api/sessions/{id}/context-report` — graph context utilisation summary for a session.
+async fn context_report_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<ContextReportRow>, ServerError> {
+    let graph = state.graph.clone();
+    let sid = session_id.clone();
+    let row = tokio::task::spawn_blocking(move || build_context_report(&graph, &sid))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(|e| ServerError::Internal(e.to_string()))?;
+    Ok(Json(row))
+}
+
+fn build_context_report(
+    graph: &graphirm_graph::GraphStore,
+    session_id: &str,
+) -> Result<ContextReportRow, graphirm_graph::GraphError> {
+    use graphirm_agent::ContextStats;
+    let nodes = graph.get_session_interactions(session_id)?;
+    let mut total = ContextStats::default();
+    let mut count = 0usize;
+    let mut compaction = 0usize;
+    let mut briefing = 0usize;
+    for node in &nodes {
+        if let Some(v) = node.metadata.get("context_stats")
+            && let Ok(s) = serde_json::from_value::<ContextStats>(v.clone())
+        {
+            total.knowledge_count += s.knowledge_count;
+            total.cross_session_links_count += s.cross_session_links_count;
+            total.pinned_conventions_count += s.pinned_conventions_count;
+            total.graph_token_percentage += s.graph_token_percentage;
+            if s.compaction_triggered {
+                compaction += 1;
+            }
+            if s.repo_briefing_included {
+                briefing += 1;
+            }
+            count += 1;
+        }
+    }
+    let n = count.max(1) as f64;
+    Ok(ContextReportRow {
+        session_id: session_id.to_string(),
+        turns_with_stats: count,
+        avg_knowledge_count: total.knowledge_count as f64 / n,
+        avg_graph_token_pct: total.graph_token_percentage / n,
+        avg_pinned_count: total.pinned_conventions_count as f64 / n,
+        avg_cross_session_links: total.cross_session_links_count as f64 / n,
+        compaction_triggered_count: compaction,
+        briefing_included_count: briefing,
+    })
 }
 
 /// `GET /api/routing/report` — aggregate per-strategy routing statistics across all sessions.

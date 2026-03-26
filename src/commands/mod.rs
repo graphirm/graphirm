@@ -74,6 +74,9 @@ pub fn build_tool_registry() -> ToolRegistry {
     ));
     registry.register(Arc::new(graphirm_tools::cargo_check::CargoCheckTool::new()));
     registry.register(Arc::new(graphirm_tools::submit::SubmitTool::new()));
+    registry.register(Arc::new(
+        graphirm_tools::context_report::ContextReportTool::new(),
+    ));
 
     let plugins_dir = std::env::var("GRAPHIRM_PLUGINS_DIR")
         .map(std::path::PathBuf::from)
