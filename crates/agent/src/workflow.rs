@@ -53,6 +53,7 @@ pub async fn stream_and_record(
             .map(|t| t as usize)
             .unwrap_or(100_000),
         segment_filter: session.agent_config.segment_filter.clone(),
+        enable_compaction: session.agent_config.enable_compaction,
         ..crate::context::ContextConfig::default()
     };
     let graph_ref = session.graph.clone();
@@ -1016,7 +1017,12 @@ pub async fn run_agent_loop(
     cancel: &CancellationToken,
 ) -> Result<(), AgentError> {
     let max_turns = session.agent_config.max_turns;
+    let max_continuations = session.agent_config.max_continuations;
     let mut all_node_ids: Vec<NodeId> = Vec::new();
+    // Track whether any tool calls have been executed in this session so far.
+    // Used to decide whether to inject a continuation message after a text-only turn.
+    let mut had_tool_calls = false;
+    let mut continuation_count: u32 = 0;
 
     events.emit(AgentEvent::AgentStart {
         agent_id: session.id.clone(),
@@ -1133,7 +1139,7 @@ pub async fn run_agent_loop(
                                 // Cross-session linking: find similar nodes from other sessions
                                 // and create RelatesTo edges so graph traversal can discover them.
                                 match retriever
-                                    .find_cross_session_links(node_id, &session.id, 3, 0.7)
+                                    .find_cross_session_links(node_id, &session.id, 5, 0.5)
                                     .await
                                 {
                                     Ok(links) if !links.is_empty() => {
@@ -1171,9 +1177,39 @@ pub async fn run_agent_loop(
                 tool_result_ids: vec![],
             });
             emit_graph_update(session, &response_id, vec![], events).await;
+
+            // Auto-continuation: if the agent stopped text-only while work was in progress
+            // (evidenced by prior tool calls this session), inject a continuation nudge so
+            // it resumes rather than silently leaving the task unfinished.
+            if had_tool_calls && continuation_count < max_continuations {
+                continuation_count += 1;
+                tracing::info!(
+                    turn,
+                    continuation_count,
+                    max_continuations,
+                    "Text-only turn mid-task; auto-injecting continuation message"
+                );
+                let cont_node = graphirm_graph::nodes::GraphNode::new(
+                    graphirm_graph::nodes::NodeType::Interaction(
+                        graphirm_graph::nodes::InteractionData {
+                            role: "user".to_string(),
+                            content: "Continue with the implementation. What is the next step?"
+                                .to_string(),
+                            token_count: None,
+                        },
+                    ),
+                );
+                if let Err(e) = session.record_interaction(cont_node).await {
+                    tracing::warn!(error = %e, "Failed to inject continuation message (non-fatal)");
+                } else {
+                    continue;
+                }
+            }
+
             break;
         }
 
+        had_tool_calls = true;
         let tool_calls: Vec<&ContentPart> = response.tool_calls();
         for part in &tool_calls {
             let ContentPart::ToolCall {

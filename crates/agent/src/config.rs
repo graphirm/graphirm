@@ -170,6 +170,15 @@ pub struct AgentConfig {
     /// with a strategy-based selection (rules, prompt classifier, or A/B experiment).
     #[serde(default)]
     pub adaptive_routing: Option<AdaptiveRoutingConfig>,
+    /// When true, automatically compact old interactions when context usage exceeds
+    /// `compaction_threshold` (default 0.80). Disabled by default; enable in `[agent]` config.
+    #[serde(default)]
+    pub enable_compaction: bool,
+    /// Maximum number of auto-continuation turns injected after a text-only response when
+    /// the agent has already executed tool calls in this session. Prevents the agent from
+    /// stopping mid-task. 0 disables. Default 2.
+    #[serde(default = "default_max_continuations")]
+    pub max_continuations: u32,
 }
 
 /// Objective weights for composite score optimisation.
@@ -270,6 +279,10 @@ fn default_repo_briefing() -> bool {
     true
 }
 
+fn default_max_continuations() -> u32 {
+    0
+}
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
@@ -329,6 +342,8 @@ impl Default for AgentConfig {
             timeout_seconds: default_timeout_seconds(),
             model_routing: None,
             adaptive_routing: None,
+            enable_compaction: false,
+            max_continuations: default_max_continuations(),
         }
     }
 }
@@ -394,6 +409,10 @@ struct AgentConfigSection {
     routing: Option<ModelRoutingConfig>,
     #[serde(default)]
     adaptive_routing: Option<AdaptiveRoutingConfig>,
+    #[serde(default)]
+    enable_compaction: bool,
+    #[serde(default = "default_max_continuations")]
+    max_continuations: u32,
 }
 
 fn default_system_prompt() -> String {
@@ -438,6 +457,8 @@ impl AgentConfig {
             timeout_seconds: file.agent.timeout_seconds,
             model_routing: file.agent.routing,
             adaptive_routing: file.agent.adaptive_routing,
+            enable_compaction: file.agent.enable_compaction,
+            max_continuations: file.agent.max_continuations,
         })
     }
 

@@ -84,6 +84,13 @@ and respond immediately. Every tool call must bring you closer to the \
 answer; if the last tool call did not help, stop and answer with what \
 you know.
 
+## Continuity rule
+
+When implementing code or performing multi-step tasks, always include at \
+least one tool call in your response. Never stop with a text-only response \
+while implementation work remains unfinished. If you have more steps to do, \
+use a tool — don't describe what you'll do, do it.
+
 ## Working directory
 
 All file paths are relative to the project root unless the user specifies \
@@ -148,6 +155,8 @@ a closure.
 """
 # segment_filter = ["reasoning", "code"]  # restrict context to these segment types
 workspaces_root = "/data/workspaces"   # persisted on the Docker volume
+enable_compaction = true               # compact old turns when context exceeds threshold
+max_continuations = 2                  # auto-inject continuation after text-only mid-task turns
 
 # Two-tier model routing — used by [agent.adaptive_routing] strategy = "rules".
 # Both models must use the same provider backend (e.g. both via openrouter).

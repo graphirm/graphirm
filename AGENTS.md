@@ -161,7 +161,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 37 | Graph context utilization telemetry — `ContextStats`, `build_context_with_stats`, metadata on assistant turns, `context_report` tool, `GET /api/sessions/:id/context-report` HTTP endpoint | ✅ done |
 | 38 | ModelRouter provider-prefix normalization — `model_for_tier` strips leading `provider/` segment; routing config now accepts `openrouter/vendor/model` format (consistent with `agent.model`); `same_provider` still correct; 2 tests updated | ✅ done |
 | 39 | Phase 37 telemetry validation — real-session query of `GET /api/sessions/{id}/context-report`; confirmed `turns_with_stats=1`, `briefing_included_count=1`, `avg_graph_token_pct=0` (expected for fresh session with no supplemental nodes) | ✅ done |
-| 40 | Agent continuity improvements — (a) turn-budget / "keep going" system-prompt injection for text-only turn failures; (b) `enable_compaction = true` by default; (c) cross-session knowledge surfacing threshold tuning | ⏳ planned |
+| 40 | Agent continuity improvements — (a) `max_continuations` field + "Continuity rule" system-prompt section; auto-inject "Continue with the implementation." after text-only mid-task turns; default 0 (code), 2 in `default.toml`; (b) `enable_compaction` in `AgentConfig`, wired from TOML, `enable_compaction = true` in `default.toml`; (c) cross-session link params: `k 3→5`, `threshold 0.7→0.5` | ✅ done |
 | 41 | Spoke deploy — Hetzner VM via Consoul, push binary, configure API keys, validate end-to-end on remote | ⏳ planned |
 
 **Phase 37 — Graph Context Utilization Telemetry:**
