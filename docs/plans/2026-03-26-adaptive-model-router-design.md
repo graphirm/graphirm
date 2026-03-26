@@ -1,6 +1,6 @@
 # Adaptive Model Router — Design
 
-> **For Claude:** use `executing-plans` skill after this design is approved.
+> **For Claude:** use `dogfood-graphirm` skill to delegate implementation tasks to the local graphirm agent. Use `executing-plans` skill for orchestration and review checkpoints.
 
 **Date:** 2026-03-26
 **Phase:** 36
