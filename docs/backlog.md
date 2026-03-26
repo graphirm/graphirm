@@ -27,6 +27,9 @@ Done 2026-03-26. Agent implemented per-chunk metrics in Layer 1: `comment_ratio`
 ### ✅ Persist language on chunk/file in graph export (ndstrms item 24) — P2 · S
 Done 2026-03-26. Canonical `language` on CHUNK with `identified_language` kept; FILE nodes get majority language from enriched chunks; `_ensure_language_attributes` backfills from `LanguageIdentifier` when there are no semantic candidates so `graph.json` always has language where paths exist. Tests: `tests/test_language_persistence.py`. Commit: `aa98893` on ndstrms.
 
+### ✅ Cross-file-only default for TF-IDF similarity edges (ndstrms item 25) — P2 · S
+Done 2026-03-27. `cross_file_only: bool = True` added to `Layer15Config` and `Layer15Orchestrator`. Same-file edges computed internally for dominance/metrics but filtered from returned `similarity_edges` by default. Parameter threaded through `run_full_graph_pipeline()` as `layer15_cross_file_only`. 85 tests pass. Commit: `9fac65a` on ndstrms.
+
 ### ✅ Wire `workspaces_root` on running server — P1 · S
 Done 2026-03-18. Set `workspaces_root = "/data/workspaces"` in `config/default.toml` — on the Docker volume so workspaces survive redeployments.
 
