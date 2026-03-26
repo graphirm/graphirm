@@ -36,6 +36,9 @@ Done 2026-03-27. Default raised from `0.6` → `0.75` in `add_semantic_edges()` 
 ### ✅ Store embedding model name on semantic edges (ndstrms item 27) — P3 · S
 Done 2026-03-27. `model_name: str = "codestral"` param added to `add_semantic_edges()` and threaded through `run_full_graph_pipeline()` as `semantic_model_name`. Both hardcoded `"codestral"` literals replaced with the variable. Model was already stored in edge attributes via `GraphBuilder.add_semantic_edge()`. 49 tests pass. Commit: `d0bafde` on ndstrms.
 
+### ✅ Rabin fingerprint content_hash on chunk nodes (ndstrms item 28) — P2 · M
+Done 2026-03-27. `content_hash: u64` field added to `Chunk` struct in `chunking.rs`, exposed via `#[pyo3(get)]`. `rabin_fingerprint()` private fn (polynomial hash, base 131, `wrapping_mul`/`wrapping_add`). Computed in `create_chunk()`. `contentHash` surfaced in chunk node attributes in `rust_chunking.py`. 3 new tests (skipped on this machine: pre-existing FAISS/libc++ linker issue). 87 tests pass. Commit: `5c58bd1` on ndstrms.
+
 ### ✅ Wire `workspaces_root` on running server — P1 · S
 Done 2026-03-18. Set `workspaces_root = "/data/workspaces"` in `config/default.toml` — on the Docker volume so workspaces survive redeployments.
 
