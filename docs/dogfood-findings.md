@@ -97,3 +97,4 @@ Cursor evaluation log for graphirm agent sessions. One row per completed task.
 | 2026-03-26 | ndstrms:5e701bd9 | cache-size-and-resume | A | max_size=500k + SHA-aware .completed marker. Both correct; duplicate `from datetime import datetime` at line 248 (harmless). Single commit as requested. |
 | 2026-03-26 | ndstrms:1f7ce411 | faiss-hnsw | A | Correct 3-line Rust change: n + index_type conditional + index_factory call. Built clean, committed. Graceful timeout fallback to pipeline smoke test. |
 | 2026-03-26 | ndstrms:27a441df | parallel-batch | A- | ThreadPoolExecutor(4), _process_one_repo helper, cache_save_lock, as_completed loop, --workers CLI option. 85+/80- clean refactor. Thread-safety of EmbeddingCache under concurrent load not explicitly tested. |
+| 2026-03-26 | a1a801d9 | adaptive-router-impl | partial | Agent wrote empty file silently; Cursor took over; all 370 tests pass after manual impl |
