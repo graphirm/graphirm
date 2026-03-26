@@ -2,6 +2,7 @@ pub mod briefing;
 pub mod compact;
 pub mod config;
 pub mod context;
+pub mod context_stats;
 pub mod coordinator;
 pub mod delegate;
 pub mod error;
@@ -24,6 +25,7 @@ pub use context::{
     ContextConfig, ContextWindow, EdgeWeights, ScoredNode, build_context, build_subagent_context,
     estimate_tokens, estimate_tokens_str, fit_to_budget, score_node, score_recency,
 };
+pub use context_stats::ContextStats;
 pub use coordinator::Coordinator;
 pub use delegate::SubagentTool;
 pub use error::AgentError;
