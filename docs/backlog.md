@@ -133,24 +133,17 @@ Done 2026-03-22. Deployed Graphirm binary to Nodestradamus100 always-on machine 
 
 Cross-project work delegated to Graphirm on `91.98.94.217:5555`. Use the `dogfood-ndstrms` Cursor skill.
 
-### Implement remaining 5 validation gates — P1 · L
-5 gates still use placeholder implementations. Each gate follows the `BaseValidationGate` pattern (see existing: `CrossFileDuplicatePrecisionGate`, `WithinFileSectionUtilityGate`, `LanguageIdentificationAccuracyGate`). Ground truth data goes in `tests/data/ground_truth/`.
+### ✅ Validation gates — all 8/8 implemented — P1 · L
+Done (prior sessions). All 8 `BaseValidationGate` subclasses in `src/nodestradamus/validation/real_gates.py` are fully implemented: `CrossFileDuplicatePrecisionGate`, `WithinFileSectionUtilityGate`, `LanguageIdentificationAccuracyGate`, `BaselineCorrelationGate`, `WithinFileSimilarityRatioGate`, `ImportDetectionRecallGate`, `KeywordExtractionGate`, `CrossRepoStabilityGate`. 23 tests pass in `tests/test_validation/test_real_gates.py`.
 
-**Gates to implement (in suggested order):**
-1. **Import detection recall** — parse actual imports, compare to ground truth. Well-defined, testable.
-2. **Keyword extraction** — pattern validation with ground truth data.
-3. **Within-file similarity ratio** — implement actual similarity analysis.
-4. **Cross-repo stability** — community analysis across repositories.
-5. **Baseline correlation** — Spearman correlation with gold standard rankings.
-
-**Example Cursor prompt:**
-> Use the dogfood-ndstrms skill to implement the "import detection recall" validation gate on the Nodestradamus100 machine. Read the existing real gate implementations to understand the BaseValidationGate pattern, implement ImportDetectionRecallGate with ground truth data, write tests, and run pytest to verify.
+### ✅ MCP batch insights server — P1 · M
+Done 2026-03-26. `src/nodestradamus/mcp/` module with `FastMCP` server exposing 8 tools over stdio: `list_repos`, `get_hotspots`, `get_cycles`, `get_duplicates`, `get_dead_code`, `get_coupling`, `search_repos`, `batch_summary`. `InsightsLoader` reads from `batch_output/` (overridable via `NDSTRMS_BATCH_DIR` env). `ndstrms-mcp` CLI entry in `pyproject.toml`. 25 tests pass. Human-readable string output per tool. Commit: `8b92032 feat(mcp): batch insights MCP server with 8 tools`.
 
 ### Verify layer integration (2, 2.5, 3, 4) — P1 · M
 BACKLOG.md flags that layer integration may be superficial. Verify each layer produces meaningful output in the end-to-end pipeline, not just passes tests in isolation.
 
 ### Increase test coverage to >50% — P2 · L
-Currently at 3-12% coverage. Add unit tests for all components, integration tests for all layers, validation tests with real repositories.
+Currently at ~2% coverage. Add unit tests for all components, integration tests for all layers, validation tests with real repositories.
 
 ### ~~Adaptive model router (A/B routing, token tracking, composite objective)~~ — ✅ done Phase 36
 ~~Replace the static rule-based router (Phase 34) with an adaptive routing framework.~~ Shipped: `RoutingStrategy` trait, `RuleRouter`, `PromptRouter`, `ExperimentRouter`, per-turn `TurnOutcome` metadata on Interaction nodes, `ObjectiveWeights` presets, `PATCH /rating` + `GET /routing/report` API. Phase 2 (statistical/learned router) remains as future work once data exists.

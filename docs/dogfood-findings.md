@@ -98,3 +98,4 @@ Cursor evaluation log for graphirm agent sessions. One row per completed task.
 | 2026-03-26 | ndstrms:1f7ce411 | faiss-hnsw | A | Correct 3-line Rust change: n + index_type conditional + index_factory call. Built clean, committed. Graceful timeout fallback to pipeline smoke test. |
 | 2026-03-26 | ndstrms:27a441df | parallel-batch | A- | ThreadPoolExecutor(4), _process_one_repo helper, cache_save_lock, as_completed loop, --workers CLI option. 85+/80- clean refactor. Thread-safety of EmbeddingCache under concurrent load not explicitly tested. |
 | 2026-03-26 | a1a801d9 | adaptive-router-impl | partial | Agent wrote empty file silently; Cursor took over; all 370 tests pass after manual impl |
+| 2026-03-26 | ndstrms:d03f47b3 | mcp-batch-insights | A | 8 tools (list_repos, get_hotspots, get_cycles, get_duplicates, get_dead_code, get_coupling, search_repos, batch_summary). 25/25 tests. Self-corrected FastMCP API. ndstrms-mcp CLI entry in pyproject.toml. |
