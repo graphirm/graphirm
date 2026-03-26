@@ -162,7 +162,7 @@ max_continuations = 2                  # auto-inject continuation after text-onl
 # Both models must use the same provider backend (e.g. both via openrouter).
 [agent.routing]
 cheap = "openrouter/qwen/qwen3-coder:free"
-smart = "openrouter/qwen/qwen3-coder-plus"
+smart = "openrouter/qwen/qwen3-coder-next"
 default_tier = "cheap"
 
 [[agent.routing.rules]]
