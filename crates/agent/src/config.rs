@@ -190,6 +190,11 @@ pub struct AgentConfig {
     /// Default 5.
     #[serde(default = "default_doom_loop_threshold")]
     pub doom_loop_threshold: u32,
+    /// Token budget thresholds at which a warning is appended to the system prompt for
+    /// the current turn. Each value is a fraction of `max_tokens` (e.g. 0.7 = 70%).
+    /// An empty list disables budget warnings. Default: [0.7, 0.9].
+    #[serde(default = "default_budget_warning_thresholds")]
+    pub budget_warning_thresholds: Vec<f64>,
 }
 
 /// Objective weights for composite score optimisation.
@@ -302,6 +307,10 @@ fn default_doom_loop_threshold() -> u32 {
     5
 }
 
+fn default_budget_warning_thresholds() -> Vec<f64> {
+    vec![0.7, 0.9]
+}
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
@@ -365,6 +374,7 @@ impl Default for AgentConfig {
             max_continuations: default_max_continuations(),
             pre_completion_verify: true,
             doom_loop_threshold: default_doom_loop_threshold(),
+            budget_warning_thresholds: default_budget_warning_thresholds(),
         }
     }
 }
@@ -438,6 +448,8 @@ struct AgentConfigSection {
     pre_completion_verify: bool,
     #[serde(default = "default_doom_loop_threshold")]
     doom_loop_threshold: u32,
+    #[serde(default = "default_budget_warning_thresholds")]
+    budget_warning_thresholds: Vec<f64>,
 }
 
 fn default_system_prompt() -> String {
@@ -486,6 +498,7 @@ impl AgentConfig {
             max_continuations: file.agent.max_continuations,
             pre_completion_verify: file.agent.pre_completion_verify,
             doom_loop_threshold: file.agent.doom_loop_threshold,
+            budget_warning_thresholds: file.agent.budget_warning_thresholds,
         })
     }
 
@@ -564,6 +577,33 @@ mod tests {
         assert_eq!(
             config.doom_loop_threshold, 3,
             "doom_loop_threshold should read 3 from TOML"
+        );
+    }
+
+    #[test]
+    fn test_budget_warning_thresholds_default() {
+        let config = AgentConfig::default();
+        assert_eq!(
+            config.budget_warning_thresholds,
+            vec![0.7, 0.9],
+            "budget_warning_thresholds should default to [0.7, 0.9]"
+        );
+    }
+
+    #[test]
+    fn test_budget_warning_thresholds_toml_parse() {
+        let toml_str = r#"
+            [agent]
+            name = "test"
+            model = "gpt-4"
+            system_prompt = "test"
+            budget_warning_thresholds = [0.5, 0.8]
+        "#;
+        let config = AgentConfig::from_toml(toml_str).unwrap();
+        assert_eq!(
+            config.budget_warning_thresholds,
+            vec![0.5, 0.8],
+            "budget_warning_thresholds should read [0.5, 0.8] from TOML"
         );
     }
 

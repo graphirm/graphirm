@@ -114,6 +114,40 @@ pub async fn stream_and_record(
     let mut context = Vec::with_capacity(1 + window.messages.len());
     context.push(window.system);
     context.extend(window.messages);
+
+    // Budget awareness: append a warning to the system message when token usage
+    // crosses a configured threshold. Helps the agent self-manage resource consumption.
+    if max_tok > 0 && !session.agent_config.budget_warning_thresholds.is_empty() {
+        let usage_ratio = window.total_tokens as f64 / max_tok as f64;
+        let highest_crossed = session
+            .agent_config
+            .budget_warning_thresholds
+            .iter()
+            .copied()
+            .filter(|&t| usage_ratio >= t)
+            .fold(f64::NEG_INFINITY, f64::max);
+        if highest_crossed.is_finite() {
+            let pct = (usage_ratio * 100.0) as u32;
+            let warning = if highest_crossed >= 0.9 {
+                format!(
+                    "\n\n[Budget] Token usage at {pct}% of limit. \
+                     Prioritize completing the current step and summarizing — do not start new tasks."
+                )
+            } else {
+                format!(
+                    "\n\n[Budget] Token usage at {pct}% of limit. \
+                     Start wrapping up; avoid long exploratory chains."
+                )
+            };
+            if let Some(system_msg) = context.first_mut() {
+                system_msg
+                    .content
+                    .push(graphirm_llm::ContentPart::text(warning));
+            }
+            tracing::info!(usage_ratio, pct, "Budget warning appended to system message");
+        }
+    }
+
     let raw_defs = tools.definitions();
     let tool_defs: Vec<graphirm_llm::ToolDefinition> = raw_defs
         .into_iter()
