@@ -214,8 +214,11 @@ Done 2026-03-26. `src/nodestradamus/mcp/` module with `FastMCP` server exposing 
 ### ✅ Verify layer integration (2, 2.5, 3, 4) — P1 · M
 Done 2026-03-26. Audit confirmed tests were superficial (import/instantiation only). Added 3 meaningful test classes: `TestLayer25MetadataOnGraph` (CHUNK nodes have language metadata), `TestLayer3StructuralEdges` (REFERENCE/CALLS/INHERITS edges produced), `TestLayer4CondensationDAG` (DAG has fewer nodes than input). 18/18 tests pass (was 15). `docs/layer-integration-audit.md` written with per-layer before/after status. Commit: `c5a342b test(integration): meaningful output assertions for layers 2.5, 3, 4`.
 
+### ✅ [INFRA] FAISS shared-library linkage fix — P1 · S
+Done 2026-03-27. Root cause: `nodestradamus_core` Rust extension (PyO3/maturin) was statically linking `libfaiss_c.a` which is missing the `_ZTVN5faiss14FaissExceptionE` C++ vtable, causing `ImportError: undefined symbol: _ZTVN5faiss14FaissExceptionE` at import time. The correctly-built shared `libfaiss.so` existed in `/tmp/faiss-build/` but was not on the linker path. Fix: copy both `libfaiss.so` + `libfaiss_c.so` to `/usr/local/lib/`, `patchelf --set-rpath`, `ldconfig`, then `cargo clean && LIBRARY_PATH=/usr/local/lib maturin develop --release`. Full rebuild procedure documented in ndstrms `BACKLOG.md` item 36. Triggered the addition of Python fallbacks (LRU `OrderedDict` for `EmbeddingCache`, numpy brute-force cosine similarity in layer1 orchestrator) as defensive code that now serves as graceful degradation.
+
 ### Increase test coverage to >50% — P2 · L
-Currently at ~2% coverage. Add unit tests for all components, integration tests for all layers, validation tests with real repositories.
+Currently at ~2% coverage (9170 stmts, 9146 missed). 757 test functions exist across 124 files but most are integration/pipeline tests that touch very little code. Priority targets: `EmbeddingCache` (both Rust and Python fallback paths), `InsightsLoader` (MCP data layer), `run_full_graph_pipeline`, Layer 1 chunker paths. Delegated to dogfood-ndstrms agent.
 
 ### ~~Adaptive model router (A/B routing, token tracking, composite objective)~~ — ✅ done Phase 36
 ~~Replace the static rule-based router (Phase 34) with an adaptive routing framework.~~ Shipped: `RoutingStrategy` trait, `RuleRouter`, `PromptRouter`, `ExperimentRouter`, per-turn `TurnOutcome` metadata on Interaction nodes, `ObjectiveWeights` presets, `PATCH /rating` + `GET /routing/report` API. Phase 2 (statistical/learned router) remains as future work once data exists.
