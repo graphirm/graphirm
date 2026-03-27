@@ -168,6 +168,9 @@ enum KnowledgeAction {
         /// Max nodes to show
         #[arg(short, long, default_value = "50")]
         limit: usize,
+        /// Output as JSON array instead of formatted text
+        #[arg(long)]
+        json: bool,
     },
     /// Create a new pinned Knowledge node (convention/rule)
     Pin {
