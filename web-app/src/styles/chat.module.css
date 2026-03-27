@@ -21,35 +21,46 @@
   padding: 8px 10px;
   border-radius: 4px;
   line-height: 1.5;
+  border-left: 3px solid transparent;
 }
 
+/* User — accent bubble, right-aligned */
 .message.user {
   background: var(--accent);
   color: var(--accent-fg);
   align-self: flex-end;
   max-width: 85%;
+  border-left: none;
+  border-radius: 12px 12px 3px 12px;
 }
 
+/* Agent — rose/pink tint with left border, matches --node-agent */
 .message.assistant {
-  background: var(--surface-2);
+  background: color-mix(in srgb, var(--node-agent) 10%, var(--surface-1));
+  border-left-color: var(--node-agent);
 }
 
+/* Tool output — teal/green tint, monospace */
 .message.tool {
-  background: transparent;
-  border-left: 3px solid var(--node-content);
-  padding-left: 8px;
+  background: color-mix(in srgb, var(--node-content) 8%, var(--surface-0));
+  border-left-color: var(--node-content);
+  padding-left: 10px;
   font-family: monospace;
   font-size: 11px;
-  color: var(--node-content);
+  color: var(--fg-muted);
 }
 
 .roleLabel {
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
-  opacity: 0.6;
+  letter-spacing: 0.5px;
   margin-bottom: 4px;
 }
+
+.message.user .roleLabel   { color: var(--accent-fg); opacity: 0.75; }
+.message.assistant .roleLabel { color: var(--node-agent); opacity: 1; }
+.message.tool .roleLabel   { color: var(--node-content); opacity: 1; }
 
 .thinkingBar {
   padding: 6px 12px;

@@ -13,7 +13,8 @@ export function InteractionNode({ data: rawData, selected }: NodeProps) {
   const nt = data.node_type;
   if (nt.type !== 'Interaction') return null;
 
-  const color = 'var(--node-interaction)';
+  const isUser = nt.role === 'user';
+  const color = isUser ? 'var(--accent)' : 'var(--node-agent)';
   const roleLabel = nt.role === 'assistant' ? 'agent' : nt.role;
   const preview = (nt.content ?? '').slice(0, 80) + ((nt.content ?? '').length > 80 ? '…' : '');
 

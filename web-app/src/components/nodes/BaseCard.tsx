@@ -38,6 +38,7 @@ export function BaseCard({
         selected ? styles.selected : '',
         expanded ? styles.expanded : '',
       ].join(' ')}
+      style={{ borderLeft: `3px solid ${color}` }}
     >
       {/* NodeResizer only activates when selected + expanded */}
       {expanded && (
