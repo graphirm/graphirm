@@ -39,6 +39,9 @@ Done 2026-03-27. `model_name: str = "codestral"` param added to `add_semantic_ed
 ### ✅ Rabin fingerprint content_hash on chunk nodes (ndstrms item 28) — P2 · M
 Done 2026-03-27. `content_hash: u64` field added to `Chunk` struct in `chunking.rs`, exposed via `#[pyo3(get)]`. `rabin_fingerprint()` private fn (polynomial hash, base 131, `wrapping_mul`/`wrapping_add`). Computed in `create_chunk()`. `contentHash` surfaced in chunk node attributes in `rust_chunking.py`. 3 new tests (skipped on this machine: pre-existing FAISS/libc++ linker issue). 87 tests pass. Commit: `5c58bd1` on ndstrms.
 
+### ✅ MinHash + LSH banding for Layer 1.5 candidate finding (ndstrms item 29) — P2 · M
+Done 2026-03-27. New `src/nodestradamus/layer1_5/minhash.py`: `token_shingles` (word k-shingles), `minhash_signature` (k min-hashes over shingle set), `lsh_candidates` (band-based bucket grouping → candidate pairs), `MinHashLSH` class. `tfidf.py`: `minhash_threshold=200` param; `analyze()` guard runs MinHash+LSH pre-filter when ≥200 chunks, routes to `_compute_similarities_on_candidates`; TF-IDF only on candidates. 9 new tests all pass. 47 layer1_5 tests pass. Commit: `e0fc2ef` on ndstrms.
+
 ### ✅ Wire `workspaces_root` on running server — P1 · S
 Done 2026-03-18. Set `workspaces_root = "/data/workspaces"` in `config/default.toml` — on the Docker volume so workspaces survive redeployments.
 
