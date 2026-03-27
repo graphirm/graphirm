@@ -137,18 +137,8 @@ New routing rule type `phase_match` in `RoutingRule`.
 - `crates/agent/src/router.rs` — `TaskPhase` enum, phase inference
 - `crates/agent/src/strategy/rule_router.rs` — phase-aware rule evaluation
 
-### Token/time budget awareness — P2 · S
-Inject budget warnings into context as the agent approaches limits. "You've used 80% of
-your token budget — prioritize wrapping up and verifying." Agents are notoriously bad at
-self-managing resource consumption without explicit nudges.
-
-**Implementation:** Compare accumulated token count against `max_tokens` after each turn.
-At configurable thresholds (e.g. 70%, 90%), append a budget warning to the system prompt
-section for the next turn.
-
-**Key files:**
-- `crates/agent/src/workflow.rs` — token accounting already exists; add threshold check
-- `crates/agent/src/config.rs` — `budget_warning_thresholds: Vec<f64>` (default [0.7, 0.9])
+### ✅ Token/time budget awareness — P2 · S
+Done 2026-03-27. In `stream_and_record`, after `build_context_with_stats` returns, computes `usage_ratio = window.total_tokens / max_tok`. Finds the highest crossed threshold from `budget_warning_thresholds` and appends a one-line warning to `context[0]` (the system message) via `ContentPart::text`. Two tiers: <90% → "wrap up", ≥90% → "complete current step only". `budget_warning_thresholds: Vec<f64>` config field (default [0.7, 0.9]; empty list disables). 2 new tests; 269 agent tests pass, clippy clean.
 
 ### Automated trace analysis loop — P3 · L
 Build an agent (or tool) that analyzes failure patterns across sessions and suggests
