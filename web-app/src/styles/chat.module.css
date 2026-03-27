@@ -24,13 +24,14 @@
 }
 
 .message.user {
-  background: #1a3a5c;
+  background: var(--accent);
+  color: var(--accent-fg);
   align-self: flex-end;
   max-width: 85%;
 }
 
 .message.assistant {
-  background: #2a2a2a;
+  background: var(--surface-2);
 }
 
 .message.tool {
@@ -52,7 +53,7 @@
 
 .thinkingBar {
   padding: 6px 12px;
-  background: #2a2a2a;
+  background: var(--surface-1);
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
@@ -83,7 +84,7 @@
 }
 
 .inputBar textarea {
-  background: #3c3c3c;
+  background: var(--surface-3);
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 3px;
@@ -107,24 +108,24 @@
 
 /* HITL approval card */
 .hitlCard {
-  border: 1px solid #f59e0b;
+  border: 1px solid var(--warning);
   border-radius: 6px;
   padding: 12px;
   margin: 8px 0;
-  background: #1c1917;
+  background: var(--surface-1);
 }
 
 .hitlHeader {
   font-weight: 600;
   margin-bottom: 8px;
-  color: #fbbf24;
+  color: var(--warning);
 }
 
 .hitlArgs pre {
   font-size: 11px;
   max-height: 200px;
   overflow-y: auto;
-  background: #0c0a09;
+  background: var(--surface-0);
   padding: 8px;
   border-radius: 4px;
 }
@@ -136,17 +137,17 @@
   flex-wrap: wrap;
 }
 
-.hitlApprove  { background: #16a34a !important; color: white !important; }
-.hitlReject   { background: #dc2626 !important; color: white !important; }
-.hitlModify   { background: #2563eb !important; color: white !important; }
+.hitlApprove  { background: var(--success) !important; color: var(--accent-fg) !important; }
+.hitlReject   { background: var(--danger) !important; color: var(--accent-fg) !important; }
+.hitlModify   { background: var(--accent) !important; color: var(--accent-fg) !important; }
 
 .hitlTextarea {
   width: 100%;
   margin-top: 8px;
   padding: 6px;
-  background: #0c0a09;
-  color: #e7e5e4;
-  border: 1px solid #44403c;
+  background: var(--surface-0);
+  color: var(--fg);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 12px;
   font-family: monospace;

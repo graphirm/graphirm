@@ -1,5 +1,5 @@
 .card {
-  background: #252526;
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--card-radius);
   padding: var(--card-padding);
@@ -81,10 +81,10 @@
   border-radius: 10px;
 }
 
-.statusPending  { background: #374151; color: #9ca3af; }
-.statusRunning  { background: #1d4ed8; color: #bfdbfe; }
-.statusCompleted { background: #14532d; color: #86efac; }
-.statusFailed   { background: #7f1d1d; color: #fca5a5; }
+.statusPending  { background: var(--surface-3); color: var(--fg-muted); }
+.statusRunning  { background: var(--info); color: var(--accent-fg); }
+.statusCompleted { background: var(--success); color: var(--node-knowledge-fg); }
+.statusFailed   { background: var(--danger); color: var(--accent-fg); }
 
 .confidenceBar {
   margin-top: 6px;
@@ -144,7 +144,7 @@
 
 /* Annotation node */
 .annotationCard {
-  background: #1c1917;
+  background: var(--surface-1);
   border: 1px dashed var(--node-annotation);
   border-radius: var(--card-radius);
   padding: var(--card-padding);
