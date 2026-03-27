@@ -109,6 +109,74 @@ Plan: `docs/plans/2026-03-19-semantic-graph-query.md`
 
 ---
 
+## Harness Engineering
+
+Systematic improvements to the agent loop infrastructure — the scaffolding around the model
+that determines reliability on long-running, multi-step tasks. Inspired by LangChain's
+harness engineering research (52.8% → 66.5% on Terminal Bench by changing only the harness)
+and Phil Schmid's "Agent Harness as Operating System" framing.
+
+### ✅ Pre-completion verification hook — P1 · M
+Done 2026-03-27. After a text-only turn that follows tool work, the agent loop injects a user message with a 5-point verification checklist (run tests, run clippy, re-read requirements, check git diff). Fires once per session via `verify_injected: bool` guard. `pre_completion_verify: bool` config field (default true) — set false in existing unit tests that use mock providers. 2 new config tests added; all 265 agent tests pass, clippy clean.
+
+### ✅ Doom loop detection — P1 · S
+Done 2026-03-27. `file_edit_counts: HashMap<PathBuf, u32>` tracked in `run_agent_loop`; incremented on every `write`/`edit` tool call by extracting the `path` arg from tool arguments. When a file's count equals `doom_loop_threshold`, a user message advisory is injected urging the agent to step back and reconsider. Fires on each threshold crossing (not just once). `doom_loop_threshold: u32` config field (default 5, 0 disables). 2 new config tests; 267 agent tests pass, clippy clean.
+
+### Phase-aware reasoning budget — P2 · M
+Extend the model router to be aware of task phase (planning / implementation / verification)
+and allocate reasoning tiers accordingly. The "reasoning sandwich" pattern: heavy reasoning
+for planning + final verification, lighter for mid-task implementation. Currently the router
+picks cheap/smart based on turn-level signals but has no concept of where in the task
+lifecycle a turn falls.
+
+**Implementation:** Add a `TaskPhase` enum to `TurnSignals`; infer phase from tool usage
+patterns (no tools yet = planning, active edits = implementation, test runs = verification).
+New routing rule type `phase_match` in `RoutingRule`.
+
+**Key files:**
+- `crates/agent/src/router.rs` — `TaskPhase` enum, phase inference
+- `crates/agent/src/strategy/rule_router.rs` — phase-aware rule evaluation
+
+### Token/time budget awareness — P2 · S
+Inject budget warnings into context as the agent approaches limits. "You've used 80% of
+your token budget — prioritize wrapping up and verifying." Agents are notoriously bad at
+self-managing resource consumption without explicit nudges.
+
+**Implementation:** Compare accumulated token count against `max_tokens` after each turn.
+At configurable thresholds (e.g. 70%, 90%), append a budget warning to the system prompt
+section for the next turn.
+
+**Key files:**
+- `crates/agent/src/workflow.rs` — token accounting already exists; add threshold check
+- `crates/agent/src/config.rs` — `budget_warning_thresholds: Vec<f64>` (default [0.7, 0.9])
+
+### Automated trace analysis loop — P3 · L
+Build an agent (or tool) that analyzes failure patterns across sessions and suggests
+harness improvements. The graph already stores everything — tool calls, outcomes, errors,
+context stats (Phase 37). Missing piece is the analysis loop that mines this data for
+systematic failure modes (e.g. "agent skips tests in 60% of sessions", "doom loops on
+Rust lifetime errors").
+
+**Implementation:** New `trace_analyzer` tool or standalone command that queries completed
+sessions, clusters failure patterns (repeated errors, long tool chains, abandoned approaches),
+and outputs a structured report with suggested harness parameter changes.
+
+**Key files:**
+- `crates/tools/src/trace_analyzer.rs` — new tool
+- `crates/agent/src/workflow.rs` — `TurnOutcome` metadata (Phase 36) is the data source
+
+### Structured work loop enforcement — P3 · S
+Add a "problem-solving framework" section to the system prompt that guides the agent
+through Plan → Build → Verify → Fix. Currently the agent gets tools and a repo briefing
+but no structure for *how* to approach a task. Can be as simple as a system prompt section
+plus a `work_phase` field tracked across turns.
+
+**Key files:**
+- `crates/agent/src/config.rs` — `enforce_work_loop: bool`
+- `crates/server/src/routes.rs` — inject framework into system prompt at session creation
+
+---
+
 ## Infrastructure & Quality
 
 ### ✅ Cross-session knowledge extraction — P2 · L

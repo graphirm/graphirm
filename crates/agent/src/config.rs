@@ -179,6 +179,17 @@ pub struct AgentConfig {
     /// stopping mid-task. 0 disables. Default 2.
     #[serde(default = "default_max_continuations")]
     pub max_continuations: u32,
+    /// When true, intercept the first text-only turn after tool work and inject a
+    /// verification checklist (run tests, check lint, re-read task requirements).
+    /// Forces the agent to validate its output before declaring the task complete.
+    /// Default true.
+    #[serde(default = "default_pre_completion_verify")]
+    pub pre_completion_verify: bool,
+    /// Number of times the agent may write/edit the same file in one session before
+    /// an advisory is injected urging it to step back and reconsider. 0 disables.
+    /// Default 5.
+    #[serde(default = "default_doom_loop_threshold")]
+    pub doom_loop_threshold: u32,
 }
 
 /// Objective weights for composite score optimisation.
@@ -283,6 +294,14 @@ fn default_max_continuations() -> u32 {
     0
 }
 
+fn default_pre_completion_verify() -> bool {
+    true
+}
+
+fn default_doom_loop_threshold() -> u32 {
+    5
+}
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
@@ -344,6 +363,8 @@ impl Default for AgentConfig {
             adaptive_routing: None,
             enable_compaction: false,
             max_continuations: default_max_continuations(),
+            pre_completion_verify: true,
+            doom_loop_threshold: default_doom_loop_threshold(),
         }
     }
 }
@@ -413,6 +434,10 @@ struct AgentConfigSection {
     enable_compaction: bool,
     #[serde(default = "default_max_continuations")]
     max_continuations: u32,
+    #[serde(default = "default_pre_completion_verify")]
+    pre_completion_verify: bool,
+    #[serde(default = "default_doom_loop_threshold")]
+    doom_loop_threshold: u32,
 }
 
 fn default_system_prompt() -> String {
@@ -459,6 +484,8 @@ impl AgentConfig {
             adaptive_routing: file.agent.adaptive_routing,
             enable_compaction: file.agent.enable_compaction,
             max_continuations: file.agent.max_continuations,
+            pre_completion_verify: file.agent.pre_completion_verify,
+            doom_loop_threshold: file.agent.doom_loop_threshold,
         })
     }
 
@@ -488,6 +515,56 @@ mod tests {
         assert_eq!(config.max_turns, 50);
         assert!(config.tools.is_empty());
         assert_eq!(config.max_context_messages, None);
+    }
+
+    #[test]
+    fn test_pre_completion_verify_default_true() {
+        let config = AgentConfig::default();
+        assert!(
+            config.pre_completion_verify,
+            "pre_completion_verify should default to true"
+        );
+    }
+
+    #[test]
+    fn test_pre_completion_verify_toml_parse() {
+        let toml_str = r#"
+            [agent]
+            name = "test"
+            model = "gpt-4"
+            system_prompt = "test"
+            pre_completion_verify = false
+        "#;
+        let config = AgentConfig::from_toml(toml_str).unwrap();
+        assert!(
+            !config.pre_completion_verify,
+            "pre_completion_verify should read false from TOML"
+        );
+    }
+
+    #[test]
+    fn test_doom_loop_threshold_default() {
+        let config = AgentConfig::default();
+        assert_eq!(
+            config.doom_loop_threshold, 5,
+            "doom_loop_threshold should default to 5"
+        );
+    }
+
+    #[test]
+    fn test_doom_loop_threshold_toml_parse() {
+        let toml_str = r#"
+            [agent]
+            name = "test"
+            model = "gpt-4"
+            system_prompt = "test"
+            doom_loop_threshold = 3
+        "#;
+        let config = AgentConfig::from_toml(toml_str).unwrap();
+        assert_eq!(
+            config.doom_loop_threshold, 3,
+            "doom_loop_threshold should read 3 from TOML"
+        );
     }
 
     #[test]

@@ -157,6 +157,8 @@ a closure.
 workspaces_root = "/data/workspaces"   # persisted on the Docker volume
 enable_compaction = true               # compact old turns when context exceeds threshold
 max_continuations = 2                  # auto-inject continuation after text-only mid-task turns
+pre_completion_verify = true           # force verification pass (tests + lint) before agent declares done
+doom_loop_threshold = 5                # inject advisory after N writes to the same file in one session
 
 # Two-tier model routing — used by [agent.adaptive_routing] strategy = "rules".
 # Both models must use the same provider backend (e.g. both via openrouter).

@@ -1020,11 +1020,18 @@ pub async fn run_agent_loop(
 ) -> Result<(), AgentError> {
     let max_turns = session.agent_config.max_turns;
     let max_continuations = session.agent_config.max_continuations;
+    let pre_completion_verify = session.agent_config.pre_completion_verify;
+    let doom_loop_threshold = session.agent_config.doom_loop_threshold;
     let mut all_node_ids: Vec<NodeId> = Vec::new();
     // Track whether any tool calls have been executed in this session so far.
     // Used to decide whether to inject a continuation message after a text-only turn.
     let mut had_tool_calls = false;
     let mut continuation_count: u32 = 0;
+    // Tracks whether the one-shot verification checklist has already been injected.
+    let mut verify_injected = false;
+    // Per-file write/edit counts for doom loop detection.
+    let mut file_edit_counts: std::collections::HashMap<std::path::PathBuf, u32> =
+        std::collections::HashMap::new();
 
     events.emit(AgentEvent::AgentStart {
         agent_id: session.id.clone(),
@@ -1208,6 +1215,37 @@ pub async fn run_agent_loop(
                 }
             }
 
+            // Pre-completion verification: fires once per session after tool work ends.
+            // Injects a checklist that forces the agent to run tests and re-check requirements
+            // before the loop exits. Non-fatal — loop breaks normally if injection fails.
+            if pre_completion_verify && had_tool_calls && !verify_injected {
+                verify_injected = true;
+                tracing::info!(turn, "Injecting pre-completion verification checklist");
+                let verify_content = concat!(
+                    "Before marking this task complete, verify your work:\n",
+                    "1. Run `cargo test` on the affected crate(s) — confirm all tests pass.\n",
+                    "2. Run `cargo clippy -- -D warnings` — fix any new lint errors.\n",
+                    "3. Re-read the original task requirements — confirm every requirement is addressed.\n",
+                    "4. Run `git diff --name-only` to see exactly what changed.\n",
+                    "If any check fails, fix it now. When all checks pass, summarize what was done.",
+                )
+                .to_string();
+                let verify_node = graphirm_graph::nodes::GraphNode::new(
+                    graphirm_graph::nodes::NodeType::Interaction(
+                        graphirm_graph::nodes::InteractionData {
+                            role: "user".to_string(),
+                            content: verify_content,
+                            token_count: None,
+                        },
+                    ),
+                );
+                if let Err(e) = session.record_interaction(verify_node).await {
+                    tracing::warn!(error = %e, "Failed to inject verification message (non-fatal)");
+                } else {
+                    continue;
+                }
+            }
+
             break;
         }
 
@@ -1227,6 +1265,22 @@ pub async fn run_agent_loop(
             });
         }
 
+        // Doom loop tracking: count write/edit calls per file path.
+        if doom_loop_threshold > 0 {
+            for part in &tool_calls {
+                let ContentPart::ToolCall { name, arguments, .. } = part else {
+                    continue;
+                };
+                if (name == "write" || name == "edit")
+                    && let Some(path_str) = arguments.get("path").and_then(|v| v.as_str())
+                {
+                    *file_edit_counts
+                        .entry(std::path::PathBuf::from(path_str))
+                        .or_insert(0) += 1;
+                }
+            }
+        }
+
         let tool_result_ids = execute_tools_parallel(
             session,
             tools,
@@ -1238,6 +1292,40 @@ pub async fn run_agent_loop(
         .await?;
 
         all_node_ids.extend(tool_result_ids.iter().cloned());
+
+        // Doom loop advisory: warn when the agent has edited a file too many times.
+        // Non-fatal — failure to inject is logged and skipped.
+        if doom_loop_threshold > 0 {
+            for (file_path, &count) in &file_edit_counts {
+                if count == doom_loop_threshold {
+                    tracing::warn!(
+                        path = %file_path.display(),
+                        count,
+                        "Doom loop detected; injecting advisory"
+                    );
+                    let advisory = format!(
+                        "Warning: you have edited `{}` {} times this session. \
+                         Step back and reconsider your approach before making further edits. \
+                         Review the error messages carefully, re-examine your logic from scratch, \
+                         or try a completely different strategy.",
+                        file_path.display(),
+                        count,
+                    );
+                    let advisory_node = graphirm_graph::nodes::GraphNode::new(
+                        graphirm_graph::nodes::NodeType::Interaction(
+                            graphirm_graph::nodes::InteractionData {
+                                role: "user".to_string(),
+                                content: advisory,
+                                token_count: None,
+                            },
+                        ),
+                    );
+                    if let Err(e) = session.record_interaction(advisory_node).await {
+                        tracing::warn!(error = %e, "Failed to inject doom loop advisory (non-fatal)");
+                    }
+                }
+            }
+        }
 
         // Check for soft escalation after tools execute
         if check_soft_escalation(turn, &session.agent_config, &response, events) {
@@ -1507,6 +1595,7 @@ mod tests {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let config = AgentConfig {
             max_turns: 10,
+            pre_completion_verify: false,
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
@@ -1604,6 +1693,7 @@ mod tests {
         let config = AgentConfig {
             max_turns: 10,
             working_dir: temp_dir.path().to_path_buf(),
+            pre_completion_verify: false,
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
@@ -1672,6 +1762,7 @@ mod tests {
         let config = AgentConfig {
             max_turns: 10,
             working_dir: temp_dir.path().to_path_buf(),
+            pre_completion_verify: false,
             ..AgentConfig::default()
         };
         let session = Session::new(graph.clone(), config).unwrap();
@@ -1825,6 +1916,7 @@ mod tests {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let config = AgentConfig {
             max_turns: 10,
+            pre_completion_verify: false,
             ..AgentConfig::default()
         };
         let hitl = Arc::new(HitlGate::new());
@@ -1903,6 +1995,7 @@ mod tests {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let config = AgentConfig {
             max_turns: 10,
+            pre_completion_verify: false,
             ..AgentConfig::default()
         };
         let hitl = Arc::new(HitlGate::new());
@@ -2059,6 +2152,7 @@ mod tests {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let config = AgentConfig {
             max_turns: 10,
+            pre_completion_verify: false,
             ..AgentConfig::default()
         };
         // No .with_hitl() — hitl is None
@@ -2172,6 +2266,7 @@ mod tests {
         let config = AgentConfig {
             max_turns: 10,
             pre_edit_impact: false, // Disable impact to avoid rg hanging in tests
+            pre_completion_verify: false,
             working_dir: temp_dir.path().to_path_buf(),
             ..AgentConfig::default()
         };
