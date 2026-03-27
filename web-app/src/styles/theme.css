@@ -1,20 +1,40 @@
-:root {
-  --bg: #1e1e1e;
-  --fg: #d4d4d4;
-  --fg-muted: #888;
-  --border: #333;
-  --border-hover: #555;
-  --accent: #0e639c;
-  --accent-fg: #fff;
-  --danger: #c72e2e;
-  --success: #16a34a;
+/* ═══════════════════════════════════════════════════════════════════════════
+   GRAPHIRM — Design Token System
+   Aesthetic: Linear, Raycast, GitHub Primer — muted, sophisticated, developer-focused
+   ═══════════════════════════════════════════════════════════════════════════ */
 
-  /* Node type colours */
-  --node-interaction: #4fc3f7;
-  --node-content: #81c784;
-  --node-task: #ffb74d;
-  --node-knowledge: #ce93d8;
-  --node-agent: #ef9a9a;
+:root,
+[data-theme="dark"] {
+  /* Base */
+  --bg: #161616;
+  --fg: #ececec;
+  --fg-muted: #878787;
+  --border: #2e2e2e;
+  --border-hover: #454545;
+  --accent: #6e8eff;
+  --accent-fg: #ffffff;
+  --danger: #f87171;
+  --success: #4ade80;
+  --info: #60a5fa;
+  --warning: #fbbf24;
+
+  /* Surfaces — layered dark → lighter */
+  --surface-0: #0f0f0f;
+  --surface-1: #171717;
+  --surface-2: #1f1f1f;
+  --surface-3: #2a2a2a;
+
+  /* Node type colours — soft pastels for dark backgrounds */
+  --node-interaction: #a78bfa;
+  --node-interaction-fg: #1a0f2e;
+  --node-content: #5eead4;
+  --node-content-fg: #0b2d2a;
+  --node-task: #fdba74;
+  --node-task-fg: #3b1e06;
+  --node-knowledge: #86efac;
+  --node-knowledge-fg: #0a2f1a;
+  --node-agent: #f9a8d4;
+  --node-agent-fg: #3b0d24;
   --node-annotation: #fbbf24;
 
   /* Edge colours (semi-transparent) */
@@ -25,6 +45,15 @@
   --edge-depends-on: #a855f788;
   --edge-spawned-by: #ec489988;
   --edge-default: #ffffff22;
+  --edge-contains: #4ade8044;
+  --edge-summarizes: #a78bfa44;
+  --edge-delegates-to: #fbbf2488;
+  --edge-follows-up: #ffffff33;
+  --edge-steers: #6e8eff88;
+  --edge-relates-to: #ffffff22;
+  --edge-derived-from: #a78bfa66;
+  --edge-approved-by: #4ade8088;
+  --edge-rejected-by: #f8717188;
 
   /* Card sizing */
   --card-radius: 6px;
@@ -53,27 +82,6 @@
   --text-lg: 15px;
   --text-xl: 18px;
   --line-height: 1.5;
-
-  /* Surfaces (layered backgrounds) */
-  --surface-0: #1e1e1e;
-  --surface-1: #252526;
-  --surface-2: #2d2d2d;
-  --surface-3: #3c3c3c;
-
-  /* Semantic colors */
-  --info: #3b82f6;
-  --warning: #f59e0b;
-
-  /* Additional edge colors */
-  --edge-contains: #4ade8044;
-  --edge-summarizes: #ce93d844;
-  --edge-delegates-to: #fbbf2488;
-  --edge-follows-up: #ffffff33;
-  --edge-steers: #0e639c88;
-  --edge-relates-to: #ffffff22;
-  --edge-derived-from: #ce93d866;
-  --edge-approved-by: #16a34a88;
-  --edge-rejected-by: #dc262688;
 }
 
 * {
@@ -118,7 +126,7 @@ button.secondary {
 button.danger { background: var(--danger); color: #fff; }
 
 select {
-  background: #3c3c3c;
+  background: var(--surface-3);
   color: var(--fg);
   border: 1px solid var(--border);
   padding: 3px 6px;
@@ -139,14 +147,14 @@ select {
 .markdown-body ul, .markdown-body ol { padding-left: 16px; margin: 4px 0; }
 .markdown-body li { margin: 2px 0; }
 .markdown-body code {
-  background: #0d0d0d;
+  background: var(--surface-0);
   border-radius: 3px;
   padding: 1px 4px;
   font-family: monospace;
   font-size: 11px;
 }
 .markdown-body pre {
-  background: #0d0d0d;
+  background: var(--surface-0);
   border-radius: 4px;
   padding: 8px;
   overflow-x: auto;
@@ -163,39 +171,54 @@ select {
 
 /* Light theme overrides */
 [data-theme="light"] {
-  --bg: #ffffff;
-  --fg: #1e1e1e;
-  --fg-muted: #6b7280;
-  --border: #e5e7eb;
-  --border-hover: #d1d5db;
-  --accent: #2563eb;
-  --accent-fg: #fff;
+  /* Base */
+  --bg: #f8f7f4;
+  --fg: #1c1c1a;
+  --fg-muted: #6e6e6a;
+  --border: #e4e3de;
+  --border-hover: #cfcec8;
+  --accent: #4f5fd9;
+  --accent-fg: #ffffff;
   --danger: #dc2626;
   --success: #16a34a;
-  --node-interaction: #2196f3;
-  --node-content: #4caf50;
-  --node-task: #ff9800;
-  --node-knowledge: #9c27b0;
-  --node-agent: #f44336;
-  --node-annotation: #f59e0b;
-  --edge-responds-to: #00000022;
-  --edge-reads: #3b82f666;
-  --edge-modifies: #f97316aa;
-  --edge-produces: #22c55eaa;
-  --edge-depends-on: #a855f7aa;
-  --edge-spawned-by: #ec4899aa;
-  --edge-default: #00000011;
-  --surface-0: #ffffff;
-  --surface-1: #f9fafb;
-  --surface-2: #f3f4f6;
-  --surface-3: #e5e7eb;
   --info: #2563eb;
   --warning: #d97706;
+
+  /* Surfaces — layered light → darker */
+  --surface-0: #fdfcfa;
+  --surface-1: #f5f4f1;
+  --surface-2: #efeee9;
+  --surface-3: #e5e4df;
+
+  /* Node type colours — rich deep tones for light backgrounds */
+  --node-interaction: #7c3aed;
+  --node-interaction-fg: #faf5ff;
+  --node-content: #0d9488;
+  --node-content-fg: #f0fdfa;
+  --node-task: #c2410c;
+  --node-task-fg: #fff7ed;
+  --node-knowledge: #15803d;
+  --node-knowledge-fg: #f0fdf4;
+  --node-agent: #be185d;
+  --node-agent-fg: #fdf2f8;
+  --node-annotation: #b45309;
+
+  /* Edge colours — slightly more opaque on light backgrounds */
+  --edge-responds-to: #00000033;
+  --edge-reads: #2563eb77;
+  --edge-modifies: #c2410caa;
+  --edge-produces: #15803daa;
+  --edge-depends-on: #7c3aedaa;
+  --edge-spawned-by: #be185daa;
+  --edge-default: #00000018;
+  --edge-contains: #15803d44;
+  --edge-summarizes: #7c3aed44;
+  --edge-delegates-to: #b4530988;
+  --edge-follows-up: #00000022;
+  --edge-steers: #4f5fd988;
+  --edge-relates-to: #00000018;
+  --edge-derived-from: #7c3aed55;
+  --edge-approved-by: #15803d88;
+  --edge-rejected-by: #dc262688;
 }
 
-[data-theme="light"] .markdown-body code {
-  background: #f3f4f6;
-}
-[data-theme="light"] .markdown-body pre {
-  background: #f3f4f6;
-}
