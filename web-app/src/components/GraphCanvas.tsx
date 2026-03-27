@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTheme } from '../hooks/useTheme';
 import {
   ReactFlow,
   Background,
@@ -61,6 +62,11 @@ function GraphCanvasInner({
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const canvasWidth = containerRef.current?.clientWidth ?? 800;
+  const { theme } = useTheme();
+
+  // Read CSS variables so MiniMap/Controls/Background respond to theme switches
+  const cssVar = (name: string) =>
+    getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
   const [filter, setFilter] = useState<NodeFilter>(EMPTY_FILTER);
 
@@ -194,24 +200,35 @@ function GraphCanvasInner({
           deleteKeyCode={null}
           proOptions={{ hideAttribution: true }}
         >
-          <Background variant={BackgroundVariant.Dots} color="#333" gap={20} />
+          <Background
+            variant={BackgroundVariant.Dots}
+            color={cssVar('--border-hover')}
+            gap={20}
+          />
           <MiniMap
             nodeColor={n => {
-              const typeColors: Record<string, string> = {
-                interaction: '#4fc3f7',
-                agent: '#ef9a9a',
-                content: '#81c784',
-                task: '#ffb74d',
-                knowledge: '#ce93d8',
-                annotation: '#fbbf24',
-                group: '#ffffff11',
+              const varMap: Record<string, string> = {
+                interaction: '--node-interaction',
+                agent:       '--node-agent',
+                content:     '--node-content',
+                task:        '--node-task',
+                knowledge:   '--node-knowledge',
+                annotation:  '--node-annotation',
               };
-              return typeColors[n.type ?? ''] ?? '#888';
+              const v = varMap[n.type ?? ''];
+              return v ? cssVar(v) : cssVar('--fg-muted');
             }}
-            maskColor="#1e1e1e99"
-            style={{ background: '#252526', border: '1px solid #333' }}
+            maskColor={theme === 'light' ? '#f8f7f488' : '#16161688'}
+            style={{
+              background: cssVar('--surface-2'),
+              border: `1px solid ${cssVar('--border')}`,
+            }}
           />
-          <Controls style={{ background: '#252526', border: '1px solid #333', color: '#d4d4d4' }} />
+          <Controls style={{
+            background: cssVar('--surface-2'),
+            border: `1px solid ${cssVar('--border')}`,
+            color: cssVar('--fg'),
+          }} />
         </ReactFlow>
         </SteerContext.Provider>
       </div>
