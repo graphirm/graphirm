@@ -62,6 +62,12 @@ Done 2026-03-18. `cargo fmt --check`, `cargo clippy --all-features -D warnings`,
 Done 2026-03-21. Expanded design tokens in `theme.css` (spacing scale, typography scale, surface layers, semantic colors, all edge color variables). Light/dark theme via `useTheme` hook (`localStorage` + `prefers-color-scheme`, sets `data-theme` on `<html>`). Toggle button (☀/◉) in Toolbar. Edge colors DRYed — `EDGE_COLORS` map removed from `LabelledEdge.tsx`, replaced with `getEdgeColor()` reading CSS variables via `getComputedStyle` with theme-aware cache. Clean build, 100% agent.
 Plan: `docs/plans/2026-03-22-research-driven-improvements.md`
 
+### ✅ Theme redesign + full CSS variable audit — P2 · M
+Done 2026-03-27. Replaced entire dark/light palette with Linear/Raycast/Primer-inspired token system: warm off-white `#f8f7f4` light bg, near-black `#161616` dark bg, soft pastels for dark node colors, rich deep tones for light node colors. Added `--node-X-fg` foreground pairs. Fixed all hardcoded dark hex values across `chat.module.css` (message bubbles, HITL card, textarea), `nodes.module.css` (card bg, status badges, annotation), `Toolbar.module.css` (layout group, search input, type buttons), `GraphCanvas.tsx` (MiniMap bg/mask, Controls, Background dots, nodeColor map). All components now respond correctly to theme toggle. Edge colors recalibrated per theme. Commits: `0d80a92`, `f54c878`.
+
+### ✅ Color-coded nodes and chat cards by role/type — P2 · S
+Done 2026-03-27. Node cards: colored left border stripe + 12% tinted background per node type via `color-mix()` in `BaseCard.tsx`. Interaction nodes split by role: user=`--accent`, assistant=`--node-agent`. Chat panel: user messages are accent-colored pill bubbles (right-aligned); assistant messages have rose/pink tint bg + `--node-agent` left border; tool output has teal tint + `--node-content` left border. Role labels styled with sender's color. MiniMap node dots read live CSS variable values. Commits: `c5141d4`, `e906686`, `5f4aa5d`.
+
 ### ✅ Workspace selector in SessionBar — P2 · S
 Done 2026-03-18. "+ New" button expands an inline form with session name + workspace inputs. Enter submits, Escape cancels, promise awaited before closing.
 
