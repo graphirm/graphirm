@@ -8,6 +8,23 @@ pub enum ModelTier {
     Smart,
 }
 
+/// The inferred lifecycle phase of the current task turn.
+///
+/// Used by `PhaseMatch` rules to implement the "reasoning sandwich" pattern:
+/// heavy model for planning + verification, lighter model for mid-task edits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskPhase {
+    /// No write/edit tool calls have been made yet — agent is still exploring and planning.
+    #[default]
+    Planning,
+    /// The agent has made write/edit calls and is actively implementing.
+    Implementation,
+    /// Write/edit calls exist in history but the most recent tool calls were
+    /// read-only (bash/read/grep/find/ls), indicating test or verification work.
+    Verification,
+}
+
 /// A single routing rule — evaluated in order, first match wins.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -22,6 +39,9 @@ pub enum RoutingRule {
     ToolOnlyTurn { tier: ModelTier },
     /// Agent has been running for more than `turn` turns → use this tier.
     StuckDetection { turn: u32, tier: ModelTier },
+    /// Current task phase matches `phase` → use this tier.
+    /// Enables the "reasoning sandwich": smart for planning/verification, cheap for implementation.
+    PhaseMatch { phase: TaskPhase, tier: ModelTier },
 }
 
 /// Two-tier model routing configuration.
@@ -90,6 +110,8 @@ pub struct TurnSignals {
     pub last_response_tool_only: bool,
     /// Estimated token count of the current user message.
     pub user_message_tokens: usize,
+    /// Inferred lifecycle phase of the task. Used by `PhaseMatch` rules.
+    pub task_phase: TaskPhase,
 }
 
 /// Stateless router — evaluates rules against turn signals.
@@ -140,6 +162,9 @@ impl<'a> ModelRouter<'a> {
             RoutingRule::StuckDetection { turn, tier } if signals.turn_number >= *turn => {
                 Some((*tier, "stuck_detection"))
             }
+            RoutingRule::PhaseMatch { phase, tier } if signals.task_phase == *phase => {
+                Some((*tier, "phase_match"))
+            }
             _ => None,
         }
     }
@@ -185,6 +210,7 @@ mod tests {
             last_tool_errored: false,
             last_response_tool_only: false,
             user_message_tokens: 50,
+            task_phase: TaskPhase::Planning,
         };
         let (model, tier, rule) = router.select(&signals);
         assert_eq!(model, "anthropic/claude-sonnet-4"); // openrouter/ prefix stripped
@@ -201,6 +227,7 @@ mod tests {
             last_tool_errored: true,
             last_response_tool_only: false,
             user_message_tokens: 30,
+            task_phase: TaskPhase::Planning,
         };
         let (_, tier, rule) = router.select(&signals);
         assert_eq!(tier, ModelTier::Smart);
@@ -216,6 +243,7 @@ mod tests {
             last_tool_errored: false,
             last_response_tool_only: true,
             user_message_tokens: 20,
+            task_phase: TaskPhase::Implementation,
         };
         let (model, tier, rule) = router.select(&signals);
         assert_eq!(model, "deepseek/deepseek-chat"); // openrouter/ prefix stripped
@@ -232,6 +260,7 @@ mod tests {
             last_tool_errored: false,
             last_response_tool_only: false,
             user_message_tokens: 300,
+            task_phase: TaskPhase::Planning,
         };
         let (_, tier, rule) = router.select(&signals);
         assert_eq!(tier, ModelTier::Smart);
@@ -247,6 +276,7 @@ mod tests {
             last_tool_errored: false,
             last_response_tool_only: false,
             user_message_tokens: 30,
+            task_phase: TaskPhase::Implementation,
         };
         let (_, tier, rule) = router.select(&signals);
         assert_eq!(tier, ModelTier::Smart);
@@ -262,6 +292,7 @@ mod tests {
             last_tool_errored: false,
             last_response_tool_only: false,
             user_message_tokens: 50,
+            task_phase: TaskPhase::Implementation,
         };
         let (model, tier, rule) = router.select(&signals);
         assert_eq!(model, "deepseek/deepseek-chat"); // openrouter/ prefix stripped
@@ -283,6 +314,7 @@ mod tests {
             last_tool_errored: true,
             last_response_tool_only: true,
             user_message_tokens: 999,
+            task_phase: TaskPhase::Planning,
         };
         let (model, tier, rule) = router.select(&signals);
         assert_eq!(model, "smart-model");
@@ -299,6 +331,7 @@ mod tests {
             last_tool_errored: true,
             last_response_tool_only: false,
             user_message_tokens: 500,
+            task_phase: TaskPhase::Planning,
         };
         let (_, _, rule) = router.select(&signals);
         assert_eq!(rule, "first_turn");
@@ -388,5 +421,139 @@ mod tests {
             rules: vec![],
         };
         assert!(!cfg.same_provider());
+    }
+
+    #[test]
+    fn phase_match_planning_selects_smart() {
+        let cfg = ModelRoutingConfig {
+            cheap: "cheap".into(),
+            smart: "smart".into(),
+            default_tier: ModelTier::Cheap,
+            rules: vec![RoutingRule::PhaseMatch {
+                phase: TaskPhase::Planning,
+                tier: ModelTier::Smart,
+            }],
+        };
+        let router = ModelRouter::new(&cfg);
+        let signals = TurnSignals {
+            turn_number: 2,
+            last_tool_errored: false,
+            last_response_tool_only: false,
+            user_message_tokens: 30,
+            task_phase: TaskPhase::Planning,
+        };
+        let (_, tier, rule) = router.select(&signals);
+        assert_eq!(tier, ModelTier::Smart);
+        assert_eq!(rule, "phase_match");
+    }
+
+    #[test]
+    fn phase_match_implementation_selects_cheap() {
+        let cfg = ModelRoutingConfig {
+            cheap: "cheap".into(),
+            smart: "smart".into(),
+            default_tier: ModelTier::Smart,
+            rules: vec![RoutingRule::PhaseMatch {
+                phase: TaskPhase::Implementation,
+                tier: ModelTier::Cheap,
+            }],
+        };
+        let router = ModelRouter::new(&cfg);
+        let signals = TurnSignals {
+            turn_number: 5,
+            last_tool_errored: false,
+            last_response_tool_only: false,
+            user_message_tokens: 30,
+            task_phase: TaskPhase::Implementation,
+        };
+        let (_, tier, rule) = router.select(&signals);
+        assert_eq!(tier, ModelTier::Cheap);
+        assert_eq!(rule, "phase_match");
+    }
+
+    #[test]
+    fn phase_match_verification_selects_smart() {
+        let cfg = ModelRoutingConfig {
+            cheap: "cheap".into(),
+            smart: "smart".into(),
+            default_tier: ModelTier::Cheap,
+            rules: vec![RoutingRule::PhaseMatch {
+                phase: TaskPhase::Verification,
+                tier: ModelTier::Smart,
+            }],
+        };
+        let router = ModelRouter::new(&cfg);
+        let signals = TurnSignals {
+            turn_number: 8,
+            last_tool_errored: false,
+            last_response_tool_only: true,
+            user_message_tokens: 20,
+            task_phase: TaskPhase::Verification,
+        };
+        let (_, tier, rule) = router.select(&signals);
+        assert_eq!(tier, ModelTier::Smart);
+        assert_eq!(rule, "phase_match");
+    }
+
+    #[test]
+    fn phase_match_wrong_phase_falls_through() {
+        let cfg = ModelRoutingConfig {
+            cheap: "cheap".into(),
+            smart: "smart".into(),
+            default_tier: ModelTier::Cheap,
+            rules: vec![RoutingRule::PhaseMatch {
+                phase: TaskPhase::Verification,
+                tier: ModelTier::Smart,
+            }],
+        };
+        let router = ModelRouter::new(&cfg);
+        let signals = TurnSignals {
+            turn_number: 3,
+            last_tool_errored: false,
+            last_response_tool_only: false,
+            user_message_tokens: 30,
+            task_phase: TaskPhase::Implementation,
+        };
+        let (_, tier, rule) = router.select(&signals);
+        // rule doesn't match — falls to default
+        assert_eq!(tier, ModelTier::Cheap);
+        assert_eq!(rule, "default");
+    }
+
+    #[test]
+    fn phase_match_deserialize_toml() {
+        let toml_str = r#"
+            cheap = "cheap"
+            smart = "smart"
+
+            [[rules]]
+            type = "phase_match"
+            phase = "planning"
+            tier = "smart"
+
+            [[rules]]
+            type = "phase_match"
+            phase = "implementation"
+            tier = "cheap"
+
+            [[rules]]
+            type = "phase_match"
+            phase = "verification"
+            tier = "smart"
+        "#;
+        let cfg: ModelRoutingConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.rules.len(), 3);
+        assert!(matches!(
+            &cfg.rules[0],
+            RoutingRule::PhaseMatch { phase: TaskPhase::Planning, tier: ModelTier::Smart }
+        ));
+        assert!(matches!(
+            &cfg.rules[1],
+            RoutingRule::PhaseMatch { phase: TaskPhase::Implementation, tier: ModelTier::Cheap }
+        ));
+        assert!(matches!(
+            &cfg.rules[2],
+            RoutingRule::PhaseMatch { phase: TaskPhase::Verification, tier: ModelTier::Smart }
+        ));
     }
 }

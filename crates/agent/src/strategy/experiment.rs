@@ -125,6 +125,7 @@ mod tests {
             last_tool_errored: false,
             last_response_tool_only: false,
             user_message_tokens: 50,
+            task_phase: crate::router::TaskPhase::Planning,
         }
     }
 

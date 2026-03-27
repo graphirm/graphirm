@@ -122,20 +122,8 @@ Done 2026-03-27. After a text-only turn that follows tool work, the agent loop i
 ### ✅ Doom loop detection — P1 · S
 Done 2026-03-27. `file_edit_counts: HashMap<PathBuf, u32>` tracked in `run_agent_loop`; incremented on every `write`/`edit` tool call by extracting the `path` arg from tool arguments. When a file's count equals `doom_loop_threshold`, a user message advisory is injected urging the agent to step back and reconsider. Fires on each threshold crossing (not just once). `doom_loop_threshold: u32` config field (default 5, 0 disables). 2 new config tests; 267 agent tests pass, clippy clean.
 
-### Phase-aware reasoning budget — P2 · M
-Extend the model router to be aware of task phase (planning / implementation / verification)
-and allocate reasoning tiers accordingly. The "reasoning sandwich" pattern: heavy reasoning
-for planning + final verification, lighter for mid-task implementation. Currently the router
-picks cheap/smart based on turn-level signals but has no concept of where in the task
-lifecycle a turn falls.
-
-**Implementation:** Add a `TaskPhase` enum to `TurnSignals`; infer phase from tool usage
-patterns (no tools yet = planning, active edits = implementation, test runs = verification).
-New routing rule type `phase_match` in `RoutingRule`.
-
-**Key files:**
-- `crates/agent/src/router.rs` — `TaskPhase` enum, phase inference
-- `crates/agent/src/strategy/rule_router.rs` — phase-aware rule evaluation
+### ✅ Phase-aware reasoning budget — P2 · M
+Done 2026-03-27. `TaskPhase` enum (`Planning`/`Implementation`/`Verification`) added to `router.rs`; `task_phase: TaskPhase` field added to `TurnSignals`; new `RoutingRule::PhaseMatch { phase, tier }` variant (TOML: `type = "phase_match"`). Phase inferred in `infer_task_phase()` from session chain tool result metadata (`tool_name`): no write/edit calls → Planning; write/edit exist but last 5 calls are read-only → Verification; otherwise Implementation. Applied in both adaptive and legacy `spawn_blocking` router blocks. 5 new router tests; 273 agent tests pass, clippy clean.
 
 ### ✅ Token/time budget awareness — P2 · S
 Done 2026-03-27. In `stream_and_record`, after `build_context_with_stats` returns, computes `usage_ratio = window.total_tokens / max_tok`. Finds the highest crossed threshold from `budget_warning_thresholds` and appends a one-line warning to `context[0]` (the system message) via `ContentPart::text`. Two tiers: <90% → "wrap up", ≥90% → "complete current step only". `budget_warning_thresholds: Vec<f64>` config field (default [0.7, 0.9]; empty list disables). 2 new tests; 269 agent tests pass, clippy clean.

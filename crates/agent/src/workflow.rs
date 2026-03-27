@@ -164,7 +164,7 @@ pub async fn stream_and_record(
         let graph_c = session.graph.clone();
         let session_id = session.id.0.clone();
 
-        let (last_tool_errored, last_response_tool_only, user_msg_tokens) =
+        let (last_tool_errored, last_response_tool_only, user_msg_tokens, task_phase) =
             tokio::task::spawn_blocking(move || {
                 let chain = graph_c.get_session_chain(&session_id).unwrap_or_default();
                 let last_assistant = chain.iter().rev().find(|n| {
@@ -189,16 +189,18 @@ pub async fn stream_and_record(
                         _ => 0,
                     })
                     .unwrap_or(0);
-                (tool_errored, tool_only, user_tokens)
+                let phase = infer_task_phase(&chain);
+                (tool_errored, tool_only, user_tokens, phase)
             })
             .await
-            .unwrap_or((false, false, 0));
+            .unwrap_or((false, false, 0, crate::router::TaskPhase::Planning));
 
         let signals = crate::router::TurnSignals {
             turn_number,
             last_tool_errored,
             last_response_tool_only,
             user_message_tokens: user_msg_tokens,
+            task_phase,
         };
 
         let objective = ar_config
@@ -237,7 +239,7 @@ pub async fn stream_and_record(
         let turn_number = session.current_turn();
         let graph_c = session.graph.clone();
         let session_id = session.id.0.clone();
-        let (last_tool_errored, last_response_tool_only, user_msg_tokens) =
+        let (last_tool_errored, last_response_tool_only, user_msg_tokens, task_phase) =
             tokio::task::spawn_blocking(move || {
                 let chain = graph_c.get_session_chain(&session_id).unwrap_or_default();
                 let last_assistant = chain.iter().rev().find(|n| {
@@ -262,15 +264,17 @@ pub async fn stream_and_record(
                         _ => 0,
                     })
                     .unwrap_or(0);
-                (tool_errored, tool_only, user_tokens)
+                let phase = infer_task_phase(&chain);
+                (tool_errored, tool_only, user_tokens, phase)
             })
             .await
-            .unwrap_or((false, false, 0));
+            .unwrap_or((false, false, 0, crate::router::TaskPhase::Planning));
         let signals = crate::router::TurnSignals {
             turn_number,
             last_tool_errored,
             last_response_tool_only,
             user_message_tokens: user_msg_tokens,
+            task_phase,
         };
         let router = crate::router::ModelRouter::new(routing);
         let (model, tier, rule) = router.select(&signals);
@@ -978,6 +982,44 @@ fn check_soft_escalation(
 
 /// Emit a GraphUpdate event with recent nodes, edges touching this turn's nodes, and a merged
 /// node list for incremental SSE clients.
+/// Infer the current task phase from the session's interaction chain.
+///
+/// Phase is determined by examining tool result nodes' `tool_name` metadata:
+/// - `Planning`: no write/edit tool calls have been made yet.
+/// - `Verification`: write/edit calls exist but the most recent tool calls are
+///   all read-only (bash, read, grep, find, ls) — agent is running tests/checks.
+/// - `Implementation`: write/edit calls have occurred and the last calls include writes.
+fn infer_task_phase(chain: &[graphirm_graph::nodes::GraphNode]) -> crate::router::TaskPhase {
+    use crate::router::TaskPhase;
+
+    // Collect all tool result names in chronological order.
+    let tool_names: Vec<&str> = chain
+        .iter()
+        .filter(|n| {
+            matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "tool")
+        })
+        .filter_map(|n| n.metadata.get("tool_name").and_then(|v| v.as_str()))
+        .collect();
+
+    let has_write_calls = tool_names
+        .iter()
+        .any(|&n| matches!(n, "write" | "edit"));
+
+    if !has_write_calls {
+        return TaskPhase::Planning;
+    }
+
+    // Check whether recent tool calls (last 5) are all read-only.
+    let read_only_tools = ["bash", "read", "grep", "find", "ls", "graph_query",
+                           "repo_briefing", "session_trace", "graph_diff", "diff", "read_many"];
+    let recent: Vec<&str> = tool_names.iter().rev().take(5).copied().collect();
+    if !recent.is_empty() && recent.iter().all(|&n| read_only_tools.contains(&n)) {
+        return TaskPhase::Verification;
+    }
+
+    TaskPhase::Implementation
+}
+
 async fn emit_graph_update(
     session: &Session,
     node_id: &NodeId,
