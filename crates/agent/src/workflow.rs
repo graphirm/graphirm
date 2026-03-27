@@ -609,6 +609,7 @@ async fn execute_tools_parallel(
 
         let mut tool_metadata = serde_json::Map::new();
         tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(&call_id));
+        tool_metadata.insert("tool_name".to_string(), serde_json::json!(&tool_name));
         tool_metadata.insert("is_error".to_string(), serde_json::json!(is_error));
 
         let mut tool_node = GraphNode::new(NodeType::Interaction(InteractionData {
@@ -745,6 +746,7 @@ async fn execute_tools_parallel(
 
                 let mut tool_metadata = serde_json::Map::new();
                 tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(call_id));
+                tool_metadata.insert("tool_name".to_string(), serde_json::json!(&name));
                 tool_metadata.insert("is_error".to_string(), serde_json::json!(is_error));
 
                 let mut tool_node = GraphNode::new(NodeType::Interaction(InteractionData {
