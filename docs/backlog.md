@@ -117,7 +117,7 @@ harness engineering research (52.8% → 66.5% on Terminal Bench by changing only
 and Phil Schmid's "Agent Harness as Operating System" framing.
 
 ### ✅ Pre-completion verification hook — P1 · M
-Done 2026-03-27. After a text-only turn that follows tool work, the agent loop injects a user message with a 5-point verification checklist (run tests, run clippy, re-read requirements, check git diff). Fires once per session via `verify_injected: bool` guard. `pre_completion_verify: bool` config field (default true) — set false in existing unit tests that use mock providers. 2 new config tests added; all 265 agent tests pass, clippy clean.
+Done 2026-03-27. After a text-only turn that follows tool work, the agent loop injects a user message with a 5-point verification checklist (run tests, run clippy, re-read requirements, check git diff). Fires once per session via `verify_injected: bool` guard. `pre_completion_verify: bool` config field (default true) — set false in existing unit tests that use mock providers. 2 new config tests added; all 265 agent tests pass, clippy clean. **Bug fix 2026-03-27:** Changed trigger condition from `had_tool_calls` (any tool, including reads) to `had_write_calls` (write/edit only) — prevents premature firing during read-only planning turns. `had_write_calls: bool` flag tracked alongside doom-loop path extraction.
 
 ### ✅ Doom loop detection — P1 · S
 Done 2026-03-27. `file_edit_counts: HashMap<PathBuf, u32>` tracked in `run_agent_loop`; incremented on every `write`/`edit` tool call by extracting the `path` arg from tool arguments. When a file's count equals `doom_loop_threshold`, a user message advisory is injected urging the agent to step back and reconsider. Fires on each threshold crossing (not just once). `doom_loop_threshold: u32` config field (default 5, 0 disables). 2 new config tests; 267 agent tests pass, clippy clean.
@@ -155,15 +155,8 @@ and outputs a structured report with suggested harness parameter changes.
 - `crates/tools/src/trace_analyzer.rs` — new tool
 - `crates/agent/src/workflow.rs` — `TurnOutcome` metadata (Phase 36) is the data source
 
-### Structured work loop enforcement — P3 · S
-Add a "problem-solving framework" section to the system prompt that guides the agent
-through Plan → Build → Verify → Fix. Currently the agent gets tools and a repo briefing
-but no structure for *how* to approach a task. Can be as simple as a system prompt section
-plus a `work_phase` field tracked across turns.
-
-**Key files:**
-- `crates/agent/src/config.rs` — `enforce_work_loop: bool`
-- `crates/server/src/routes.rs` — inject framework into system prompt at session creation
+### ✅ Structured work loop enforcement — P3 · S
+Done 2026-03-27. `enforce_work_loop: bool` config field (default true). When enabled, `create_session` in `crates/server/src/routes.rs` appends a "## Problem-Solving Framework" section to the system prompt: 4-step Plan→Build→Verify→Fix with explicit instruction to transition from Plan to Build after at most 2 messages. 2 new config tests; all agent + server tests pass, clippy clean.
 
 ---
 

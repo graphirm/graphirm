@@ -195,6 +195,11 @@ pub struct AgentConfig {
     /// An empty list disables budget warnings. Default: [0.7, 0.9].
     #[serde(default = "default_budget_warning_thresholds")]
     pub budget_warning_thresholds: Vec<f64>,
+    /// When true, inject a Plan→Build→Verify→Fix problem-solving framework into the
+    /// system prompt at session start. Guides the agent from planning directly into
+    /// execution without excessive discussion. Default true.
+    #[serde(default = "default_enforce_work_loop")]
+    pub enforce_work_loop: bool,
 }
 
 /// Objective weights for composite score optimisation.
@@ -311,6 +316,10 @@ fn default_budget_warning_thresholds() -> Vec<f64> {
     vec![0.7, 0.9]
 }
 
+fn default_enforce_work_loop() -> bool {
+    true
+}
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
@@ -375,6 +384,7 @@ impl Default for AgentConfig {
             pre_completion_verify: true,
             doom_loop_threshold: default_doom_loop_threshold(),
             budget_warning_thresholds: default_budget_warning_thresholds(),
+            enforce_work_loop: default_enforce_work_loop(),
         }
     }
 }
@@ -450,6 +460,8 @@ struct AgentConfigSection {
     doom_loop_threshold: u32,
     #[serde(default = "default_budget_warning_thresholds")]
     budget_warning_thresholds: Vec<f64>,
+    #[serde(default = "default_enforce_work_loop")]
+    enforce_work_loop: bool,
 }
 
 fn default_system_prompt() -> String {
@@ -499,6 +511,7 @@ impl AgentConfig {
             pre_completion_verify: file.agent.pre_completion_verify,
             doom_loop_threshold: file.agent.doom_loop_threshold,
             budget_warning_thresholds: file.agent.budget_warning_thresholds,
+            enforce_work_loop: file.agent.enforce_work_loop,
         })
     }
 
@@ -604,6 +617,31 @@ mod tests {
             config.budget_warning_thresholds,
             vec![0.5, 0.8],
             "budget_warning_thresholds should read [0.5, 0.8] from TOML"
+        );
+    }
+
+    #[test]
+    fn test_enforce_work_loop_default_true() {
+        let config = AgentConfig::default();
+        assert!(
+            config.enforce_work_loop,
+            "enforce_work_loop should default to true"
+        );
+    }
+
+    #[test]
+    fn test_enforce_work_loop_toml_parse() {
+        let toml_str = r#"
+            [agent]
+            name = "test"
+            model = "gpt-4"
+            system_prompt = "test"
+            enforce_work_loop = false
+        "#;
+        let config = AgentConfig::from_toml(toml_str).unwrap();
+        assert!(
+            !config.enforce_work_loop,
+            "enforce_work_loop should read false from TOML"
         );
     }
 

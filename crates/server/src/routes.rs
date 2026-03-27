@@ -217,6 +217,19 @@ async fn create_session(
         config.system_prompt.push_str(&briefing);
     }
 
+    // Inject Plan→Build→Verify→Fix problem-solving framework when enabled.
+    if config.enforce_work_loop {
+        config.system_prompt.push_str(concat!(
+            "\n\n## Problem-Solving Framework\n",
+            "Work through every task in this order:\n",
+            "1. **Plan** — Read the spec and relevant files. Form a clear picture of what to change.\n",
+            "2. **Build** — After at most 2 planning messages, make the first `write` or `edit` call. Commit to an approach.\n",
+            "3. **Verify** — Run `cargo test` and `cargo clippy -- -D warnings` on the affected crate. Check `git diff`.\n",
+            "4. **Fix** — If verification fails, fix only what broke. Do NOT restart from scratch.\n",
+            "\nTransition from Plan to Build immediately: once you know what to change, make the first write without further discussion.",
+        ));
+    }
+
     // Validate model routing: both tiers must use the same provider backend.
     if let Some(ref routing) = config.model_routing
         && !routing.same_provider()

@@ -1060,6 +1060,10 @@ pub async fn run_agent_loop(
     // Track whether any tool calls have been executed in this session so far.
     // Used to decide whether to inject a continuation message after a text-only turn.
     let mut had_tool_calls = false;
+    // True only when the agent has executed at least one write or edit tool call.
+    // pre_completion_verify uses this so the checklist fires after actual file changes,
+    // not after read-only planning turns.
+    let mut had_write_calls = false;
     let mut continuation_count: u32 = 0;
     // Tracks whether the one-shot verification checklist has already been injected.
     let mut verify_injected = false;
@@ -1252,7 +1256,7 @@ pub async fn run_agent_loop(
             // Pre-completion verification: fires once per session after tool work ends.
             // Injects a checklist that forces the agent to run tests and re-check requirements
             // before the loop exits. Non-fatal — loop breaks normally if injection fails.
-            if pre_completion_verify && had_tool_calls && !verify_injected {
+            if pre_completion_verify && had_write_calls && !verify_injected {
                 verify_injected = true;
                 tracing::info!(turn, "Injecting pre-completion verification checklist");
                 let verify_content = concat!(
@@ -1308,6 +1312,7 @@ pub async fn run_agent_loop(
                 if (name == "write" || name == "edit")
                     && let Some(path_str) = arguments.get("path").and_then(|v| v.as_str())
                 {
+                    had_write_calls = true;
                     *file_edit_counts
                         .entry(std::path::PathBuf::from(path_str))
                         .or_insert(0) += 1;

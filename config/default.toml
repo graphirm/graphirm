@@ -160,6 +160,7 @@ max_continuations = 2                  # auto-inject continuation after text-onl
 pre_completion_verify = true           # force verification pass (tests + lint) before agent declares done
 doom_loop_threshold = 5                # inject advisory after N writes to the same file in one session
 # budget_warning_thresholds = [0.7, 0.9]  # warn at these fractions of max_tokens (defaults shown)
+enforce_work_loop = true               # inject Plan→Build→Verify→Fix framework into system prompt
 
 # Two-tier model routing — used by [agent.adaptive_routing] strategy = "rules".
 # Both models must use the same provider backend (e.g. both via openrouter).
