@@ -220,6 +220,16 @@ Done 2026-03-27. Root cause: `nodestradamus_core` Rust extension (PyO3/maturin) 
 ### ✅ Increase test coverage to >50% — P2 · L
 Done 2026-03-27. **57% coverage, 533 passing, 2 pre-existing failures** (`test_cache_wrapper` Rust serialization format). Journey: fixed FAISS import blocker → added EmbeddingCache/InsightsLoader/full_graph unit tests (90 passing, 10%) → fixed lazy scipy guard in `spectral.py` + lazy mcp server in `mcp/__init__.py` (38782ce) → installed scipy in venv → discovered validation tests were failing due to missing venv activation (not code bugs) → ran full suite including `tests/test_validation/` with venv → 57%. Key insight: 757 existing test functions across 124 files were already well-written — the blocker was import-time failures and venv inconsistency, not missing test coverage.
 
+### ✅ Batch output quality audit + extractor bug fixes — P1 · M
+Done 2026-03-27. Audited actual output of 21 successfully-processed repos (of 95 total; 30 had zero chunks due to missing clones, 42 skipped). Found and fixed two silent bugs in `RepoInsightExtractor`:
+- **Duplicate clusters always 0**: `_extract_duplicate_clusters` used `chunk_node.attributes.get("file_path", "")` — chunks store their parent as `parentFile`, file path is encoded in the node ID. Fixed by calling `_resolve_file_path()` which parses `chunk:file:/path:index`. Result: 0 → 20 clusters per repo.
+- **Dead code always 0**: same root cause in `_extract_dead_code_candidates`, two call sites.
+- **Hotspot noise**: 25% of hotspots were test/generated/vendor files (`_test.go`, `test.pb.go`, `testdata/` etc.) ranked by PageRank on CALLS edges into test helpers. Fixed by adding `_is_noise_path()` filter before sort+cap. pytest went from 18/18 noise to 18/18 real hotspots.
+- Added regression test for the `parentFile` bug (`tests/test_insights/test_extractor.py`).
+- Added `scripts/reextract_insights.py` — re-runs extraction on existing batch output without re-running the full (slow) pipeline. All 21 repos refreshed in ~2 min.
+- Commits: `ec8b6c7` (extractor fix + regression test), `8ac4746` (hotspot filter), `2827893` (reextract script).
+- Known remaining limitation: coupling is 0 for Go/C++/Ruby repos because import resolution is too low (Go: 6%) to produce cross-file CALLS edges — not a code bug.
+
 ### ~~Adaptive model router (A/B routing, token tracking, composite objective)~~ — ✅ done Phase 36
 ~~Replace the static rule-based router (Phase 34) with an adaptive routing framework.~~ Shipped: `RoutingStrategy` trait, `RuleRouter`, `PromptRouter`, `ExperimentRouter`, per-turn `TurnOutcome` metadata on Interaction nodes, `ObjectiveWeights` presets, `PATCH /rating` + `GET /routing/report` API. Phase 2 (statistical/learned router) remains as future work once data exists.
 Design: `docs/plans/2026-03-26-adaptive-model-router-design.md`
