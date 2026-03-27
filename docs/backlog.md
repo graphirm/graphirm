@@ -42,6 +42,9 @@ Done 2026-03-27. `content_hash: u64` field added to `Chunk` struct in `chunking.
 ### ✅ MinHash + LSH banding for Layer 1.5 candidate finding (ndstrms item 29) — P2 · M
 Done 2026-03-27. New `src/nodestradamus/layer1_5/minhash.py`: `token_shingles` (word k-shingles), `minhash_signature` (k min-hashes over shingle set), `lsh_candidates` (band-based bucket grouping → candidate pairs), `MinHashLSH` class. `tfidf.py`: `minhash_threshold=200` param; `analyze()` guard runs MinHash+LSH pre-filter when ≥200 chunks, routes to `_compute_similarities_on_candidates`; TF-IDF only on candidates. 9 new tests all pass. 47 layer1_5 tests pass. Commit: `e0fc2ef` on ndstrms.
 
+### ✅ Spectral clustering on similarity graph (ndstrms item 30) — P2 · M
+Done 2026-03-27. New `src/nodestradamus/layer1_5/spectral.py`: `build_adjacency_matrix` (sparse `csr_matrix`, symmetric, skips out-of-scope nodes), `compute_normalized_laplacian` (D^{-1/2}(D-A)D^{-1/2}, isolated nodes zeroed), `fiedler_eigenvectors` (`eigsh` with shift-invert `sigma=0` for stability), `assign_clusters` (`scipy.cluster.vq.kmeans2` — sklearn not available), `SpectralClusterer` class. `orchestrator.py`: added `from .spectral import SpectralClusterer` + `spectral_cluster(n_clusters=2)` method. 15 new tests all pass. One out-of-scope edit (`__init__.py`) reverted before commit. 62 layer1_5 tests pass. Commit: `cf31d87` on ndstrms.
+
 ### ✅ Wire `workspaces_root` on running server — P1 · S
 Done 2026-03-18. Set `workspaces_root = "/data/workspaces"` in `config/default.toml` — on the Docker volume so workspaces survive redeployments.
 
