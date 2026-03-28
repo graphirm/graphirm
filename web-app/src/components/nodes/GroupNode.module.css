@@ -34,3 +34,8 @@
 }
 
 .collapseBtn:hover { opacity: 1; }
+
+/* LOD zoom — group compact mode */
+.groupLOD {
+  opacity: 0.7;
+}

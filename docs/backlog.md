@@ -154,20 +154,17 @@ for redundancy. When collapsed, canvas-only.
 - `web-app/src/components/GraphCanvas.tsx` — render HITL popover when `pendingApproval`
 - `web-app/src/components/HitlOverlay.tsx` — extract from `ChatPane.tsx`, make reusable
 
-#### LOD (level-of-detail) zoom — P2 · S
-Tie node expand/collapse state to zoom level. Below zoom threshold (~0.4), all nodes
-auto-collapse to compact cards (type badge + one-line preview). Above threshold, nodes
-restore their user-set expand state. Uses `useViewport()` hook from React Flow with
-a debounced threshold crossing (not continuous re-render). The mechanism already exists
-in `BaseCard` (`expanded` prop) — this just adds a zoom-driven override.
+#### ✅ LOD (level-of-detail) zoom — P2 · S
 
-Game design reference: Factorio / Cities Skylines / Starcraft minimap-to-detail
-transition. The graph is readable at any zoom level.
-
-**Key files:**
-- `web-app/src/hooks/useGraphData.ts` — accept `zoomLevel`, stamp `data.zoomCollapsed` on nodes
-- `web-app/src/components/nodes/BaseCard.tsx` — respect `zoomCollapsed` override
-- `web-app/src/components/GraphCanvas.tsx` — read `useViewport().zoom`, debounce threshold
+Done 2026-03-28. Dogfood session 24612fe9 + CSS fix. Grade: partial.
+- `ZoomContext.tsx` — `useViewport()` + 150ms debounced threshold, `isLODEnabled` flag
+- `ZoomProvider` wraps `ReactFlow` inside `GraphCanvas` (required for hook to work)
+- All 5 main node types: `isLODEnabled ? false : expanded` override; `onToggleExpand` no-op during LOD
+- User expand preferences fully preserved: blocked during LOD, restored on zoom-in
+- AnnotationNode: 1-row compact textarea during LOD
+- GroupNode: collapse button hidden during LOD
+- Agent bug: referenced `annotationCardLOD` / `groupLOD` CSS classes without defining them (undefined in className). Fixed manually with opacity:0.7 stub rules.
+Commits: `2a6ebc5` (agent), `fix` (CSS stubs)
 
 #### Timeline swimlane backgrounds — P3 · S
 In Timeline layout mode, render subtle horizontal background bands behind each node
