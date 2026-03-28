@@ -86,12 +86,17 @@ The agent got stuck during CSS/button integration but had good architecture.
 Manual fixes completed the task. Commits: 081cdab, 0513abe (min-width fix),
 52d576a (toggle button moved to top), 175acb9 (instant collapse, no transition).
 
-#### Floating command input — P1 · S
-When the chat panel is collapsed, a floating input bar appears at the bottom of the
-graph canvas (like a game console / command palette). Triggered by `/` or `Enter`.
-Pressing `Escape` dismisses it. Sends messages through the same `sendPrompt` path.
-Shows "thinking" indicator as a subtle overlay instead of the chat panel's bar.
-HITL approvals surface as toast-style overlays anchored to the relevant node.
+#### ✅ Floating command input — P1 · S
+
+Done 2026-03-28. Dogfood session a5f12a8c + bug fix in same session.
+- `FloatingInput.tsx` + `FloatingInput.module.css` — new component: hint strip at bottom
+  center of canvas; `/` or `Enter` (when nothing focused) expands input; `Escape` collapses
+- Sends via the same `onSend`/`handleSendWithSteer` path as the chat panel
+- Shows `thinking` badge when `isThinking` is true
+- `GraphCanvas` receives `chatCollapsed`, `onSend`, `isThinking` optional props
+- Agent bug: used `useCallback` instead of `useEffect` for keyboard listener (dead code);
+  fixed in second dogfood prompt. CSS correct — all theme variables, no hardcoded colors.
+Commit: a5c1df7
 
 **Key files:**
 - `web-app/src/components/GraphCanvas.tsx` — render `FloatingInput` when `chatCollapsed`
