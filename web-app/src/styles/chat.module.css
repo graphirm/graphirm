@@ -1,12 +1,11 @@
 .chatPane {
-  width: 42%;
+  width: 420px;
   min-width: 280px;
   max-width: 520px;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
   flex-shrink: 0;
-  transition: width 0.3s ease, min-width 0.3s ease, max-width 0.3s ease;
 }
 
 .chatPane.collapsed {
@@ -14,7 +13,6 @@
   min-width: 40px;
   max-width: 40px;
   overflow: hidden;
-  flex-shrink: 0;
 }
 
 .chatPane.collapsed .messages,
