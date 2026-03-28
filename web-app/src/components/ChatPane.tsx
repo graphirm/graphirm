@@ -20,6 +20,8 @@ interface ChatPaneProps {
   onReject: (nodeId: string, reason?: string) => void;
   onModify: (nodeId: string, modifiedArgs: string) => void;
   onClearSteer: () => void;
+  chatCollapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 function HitlCard({
@@ -116,6 +118,8 @@ export function ChatPane({
   onReject,
   onModify,
   onClearSteer,
+  chatCollapsed,
+  onToggleCollapse,
 }: ChatPaneProps) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -136,7 +140,7 @@ export function ChatPane({
   }, [handleSend]);
 
   return (
-    <div className={styles.chatPane}>
+    <div className={`${styles.chatPane} ${chatCollapsed ? styles.collapsed : ''}`}>
       <div className={styles.messages}>
         {messages.map(msg => (
           <div key={msg.id} className={[styles.message, styles[msg.role as keyof typeof styles] ?? ''].join(' ')}>
@@ -167,6 +171,17 @@ export function ChatPane({
       )}
 
       <div className={styles.inputBar}>
+        {onToggleCollapse && (
+          <div className={styles.toggleBar}>
+            <button
+              className={styles.toggleButton}
+              onClick={onToggleCollapse}
+              title={chatCollapsed ? 'Expand chat' : 'Collapse chat'}
+            >
+              ☰
+            </button>
+          </div>
+        )}
         {steerContext && (
           <div style={{
             fontSize: 11,

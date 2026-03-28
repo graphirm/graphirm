@@ -5,6 +5,7 @@ interface ShortcutHandlers {
   onToggleLayout: () => void;
   onNewSession: () => void;
   onFocusChat: () => void;
+  onToggleChatCollapsed?: () => void;
 }
 
 /**
@@ -13,6 +14,7 @@ interface ShortcutHandlers {
  * - L  — cycle layout mode (dagre → timeline → free)
  * - N  — new session
  * - /  — focus chat input
+ * - C  — toggle chat panel collapse
  * - Escape — blur active element / close expansions
  */
 export function useKeyboardShortcuts({
@@ -20,6 +22,7 @@ export function useKeyboardShortcuts({
   onToggleLayout,
   onNewSession,
   onFocusChat,
+  onToggleChatCollapsed,
 }: ShortcutHandlers) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -51,6 +54,10 @@ export function useKeyboardShortcuts({
           e.preventDefault();
           onFocusChat();
           break;
+        case 'c':
+          e.preventDefault();
+          onToggleChatCollapsed?.();
+          break;
         default:
           break;
       }
@@ -58,5 +65,5 @@ export function useKeyboardShortcuts({
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onFitView, onToggleLayout, onNewSession, onFocusChat]);
+  }, [onFitView, onToggleLayout, onNewSession, onFocusChat, onToggleChatCollapsed]);
 }

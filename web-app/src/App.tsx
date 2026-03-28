@@ -30,6 +30,7 @@ export function App() {
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [steerContext, setSteerContext] = useState<{ nodeId: string } | null>(null);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
 
   // Ref callbacks let GraphCanvasInner register its handlers after mount.
   const fitViewCb = useRef<(() => void) | null>(null);
@@ -63,6 +64,7 @@ export function App() {
     onToggleLayout: () => cycleLayoutCb.current?.(),
     onNewSession: createSession,
     onFocusChat: () => chatInputRef.current?.focus(),
+    onToggleChatCollapsed: () => setChatCollapsed(c => !c),
   });
 
   return (
@@ -92,6 +94,8 @@ export function App() {
           onReject={rejectAction}
           onModify={modifyAction}
           onClearSteer={() => setSteerContext(null)}
+          chatCollapsed={chatCollapsed}
+          onToggleCollapse={() => setChatCollapsed(c => !c)}
         />
         <GraphCanvas
           graphData={graphData}
