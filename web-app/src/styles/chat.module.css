@@ -19,35 +19,27 @@
 
 .chatPane.collapsed .messages,
 .chatPane.collapsed .thinkingBar,
-.chatPane.collapsed .inputBar > textarea,
-.chatPane.collapsed .inputBar > .inputActions {
+.chatPane.collapsed .inputBar {
   display: none !important;
 }
 
-.chatPane.collapsed .inputBar > .toggleBar {
-  display: block;
-  padding: 8px 0;
-}
-
-.toggleBar {
-  display: none;
-  text-align: center;
-  padding: 8px 0;
-}
-
-.toggleButton {
+.collapseToggle {
   background: none;
   border: none;
+  border-bottom: 1px solid var(--border);
   cursor: pointer;
-  font-size: 18px;
-  color: var(--accent);
-  padding: 8px 12px;
-  border-radius: 4px;
-  transition: background 0.2s ease;
+  font-size: 14px;
+  color: var(--fg-muted);
+  padding: 8px;
+  width: 100%;
+  text-align: center;
+  transition: background 0.2s ease, color 0.2s ease;
+  flex-shrink: 0;
 }
 
-.toggleButton:hover {
+.collapseToggle:hover {
   background: var(--surface-1);
+  color: var(--accent);
 }
 
 .messages {

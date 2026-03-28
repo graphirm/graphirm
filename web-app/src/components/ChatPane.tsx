@@ -141,6 +141,15 @@ export function ChatPane({
 
   return (
     <div className={`${styles.chatPane} ${chatCollapsed ? styles.collapsed : ''}`}>
+      {onToggleCollapse && (
+        <button
+          className={styles.collapseToggle}
+          onClick={onToggleCollapse}
+          title={chatCollapsed ? 'Expand chat (C)' : 'Collapse chat (C)'}
+        >
+          {chatCollapsed ? '▶' : '◀'}
+        </button>
+      )}
       <div className={styles.messages}>
         {messages.map(msg => (
           <div key={msg.id} className={[styles.message, styles[msg.role as keyof typeof styles] ?? ''].join(' ')}>
@@ -171,17 +180,6 @@ export function ChatPane({
       )}
 
       <div className={styles.inputBar}>
-        {onToggleCollapse && (
-          <div className={styles.toggleBar}>
-            <button
-              className={styles.toggleButton}
-              onClick={onToggleCollapse}
-              title={chatCollapsed ? 'Expand chat' : 'Collapse chat'}
-            >
-              ☰
-            </button>
-          </div>
-        )}
         {steerContext && (
           <div style={{
             fontSize: 11,
