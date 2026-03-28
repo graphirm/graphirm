@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { useTheme } from '../hooks/useTheme';
 import {
   ReactFlow,
@@ -8,8 +8,9 @@ import {
   BackgroundVariant,
   useReactFlow,
   ReactFlowProvider,
+  Node,
 } from '@xyflow/react';
-import type { NodeTypes, EdgeTypes, Node } from '@xyflow/react';
+import type { NodeTypes, EdgeTypes } from '@xyflow/react';
 import type { GraphData } from '../types/graph';
 import { useGraphData, EMPTY_FILTER } from '../hooks/useGraphData';
 import type { LayoutMode, NodeFilter } from '../hooks/useGraphData';
@@ -95,6 +96,10 @@ function GraphCanvasInner({
         setFilter(EMPTY_FILTER);
         searchInputRef.current?.blur();
       }
+      // Clear focus when pressing Escape (outside of search input)
+      if (e.key === 'Escape' && document.activeElement !== searchInputRef.current) {
+        onNodeSelect(null);
+      }
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -116,6 +121,46 @@ function GraphCanvasInner({
   const { fitView, screenToFlowPosition } = useReactFlow();
 
   const { focusedNodeId } = useNodeNavigation(nodes, edges);
+  
+  // Compute dimmed nodes: non-focused nodes that are NOT immediate 1-hop neighbors
+  const dimmedNodeIds = useMemo(() => {
+    if (!focusedNodeId) return new Set<string>();
+    const dimmed = new Set<string>();
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    const focusedNode = nodeMap.get(focusedNodeId);
+    if (!focusedNode) return new Set();
+    
+    // Collect neighbors (nodes connected by any edge to focused node)
+    const neighbors = new Set<string>();
+    for (const edge of edges) {
+      if (edge.source === focusedNodeId) {
+        neighbors.add(edge.target);
+      } else if (edge.target === focusedNodeId) {
+        neighbors.add(edge.source);
+      }
+    }
+    
+    // All non-focused, non-neighbor nodes are dimmed
+    for (const node of nodes) {
+      if (node.id !== focusedNodeId && !neighbors.has(node.id)) {
+        dimmed.add(node.id);
+      }
+    }
+    return dimmed;
+  }, [focusedNodeId, nodes, edges]);
+  
+  // Compute dimmed edges: edges where BOTH source and target are dimmed
+  const dimmedEdgeIds = useMemo(() => {
+    if (dimmedNodeIds.size === 0) return new Set<string>();
+    const dimmed = new Set<string>();
+    for (const edge of edges) {
+      if (dimmedNodeIds.has(edge.source) && dimmedNodeIds.has(edge.target)) {
+        dimmed.add(edge.id);
+      }
+    }
+    return dimmed;
+  }, [edges, dimmedNodeIds]);
+
   useEffect(() => {
     if (!focusedNodeId) return;
     fitView({ nodes: [{ id: focusedNodeId }], padding: 0.4, duration: 300, maxZoom: 1.5 });
@@ -182,6 +227,19 @@ function GraphCanvasInner({
     [screenToFlowPosition, addNode],
   );
 
+  // Clear focus when clicking empty canvas or pressing Escape
+  const handlePaneClick = useCallback(() => {
+    onNodeSelect(null);
+  }, [onNodeSelect]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onNodeSelect(null);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onNodeSelect]);
+
   return (
     <div className={styles.graphPane} ref={containerRef}>
       <Toolbar
@@ -203,14 +261,26 @@ function GraphCanvasInner({
         <SteerContext.Provider value={steerCallbackRef.current}>
         <ZoomProvider>
         <ReactFlow
-          nodes={nodes}
-          edges={edges}
+          nodes={nodes.map(node => ({
+            ...node,
+            style: {
+              ...node.style,
+              opacity: dimmedNodeIds.has(node.id) ? 0.25 : undefined,
+            },
+          }))}
+          edges={edges.map(edge => ({
+            ...edge,
+            style: {
+              ...edge.style,
+              opacity: dimmedEdgeIds.has(edge.id) ? 0.25 : undefined,
+            },
+          }))}
           nodeTypes={NODE_TYPES}
           edgeTypes={EDGE_TYPES}
           onNodesChange={onNodesChange}
           onNodeClick={handleNodeClick}
           onNodeDragStop={handleNodeDragStop}
-          onPaneClick={() => onNodeSelect(null)}
+          onPaneClick={handlePaneClick}
           onDoubleClick={handlePaneDoubleClick}
           fitView
           fitViewOptions={{ padding: 0.12 }}
