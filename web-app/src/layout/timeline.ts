@@ -1,12 +1,20 @@
 import type { Node, Edge } from '@xyflow/react';
 import type { GraphNode } from '../types/graph';
 
-const TYPE_Y: Record<string, number> = {
+export const TYPE_Y: Record<string, number> = {
   Agent: 80,
   Task: 160,
   Interaction: 260,
   Content: 360,
   Knowledge: 440,
+};
+
+export const TYPE_LABELS: Record<string, string> = {
+  Agent: 'Agent',
+  Task: 'Task',
+  Interaction: 'Interaction',
+  Content: 'Content',
+  Knowledge: 'Knowledge',
 };
 
 interface GroupInfo {

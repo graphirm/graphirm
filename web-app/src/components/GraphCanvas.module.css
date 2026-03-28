@@ -11,6 +11,26 @@
   position: relative;
 }
 
+/* Timeline swimlane backgrounds */
+.swimlaneContainer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0; /* Behind nodes/edges but above background dots */
+}
+
+.swimlane {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 80px; /* Standard row height matching TYPE_Y spacing */
+  border-radius: 4px;
+  opacity: 0.05; /* 5% opacity as requested */
+}
+
 /* Canvas HITL card: anchored bottom-center above floating input */
 .hitlCanvasOverlay {
   position: absolute;

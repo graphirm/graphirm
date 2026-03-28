@@ -152,17 +152,12 @@ Done 2026-03-28. Dogfood session 24612fe9 + CSS fix. Grade: partial.
 - Agent bug: referenced `annotationCardLOD` / `groupLOD` CSS classes without defining them (undefined in className). Fixed manually with opacity:0.7 stub rules.
 Commits: `2a6ebc5` (agent), `fix` (CSS stubs)
 
-#### Timeline swimlane backgrounds — P3 · S
-In Timeline layout mode, render subtle horizontal background bands behind each node
-type row (Agent, Task, Interaction, Content, Knowledge). Uses the existing `TYPE_Y`
-constants from `timeline.ts`. Semi-transparent fills using node type CSS color variables
-at ~5% opacity. Implemented as absolutely-positioned divs behind the React Flow layer,
-or as a custom React Flow background plugin.
+#### ✅ Timeline swimlane backgrounds — P3 · S
 
-**Key files:**
-- `web-app/src/layout/timeline.ts` — export `TYPE_Y` and `TYPE_LABELS`
-- `web-app/src/components/GraphCanvas.tsx` — render swimlane divs when `layoutMode === 'timeline'`
-- `web-app/src/components/GraphCanvas.module.css` — swimlane strip styling
+Done 2026-03-28. Dogfood session `4610758d` + coordinate-system comment.
+- `timeline.ts` — `export const TYPE_Y`, `TYPE_LABELS` (redundant labels; kept for API symmetry)
+- `GraphCanvas.tsx` — when `layoutMode === 'timeline'`, `swimlaneContainer` + per-type strips using `cssVar(--node-*)` and `TYPE_Y` for `top`; screen-fixed overlay (does not pan/zoom with flow) — comment in source
+- `GraphCanvas.module.css` — `.swimlaneContainer`, `.swimlane` (pointer-events none, z-index 0)
 
 #### Node quick-reply — P3 · M
 Select any Interaction node (keyboard or click) and press `R` to open an inline

@@ -31,6 +31,7 @@ import { PopoverProvider } from '../context/PopoverContext';
 import type { PopoverActions } from '../context/PopoverContext';
 import { FloatingInput } from './FloatingInput';
 import { HitlOverlay } from './HitlOverlay';
+import { TYPE_Y } from '../layout/timeline';
 import styles from './GraphCanvas.module.css';
 import nodeStyles from '../styles/nodes.module.css';
 import { useNodeNavigation } from '../hooks/useNodeNavigation';
@@ -349,6 +350,21 @@ function GraphCanvasInner({
       />
       <div className={styles.canvasWrapper}>
         <FloatingInput chatCollapsed={chatCollapsed} onSend={onSend ?? (() => {})} isThinking={isThinking} />
+        {/* Timeline bands: TYPE_Y is graph coordinates; this overlay is screen-fixed (does not pan/zoom with the flow). Decorative hint only — see backlog / future: viewport-transformed layer. */}
+        {layoutMode === 'timeline' && (
+          <div className={styles.swimlaneContainer}>
+            {Object.entries(TYPE_Y).map(([type, y]) => (
+              <div
+                key={type}
+                className={styles.swimlane}
+                style={{
+                  top: y - 40, /* Center the 80px tall band around the TYPE_Y position */
+                  backgroundColor: cssVar(`--node-${type.toLowerCase()}`),
+                }}
+              />
+            ))}
+          </div>
+        )}
         <PopoverProvider value={popoverActions}>
         <FocusContext.Provider value={focusedNodeId}>
         <SteerContext.Provider value={steerCallbackRef.current}>
