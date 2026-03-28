@@ -24,6 +24,7 @@ import { LabelledEdge } from './edges/LabelledEdge';
 import { Toolbar } from './Toolbar';
 import { SteerContext } from '../context/SteerContext';
 import { FocusContext } from '../context/FocusContext';
+import { ZoomProvider } from '../context/ZoomContext';
 import { FloatingInput } from './FloatingInput';
 import styles from './GraphCanvas.module.css';
 import { useNodeNavigation } from '../hooks/useNodeNavigation';
@@ -200,6 +201,7 @@ function GraphCanvasInner({
         <FloatingInput chatCollapsed={chatCollapsed} onSend={onSend ?? (() => {})} isThinking={isThinking} />
         <FocusContext.Provider value={focusedNodeId}>
         <SteerContext.Provider value={steerCallbackRef.current}>
+        <ZoomProvider>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -247,6 +249,7 @@ function GraphCanvasInner({
             color: cssVar('--fg'),
           }} />
         </ReactFlow>
+        </ZoomProvider>
         </SteerContext.Provider>
         </FocusContext.Provider>
       </div>

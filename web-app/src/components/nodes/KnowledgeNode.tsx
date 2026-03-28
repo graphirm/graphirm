@@ -2,12 +2,14 @@ import { useState } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { GraphNode } from '../../types/graph';
 import { useFocusedNodeId } from '../../context/FocusContext';
+import { useZoom } from '../../context/ZoomContext';
 import { BaseCard } from './BaseCard';
 import styles from '../../styles/nodes.module.css';
 
 export function KnowledgeNode({ id, data: rawData, selected }: NodeProps) {
   const [expanded, setExpanded] = useState(false);
   const focusedNodeId = useFocusedNodeId();
+  const { isLODEnabled } = useZoom();
   const data = rawData as unknown as GraphNode;
   const nt = data.node_type;
   if (nt.type !== 'Knowledge') return null;
@@ -22,8 +24,12 @@ export function KnowledgeNode({ id, data: rawData, selected }: NodeProps) {
       timestamp={data.created_at}
       preview={preview}
       selected={selected}
-      expanded={expanded}
-      onToggleExpand={() => setExpanded(e => !e)}
+      expanded={isLODEnabled ? false : expanded}
+      onToggleExpand={() => {
+        if (!isLODEnabled) {
+          setExpanded(e => !e);
+        }
+      }}
       focused={focusedNodeId === id}
     >
       <div className={styles.body}>
