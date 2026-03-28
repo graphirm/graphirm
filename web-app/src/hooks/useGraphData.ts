@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Node, Edge } from '@xyflow/react';
+import type { Node, Edge, XYPosition } from '@xyflow/react';
 import type { GraphData, GraphNode } from '../types/graph';
 import { applyDagreLayout } from '../layout/dagre';
 import { applyTimelineLayout } from '../layout/timeline';
@@ -13,8 +13,100 @@ export interface NodeFilter {
 
 export const EMPTY_FILTER: NodeFilter = { query: '', types: new Set() };
 
+// Layout stability: persist positions per session to avoid jumps
 const STORAGE_PREFIX = 'graphirm:positions:';
 const GROUP_COLOR = '#4fc3f7';
+
+// Default spacing for incremental positioning
+const INCREMENTAL_OFFSET = 220;
+const INCREMENTAL_SPACING = 120;
+
+/**
+ * Incrementally position only new nodes without affecting existing ones.
+ * Places new nodes relative to their parent/target nodes to maintain visual continuity.
+ */
+function positionNewNodes(
+  newNodeIds: Set<string>,
+  nodes: Node[],
+  edges: Edge[],
+  existingPositions: Map<string, XYPosition>,
+): Node[] {
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  const result = [...nodes];
+
+  // Build adjacency info to find parent/target nodes for new nodes
+  const producesMap = new Map<string, string[]>(); // source -> targets (produces edges)
+  const targetMap = new Map<string, string[]>();   // target -> sources (incoming edges)
+
+  for (const edge of edges) {
+    const et = (edge.data as { edge_type?: string } | undefined)?.edge_type ?? '';
+    if (et === 'produces') {
+      const targets = producesMap.get(edge.source) ?? [];
+      targets.push(edge.target);
+      producesMap.set(edge.source, targets);
+    }
+    // Track incoming edges for all edge types
+    const sources = targetMap.get(edge.target) ?? [];
+    sources.push(edge.source);
+    targetMap.set(edge.target, sources);
+  }
+
+  // Track where we're placing new nodes to avoid overlap
+  const childYOffset = new Map<string, number>();
+
+  for (const nodeId of newNodeIds) {
+    const node = nodeMap.get(nodeId);
+    if (!node) continue;
+
+    const incoming = targetMap.get(nodeId) ?? [];
+    const parentIds = incoming.filter(id => nodeMap.has(id));
+
+    if (parentIds.length > 0) {
+      // Find the first parent with a valid position
+      for (const parentId of parentIds) {
+        const parent = nodeMap.get(parentId);
+        if (!parent) continue;
+        const parentPos = existingPositions.get(parentId) ?? parent.position;
+
+        // Calculate position relative to parent
+        let offsetX = INCREMENTAL_OFFSET;
+        let offsetY = 0;
+
+        // If this node is produced by the parent, place it to the right
+        if (producesMap.has(parentId) && producesMap.get(parentId)?.includes(nodeId)) {
+          offsetX = INCREMENTAL_OFFSET;
+          offsetY = 0;
+        } else {
+          // For other relationships, place below with some spacing
+          offsetX = INCREMENTAL_OFFSET / 2;
+          const childCount = childYOffset.get(parentId) ?? 0;
+          offsetY = childCount * INCREMENTAL_SPACING + 40;
+          childYOffset.set(parentId, childCount + 1);
+        }
+
+        result.find(n => n.id === nodeId)!.position = {
+          x: parentPos.x + offsetX,
+          y: parentPos.y + offsetY,
+        };
+        break;
+      }
+    } else {
+      // No parents - place at a reasonable default offset
+      const existingPositionsArray = Array.from(existingPositions.values());
+      let baseX = 100;
+      let baseY = 100;
+      if (existingPositionsArray.length > 0) {
+        const maxX = Math.max(...existingPositionsArray.map(p => p.x));
+        const maxY = Math.max(...existingPositionsArray.map(p => p.y));
+        baseX = maxX + INCREMENTAL_OFFSET;
+        baseY = maxY < 500 ? maxY + INCREMENTAL_SPACING : 100;
+      }
+      result.find(n => n.id === nodeId)!.position = { x: baseX, y: baseY };
+    }
+  }
+
+  return result;
+}
 
 function loadPositions(sessionId: string): Record<string, { x: number; y: number }> {
   try {
@@ -206,6 +298,7 @@ export function useGraphData(
   sessionId: string | null,
   canvasWidth: number,
   filter: NodeFilter = EMPTY_FILTER,
+  isPatchUpdate: boolean = false,
 ): UseGraphDataReturn {
   const [layoutMode, setLayoutModeState] = useState<LayoutMode>('dagre');
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -263,6 +356,44 @@ export function useGraphData(
     const baseNodes = graphData.nodes.map(graphNodeToFlowNode);
     const flowEdges = rawEdges;
 
+    // If this is a patch update with only a few new nodes, position them incrementally
+    // to avoid jarring layout shifts during agent execution.
+    if (isPatchUpdate && nodes.length > 0 && baseNodes.length > nodes.length) {
+      // Only new nodes were added - use incremental positioning
+      const newNodeIds = new Set<string>();
+      const existingIds = new Set(nodes.map(n => n.id));
+      
+      for (const newNode of baseNodes) {
+        if (!existingIds.has(newNode.id)) {
+          newNodeIds.add(newNode.id);
+        }
+      }
+
+      if (newNodeIds.size > 0) {
+        // Build existing positions map from current nodes
+        const existingPositions = new Map<string, XYPosition>();
+        for (const node of nodes) {
+          existingPositions.set(node.id, node.position);
+        }
+
+        // Position new nodes incrementally relative to their parents
+        const positioned = positionNewNodes(newNodeIds, baseNodes, flowEdges, existingPositions);
+        
+        // Apply grouping and filter as usual, but preserve positions from positionNewNodes
+        const { grouped, groupNodes } = buildGroups(positioned, flowEdges);
+        const { nodes: withHidden, matchCount: count } = applyFilterToNodes(
+          [...groupNodes, ...grouped.filter(n => n.parentId)],
+          graphData.nodes,
+          filter,
+        );
+        setNodes(withHidden);
+        setEdges(flowEdges);
+        setMatchCount(count);
+        return;
+      }
+    }
+
+    // Full layout path (non-patch or no existing nodes)
     // Build groups, then apply layout to content nodes (group nodes get positioned separately).
     const { grouped, groupNodes } = buildGroups(baseNodes, flowEdges);
     const laid = applyLayout(grouped, flowEdges, layoutMode, graphData.nodes, sessionId);
@@ -315,7 +446,7 @@ export function useGraphData(
     // the second useEffect below to avoid re-running the expensive layout algorithm
     // on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphData, rawEdges, sessionId]);
+  }, [graphData, rawEdges, sessionId, isPatchUpdate, layoutMode]);
 
   useEffect(() => {
     if (!graphData) return;
