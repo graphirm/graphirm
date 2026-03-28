@@ -83,7 +83,8 @@ Done 2026-03-28. Dogfood session 79c59495 + manual completion. Implementation:
 - GraphCanvas auto-expands via flex layout to fill freed space
 - Chat state preserved (no unmounting) — scroll and input draft persist
 The agent got stuck during CSS/button integration but had good architecture.
-Manual fixes completed the task. Commit: 081cdab.
+Manual fixes completed the task. Commits: 081cdab, 0513abe (min-width fix),
+52d576a (toggle button moved to top), 175acb9 (instant collapse, no transition).
 
 #### Floating command input — P1 · S
 When the chat panel is collapsed, a floating input bar appears at the bottom of the
