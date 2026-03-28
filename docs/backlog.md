@@ -72,17 +72,18 @@ interface. Power users interact directly with nodes on the canvas, navigating wi
 keyboard like a game world. Items below are ordered as an incremental build path —
 each one is useful standalone, but together they form the paradigm shift.
 
-#### Collapsible chat panel — P1 · S
-The chat panel (`ChatPane`, 42% width) becomes collapsible via a toggle button or
-keyboard shortcut (`C`). When collapsed, it animates to a thin vertical strip (icon +
-unread count badge). Graph canvas fills the freed space. Chat state preserved — expanding
-restores scroll position and input draft. CSS transition on `.chatPane` width, no
-component unmounting.
+#### ✅ Collapsible chat panel — P1 · S
 
-**Key files:**
-- `web-app/src/App.tsx` — add `chatCollapsed` state, pass to ChatPane + GraphCanvas
-- `web-app/src/styles/chat.module.css` — `.collapsed` variant (width → 40px, overflow hidden)
-- `web-app/src/hooks/useKeyboardShortcuts.ts` — `C` key handler
+Done 2026-03-28. Dogfood session 79c59495 + manual completion. Implementation:
+- `chatCollapsed` state added to App.tsx, wired to keyboard hook (C key)
+- ChatPane receives `chatCollapsed` and `onToggleCollapse` props
+- Toggle button (☰ hamburger) renders in ChatPane header
+- CSS `.collapsed` class: width 40px, overflow hidden, messages/input hidden
+- Smooth CSS transition 0.3s ease on width changes
+- GraphCanvas auto-expands via flex layout to fill freed space
+- Chat state preserved (no unmounting) — scroll and input draft persist
+The agent got stuck during CSS/button integration but had good architecture.
+Manual fixes completed the task. Commit: 081cdab.
 
 #### Floating command input — P1 · S
 When the chat panel is collapsed, a floating input bar appears at the bottom of the
