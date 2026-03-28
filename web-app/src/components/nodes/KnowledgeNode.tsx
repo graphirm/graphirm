@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { GraphNode } from '../../types/graph';
+import { useFocusedNodeId } from '../../context/FocusContext';
 import { BaseCard } from './BaseCard';
 import styles from '../../styles/nodes.module.css';
 
-export function KnowledgeNode({ data: rawData, selected }: NodeProps) {
+export function KnowledgeNode({ id, data: rawData, selected }: NodeProps) {
   const [expanded, setExpanded] = useState(false);
+  const focusedNodeId = useFocusedNodeId();
   const data = rawData as unknown as GraphNode;
   const nt = data.node_type;
   if (nt.type !== 'Knowledge') return null;
@@ -22,6 +24,7 @@ export function KnowledgeNode({ data: rawData, selected }: NodeProps) {
       selected={selected}
       expanded={expanded}
       onToggleExpand={() => setExpanded(e => !e)}
+      focused={focusedNodeId === id}
     >
       <div className={styles.body}>
         <strong style={{ color }}>{nt.entity}</strong>

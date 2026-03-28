@@ -11,6 +11,7 @@ interface BaseCardProps {
   expanded: boolean;
   onToggleExpand: () => void;
   children?: ReactNode;
+  focused?: boolean;
 }
 
 function formatTimestamp(iso: string): string {
@@ -30,6 +31,7 @@ export function BaseCard({
   expanded,
   onToggleExpand,
   children,
+  focused = false,
 }: BaseCardProps) {
   return (
     <div
@@ -37,6 +39,7 @@ export function BaseCard({
         styles.card,
         selected ? styles.selected : '',
         expanded ? styles.expanded : '',
+        focused ? styles.focused : '',
       ].join(' ')}
       style={{
         borderLeft: `3px solid ${color}`,

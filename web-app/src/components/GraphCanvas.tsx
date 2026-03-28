@@ -23,8 +23,10 @@ import { GroupNode } from './nodes/GroupNode';
 import { LabelledEdge } from './edges/LabelledEdge';
 import { Toolbar } from './Toolbar';
 import { SteerContext } from '../context/SteerContext';
+import { FocusContext } from '../context/FocusContext';
 import { FloatingInput } from './FloatingInput';
 import styles from './GraphCanvas.module.css';
+import { useNodeNavigation } from '../hooks/useNodeNavigation';
 
 const NODE_TYPES: NodeTypes = {
   interaction: InteractionNode,
@@ -112,6 +114,12 @@ function GraphCanvasInner({
 
   const { fitView, screenToFlowPosition } = useReactFlow();
 
+  const { focusedNodeId } = useNodeNavigation(nodes, edges);
+  useEffect(() => {
+    if (!focusedNodeId) return;
+    fitView({ nodes: [{ id: focusedNodeId }], padding: 0.4, duration: 300, maxZoom: 1.5 });
+  }, [focusedNodeId, fitView]);
+
   // Expose fitView and layout-cycle callbacks to parent via ref callbacks.
   useEffect(() => {
     onFitViewRef?.(() => fitView({ padding: 0.12, duration: 400 }));
@@ -190,6 +198,7 @@ function GraphCanvasInner({
       />
       <div className={styles.canvasWrapper}>
         <FloatingInput chatCollapsed={chatCollapsed} onSend={onSend ?? (() => {})} isThinking={isThinking} />
+        <FocusContext.Provider value={focusedNodeId}>
         <SteerContext.Provider value={steerCallbackRef.current}>
         <ReactFlow
           nodes={nodes}
@@ -239,6 +248,7 @@ function GraphCanvasInner({
           }} />
         </ReactFlow>
         </SteerContext.Provider>
+        </FocusContext.Provider>
       </div>
     </div>
   );

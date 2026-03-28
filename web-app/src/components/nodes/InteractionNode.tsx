@@ -2,13 +2,15 @@ import { useState } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { GraphNode } from '../../types/graph';
 import { useSteer } from '../../context/SteerContext';
+import { useFocusedNodeId } from '../../context/FocusContext';
 import { BaseCard } from './BaseCard';
 import { MarkdownBody } from './MarkdownBody';
 import styles from '../../styles/nodes.module.css';
 
-export function InteractionNode({ data: rawData, selected }: NodeProps) {
+export function InteractionNode({ id, data: rawData, selected }: NodeProps) {
   const [expanded, setExpanded] = useState(false);
   const onSteer = useSteer();
+  const focusedNodeId = useFocusedNodeId();
   const data = rawData as unknown as GraphNode;
   const nt = data.node_type;
   if (nt.type !== 'Interaction') return null;
@@ -44,6 +46,7 @@ export function InteractionNode({ data: rawData, selected }: NodeProps) {
       selected={selected}
       expanded={expanded}
       onToggleExpand={() => setExpanded(e => !e)}
+      focused={focusedNodeId === id}
     >
       <MarkdownBody content={nt.content ?? ''} maxHeight={320} />
       {nt.token_count != null && (

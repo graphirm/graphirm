@@ -163,3 +163,12 @@
   outline: none;
   min-height: 40px;
 }
+
+.focused {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
+  animation: focusPulse 1.8s ease-in-out infinite;
+}
+@keyframes focusPulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+  50%       { box-shadow: 0 0 0 2px var(--accent), 0 0 0 8px color-mix(in srgb, var(--accent) 15%, transparent); }
+}
