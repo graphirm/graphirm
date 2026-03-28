@@ -23,6 +23,7 @@ import { GroupNode } from './nodes/GroupNode';
 import { LabelledEdge } from './edges/LabelledEdge';
 import { Toolbar } from './Toolbar';
 import { SteerContext } from '../context/SteerContext';
+import { FloatingInput } from './FloatingInput';
 import styles from './GraphCanvas.module.css';
 
 const NODE_TYPES: NodeTypes = {
@@ -47,6 +48,9 @@ interface GraphCanvasProps {
   onSteerFromNode: (nodeId: string) => void;
   onFitViewRef?: (cb: () => void) => void;
   onCycleLayoutRef?: (cb: () => void) => void;
+  chatCollapsed?: boolean;
+  onSend?: (content: string) => void;
+  isThinking?: boolean;
 }
 
 const LAYOUT_CYCLE: LayoutMode[] = ['dagre', 'timeline', 'free'];
@@ -58,6 +62,9 @@ function GraphCanvasInner({
   onSteerFromNode,
   onFitViewRef,
   onCycleLayoutRef,
+  chatCollapsed = false,
+  onSend,
+  isThinking = false,
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -182,6 +189,7 @@ function GraphCanvasInner({
         searchInputRef={searchInputRef}
       />
       <div className={styles.canvasWrapper}>
+        <FloatingInput chatCollapsed={chatCollapsed} onSend={onSend ?? (() => {})} isThinking={isThinking} />
         <SteerContext.Provider value={steerCallbackRef.current}>
         <ReactFlow
           nodes={nodes}

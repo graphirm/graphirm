@@ -105,6 +105,9 @@ export function App() {
           onSteerFromNode={handleSteerFromNode}
           onFitViewRef={cb => { fitViewCb.current = cb; }}
           onCycleLayoutRef={cb => { cycleLayoutCb.current = cb; }}
+          chatCollapsed={chatCollapsed}
+          onSend={handleSendWithSteer}
+          isThinking={isThinking}
         />
       </div>
     </div>

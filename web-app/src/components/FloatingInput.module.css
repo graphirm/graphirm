@@ -1,0 +1,78 @@
+.wrapper {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.hint {
+  pointer-events: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  padding: 8px 16px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.inputBar {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border-hover);
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 400px;
+  gap: 8px;
+}
+
+.input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+}
+
+.input::placeholder {
+  color: var(--fg-muted);
+}
+
+.sendBtn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: var(--text-xs);
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.sendBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.thinkingBadge {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  padding: 2px 8px;
+  white-space: nowrap;
+}
