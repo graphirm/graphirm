@@ -225,17 +225,16 @@ Done 2026-03-28. Manual (dogfood failed 3 sessions — agent looped on relative 
 - Build passes
 Commit: see next commit
 
-#### Focus-and-context zoom — P2 · S
-When a node is selected (click or keyboard navigation), smoothly zoom to show it plus
-its immediate 1-hop neighbors at readable zoom, dimming the rest of the graph. Uses
-React Flow's `fitView({ nodes: [selected, ...neighbors], padding: 0.3, duration: 400 })`.
-Non-focused nodes get `opacity: 0.3` via a CSS class. Clicking empty canvas restores
-full view. Like a spotlight / fog-of-war effect.
+#### ✅ Focus-and-context zoom — P2 · S
 
-**Key files:**
-- `web-app/src/components/GraphCanvas.tsx` — on `onNodeClick`, compute neighbor set from edges, call `fitView` with subset
-- `web-app/src/styles/nodes.module.css` — `.dimmed { opacity: 0.3; transition: opacity 0.2s; }`
-- `web-app/src/hooks/useGraphData.ts` — stamp `className: 'dimmed'` on non-focused nodes when a node is selected
+Done 2026-03-28. Dogfood session b2046968 + manual fixes. Grade: partial.
+- `selectedNodeId` + `onNodeSelect` prop on `GraphCanvas`, wired from `App.tsx`
+- `dimmedNodeIds`: `useMemo` computes 1-hop neighbor set; non-neighbors get `opacity: 0.25`
+- `dimmedEdgeIds`: edges where both endpoints are dimmed also get `opacity: 0.25`
+- `handlePaneClick` clears selection; Escape key listener via `useEffect`
+- Agent doom-looped on GraphCanvas (5 edits); left unused `Edge` import + `handleKeyDown` defined but never attached
+- Manual fixes: removed import, wired handler via `useEffect`
+Commit: `6940b28`
 
 #### Timeline collision avoidance — P3 · S
 Nodes with overlapping X positions (similar `created_at` timestamps) should be
