@@ -51,16 +51,64 @@ pub enum RoutingRule {
 /// is preserved.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelRoutingConfig {
-    /// Model string for cheap/fast turns (e.g. "openrouter/deepseek/deepseek-chat").
-    pub cheap: String,
-    /// Model string for complex/smart turns (e.g. "openrouter/anthropic/claude-sonnet-4").
-    pub smart: String,
+    /// Model strings for cheap/fast turns (e.g. "openrouter/deepseek/deepseek-chat").
+    /// Accepts both a single string (backward compatibility) and an array for fallback chains.
+    #[serde(deserialize_with = "deserialize_model_list")]
+    pub cheap: Vec<String>,
+    /// Model strings for complex/smart turns (e.g. "openrouter/anthropic/claude-sonnet-4").
+    /// Accepts both a single string (backward compatibility) and an array for fallback chains.
+    #[serde(deserialize_with = "deserialize_model_list")]
+    pub smart: Vec<String>,
     /// Which tier to use when no rule matches.
     #[serde(default = "default_tier")]
     pub default_tier: ModelTier,
     /// Ordered list of routing rules. First match wins.
     #[serde(default)]
     pub rules: Vec<RoutingRule>,
+}
+
+/// Deserializer that accepts both a single string and an array of strings,
+/// converting a single string into a one-element vector for backward compatibility.
+fn deserialize_model_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct ModelListVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for ModelListVisitor {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or an array of strings")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(vec![v.to_string()])
+        }
+
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(vec![v])
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let mut vec = Vec::new();
+            while let Some(elem) = seq.next_element()? {
+                vec.push(elem);
+            }
+            Ok(vec)
+        }
+    }
+
+    deserializer.deserialize_any(ModelListVisitor)
 }
 
 fn default_tier() -> ModelTier {
@@ -81,18 +129,34 @@ impl ModelRoutingConfig {
     /// - `"deepseek/deepseek-chat"` → `"deepseek-chat"`
     /// - `"just-a-model"` → `"just-a-model"` (no prefix, returned as-is)
     pub fn model_for_tier(&self, tier: ModelTier) -> &str {
-        let raw = match tier {
+        let models = match tier {
             ModelTier::Cheap => &self.cheap,
             ModelTier::Smart => &self.smart,
         };
+        // Return first model in the list (fallback chain)
+        let raw = models.first().expect("model list should not be empty");
         raw.split_once('/').map(|x| x.1).unwrap_or(raw.as_str())
+    }
+
+    /// Get all models for a given tier (for fallback iteration).
+    pub fn models_for_tier(&self, tier: ModelTier) -> &[String] {
+        match tier {
+            ModelTier::Cheap => &self.cheap,
+            ModelTier::Smart => &self.smart,
+        }
     }
 
     /// Check whether both tiers use the same provider backend.
     pub fn same_provider(&self) -> bool {
-        let cheap_provider = self.cheap.split('/').next().unwrap_or("");
-        let smart_provider = self.smart.split('/').next().unwrap_or("");
-        cheap_provider == smart_provider
+        // Check that all models across both vecs share the same provider prefix
+        let mut all_providers = std::collections::HashSet::new();
+
+        for model in self.cheap.iter().chain(self.smart.iter()) {
+            let provider = model.split('/').next().unwrap_or("");
+            all_providers.insert(provider);
+        }
+
+        all_providers.len() == 1
     }
 }
 
@@ -170,14 +234,22 @@ impl<'a> ModelRouter<'a> {
     }
 }
 
+/// Records a failed attempt at using a particular model during fallback retry.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FallbackAttempt {
+    pub model: String,
+    pub error: String,
+    pub latency_ms: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn test_config() -> ModelRoutingConfig {
         ModelRoutingConfig {
-            cheap: "openrouter/deepseek/deepseek-chat".into(),
-            smart: "openrouter/anthropic/claude-sonnet-4".into(),
+            cheap: vec!["openrouter/deepseek/deepseek-chat".into()],
+            smart: vec!["openrouter/anthropic/claude-sonnet-4".into()],
             default_tier: ModelTier::Cheap,
             rules: vec![
                 RoutingRule::FirstTurn {
@@ -303,8 +375,8 @@ mod tests {
     #[test]
     fn empty_rules_uses_default() {
         let cfg = ModelRoutingConfig {
-            cheap: "cheap-model".into(),
-            smart: "smart-model".into(),
+            cheap: vec!["cheap-model".into()],
+            smart: vec!["smart-model".into()],
             default_tier: ModelTier::Smart,
             rules: vec![],
         };
@@ -367,8 +439,8 @@ mod tests {
             tier = "smart"
         "#;
         let cfg: ModelRoutingConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(cfg.cheap, "deepseek/deepseek-chat");
-        assert_eq!(cfg.smart, "anthropic/claude-sonnet-4");
+        assert_eq!(cfg.cheap, vec!["deepseek/deepseek-chat".to_string()]);
+        assert_eq!(cfg.smart, vec!["anthropic/claude-sonnet-4".to_string()]);
         assert_eq!(cfg.default_tier, ModelTier::Cheap);
         assert_eq!(cfg.rules.len(), 5);
     }
@@ -376,12 +448,15 @@ mod tests {
     #[test]
     fn model_for_tier_strips_provider_prefix() {
         let cfg = ModelRoutingConfig {
-            cheap: "openrouter/qwen/qwen3-coder:free".into(),
-            smart: "openrouter/anthropic/claude-sonnet-4".into(),
+            cheap: vec!["openrouter/qwen/qwen3-coder:free".into()],
+            smart: vec!["openrouter/anthropic/claude-sonnet-4".into()],
             default_tier: ModelTier::Cheap,
             rules: vec![],
         };
-        assert_eq!(cfg.model_for_tier(ModelTier::Cheap), "qwen/qwen3-coder:free");
+        assert_eq!(
+            cfg.model_for_tier(ModelTier::Cheap),
+            "qwen/qwen3-coder:free"
+        );
         assert_eq!(
             cfg.model_for_tier(ModelTier::Smart),
             "anthropic/claude-sonnet-4"
@@ -392,8 +467,8 @@ mod tests {
     fn model_for_tier_no_prefix_passthrough() {
         // Model strings without a leading provider/ segment are returned as-is.
         let cfg = ModelRoutingConfig {
-            cheap: "just-a-model".into(),
-            smart: "another-model".into(),
+            cheap: vec!["just-a-model".into()],
+            smart: vec!["another-model".into()],
             default_tier: ModelTier::Cheap,
             rules: vec![],
         };
@@ -404,8 +479,8 @@ mod tests {
     #[test]
     fn same_provider_both_openrouter() {
         let cfg = ModelRoutingConfig {
-            cheap: "openrouter/deepseek/deepseek-chat".into(),
-            smart: "openrouter/anthropic/claude-sonnet-4".into(),
+            cheap: vec!["openrouter/deepseek/deepseek-chat".into()],
+            smart: vec!["openrouter/anthropic/claude-sonnet-4".into()],
             default_tier: ModelTier::Cheap,
             rules: vec![],
         };
@@ -415,8 +490,8 @@ mod tests {
     #[test]
     fn same_provider_different_backends() {
         let cfg = ModelRoutingConfig {
-            cheap: "deepseek/deepseek-chat".into(),
-            smart: "anthropic/claude-sonnet-4".into(),
+            cheap: vec!["deepseek/deepseek-chat".into()],
+            smart: vec!["anthropic/claude-sonnet-4".into()],
             default_tier: ModelTier::Cheap,
             rules: vec![],
         };
@@ -426,8 +501,8 @@ mod tests {
     #[test]
     fn phase_match_planning_selects_smart() {
         let cfg = ModelRoutingConfig {
-            cheap: "cheap".into(),
-            smart: "smart".into(),
+            cheap: vec!["cheap".into()],
+            smart: vec!["smart".into()],
             default_tier: ModelTier::Cheap,
             rules: vec![RoutingRule::PhaseMatch {
                 phase: TaskPhase::Planning,
@@ -450,8 +525,8 @@ mod tests {
     #[test]
     fn phase_match_implementation_selects_cheap() {
         let cfg = ModelRoutingConfig {
-            cheap: "cheap".into(),
-            smart: "smart".into(),
+            cheap: vec!["cheap".into()],
+            smart: vec!["smart".into()],
             default_tier: ModelTier::Smart,
             rules: vec![RoutingRule::PhaseMatch {
                 phase: TaskPhase::Implementation,
@@ -474,8 +549,8 @@ mod tests {
     #[test]
     fn phase_match_verification_selects_smart() {
         let cfg = ModelRoutingConfig {
-            cheap: "cheap".into(),
-            smart: "smart".into(),
+            cheap: vec!["cheap".into()],
+            smart: vec!["smart".into()],
             default_tier: ModelTier::Cheap,
             rules: vec![RoutingRule::PhaseMatch {
                 phase: TaskPhase::Verification,
@@ -498,8 +573,8 @@ mod tests {
     #[test]
     fn phase_match_wrong_phase_falls_through() {
         let cfg = ModelRoutingConfig {
-            cheap: "cheap".into(),
-            smart: "smart".into(),
+            cheap: vec!["cheap".into()],
+            smart: vec!["smart".into()],
             default_tier: ModelTier::Cheap,
             rules: vec![RoutingRule::PhaseMatch {
                 phase: TaskPhase::Verification,
@@ -545,15 +620,24 @@ mod tests {
         assert_eq!(cfg.rules.len(), 3);
         assert!(matches!(
             &cfg.rules[0],
-            RoutingRule::PhaseMatch { phase: TaskPhase::Planning, tier: ModelTier::Smart }
+            RoutingRule::PhaseMatch {
+                phase: TaskPhase::Planning,
+                tier: ModelTier::Smart
+            }
         ));
         assert!(matches!(
             &cfg.rules[1],
-            RoutingRule::PhaseMatch { phase: TaskPhase::Implementation, tier: ModelTier::Cheap }
+            RoutingRule::PhaseMatch {
+                phase: TaskPhase::Implementation,
+                tier: ModelTier::Cheap
+            }
         ));
         assert!(matches!(
             &cfg.rules[2],
-            RoutingRule::PhaseMatch { phase: TaskPhase::Verification, tier: ModelTier::Smart }
+            RoutingRule::PhaseMatch {
+                phase: TaskPhase::Verification,
+                tier: ModelTier::Smart
+            }
         ));
     }
 }

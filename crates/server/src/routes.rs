@@ -23,9 +23,9 @@ use crate::state::{AppState, SessionHandle};
 use crate::types::{
     AnnotationRequest, AutoApproveRequest, ContextReportRow, CreateKnowledgeRequest,
     CreateSessionRequest, ExportQuery, GraphResponse, HealthResponse, NodeAction,
-    NodeActionRequest, PinnedKnowledgeQuery, PromptRequest, RateTurnRequest,
-    RenameSessionRequest, SessionId, SessionResponse, SessionStatus, SseEvent, SseEventType,
-    StrategyReport, SubgraphQuery,
+    NodeActionRequest, PinnedKnowledgeQuery, PromptRequest, RateTurnRequest, RenameSessionRequest,
+    SessionId, SessionResponse, SessionStatus, SseEvent, SseEventType, StrategyReport,
+    SubgraphQuery,
 };
 
 /// Build a brief workspace context block to inject into the system prompt.
@@ -235,8 +235,8 @@ async fn create_session(
         && !routing.same_provider()
     {
         tracing::warn!(
-            cheap = %routing.cheap,
-            smart = %routing.smart,
+            cheap = ?routing.cheap,
+            smart = ?routing.smart,
             "model routing tiers use different providers — routing disabled, using single model"
         );
         config.model_routing = None;
@@ -985,11 +985,15 @@ async fn rate_turn(
     let graph = state.graph.clone();
     let node_id = NodeId(turn_id.clone());
     tokio::task::spawn_blocking(move || {
-        let mut node = graph.get_node(&node_id).map_err(|_| StatusCode::NOT_FOUND)?;
+        let mut node = graph
+            .get_node(&node_id)
+            .map_err(|_| StatusCode::NOT_FOUND)?;
         if let serde_json::Value::Object(ref mut map) = node.metadata {
             map.insert("user_rating".to_string(), serde_json::json!(body.rating));
         }
-        graph.update_node(&node_id, node).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        graph
+            .update_node(&node_id, node)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         Ok::<_, StatusCode>(())
     })
     .await
@@ -1097,9 +1101,7 @@ fn build_routing_report(graph: &graphirm_graph::GraphStore) -> Vec<StrategyRepor
             .and_then(|v| v.as_u64())
             .map(|e| e > 0)
             .unwrap_or(false);
-        let rating = meta
-            .get("user_rating")
-            .and_then(|v| v.as_f64());
+        let rating = meta.get("user_rating").and_then(|v| v.as_f64());
 
         let entry = groups.entry(strategy).or_insert((0, 0, 0, 0, 0, vec![]));
         entry.0 += 1;
@@ -1116,23 +1118,25 @@ fn build_routing_report(graph: &graphirm_graph::GraphStore) -> Vec<StrategyRepor
 
     let mut reports: Vec<StrategyReport> = groups
         .into_iter()
-        .map(|(strategy_name, (count, input, output, latency, errors, ratings))| {
-            let n = count as f64;
-            let avg_user_rating = if ratings.is_empty() {
-                None
-            } else {
-                Some(ratings.iter().sum::<f64>() / ratings.len() as f64)
-            };
-            StrategyReport {
-                strategy_name,
-                turn_count: count,
-                avg_input_tokens: input as f64 / n,
-                avg_output_tokens: output as f64 / n,
-                avg_latency_ms: latency as f64 / n,
-                error_rate: errors as f64 / n,
-                avg_user_rating,
-            }
-        })
+        .map(
+            |(strategy_name, (count, input, output, latency, errors, ratings))| {
+                let n = count as f64;
+                let avg_user_rating = if ratings.is_empty() {
+                    None
+                } else {
+                    Some(ratings.iter().sum::<f64>() / ratings.len() as f64)
+                };
+                StrategyReport {
+                    strategy_name,
+                    turn_count: count,
+                    avg_input_tokens: input as f64 / n,
+                    avg_output_tokens: output as f64 / n,
+                    avg_latency_ms: latency as f64 / n,
+                    error_rate: errors as f64 / n,
+                    avg_user_rating,
+                }
+            },
+        )
         .collect();
     reports.sort_by(|a, b| b.turn_count.cmp(&a.turn_count));
     reports

@@ -43,12 +43,14 @@ fn build_named(
 }
 
 fn build_rule_router(routing_config: Option<&ModelRoutingConfig>) -> Arc<dyn RoutingStrategy> {
-    let config = routing_config.cloned().unwrap_or_else(|| ModelRoutingConfig {
-        cheap: "deepseek/deepseek-chat".into(),
-        smart: "deepseek/deepseek-chat".into(),
-        default_tier: ModelTier::Cheap,
-        rules: vec![],
-    });
+    let config = routing_config
+        .cloned()
+        .unwrap_or_else(|| ModelRoutingConfig {
+            cheap: vec!["deepseek/deepseek-chat".into()],
+            smart: vec!["deepseek/deepseek-chat".into()],
+            default_tier: ModelTier::Cheap,
+            rules: vec![],
+        });
     Arc::new(RuleRouter::new(config))
 }
 
@@ -74,7 +76,11 @@ pub fn candidates_from_config(
             .iter()
             .map(|c| ModelCandidate {
                 model: c.model.clone(),
-                tier: if c.tier == "smart" { ModelTier::Smart } else { ModelTier::Cheap },
+                tier: if c.tier == "smart" {
+                    ModelTier::Smart
+                } else {
+                    ModelTier::Cheap
+                },
                 cost_per_1k_input: c.cost_per_1k_input,
                 cost_per_1k_output: c.cost_per_1k_output,
                 avg_latency_ms: c.avg_latency_ms,

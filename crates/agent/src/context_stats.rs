@@ -57,9 +57,17 @@ mod tests {
         let parsed: ContextStats = serde_json::from_str(&json).unwrap();
 
         assert_eq!(stats.knowledge_count, parsed.knowledge_count);
-        assert_eq!(stats.cross_session_links_count, parsed.cross_session_links_count);
-        assert_eq!(stats.pinned_conventions_count, parsed.pinned_conventions_count);
-        assert!((stats.graph_token_percentage - parsed.graph_token_percentage).abs() < f64::EPSILON);
+        assert_eq!(
+            stats.cross_session_links_count,
+            parsed.cross_session_links_count
+        );
+        assert_eq!(
+            stats.pinned_conventions_count,
+            parsed.pinned_conventions_count
+        );
+        assert!(
+            (stats.graph_token_percentage - parsed.graph_token_percentage).abs() < f64::EPSILON
+        );
         assert_eq!(stats.repo_briefing_included, parsed.repo_briefing_included);
         assert_eq!(stats.compaction_triggered, parsed.compaction_triggered);
     }

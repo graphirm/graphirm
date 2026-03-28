@@ -78,10 +78,7 @@ impl Tool for ContextReportTool {
             .ok_or_else(|| ToolError::InvalidArguments("session_id is required".into()))?
             .to_string();
 
-        let limit = params
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(50) as usize;
+        let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
 
         let graph = ctx.graph.clone();
 
@@ -103,10 +100,10 @@ impl Tool for ContextReportTool {
                     && v.is_object()
                 {
                     total_knowledge += stat_u64(v, "knowledge_count");
-                        total_cross += stat_u64(v, "cross_session_links_count");
-                        total_pinned += stat_u64(v, "pinned_conventions_count");
-                        total_token_pct += stat_f64(v, "graph_token_percentage");
-                        if stat_bool(v, "compaction_triggered") {
+                    total_cross += stat_u64(v, "cross_session_links_count");
+                    total_pinned += stat_u64(v, "pinned_conventions_count");
+                    total_token_pct += stat_f64(v, "graph_token_percentage");
+                    if stat_bool(v, "compaction_triggered") {
                         compaction_count += 1;
                     }
                     if stat_bool(v, "repo_briefing_included") {

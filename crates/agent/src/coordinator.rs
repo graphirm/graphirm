@@ -93,14 +93,7 @@ impl Coordinator {
 
         let llm: Arc<dyn graphirm_llm::LlmProvider> =
             Arc::from((self.llm_factory)(&primary_config.model));
-        run_agent_loop(
-            &session,
-            llm,
-            &primary_tools,
-            &self.events,
-            &cancel,
-        )
-        .await?;
+        run_agent_loop(&session, llm, &primary_tools, &self.events, &cancel).await?;
 
         Ok(session.id)
     }

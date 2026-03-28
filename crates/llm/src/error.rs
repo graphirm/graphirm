@@ -37,6 +37,14 @@ impl LlmError {
     pub fn config(msg: impl Into<String>) -> Self {
         Self::Config(msg.into())
     }
+
+    /// Whether this error is transient and worth retrying with a fallback model.
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::RateLimited { .. } | Self::Provider(_) | Self::Stream(_) | Self::Request(_)
+        )
+    }
 }
 
 #[cfg(test)]
@@ -86,5 +94,24 @@ mod tests {
     fn test_error_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<LlmError>();
+    }
+
+    #[test]
+    fn retryable_errors() {
+        assert!(
+            LlmError::RateLimited {
+                retry_after_ms: 1000
+            }
+            .is_retryable()
+        );
+        assert!(LlmError::provider("503 Service Unavailable").is_retryable());
+        assert!(LlmError::stream("connection reset").is_retryable());
+        assert!(LlmError::Request("timeout".into()).is_retryable());
+    }
+
+    #[test]
+    fn non_retryable_errors() {
+        assert!(!LlmError::invalid_model("bad-model").is_retryable());
+        assert!(!LlmError::config("missing key").is_retryable());
     }
 }

@@ -168,6 +168,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 44 | Token/time budget awareness — in `stream_and_record`, after context is built, computes `usage_ratio = window.total_tokens / max_tok`; appends one-line warning to system message when highest crossed threshold found in `budget_warning_thresholds` (default [0.7, 0.9]); two tiers: <90% wrap-up nudge, ≥90% stop-new-tasks warning | ✅ done |
 | 45 | Structured work loop enforcement — `enforce_work_loop: bool` (default true); `create_session` appends "## Problem-Solving Framework" (Plan→Build→Verify→Fix) to system prompt; explicit instruction to transition from Plan to Build after ≤2 messages | ✅ done |
 | 46 | Phase-aware reasoning budget — `TaskPhase` enum (Planning/Implementation/Verification) in `TurnSignals`; `RoutingRule::PhaseMatch` for "reasoning sandwich" routing; `infer_task_phase()` from chain tool_name metadata; 5 new tests | ✅ done |
+| 47 | Model fallback chain — `cheap`/`smart` tiers accept `String \| Vec<String>` (custom serde deserializer); `models_for_tier()` returns full array; `LlmError::is_retryable()`; retry loop in `stream_and_record`; `FallbackAttempt` metadata on Interaction nodes; `same_provider()` validates all models | ✅ done |
 
 **Phases 42–46 — Harness Engineering (agent loop reliability):**
 - **Pre-completion verify (42):** `verify_injected: bool` in `run_agent_loop`; fires once when `pre_completion_verify && had_write_calls && !verify_injected`; injects user message with 5-point checklist. Config: `pre_completion_verify = true` in `default.toml`. Tests using mock providers set `pre_completion_verify: false`. `had_write_calls` (distinct from `had_tool_calls`) prevents premature firing on read-only planning turns.
@@ -175,6 +176,17 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - **Budget awareness (44):** In `stream_and_record`, after context is assembled, computes `usage_ratio = window.total_tokens as f64 / max_tok as f64`; finds highest crossed threshold via `fold(NEG_INFINITY, f64::max)`; appends `ContentPart::text(warning)` to `context[0]` (system message). Config: `budget_warning_thresholds: Vec<f64>` (default [0.7, 0.9]; empty list disables; example commented out in `default.toml`).
 - **Structured work loop (45):** `enforce_work_loop: bool` (default true). In `create_session` (routes.rs), appends "## Problem-Solving Framework" (Plan→Build→Verify→Fix) to `config.system_prompt` after the repo briefing. Explicit instruction: transition from Plan to Build after at most 2 messages. Config: `enforce_work_loop = true` in `default.toml`.
 - **Phase-aware reasoning budget (46):** `TaskPhase` enum (Planning/Implementation/Verification) in `router.rs`; `task_phase: TaskPhase` added to `TurnSignals`; `RoutingRule::PhaseMatch { phase, tier }` enables the "reasoning sandwich" (smart→cheap→smart). `infer_task_phase(&chain)` inspects `tool_name` metadata on tool result nodes: no write/edit → Planning; write/edit exist but last 5 calls are all read-only → Verification; else Implementation. Wired into both adaptive and legacy `spawn_blocking` blocks in `stream_and_record`. Config: add `PhaseMatch` rules to `[[agent.routing.rules]]`.
+
+**Model fallback chain (Phase 47):**
+- `crates/agent/src/router.rs` — `ModelRoutingConfig.cheap`/`smart` changed from `String` to `Vec<String>` with `#[serde(deserialize_with = "deserialize_model_list")]`; custom deserializer accepts both `"model"` and `["model1", "model2"]` for backward compatibility
+- `model_for_tier(tier)` returns first model (index 0) with provider prefix stripped; `models_for_tier(tier) -> &[String]` returns full array for fallback iteration
+- `same_provider()` checks ALL models across both vecs share the same provider prefix (uses `HashSet`)
+- `FallbackAttempt { model, error, latency_ms }` — `Serialize` struct recorded per failed attempt
+- `crates/llm/src/error.rs` — `LlmError::is_retryable()`: `RateLimited`, `Provider`, `Stream`, `Request` → retryable; `InvalidModel`, `Config`, `Serde` → non-retryable
+- `crates/agent/src/workflow.rs` — `stream_and_record` retry loop: on retryable error, logs warning + pushes `FallbackAttempt`, tries next model in tier array; non-retryable errors or last model → immediate return
+- `fallback_chain` metadata persisted on Interaction node when non-empty (model, error string, latency per attempt)
+- Config: `cheap = ["model1", "model2"]` or `cheap = "model"` (backward compat) in `[agent.routing]`
+- 2 new tests for `is_retryable`; all existing router/strategy tests updated for `Vec<String>`; clippy clean
 
 **Phase 37 — Graph Context Utilization Telemetry:**
 - **Phase 37a (foundation):** `ContextStats` struct with 6 fields (knowledge_count, cross_session_links_count, pinned_conventions_count, graph_token_percentage, repo_briefing_included, compaction_triggered); Serialize/Deserialize; 4 unit tests; registered as public module in `graphirm-agent` (commit 69faf79)

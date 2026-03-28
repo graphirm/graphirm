@@ -52,10 +52,26 @@ impl ObjectiveWeights {
     /// Built-in presets.
     pub fn preset(name: &str) -> Self {
         match name {
-            "cost_focused" => Self { cost_weight: 0.7, quality_weight: 0.2, speed_weight: 0.1 },
-            "quality_first" => Self { cost_weight: 0.1, quality_weight: 0.7, speed_weight: 0.2 },
-            "speed" => Self { cost_weight: 0.2, quality_weight: 0.2, speed_weight: 0.6 },
-            _ => Self { cost_weight: 0.4, quality_weight: 0.4, speed_weight: 0.2 }, // balanced
+            "cost_focused" => Self {
+                cost_weight: 0.7,
+                quality_weight: 0.2,
+                speed_weight: 0.1,
+            },
+            "quality_first" => Self {
+                cost_weight: 0.1,
+                quality_weight: 0.7,
+                speed_weight: 0.2,
+            },
+            "speed" => Self {
+                cost_weight: 0.2,
+                quality_weight: 0.2,
+                speed_weight: 0.6,
+            },
+            _ => Self {
+                cost_weight: 0.4,
+                quality_weight: 0.4,
+                speed_weight: 0.2,
+            }, // balanced
         }
     }
 
@@ -195,7 +211,11 @@ mod tests {
 
     #[test]
     fn objective_weights_normalize() {
-        let w = ObjectiveWeights { cost_weight: 2.0, quality_weight: 2.0, speed_weight: 1.0 };
+        let w = ObjectiveWeights {
+            cost_weight: 2.0,
+            quality_weight: 2.0,
+            speed_weight: 1.0,
+        };
         let n = w.normalized();
         assert!((n.cost_weight - 0.4).abs() < 1e-9);
         assert!((n.speed_weight - 0.2).abs() < 1e-9);

@@ -990,8 +990,8 @@ segment_filter = ["reasoning", "code"]
         "#;
         let config = AgentConfig::from_toml(toml).unwrap();
         let routing = config.model_routing.unwrap();
-        assert_eq!(routing.cheap, "deepseek/deepseek-chat");
-        assert_eq!(routing.smart, "anthropic/claude-sonnet-4");
+        assert_eq!(routing.cheap, vec!["deepseek/deepseek-chat".to_string()]);
+        assert_eq!(routing.smart, vec!["anthropic/claude-sonnet-4".to_string()]);
         assert_eq!(routing.rules.len(), 1);
     }
 
@@ -1027,7 +1027,10 @@ segment_filter = ["reasoning", "code"]
         let config = AgentConfig::from_toml(toml).unwrap();
         let ar = config.adaptive_routing.unwrap();
         assert_eq!(ar.strategy, "experiment");
-        assert_eq!(ar.objective.as_ref().unwrap().preset.as_deref(), Some("cost_focused"));
+        assert_eq!(
+            ar.objective.as_ref().unwrap().preset.as_deref(),
+            Some("cost_focused")
+        );
         assert!((ar.experiment.as_ref().unwrap().split - 0.6).abs() < 1e-9);
     }
 }

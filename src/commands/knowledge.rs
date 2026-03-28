@@ -19,7 +19,10 @@ pub fn run(action: KnowledgeAction, db_path: &Path) -> Result<(), GraphirmError>
                             let mut obj = serde_json::Map::new();
                             obj.insert("id".to_string(), serde_json::json!(node.id.0));
                             obj.insert("entity".to_string(), serde_json::json!(kd.entity));
-                            obj.insert("entity_type".to_string(), serde_json::json!(kd.entity_type));
+                            obj.insert(
+                                "entity_type".to_string(),
+                                serde_json::json!(kd.entity_type),
+                            );
                             obj.insert("summary".to_string(), serde_json::json!(kd.summary));
                             obj.insert("confidence".to_string(), serde_json::json!(kd.confidence));
                             Some(serde_json::Value::Object(obj))

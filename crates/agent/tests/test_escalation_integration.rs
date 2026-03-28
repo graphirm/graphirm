@@ -121,9 +121,14 @@ async fn test_agent_loop_soft_escalation_prevents_repeated_reads() {
     let cancel = CancellationToken::new();
 
     // Run the agent loop
-    let result =
-        graphirm_agent::workflow::run_agent_loop(&session, Arc::new(provider), &tools, &events, &cancel)
-            .await;
+    let result = graphirm_agent::workflow::run_agent_loop(
+        &session,
+        Arc::new(provider),
+        &tools,
+        &events,
+        &cancel,
+    )
+    .await;
 
     // Assert: should succeed (escalation triggered, model synthesized)
     assert!(
@@ -190,9 +195,14 @@ async fn test_agent_loop_hard_limit_if_model_ignores_synthesis() {
     let cancel = CancellationToken::new();
 
     // Run the agent loop
-    let result =
-        graphirm_agent::workflow::run_agent_loop(&session, Arc::new(provider), &tools, &events, &cancel)
-            .await;
+    let result = graphirm_agent::workflow::run_agent_loop(
+        &session,
+        Arc::new(provider),
+        &tools,
+        &events,
+        &cancel,
+    )
+    .await;
 
     // Assert: should fail with RecursionLimit
     assert!(
@@ -263,9 +273,14 @@ async fn test_soft_escalation_respects_turn_threshold() {
     let events = EventBus::new();
     let cancel = CancellationToken::new();
 
-    let result =
-        graphirm_agent::workflow::run_agent_loop(&session, Arc::new(provider), &tools, &events, &cancel)
-            .await;
+    let result = graphirm_agent::workflow::run_agent_loop(
+        &session,
+        Arc::new(provider),
+        &tools,
+        &events,
+        &cancel,
+    )
+    .await;
 
     // Should succeed — escalation checks don't apply before turn 10
     assert!(result.is_ok());

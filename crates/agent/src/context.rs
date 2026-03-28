@@ -1528,11 +1528,7 @@ mod tests {
         let kn_id = kn.id.clone();
         graph.add_node(kn).unwrap();
         graph
-            .add_edge(GraphEdge::new(
-                EdgeType::Reads,
-                user_id.clone(),
-                kn_id,
-            ))
+            .add_edge(GraphEdge::new(EdgeType::Reads, user_id.clone(), kn_id))
             .unwrap();
 
         let config = ContextConfig {
@@ -1585,11 +1581,7 @@ mod tests {
         let kn_id = kn.id.clone();
         graph.add_node(kn).unwrap();
         graph
-            .add_edge(GraphEdge::new(
-                EdgeType::Reads,
-                user_id,
-                kn_id,
-            ))
+            .add_edge(GraphEdge::new(EdgeType::Reads, user_id, kn_id))
             .unwrap();
 
         let config = ContextConfig {
@@ -1659,11 +1651,7 @@ mod tests {
             ))
             .unwrap();
         graph
-            .add_edge(GraphEdge::new(
-                EdgeType::Reads,
-                user_id,
-                local_id,
-            ))
+            .add_edge(GraphEdge::new(EdgeType::Reads, user_id, local_id))
             .unwrap();
 
         let config = ContextConfig {
@@ -1715,11 +1703,7 @@ mod tests {
             let kn_id = kn.id.clone();
             graph.add_node(kn).unwrap();
             graph
-                .add_edge(GraphEdge::new(
-                    EdgeType::Reads,
-                    user_id.clone(),
-                    kn_id,
-                ))
+                .add_edge(GraphEdge::new(EdgeType::Reads, user_id.clone(), kn_id))
                 .unwrap();
         }
 
@@ -1771,11 +1755,7 @@ mod tests {
         let file_id = file.id.clone();
         graph.add_node(file).unwrap();
         graph
-            .add_edge(GraphEdge::new(
-                EdgeType::Reads,
-                user_id,
-                file_id,
-            ))
+            .add_edge(GraphEdge::new(EdgeType::Reads, user_id, file_id))
             .unwrap();
 
         let config = ContextConfig {

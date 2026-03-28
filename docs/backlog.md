@@ -584,3 +584,5 @@ clean commit history, GitHub topics/description. Required before any public visi
 | 14 | Per-session workspaces (`workspaces_root`, named dirs, graph persistence, restart restore) |
 | 19 | Subagent workspace isolation + diff/read_many tools |
 | 20–33 | Graph search/filter, session export, graph-aware tools, graph_diff, repo briefing, session traces, lessons briefing, auto-compaction, design system, read truncate, SQLite indices, node cache, cursor import, SQL fast paths, agent cache, pinned knowledge |
+| 34–46 | Model router, `main.rs` extraction, adaptive router (strategies, A/B), context telemetry, agent continuity, pre-completion verify, doom loop, budget awareness, work loop, phase-aware routing |
+| 47 | Model fallback chain — ordered array of models per routing tier with retry on retryable LLM errors |

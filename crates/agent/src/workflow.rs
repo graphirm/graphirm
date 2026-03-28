@@ -144,7 +144,11 @@ pub async fn stream_and_record(
                     .content
                     .push(graphirm_llm::ContentPart::text(warning));
             }
-            tracing::info!(usage_ratio, pct, "Budget warning appended to system message");
+            tracing::info!(
+                usage_ratio,
+                pct,
+                "Budget warning appended to system message"
+            );
         }
     }
 
@@ -156,7 +160,7 @@ pub async fn stream_and_record(
 
     // Model routing: select cheap or smart model based on session signals.
     // Prefer adaptive strategy when configured; fall back to legacy static router.
-    let (selected_model, routing_outcome) = if let Some(ref ar_config) =
+    let (mut selected_model, routing_outcome) = if let Some(ref ar_config) =
         session.agent_config.adaptive_routing
     {
         let t_route_start = std::time::Instant::now();
@@ -233,7 +237,10 @@ pub async fn stream_and_record(
             "adaptive router selected"
         );
 
-        (decision.model.clone(), Some((decision, routing_decision_ms)))
+        (
+            decision.model.clone(),
+            Some((decision, routing_decision_ms)),
+        )
     } else if let Some(ref routing) = session.agent_config.model_routing {
         // Legacy static router — preserved for backward compat.
         let turn_number = session.current_turn();
@@ -292,16 +299,70 @@ pub async fn stream_and_record(
         (session.agent_config.model.clone(), None)
     };
 
-    let config = CompletionConfig::new(&selected_model)
-        .with_max_tokens(
-            session
-                .agent_config
-                .max_output_tokens
-                .unwrap_or(session.agent_config.max_tokens.unwrap_or(8192)),
-        )
-        .with_temperature(session.agent_config.temperature.unwrap_or(0.7));
+    let max_output = session
+        .agent_config
+        .max_output_tokens
+        .unwrap_or(session.agent_config.max_tokens.unwrap_or(8192));
+    let temperature = session.agent_config.temperature.unwrap_or(0.7);
 
-    let response = llm.complete(context, &tool_defs, &config).await?;
+    // Build fallback model list for the selected tier.
+    let fallback_models: Vec<String> = routing_outcome
+        .as_ref()
+        .and_then(|(decision, _)| {
+            session.agent_config.model_routing.as_ref().map(|routing| {
+                routing
+                    .models_for_tier(decision.tier)
+                    .iter()
+                    .map(|m| {
+                        m.split_once('/')
+                            .map(|x| x.1)
+                            .unwrap_or(m.as_str())
+                            .to_string()
+                    })
+                    .collect()
+            })
+        })
+        .unwrap_or_else(|| vec![selected_model.clone()]);
+
+    let mut fallback_chain: Vec<crate::router::FallbackAttempt> = Vec::new();
+    let mut response = None;
+
+    for (i, model) in fallback_models.iter().enumerate() {
+        let is_last = i == fallback_models.len() - 1;
+        let comp_config = CompletionConfig::new(model)
+            .with_max_tokens(max_output)
+            .with_temperature(temperature);
+        let start = std::time::Instant::now();
+        match llm
+            .complete(context.clone(), &tool_defs, &comp_config)
+            .await
+        {
+            Ok(resp) => {
+                if i > 0 {
+                    selected_model = model.clone();
+                }
+                response = Some(resp);
+                break;
+            }
+            Err(e) if e.is_retryable() && !is_last => {
+                let latency_ms = start.elapsed().as_millis() as u64;
+                tracing::warn!(
+                    model,
+                    error = %e,
+                    attempt = i + 1,
+                    "LLM call failed, trying next fallback model"
+                );
+                fallback_chain.push(crate::router::FallbackAttempt {
+                    model: model.clone(),
+                    error: e.to_string(),
+                    latency_ms,
+                });
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    let response = response.expect("fallback loop must produce a response or return an error");
 
     // Build metadata to persist tool_calls so build_context can reconstruct them
     let mut metadata = serde_json::Map::new();
@@ -342,22 +403,38 @@ pub async fn stream_and_record(
         serde_json::to_value(&context_stats).unwrap_or(serde_json::Value::Null),
     );
 
+    if !fallback_chain.is_empty() {
+        metadata.insert(
+            "fallback_chain".to_string(),
+            serde_json::to_value(&fallback_chain).unwrap_or_default(),
+        );
+    }
+
     if let Some((ref decision, decision_ms)) = routing_outcome {
         metadata.insert(
             "model_tier".to_string(),
             serde_json::json!(format!("{:?}", decision.tier).to_lowercase()),
         );
-        metadata.insert("model_selected".to_string(), serde_json::json!(&selected_model));
+        metadata.insert(
+            "model_selected".to_string(),
+            serde_json::json!(&selected_model),
+        );
         metadata.insert(
             "routing_strategy".to_string(),
             serde_json::json!(&decision.strategy_name),
         );
-        metadata.insert("routing_reason".to_string(), serde_json::json!(&decision.reason));
+        metadata.insert(
+            "routing_reason".to_string(),
+            serde_json::json!(&decision.reason),
+        );
         metadata.insert(
             "routing_confidence".to_string(),
             serde_json::json!(decision.confidence),
         );
-        metadata.insert("routing_decision_ms".to_string(), serde_json::json!(decision_ms));
+        metadata.insert(
+            "routing_decision_ms".to_string(),
+            serde_json::json!(decision_ms),
+        );
     }
 
     let mut interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
@@ -1001,17 +1078,26 @@ fn infer_task_phase(chain: &[graphirm_graph::nodes::GraphNode]) -> crate::router
         .filter_map(|n| n.metadata.get("tool_name").and_then(|v| v.as_str()))
         .collect();
 
-    let has_write_calls = tool_names
-        .iter()
-        .any(|&n| matches!(n, "write" | "edit"));
+    let has_write_calls = tool_names.iter().any(|&n| matches!(n, "write" | "edit"));
 
     if !has_write_calls {
         return TaskPhase::Planning;
     }
 
     // Check whether recent tool calls (last 5) are all read-only.
-    let read_only_tools = ["bash", "read", "grep", "find", "ls", "graph_query",
-                           "repo_briefing", "session_trace", "graph_diff", "diff", "read_many"];
+    let read_only_tools = [
+        "bash",
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "graph_query",
+        "repo_briefing",
+        "session_trace",
+        "graph_diff",
+        "diff",
+        "read_many",
+    ];
     let recent: Vec<&str> = tool_names.iter().rev().take(5).copied().collect();
     if !recent.is_empty() && recent.iter().all(|&n| read_only_tools.contains(&n)) {
         return TaskPhase::Verification;
@@ -1348,7 +1434,10 @@ pub async fn run_agent_loop(
         // Doom loop tracking: count write/edit calls per file path.
         if doom_loop_threshold > 0 {
             for part in &tool_calls {
-                let ContentPart::ToolCall { name, arguments, .. } = part else {
+                let ContentPart::ToolCall {
+                    name, arguments, ..
+                } = part
+                else {
                     continue;
                 };
                 if (name == "write" || name == "edit")

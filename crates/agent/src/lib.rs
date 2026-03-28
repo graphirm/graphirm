@@ -41,11 +41,11 @@ pub use multi::{
     wait_for_dependencies, wait_for_subagents,
 };
 pub use router::{ModelRouter, ModelRoutingConfig, ModelTier, RoutingRule, TurnSignals};
+pub use session::{Session, SessionMetadata, SessionStatus};
 pub use strategy::{
     ObjectiveWeights, RoutingDecision, RoutingStrategy, SessionScore, TurnOutcome,
     compute_session_score,
 };
-pub use session::{Session, SessionMetadata, SessionStatus};
 pub use workflow::run_agent_loop;
 
 // Glibc < 2.38 compatibility shim for ort's prebuilt binary.

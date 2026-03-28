@@ -3,7 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::router::TurnSignals;
-use crate::strategy::{ModelCandidate, ObjectiveWeights, RoutingDecision, RoutingStrategy, TurnOutcome};
+use crate::strategy::{
+    ModelCandidate, ObjectiveWeights, RoutingDecision, RoutingStrategy, TurnOutcome,
+};
 
 pub struct ExperimentRouter {
     strategy_a: Arc<dyn RoutingStrategy>,
@@ -18,7 +20,11 @@ impl ExperimentRouter {
         strategy_b: Arc<dyn RoutingStrategy>,
         split: f64,
     ) -> Self {
-        Self { strategy_a, strategy_b, split: split.clamp(0.0, 1.0) }
+        Self {
+            strategy_a,
+            strategy_b,
+            split: split.clamp(0.0, 1.0),
+        }
     }
 
     fn pick_strategy(&self) -> &dyn RoutingStrategy {
@@ -85,7 +91,10 @@ mod tests {
             candidates: &[ModelCandidate],
             _obj: &ObjectiveWeights,
         ) -> RoutingDecision {
-            let c = candidates.iter().find(|c| c.tier == self.0).expect("candidate not found");
+            let c = candidates
+                .iter()
+                .find(|c| c.tier == self.0)
+                .expect("candidate not found");
             RoutingDecision {
                 model: c.model.clone(),
                 tier: self.0,
@@ -136,7 +145,9 @@ mod tests {
             Arc::new(FixedRouter(ModelTier::Smart, "b")),
             1.0, // always A
         );
-        let d = router.select(&signals(), &candidates(), &ObjectiveWeights::default()).await;
+        let d = router
+            .select(&signals(), &candidates(), &ObjectiveWeights::default())
+            .await;
         assert_eq!(d.strategy_name, "experiment:a");
     }
 
@@ -147,7 +158,9 @@ mod tests {
             Arc::new(FixedRouter(ModelTier::Smart, "b")),
             0.0, // always B
         );
-        let d = router.select(&signals(), &candidates(), &ObjectiveWeights::default()).await;
+        let d = router
+            .select(&signals(), &candidates(), &ObjectiveWeights::default())
+            .await;
         assert_eq!(d.strategy_name, "experiment:b");
     }
 }

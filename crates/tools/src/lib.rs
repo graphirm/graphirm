@@ -1,6 +1,7 @@
 pub mod bash;
 pub mod bash_paths;
 pub mod cargo_check;
+pub mod context_report;
 pub mod diff;
 pub mod edit;
 pub mod error;
@@ -18,7 +19,6 @@ pub mod registry;
 pub mod repo_briefing;
 pub mod retriever;
 pub mod script;
-pub mod context_report;
 pub mod session_trace;
 pub mod submit;
 pub mod write;

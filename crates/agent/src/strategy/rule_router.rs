@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 
 use crate::router::{ModelRouter, ModelRoutingConfig};
-use crate::strategy::{ModelCandidate, ObjectiveWeights, RoutingDecision, RoutingStrategy, TurnOutcome};
+use crate::strategy::{
+    ModelCandidate, ObjectiveWeights, RoutingDecision, RoutingStrategy, TurnOutcome,
+};
 
 pub struct RuleRouter {
     config: ModelRoutingConfig,
@@ -81,10 +83,12 @@ mod tests {
     #[tokio::test]
     async fn selects_smart_on_first_turn() {
         let config = ModelRoutingConfig {
-            cheap: "deepseek/deepseek-chat".into(),
-            smart: "anthropic/claude-sonnet-4".into(),
+            cheap: vec!["deepseek/deepseek-chat".into()],
+            smart: vec!["anthropic/claude-sonnet-4".into()],
             default_tier: ModelTier::Cheap,
-            rules: vec![RoutingRule::FirstTurn { tier: ModelTier::Smart }],
+            rules: vec![RoutingRule::FirstTurn {
+                tier: ModelTier::Smart,
+            }],
         };
         let router = RuleRouter::new(config);
         let signals = crate::router::TurnSignals {
@@ -95,7 +99,11 @@ mod tests {
             task_phase: crate::router::TaskPhase::Planning,
         };
         let decision = router
-            .select(&signals, &[cheap_candidate(), smart_candidate()], &ObjectiveWeights::default())
+            .select(
+                &signals,
+                &[cheap_candidate(), smart_candidate()],
+                &ObjectiveWeights::default(),
+            )
             .await;
         assert_eq!(decision.model, "anthropic/claude-sonnet-4");
         assert_eq!(decision.strategy_name, "rule_router");
@@ -104,8 +112,8 @@ mod tests {
     #[tokio::test]
     async fn falls_back_to_default_when_no_rule_matches() {
         let config = ModelRoutingConfig {
-            cheap: "deepseek/deepseek-chat".into(),
-            smart: "anthropic/claude-sonnet-4".into(),
+            cheap: vec!["deepseek/deepseek-chat".into()],
+            smart: vec!["anthropic/claude-sonnet-4".into()],
             default_tier: ModelTier::Cheap,
             rules: vec![],
         };
@@ -118,7 +126,11 @@ mod tests {
             task_phase: crate::router::TaskPhase::Implementation,
         };
         let decision = router
-            .select(&signals, &[cheap_candidate(), smart_candidate()], &ObjectiveWeights::default())
+            .select(
+                &signals,
+                &[cheap_candidate(), smart_candidate()],
+                &ObjectiveWeights::default(),
+            )
             .await;
         assert_eq!(decision.model, "deepseek/deepseek-chat");
     }

@@ -248,14 +248,7 @@ pub async fn spawn_subagent(
     );
 
     let join_handle = tokio::spawn(async move {
-        let result = run_agent_loop(
-            &session,
-            llm,
-            &scoped_tools,
-            &events_clone,
-            &cancel,
-        )
-        .await;
+        let result = run_agent_loop(&session, llm, &scoped_tools, &events_clone, &cancel).await;
 
         // Update task status in graph via spawn_blocking to avoid blocking the runtime.
         let status = if result.is_ok() {

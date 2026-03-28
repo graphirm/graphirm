@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use graphirm_llm::{CompletionConfig, ContentPart, LlmMessage, LlmProvider, Role};
 
 use crate::router::{ModelTier, TurnSignals};
-use crate::strategy::{ModelCandidate, ObjectiveWeights, RoutingDecision, RoutingStrategy, TurnOutcome};
+use crate::strategy::{
+    ModelCandidate, ObjectiveWeights, RoutingDecision, RoutingStrategy, TurnOutcome,
+};
 
 pub struct PromptRouter {
     provider: Arc<dyn LlmProvider>,
@@ -18,7 +20,11 @@ impl PromptRouter {
         classifier_model: String,
         timeout_seconds: u64,
     ) -> Self {
-        Self { provider, classifier_model, timeout_seconds }
+        Self {
+            provider,
+            classifier_model,
+            timeout_seconds,
+        }
     }
 
     fn build_prompt(signals: &TurnSignals) -> String {
@@ -85,7 +91,10 @@ impl RoutingStrategy for PromptRouter {
             }
         };
 
-        let candidate = candidates.iter().find(|c| c.tier == tier).or_else(|| candidates.first());
+        let candidate = candidates
+            .iter()
+            .find(|c| c.tier == tier)
+            .or_else(|| candidates.first());
 
         let (model, final_tier) = candidate
             .map(|c| (c.model.clone(), c.tier))
@@ -155,8 +164,9 @@ mod tests {
     async fn selects_smart_when_llm_says_smart() {
         let provider = Arc::new(MockProvider::new(vec![MockResponse::text("smart")]));
         let router = PromptRouter::new(provider, "cheap-model".into(), 3);
-        let decision =
-            router.select(&signals(), &candidates(), &ObjectiveWeights::default()).await;
+        let decision = router
+            .select(&signals(), &candidates(), &ObjectiveWeights::default())
+            .await;
         assert_eq!(decision.tier, ModelTier::Smart);
         assert_eq!(decision.strategy_name, "prompt_router");
     }
@@ -165,8 +175,9 @@ mod tests {
     async fn falls_back_to_cheap_on_bad_response() {
         let provider = Arc::new(MockProvider::new(vec![MockResponse::text("I dunno")]));
         let router = PromptRouter::new(provider, "cheap-model".into(), 3);
-        let decision =
-            router.select(&signals(), &candidates(), &ObjectiveWeights::default()).await;
+        let decision = router
+            .select(&signals(), &candidates(), &ObjectiveWeights::default())
+            .await;
         assert_eq!(decision.tier, ModelTier::Cheap);
     }
 
@@ -174,8 +185,9 @@ mod tests {
     async fn selects_cheap_when_llm_says_cheap() {
         let provider = Arc::new(MockProvider::new(vec![MockResponse::text("cheap")]));
         let router = PromptRouter::new(provider, "cheap-model".into(), 3);
-        let decision =
-            router.select(&signals(), &candidates(), &ObjectiveWeights::default()).await;
+        let decision = router
+            .select(&signals(), &candidates(), &ObjectiveWeights::default())
+            .await;
         assert_eq!(decision.tier, ModelTier::Cheap);
     }
 }
