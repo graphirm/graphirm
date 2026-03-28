@@ -111,4 +111,25 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ entity, entity_type: entityType, summary, position }),
     }),
+
+  rateTurn: (sessionId: string, turnId: string, rating: number): Promise<void> =>
+    apiFetch(`/api/sessions/${sessionId}/turns/${turnId}/rating`, {
+      method: 'PATCH',
+      body: JSON.stringify({ rating }),
+    }),
+
+  updateTaskStatus: (sessionId: string, nodeId: string, status: string): Promise<void> => {
+    console.warn('updateTaskStatus not implemented yet', { sessionId, nodeId, status });
+    return Promise.resolve();
+  },
+
+  toggleKnowledgePin: (sessionId: string, nodeId: string, pinned: boolean): Promise<void> => {
+    console.warn('toggleKnowledgePin not implemented yet', { sessionId, nodeId, pinned });
+    return Promise.resolve();
+  },
+
+  editKnowledgeSummary: (sessionId: string, nodeId: string, summary: string): Promise<void> => {
+    console.warn('editKnowledgeSummary not implemented yet', { sessionId, nodeId, summary });
+    return Promise.resolve();
+  },
 };

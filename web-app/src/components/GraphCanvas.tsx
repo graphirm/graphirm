@@ -21,14 +21,18 @@ import { TaskNode } from './nodes/TaskNode';
 import { KnowledgeNode } from './nodes/KnowledgeNode';
 import { AnnotationNode } from './nodes/AnnotationNode';
 import { GroupNode } from './nodes/GroupNode';
+import { NodePopover } from './nodes/NodePopover';
 import { LabelledEdge } from './edges/LabelledEdge';
 import { Toolbar } from './Toolbar';
 import { SteerContext } from '../context/SteerContext';
 import { FocusContext } from '../context/FocusContext';
 import { ZoomProvider } from '../context/ZoomContext';
+import { PopoverProvider } from '../context/PopoverContext';
+import type { PopoverActions } from '../context/PopoverContext';
 import { FloatingInput } from './FloatingInput';
 import styles from './GraphCanvas.module.css';
 import { useNodeNavigation } from '../hooks/useNodeNavigation';
+import { api } from '../api/client';
 
 const NODE_TYPES: NodeTypes = {
   interaction: InteractionNode,
@@ -120,7 +124,7 @@ function GraphCanvasInner({
 
   const { fitView, screenToFlowPosition } = useReactFlow();
 
-  const { focusedNodeId } = useNodeNavigation(nodes, edges);
+  const { focusedNodeId, activateNodeId, clearActivation } = useNodeNavigation(nodes, edges);
   
   // Compute dimmed nodes: non-focused nodes that are NOT immediate 1-hop neighbors
   const dimmedNodeIds = useMemo(() => {
@@ -230,7 +234,76 @@ function GraphCanvasInner({
   // Clear focus when clicking empty canvas or pressing Escape
   const handlePaneClick = useCallback(() => {
     onNodeSelect(null);
+    setPopoverState(null);
   }, [onNodeSelect]);
+
+  // ── Popover state ──
+  const [popoverState, setPopoverState] = useState<{
+    nodeId: string;
+    position: { x: number; y: number };
+  } | null>(null);
+
+  // Find the GraphNode data for the active popover
+  const popoverGraphNode = useMemo(() => {
+    if (!popoverState || !graphData) return null;
+    return graphData.nodes.find(n => n.id === popoverState.nodeId) ?? null;
+  }, [popoverState, graphData]);
+
+  // Open popover for a given node id — compute screen position from the React Flow node
+  const openPopover = useCallback((nodeId: string) => {
+    const rfNode = nodes.find(n => n.id === nodeId);
+    if (!rfNode || !graphData) return;
+    // Skip annotation nodes — they have inline editing already
+    if (rfNode.type === 'annotation' || rfNode.type === 'group') return;
+    const gn = graphData.nodes.find(n => n.id === nodeId);
+    if (!gn) return;
+
+    setPopoverState({ nodeId, position: rfNode.position });
+  }, [nodes, graphData]);
+
+  const closePopover = useCallback(() => {
+    setPopoverState(null);
+  }, []);
+
+  // React to keyboard Enter activation from useNodeNavigation
+  useEffect(() => {
+    if (activateNodeId) {
+      openPopover(activateNodeId);
+      clearActivation();
+    }
+  }, [activateNodeId, openPopover, clearActivation]);
+
+  // Double-click on a node opens the popover
+  const handleNodeDoubleClick = useCallback(
+    (_: React.MouseEvent, node: { id: string }) => {
+      openPopover(node.id);
+    },
+    [openPopover],
+  );
+
+  // Build popover actions that call the API
+  const popoverActions = useMemo((): PopoverActions => ({
+    sessionId,
+    onSteer: (nodeId: string) => {
+      onSteerFromNode(nodeId);
+    },
+    onUpdateTaskStatus: async (nodeId: string, status: 'completed' | 'failed') => {
+      if (!sessionId) return;
+      await api.updateTaskStatus(sessionId, nodeId, status);
+    },
+    onRateTurn: async (nodeId: string, rating: number) => {
+      if (!sessionId) return;
+      await api.rateTurn(sessionId, nodeId, rating);
+    },
+    onTogglePin: async (nodeId: string, pinned: boolean) => {
+      if (!sessionId) return;
+      await api.toggleKnowledgePin(sessionId, nodeId, pinned);
+    },
+    onEditSummary: async (nodeId: string, summary: string) => {
+      if (!sessionId) return;
+      await api.editKnowledgeSummary(sessionId, nodeId, summary);
+    },
+  }), [sessionId, onSteerFromNode]);
 
   return (
     <div className={styles.graphPane} ref={containerRef}>
@@ -249,6 +322,7 @@ function GraphCanvasInner({
       />
       <div className={styles.canvasWrapper}>
         <FloatingInput chatCollapsed={chatCollapsed} onSend={onSend ?? (() => {})} isThinking={isThinking} />
+        <PopoverProvider value={popoverActions}>
         <FocusContext.Provider value={focusedNodeId}>
         <SteerContext.Provider value={steerCallbackRef.current}>
         <ZoomProvider>
@@ -271,6 +345,7 @@ function GraphCanvasInner({
           edgeTypes={EDGE_TYPES}
           onNodesChange={onNodesChange}
           onNodeClick={handleNodeClick}
+          onNodeDoubleClick={handleNodeDoubleClick}
           onNodeDragStop={handleNodeDragStop}
           onPaneClick={handlePaneClick}
           onDoubleClick={handlePaneDoubleClick}
@@ -314,6 +389,14 @@ function GraphCanvasInner({
         </ZoomProvider>
         </SteerContext.Provider>
         </FocusContext.Provider>
+        {popoverState && popoverGraphNode && (
+          <NodePopover
+            node={popoverGraphNode}
+            position={popoverState.position}
+            onClose={closePopover}
+          />
+        )}
+        </PopoverProvider>
       </div>
     </div>
   );

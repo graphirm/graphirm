@@ -1,0 +1,109 @@
+.popover {
+  position: absolute;
+  z-index: 100;
+  background: var(--surface-2);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--card-radius);
+  padding: 8px;
+  min-width: 160px;
+  max-width: 240px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  animation: popoverFadeIn 0.15s ease-out;
+}
+
+@keyframes popoverFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.popoverBtn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.popoverBtn:hover {
+  background: var(--surface-3);
+}
+
+.popoverBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ratingSection {
+  padding: 4px 8px;
+}
+
+.ratingLabel {
+  font-size: 10px;
+  color: var(--fg-muted);
+  margin-bottom: 4px;
+}
+
+.stars {
+  display: flex;
+  gap: 2px;
+}
+
+.starBtn {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  color: var(--fg-muted);
+  padding: 0 2px;
+  transition: color var(--transition-fast), transform var(--transition-fast);
+}
+
+.starBtn:hover {
+  color: var(--accent);
+  transform: scale(1.2);
+}
+
+.editSection {
+  padding: 4px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.summaryInput {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--fg);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 4px 6px;
+  resize: vertical;
+  outline: none;
+  min-height: 40px;
+}
+
+.summaryInput:focus {
+  border-color: var(--accent);
+}
+
+.editActions {
+  display: flex;
+  gap: 4px;
+}

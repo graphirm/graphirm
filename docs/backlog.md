@@ -121,27 +121,16 @@ Commit: 9bc20b8
 - `web-app/src/components/GraphCanvas.tsx` — wire hook, pass `focusedNodeId` to nodes
 - `web-app/src/styles/nodes.module.css` — `.focused` ring animation
 
-#### Inline node interaction — P2 · M
-Pressing `Enter` (or double-click) on a focused node opens an inline interaction
-popover anchored to that node. What appears depends on node type:
+#### ✅ Inline node interaction — P2 · M
 
-| Node type | Inline action |
-|-----------|---------------|
-| Interaction (user) | Edit + re-send (steer from here) |
-| Interaction (assistant) | Reply (creates child message), rate (1–5 stars → `PATCH /rating`) |
-| Content | Expand/collapse, copy to clipboard, "open in editor" link |
-| Task | Mark complete/failed, add subtask |
-| Knowledge | Pin/unpin, edit summary, delete |
-| Annotation | Edit text (already works) |
-
-The popover is a small card that appears below the node (using React Flow's
-`screenToFlowPosition` inverse). `Escape` or clicking outside dismisses it.
-This replaces the need to use the chat panel for most interactions.
-
-**Key files:**
-- `web-app/src/components/NodePopover.tsx` — new component
-- `web-app/src/components/nodes/BaseCard.tsx` — emit `onInteract` callback
-- `web-app/src/components/GraphCanvas.tsx` — track `popoverNodeId` state
+Done 2026-03-28. Dogfood sessions 060fbdd2 (implementation) + 98e2c570 (bug fixes).
+- `PopoverContext.tsx` — typed context with 5 action callbacks (steer, rate, task status, pin, edit summary)
+- `NodePopover.tsx` + `NodePopover.module.css` — popover component with per-type UI, fade-in animation, theme variables
+- `useNodeNavigation.ts` — Enter key activates focused node via one-shot `activateNodeId` pattern
+- `GraphCanvas.tsx` — popover state, open/close, double-click handler, context provider wrapping
+- `client.ts` — `rateTurn` wired to existing PATCH endpoint; `updateTaskStatus`, `toggleKnowledgePin`, `editKnowledgeSummary` are console.warn stubs pending backend endpoints
+- First test of Claude Opus 4.6 + DeepSeek V3.2 model fallback chain (7 fallbacks triggered)
+Commits: pending
 
 #### HITL approval on canvas — P2 · S
 When the agent requests approval for a destructive tool, the HITL card appears as a

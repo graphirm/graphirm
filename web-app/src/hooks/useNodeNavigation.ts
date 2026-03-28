@@ -1,14 +1,20 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { Node, Edge } from "@xyflow/react";
 
 const NAV_EDGE_TYPES = new Set(["produces", "responds_to", "contains"]);
 
 export function useNodeNavigation(nodes: Node[], edges: Edge[]) {
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+  const [activateNodeId, setActivateNodeId] = useState<string | null>(null);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   nodesRef.current = nodes;
   edgesRef.current = edges;
+
+  // Clear the activation after consumers read it (one-shot event).
+  const clearActivation = useCallback(() => {
+    setActivateNodeId(null);
+  }, []);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -18,6 +24,18 @@ export function useNodeNavigation(nodes: Node[], edges: Edge[]) {
 
       const arrows = ["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"];
       if (e.key === "Escape") { setFocusedNodeId(null); return; }
+
+      // Enter activates the focused node (opens popover)
+      if (e.key === "Enter") {
+        setFocusedNodeId(current => {
+          if (current) {
+            setActivateNodeId(current);
+          }
+          return current;
+        });
+        return;
+      }
+
       if (!arrows.includes(e.key)) return;
       e.preventDefault();
 
@@ -65,5 +83,5 @@ export function useNodeNavigation(nodes: Node[], edges: Edge[]) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []); // empty dep array - uses refs
 
-  return { focusedNodeId };
+  return { focusedNodeId, activateNodeId, clearActivation };
 }

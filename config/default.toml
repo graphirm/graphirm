@@ -165,8 +165,8 @@ enforce_work_loop = true               # inject Plan→Build→Verify→Fix fram
 # Two-tier model routing — used by [agent.adaptive_routing] strategy = "rules".
 # Both models must use the same provider backend (e.g. both via openrouter).
 [agent.routing]
-cheap = "openrouter/deepseek/deepseek-v3.2"
-smart = "openrouter/deepseek/deepseek-v3.2"
+cheap = ["openrouter/deepseek/deepseek-v3.2"]
+smart = ["openrouter/deepseek/deepseek-v3.2"]
 default_tier = "cheap"
 
 [[agent.routing.rules]]
