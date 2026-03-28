@@ -222,3 +222,8 @@ select {
   --edge-rejected-by: #dc262688;
 }
 
+
+/* Smooth layout transitions — React Flow suspends this during drag automatically */
+.react-flow__node {
+  transition: transform 0.3s ease;
+}

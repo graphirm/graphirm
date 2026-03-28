@@ -217,21 +217,13 @@ Done 2026-03-28. Dogfood session 59c384ed. Grade: pass.
 - Build passed on first attempt
 Commit: `422aea7`
 
-#### Animated layout transitions — P2 · S
-When a re-layout occurs (layout mode switch, fit-view, manual trigger), animate nodes
-from old positions to new positions over ~300ms. Interpolate positions in a
-`requestAnimationFrame` loop or use React Flow's built-in node transition support
-(set `style.transition` on node wrappers). Prevents the jarring "teleport" effect.
+#### ✅ Animated layout transitions — P2 · S
 
-**Implementation:**
-- Before applying new layout, snapshot current `{id: position}` map
-- After computing new positions, interpolate: `lerp(old, new, t)` over 300ms via rAF
-- Or simpler: set CSS `transition: transform 0.3s ease` on `.react-flow__node` and
-  let React Flow's built-in position-to-transform handle it
-
-**Key files:**
-- `web-app/src/hooks/useGraphData.ts` — add `animateToPositions(oldPositions, newNodes)` helper
-- `web-app/src/styles/nodes.module.css` — add `.react-flow__node { transition: transform 0.3s ease; }`
+Done 2026-03-28. Manual (dogfood failed 3 sessions — agent looped on relative paths, never wrote).
+- One line appended to `web-app/src/styles/theme.css`: `.react-flow__node { transition: transform 0.3s ease; }`
+- React Flow suspends CSS transitions during drag automatically — no drag-and-drop regression
+- Build passes
+Commit: see next commit
 
 #### Focus-and-context zoom — P2 · S
 When a node is selected (click or keyboard navigation), smoothly zoom to show it plus
