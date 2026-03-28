@@ -58,6 +58,226 @@ Done 2026-03-18. `cargo fmt --check`, `cargo clippy --all-features -D warnings`,
 
 ## UI (web-app)
 
+### ✅ Markdown rendering — P1 · S
+Done 2026-03-28. Chat panel now renders markdown for assistant/tool messages using
+the existing `MarkdownBody` component (`marked` + `highlight.js`, 20 languages).
+User messages remain plain text. Node preview (collapsed state) strips markdown
+syntax (**bold**, *italic*, `code`, [links], # headers, - lists, > blockquotes)
+for clean text display. Web app builds without TypeScript errors. Commit: `877f6a8`.
+
+### Graph-First Interaction Model
+
+The graph is the agent. The chat panel is a fallback for users who want a traditional
+interface. Power users interact directly with nodes on the canvas, navigating with
+keyboard like a game world. Items below are ordered as an incremental build path —
+each one is useful standalone, but together they form the paradigm shift.
+
+#### Collapsible chat panel — P1 · S
+The chat panel (`ChatPane`, 42% width) becomes collapsible via a toggle button or
+keyboard shortcut (`C`). When collapsed, it animates to a thin vertical strip (icon +
+unread count badge). Graph canvas fills the freed space. Chat state preserved — expanding
+restores scroll position and input draft. CSS transition on `.chatPane` width, no
+component unmounting.
+
+**Key files:**
+- `web-app/src/App.tsx` — add `chatCollapsed` state, pass to ChatPane + GraphCanvas
+- `web-app/src/styles/chat.module.css` — `.collapsed` variant (width → 40px, overflow hidden)
+- `web-app/src/hooks/useKeyboardShortcuts.ts` — `C` key handler
+
+#### Floating command input — P1 · S
+When the chat panel is collapsed, a floating input bar appears at the bottom of the
+graph canvas (like a game console / command palette). Triggered by `/` or `Enter`.
+Pressing `Escape` dismisses it. Sends messages through the same `sendPrompt` path.
+Shows "thinking" indicator as a subtle overlay instead of the chat panel's bar.
+HITL approvals surface as toast-style overlays anchored to the relevant node.
+
+**Key files:**
+- `web-app/src/components/GraphCanvas.tsx` — render `FloatingInput` when `chatCollapsed`
+- `web-app/src/components/FloatingInput.tsx` — new component, reuses `handleSend` logic
+
+#### Keyboard node navigation — P1 · M
+Arrow keys move a "cursor" (highlighted selection ring) between nodes on the canvas.
+Navigation follows graph edges — `→` moves to the next node along outgoing edges
+(chronological by `created_at`), `←` goes back, `↑`/`↓` move between sibling nodes
+at the same depth. `Tab` cycles through node types. Selected node auto-scrolls into
+view via `fitView` with a tight bounding box.
+
+Game design reference: Factorio's logistics network overlay — you navigate connected
+structures, not a grid. The topology IS the navigation map.
+
+**Implementation:**
+- Build an adjacency list from React Flow edges on each graph update
+- `useNodeNavigation(nodes, edges)` hook: tracks `focusedNodeId`, handles arrow key events
+- `→`/`←`: follow `Produces`/`RespondsTo` edges (the conversation chain)
+- `↑`/`↓`: siblings = nodes sharing the same parent group
+- `Enter` on a focused node: opens inline interaction (see below)
+- `Escape`: clears focus
+- Focused node gets a pulsing highlight ring (CSS animation, `--accent` color)
+
+**Key files:**
+- `web-app/src/hooks/useNodeNavigation.ts` — new hook
+- `web-app/src/components/GraphCanvas.tsx` — wire hook, pass `focusedNodeId` to nodes
+- `web-app/src/styles/nodes.module.css` — `.focused` ring animation
+
+#### Inline node interaction — P2 · M
+Pressing `Enter` (or double-click) on a focused node opens an inline interaction
+popover anchored to that node. What appears depends on node type:
+
+| Node type | Inline action |
+|-----------|---------------|
+| Interaction (user) | Edit + re-send (steer from here) |
+| Interaction (assistant) | Reply (creates child message), rate (1–5 stars → `PATCH /rating`) |
+| Content | Expand/collapse, copy to clipboard, "open in editor" link |
+| Task | Mark complete/failed, add subtask |
+| Knowledge | Pin/unpin, edit summary, delete |
+| Annotation | Edit text (already works) |
+
+The popover is a small card that appears below the node (using React Flow's
+`screenToFlowPosition` inverse). `Escape` or clicking outside dismisses it.
+This replaces the need to use the chat panel for most interactions.
+
+**Key files:**
+- `web-app/src/components/NodePopover.tsx` — new component
+- `web-app/src/components/nodes/BaseCard.tsx` — emit `onInteract` callback
+- `web-app/src/components/GraphCanvas.tsx` — track `popoverNodeId` state
+
+#### HITL approval on canvas — P2 · S
+When the agent requests approval for a destructive tool, the HITL card appears as a
+popover attached to the relevant Interaction node on the canvas (not in the chat panel).
+The node gets a warning-colored pulsing ring. Approve / Reject / Modify buttons work
+identically. When the chat panel is open, HITL shows in BOTH places (canvas + chat)
+for redundancy. When collapsed, canvas-only.
+
+**Key files:**
+- `web-app/src/components/GraphCanvas.tsx` — render HITL popover when `pendingApproval`
+- `web-app/src/components/HitlOverlay.tsx` — extract from `ChatPane.tsx`, make reusable
+
+#### LOD (level-of-detail) zoom — P2 · S
+Tie node expand/collapse state to zoom level. Below zoom threshold (~0.4), all nodes
+auto-collapse to compact cards (type badge + one-line preview). Above threshold, nodes
+restore their user-set expand state. Uses `useViewport()` hook from React Flow with
+a debounced threshold crossing (not continuous re-render). The mechanism already exists
+in `BaseCard` (`expanded` prop) — this just adds a zoom-driven override.
+
+Game design reference: Factorio / Cities Skylines / Starcraft minimap-to-detail
+transition. The graph is readable at any zoom level.
+
+**Key files:**
+- `web-app/src/hooks/useGraphData.ts` — accept `zoomLevel`, stamp `data.zoomCollapsed` on nodes
+- `web-app/src/components/nodes/BaseCard.tsx` — respect `zoomCollapsed` override
+- `web-app/src/components/GraphCanvas.tsx` — read `useViewport().zoom`, debounce threshold
+
+#### Timeline swimlane backgrounds — P3 · S
+In Timeline layout mode, render subtle horizontal background bands behind each node
+type row (Agent, Task, Interaction, Content, Knowledge). Uses the existing `TYPE_Y`
+constants from `timeline.ts`. Semi-transparent fills using node type CSS color variables
+at ~5% opacity. Implemented as absolutely-positioned divs behind the React Flow layer,
+or as a custom React Flow background plugin.
+
+**Key files:**
+- `web-app/src/layout/timeline.ts` — export `TYPE_Y` and `TYPE_LABELS`
+- `web-app/src/components/GraphCanvas.tsx` — render swimlane divs when `layoutMode === 'timeline'`
+- `web-app/src/components/GraphCanvas.module.css` — swimlane strip styling
+
+#### Node quick-reply — P3 · M
+Select any Interaction node (keyboard or click) and press `R` to open an inline
+reply input directly on the canvas. The message is sent as a steer-from-node prompt
+(reuses `sendPrompt(content, nodeId)`). The reply appears as a new child node in the
+graph. This completes the loop: you can have an entire conversation without ever
+opening the chat panel.
+
+**Key files:**
+- `web-app/src/components/NodeReplyInput.tsx` — new component (inline textarea below node)
+- `web-app/src/hooks/useNodeNavigation.ts` — `R` key handler
+- `web-app/src/components/GraphCanvas.tsx` — track `replyingToNodeId` state
+
+### Smart Layout Engine
+
+The current layout is functional but naive — dagre re-runs on every SSE event with
+hardcoded `200×80` node dimensions, no animation, and no collision detection. These
+items make the graph feel alive and stable during live agent sessions.
+
+#### Layout stability on live updates — P1 · M
+When a new node arrives via SSE `graph_update`, don't re-layout the entire graph.
+Position only the new node relative to its parent (follow the `Produces`/`RespondsTo`
+edge to find the anchor node, place the new node adjacent to it). Existing nodes stay
+put. This is the single biggest UX problem — watching nodes jump around while the
+agent works is disorienting.
+
+**Implementation:**
+- Track which node IDs existed before the patch in `useGraphData`
+- For new nodes only: find their edge-connected parent, compute position relative to
+  parent (e.g. parent.x + ranksep, parent.y + child_index * nodesep)
+- For existing nodes: preserve current position
+- Only run full dagre on explicit layout-mode switch or `F` (fit-view)
+- Group nodes: expand group bounds when a new child arrives, don't rebuild
+
+**Key files:**
+- `web-app/src/hooks/useGraphData.ts` — split `useEffect` into full-layout vs incremental-patch paths
+- `web-app/src/layout/dagre.ts` — add `positionNewNode(existing, newNode, edges)` helper
+- `web-app/src/hooks/useSession.ts` — `patchGraphData` already merges by ID (no change needed)
+
+#### Actual node dimensions in dagre — P1 · S
+Pass real rendered `width`/`height` to dagre instead of hardcoded `200×80`. Use
+React Flow's `useNodesInitialized` + measured node dimensions (React Flow stores
+`measured.width`/`measured.height` on each node after first render). On first layout
+pass, use estimated sizes by type (Interaction=200×100, Knowledge=180×60, etc.).
+On subsequent passes (layout toggle), use actual measured dimensions. Eliminates
+overlaps for expanded nodes.
+
+**Key files:**
+- `web-app/src/layout/dagre.ts` — accept `dimensions: Map<string, {w,h}>` param, fall back to type-based estimates
+- `web-app/src/hooks/useGraphData.ts` — read `node.measured` from React Flow state, pass to layout
+
+#### Animated layout transitions — P2 · S
+When a re-layout occurs (layout mode switch, fit-view, manual trigger), animate nodes
+from old positions to new positions over ~300ms. Interpolate positions in a
+`requestAnimationFrame` loop or use React Flow's built-in node transition support
+(set `style.transition` on node wrappers). Prevents the jarring "teleport" effect.
+
+**Implementation:**
+- Before applying new layout, snapshot current `{id: position}` map
+- After computing new positions, interpolate: `lerp(old, new, t)` over 300ms via rAF
+- Or simpler: set CSS `transition: transform 0.3s ease` on `.react-flow__node` and
+  let React Flow's built-in position-to-transform handle it
+
+**Key files:**
+- `web-app/src/hooks/useGraphData.ts` — add `animateToPositions(oldPositions, newNodes)` helper
+- `web-app/src/styles/nodes.module.css` — add `.react-flow__node { transition: transform 0.3s ease; }`
+
+#### Focus-and-context zoom — P2 · S
+When a node is selected (click or keyboard navigation), smoothly zoom to show it plus
+its immediate 1-hop neighbors at readable zoom, dimming the rest of the graph. Uses
+React Flow's `fitView({ nodes: [selected, ...neighbors], padding: 0.3, duration: 400 })`.
+Non-focused nodes get `opacity: 0.3` via a CSS class. Clicking empty canvas restores
+full view. Like a spotlight / fog-of-war effect.
+
+**Key files:**
+- `web-app/src/components/GraphCanvas.tsx` — on `onNodeClick`, compute neighbor set from edges, call `fitView` with subset
+- `web-app/src/styles/nodes.module.css` — `.dimmed { opacity: 0.3; transition: opacity 0.2s; }`
+- `web-app/src/hooks/useGraphData.ts` — stamp `className: 'dimmed'` on non-focused nodes when a node is selected
+
+#### Timeline collision avoidance — P3 · S
+Nodes with overlapping X positions (similar `created_at` timestamps) should be
+vertically staggered within their type band. Currently they stack directly on top of
+each other. Fix: after computing X positions, sort nodes per band by time, track
+occupied X ranges, and nudge right by `NODE_WIDTH + gap` when overlapping.
+
+**Key files:**
+- `web-app/src/layout/timeline.ts` — add overlap detection pass after initial positioning
+
+#### Type-aware spacing in dagre — P3 · S
+Give different node types different default dimensions and spacing in dagre.
+Knowledge/Content nodes are compact (180×60), Interaction nodes are tall (220×120),
+Agent nodes are wide (240×70). Pass per-node dimensions to `g.setNode()` instead of
+the fixed `200×80`. Combined with the "actual dimensions" item above, this provides
+good first-render layout before measured sizes are available.
+
+**Key files:**
+- `web-app/src/layout/dagre.ts` — `TYPE_DIMENSIONS` map, use node type from data to look up size
+
+---
+
 ### ✅ Design system + light/dark theme — P3 · S
 Done 2026-03-21. Expanded design tokens in `theme.css` (spacing scale, typography scale, surface layers, semantic colors, all edge color variables). Light/dark theme via `useTheme` hook (`localStorage` + `prefers-color-scheme`, sets `data-theme` on `<html>`). Toggle button (☀/◉) in Toolbar. Edge colors DRYed — `EDGE_COLORS` map removed from `LabelledEdge.tsx`, replaced with `getEdgeColor()` reading CSS variables via `getComputedStyle` with theme-aware cache. Clean build, 100% agent.
 Plan: `docs/plans/2026-03-22-research-driven-improvements.md`
