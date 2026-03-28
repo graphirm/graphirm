@@ -232,14 +232,6 @@ function GraphCanvasInner({
     onNodeSelect(null);
   }, [onNodeSelect]);
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onNodeSelect(null);
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onNodeSelect]);
-
   return (
     <div className={styles.graphPane} ref={containerRef}>
       <Toolbar

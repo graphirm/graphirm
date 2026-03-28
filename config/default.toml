@@ -1,12 +1,12 @@
 [model]
 provider = "openrouter"
-name = "qwen/qwen3-coder:free"
+name = "deepseek/deepseek-v3.2"
 temperature = 0.7
 max_tokens = 8192
 
 [agent]
 name = "graphirm"
-model = "openrouter/qwen/qwen3-coder:free"
+model = "openrouter/deepseek/deepseek-v3.2"
 max_iterations = 50
 parallel_tool_calls = true
 max_output_tokens = 1500
@@ -165,8 +165,8 @@ enforce_work_loop = true               # inject Plan→Build→Verify→Fix fram
 # Two-tier model routing — used by [agent.adaptive_routing] strategy = "rules".
 # Both models must use the same provider backend (e.g. both via openrouter).
 [agent.routing]
-cheap = "openrouter/qwen/qwen3-coder:free"
-smart = "openrouter/qwen/qwen3-coder-next"
+cheap = "openrouter/deepseek/deepseek-v3.2"
+smart = "openrouter/deepseek/deepseek-v3.2-speciale"
 default_tier = "cheap"
 
 [[agent.routing.rules]]
