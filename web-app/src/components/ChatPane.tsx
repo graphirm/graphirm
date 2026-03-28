@@ -1,5 +1,6 @@
 import React, { useCallback, useRef, useState } from 'react';
 import type { Message, PendingApproval } from '../types/graph';
+import { MarkdownBody } from './nodes/MarkdownBody';
 import styles from '../styles/chat.module.css';
 
 interface SteerContext {
@@ -140,7 +141,11 @@ export function ChatPane({
         {messages.map(msg => (
           <div key={msg.id} className={[styles.message, styles[msg.role as keyof typeof styles] ?? ''].join(' ')}>
             <div className={styles.roleLabel}>{msg.role}</div>
-            <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.content}</div>
+            {msg.role === 'user' ? (
+              <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.content}</div>
+            ) : (
+              <MarkdownBody content={msg.content} maxHeight={250} />
+            )}
           </div>
         ))}
         {pendingApproval && (

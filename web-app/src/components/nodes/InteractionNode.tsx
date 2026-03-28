@@ -16,7 +16,24 @@ export function InteractionNode({ data: rawData, selected }: NodeProps) {
   const isUser = nt.role === 'user';
   const color = isUser ? 'var(--accent)' : 'var(--node-agent)';
   const roleLabel = nt.role === 'assistant' ? 'agent' : nt.role;
-  const preview = (nt.content ?? '').slice(0, 80) + ((nt.content ?? '').length > 80 ? '…' : '');
+  
+  // Strip markdown for collapsed preview
+  const stripMarkdown = (text: string): string => {
+    return text
+      .replace(/\*\*(.*?)\*\*/g, '$1') // bold
+      .replace(/\*(.*?)\*/g, '$1')      // italic
+      .replace(/__(.*?)__/g, '$1')      // bold
+      .replace(/_(.*?)_/g, '$1')        // italic
+      .replace(/`([^`]+)`/g, '$1')      // inline code
+      .replace(/\[([^\]]*)\]\([^)]+\)/g, '$1') // links
+      .replace(/^#+\s*/gm, '')          // headers
+      .replace(/^-\s+/gm, '')           // lists
+      .replace(/^>\s+/gm, '')           // blockquotes
+      .replace(/\n+/g, ' ')             // newlines to spaces
+      .trim();
+  };
+  
+  const preview = stripMarkdown(nt.content ?? '').slice(0, 80) + ((nt.content ?? '').length > 80 ? '…' : '');
 
   return (
     <BaseCard
