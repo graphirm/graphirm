@@ -102,23 +102,18 @@ Commit: a5c1df7
 - `web-app/src/components/GraphCanvas.tsx` — render `FloatingInput` when `chatCollapsed`
 - `web-app/src/components/FloatingInput.tsx` — new component, reuses `handleSend` logic
 
-#### Keyboard node navigation — P1 · M
-Arrow keys move a "cursor" (highlighted selection ring) between nodes on the canvas.
-Navigation follows graph edges — `→` moves to the next node along outgoing edges
-(chronological by `created_at`), `←` goes back, `↑`/`↓` move between sibling nodes
-at the same depth. `Tab` cycles through node types. Selected node auto-scrolls into
-view via `fitView` with a tight bounding box.
+#### ✅ Keyboard node navigation — P1 · M
 
-Game design reference: Factorio's logistics network overlay — you navigate connected
-structures, not a grid. The topology IS the navigation map.
-
-**Implementation:**
-- Build an adjacency list from React Flow edges on each graph update
-- `useNodeNavigation(nodes, edges)` hook: tracks `focusedNodeId`, handles arrow key events
-- `→`/`←`: follow `Produces`/`RespondsTo` edges (the conversation chain)
-- `↑`/`↓`: siblings = nodes sharing the same parent group
-- `Enter` on a focused node: opens inline interaction (see below)
-- `Escape`: clears focus
+Done 2026-03-28. Dogfood session 834f6952 + manual fixes.
+- `useNodeNavigation(nodes, edges)` hook: refs+empty-dep-array pattern, arrow keys follow
+  `produces`/`responds_to`/`contains` edges; `↑`/`↓` move between siblings by Y position;
+  first arrow key focuses first visible node; `Escape` clears
+- `FocusContext.tsx`: `createContext<string|null>` + `useFocusedNodeId()` hook
+- `BaseCard`: `focused?` prop + `.focused` CSS class with pulsing accent ring animation
+- All 5 node components consume context and pass `focused={focusedNodeId === id}` to BaseCard
+- `GraphCanvas`: `FocusContext.Provider` wraps ReactFlow; `fitView` centers on focused node
+Agent bugs: missing import in AgentNode (doom loop), unclosed JSX Provider tag — both fixed manually.
+Commit: 9bc20b8
 - Focused node gets a pulsing highlight ring (CSS animation, `--accent` color)
 
 **Key files:**
