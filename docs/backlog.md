@@ -197,25 +197,16 @@ The current layout is functional but naive — dagre re-runs on every SSE event 
 hardcoded `200×80` node dimensions, no animation, and no collision detection. These
 items make the graph feel alive and stable during live agent sessions.
 
-#### Layout stability on live updates — P1 · M
-When a new node arrives via SSE `graph_update`, don't re-layout the entire graph.
-Position only the new node relative to its parent (follow the `Produces`/`RespondsTo`
-edge to find the anchor node, place the new node adjacent to it). Existing nodes stay
-put. This is the single biggest UX problem — watching nodes jump around while the
-agent works is disorienting.
+#### ✅ Layout stability on live updates — P1 · M
 
-**Implementation:**
-- Track which node IDs existed before the patch in `useGraphData`
-- For new nodes only: find their edge-connected parent, compute position relative to
-  parent (e.g. parent.x + ranksep, parent.y + child_index * nodesep)
-- For existing nodes: preserve current position
-- Only run full dagre on explicit layout-mode switch or `F` (fit-view)
-- Group nodes: expand group bounds when a new child arrives, don't rebuild
-
-**Key files:**
-- `web-app/src/hooks/useGraphData.ts` — split `useEffect` into full-layout vs incremental-patch paths
-- `web-app/src/layout/dagre.ts` — add `positionNewNode(existing, newNode, edges)` helper
-- `web-app/src/hooks/useSession.ts` — `patchGraphData` already merges by ID (no change needed)
+Done 2026-03-28. Dogfood session b2356651 + manual completion. Core implementation:
+- `positionNewNodes()` helper placed new nodes relative to parents based on edge graph
+- `isPatchUpdate` parameter added to useGraphData hook to detect SSE patches
+- useEffect logic splits: skip full layout on patch update, use incremental positioning
+- TypeScript compilation fixed (removed duplicate XYPosition interface)
+- Web app builds successfully without errors
+The agent got stuck in a read loop during integration but the helper function logic was solid.
+Manual fixes completed the task. Commits 3d1e158, c7014f5.
 
 #### Actual node dimensions in dagre — P1 · S
 Pass real rendered `width`/`height` to dagre instead of hardcoded `200×80`. Use
