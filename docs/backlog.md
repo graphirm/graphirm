@@ -210,17 +210,15 @@ Done 2026-03-28. Dogfood session b2356651 + manual completion. Core implementati
 The agent got stuck in a read loop during integration but the helper function logic was solid.
 Manual fixes completed the task. Commits 3d1e158, c7014f5.
 
-#### Actual node dimensions in dagre — P1 · S
-Pass real rendered `width`/`height` to dagre instead of hardcoded `200×80`. Use
-React Flow's `useNodesInitialized` + measured node dimensions (React Flow stores
-`measured.width`/`measured.height` on each node after first render). On first layout
-pass, use estimated sizes by type (Interaction=200×100, Knowledge=180×60, etc.).
-On subsequent passes (layout toggle), use actual measured dimensions. Eliminates
-overlaps for expanded nodes.
+#### ✅ Actual node dimensions in dagre — P1 · S
 
-**Key files:**
-- `web-app/src/layout/dagre.ts` — accept `dimensions: Map<string, {w,h}>` param, fall back to type-based estimates
-- `web-app/src/hooks/useGraphData.ts` — read `node.measured` from React Flow state, pass to layout
+Done 2026-03-28. Dogfood session 59c384ed. Grade: pass.
+- `getNodeDimensions(node)` reads `node.measured.width`/`node.measured.height` when available
+- Per-type fallback estimates: Interaction 220×100, Knowledge 180×60, Content 200×80, Task 180×70, Agent 160×60
+- Position centering formula updated (`pos.x - dims.width/2`) consistently
+- Minimal footprint: only `dagre.ts` modified — no `useNodesInitialized` wiring needed (measured is just undefined pre-render)
+- Build passed on first attempt
+Commit: `422aea7`
 
 #### Animated layout transitions — P2 · S
 When a re-layout occurs (layout mode switch, fit-view, manual trigger), animate nodes
