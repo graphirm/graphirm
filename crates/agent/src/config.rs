@@ -190,6 +190,12 @@ pub struct AgentConfig {
     /// Default 5.
     #[serde(default = "default_doom_loop_threshold")]
     pub doom_loop_threshold: u32,
+    /// Number of times the agent may read the same file in one session before
+    /// an advisory is injected ("you already read this, stop re-verifying").
+    /// Catches verification doom loops where the agent re-reads files after a
+    /// passing build instead of stopping. 0 disables. Default 3.
+    #[serde(default = "default_read_loop_threshold")]
+    pub read_loop_threshold: u32,
     /// Token budget thresholds at which a warning is appended to the system prompt for
     /// the current turn. Each value is a fraction of `max_tokens` (e.g. 0.7 = 70%).
     /// An empty list disables budget warnings. Default: [0.7, 0.9].
@@ -312,6 +318,10 @@ fn default_doom_loop_threshold() -> u32 {
     5
 }
 
+fn default_read_loop_threshold() -> u32 {
+    3
+}
+
 fn default_budget_warning_thresholds() -> Vec<f64> {
     vec![0.7, 0.9]
 }
@@ -383,6 +393,7 @@ impl Default for AgentConfig {
             max_continuations: default_max_continuations(),
             pre_completion_verify: true,
             doom_loop_threshold: default_doom_loop_threshold(),
+            read_loop_threshold: default_read_loop_threshold(),
             budget_warning_thresholds: default_budget_warning_thresholds(),
             enforce_work_loop: default_enforce_work_loop(),
         }
@@ -458,6 +469,8 @@ struct AgentConfigSection {
     pre_completion_verify: bool,
     #[serde(default = "default_doom_loop_threshold")]
     doom_loop_threshold: u32,
+    #[serde(default = "default_read_loop_threshold")]
+    read_loop_threshold: u32,
     #[serde(default = "default_budget_warning_thresholds")]
     budget_warning_thresholds: Vec<f64>,
     #[serde(default = "default_enforce_work_loop")]
@@ -510,6 +523,7 @@ impl AgentConfig {
             max_continuations: file.agent.max_continuations,
             pre_completion_verify: file.agent.pre_completion_verify,
             doom_loop_threshold: file.agent.doom_loop_threshold,
+            read_loop_threshold: file.agent.read_loop_threshold,
             budget_warning_thresholds: file.agent.budget_warning_thresholds,
             enforce_work_loop: file.agent.enforce_work_loop,
         })

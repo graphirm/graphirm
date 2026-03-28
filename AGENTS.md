@@ -169,9 +169,10 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 45 | Structured work loop enforcement — `enforce_work_loop: bool` (default true); `create_session` appends "## Problem-Solving Framework" (Plan→Build→Verify→Fix) to system prompt; explicit instruction to transition from Plan to Build after ≤2 messages | ✅ done |
 | 46 | Phase-aware reasoning budget — `TaskPhase` enum (Planning/Implementation/Verification) in `TurnSignals`; `RoutingRule::PhaseMatch` for "reasoning sandwich" routing; `infer_task_phase()` from chain tool_name metadata; 5 new tests | ✅ done |
 | 47 | Model fallback chain — `cheap`/`smart` tiers accept `String \| Vec<String>` (custom serde deserializer); `models_for_tier()` returns full array; `LlmError::is_retryable()`; retry loop in `stream_and_record`; `FallbackAttempt` metadata on Interaction nodes; `same_provider()` validates all models | ✅ done |
+| 48 | Verification doom-loop fix — read-loop detection (`file_read_counts`, `read_loop_threshold`), post-verification exit guard, trimmed verify checklist, pinned convention | ✅ done |
 
-**Phases 42–46 — Harness Engineering (agent loop reliability):**
-- **Pre-completion verify (42):** `verify_injected: bool` in `run_agent_loop`; fires once when `pre_completion_verify && had_write_calls && !verify_injected`; injects user message with 5-point checklist. Config: `pre_completion_verify = true` in `default.toml`. Tests using mock providers set `pre_completion_verify: false`. `had_write_calls` (distinct from `had_tool_calls`) prevents premature firing on read-only planning turns.
+**Phases 42–46+48 — Harness Engineering (agent loop reliability):**
+- **Pre-completion verify (42):** `verify_injected: bool` in `run_agent_loop`; fires once when `pre_completion_verify && had_write_calls && !verify_injected`; injects user message with checklist (build, clippy, git diff). Config: `pre_completion_verify = true` in `default.toml`. Tests using mock providers set `pre_completion_verify: false`. `had_write_calls` (distinct from `had_tool_calls`) prevents premature firing on read-only planning turns.
 - **Doom loop detection (43):** `file_edit_counts: HashMap<PathBuf, u32>` incremented in the tool-call loop for `write`/`edit` by extracting the `path` argument from JSON. Advisory user message injected when `count == doom_loop_threshold`. Uses let-chain `&&` for clippy-compliant collapsible-if. Config: `doom_loop_threshold = 5`. Also sets `had_write_calls = true` — shares the same loop.
 - **Budget awareness (44):** In `stream_and_record`, after context is assembled, computes `usage_ratio = window.total_tokens as f64 / max_tok as f64`; finds highest crossed threshold via `fold(NEG_INFINITY, f64::max)`; appends `ContentPart::text(warning)` to `context[0]` (system message). Config: `budget_warning_thresholds: Vec<f64>` (default [0.7, 0.9]; empty list disables; example commented out in `default.toml`).
 - **Structured work loop (45):** `enforce_work_loop: bool` (default true). In `create_session` (routes.rs), appends "## Problem-Solving Framework" (Plan→Build→Verify→Fix) to `config.system_prompt` after the repo briefing. Explicit instruction: transition from Plan to Build after at most 2 messages. Config: `enforce_work_loop = true` in `default.toml`.
@@ -187,6 +188,12 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - `fallback_chain` metadata persisted on Interaction node when non-empty (model, error string, latency per attempt)
 - Config: `cheap = ["model1", "model2"]` or `cheap = "model"` (backward compat) in `[agent.routing]`
 - 2 new tests for `is_retryable`; all existing router/strategy tests updated for `Vec<String>`; clippy clean
+
+**Verification doom-loop fix (Phase 48):**
+- **Read-loop detection:** `file_read_counts: HashMap<PathBuf, u32>` in `run_agent_loop`; incremented for `read` (single path) and `read_many` (all paths in array); advisory injected at `read_loop_threshold` (default 3). Write/edit resets the counter for that path (re-reading after an edit is expected). Config: `read_loop_threshold = 3` in `default.toml`.
+- **Post-verification exit:** When `verify_injected` is true and the agent produces a text-only turn (its summary), the loop breaks immediately — skipping auto-continuation which previously caused the agent to re-enter a read loop. This is the key structural fix.
+- **Trimmed verification checklist:** Removed "re-read the original task requirements" item (was item 3); added explicit "Do NOT re-read source files after a passing build" to the checklist.
+- **Pinned Knowledge convention:** `stop-after-build-passes` convention node pinned in graph — surfaced in every session's repo briefing, instructing the agent to stop immediately after a passing build.
 
 **Phase 37 — Graph Context Utilization Telemetry:**
 - **Phase 37a (foundation):** `ContextStats` struct with 6 fields (knowledge_count, cross_session_links_count, pinned_conventions_count, graph_token_percentage, repo_briefing_included, compaction_triggered); Serialize/Deserialize; 4 unit tests; registered as public module in `graphirm-agent` (commit 69faf79)

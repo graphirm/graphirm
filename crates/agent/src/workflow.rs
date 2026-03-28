@@ -1184,6 +1184,7 @@ pub async fn run_agent_loop(
     let max_continuations = session.agent_config.max_continuations;
     let pre_completion_verify = session.agent_config.pre_completion_verify;
     let doom_loop_threshold = session.agent_config.doom_loop_threshold;
+    let read_loop_threshold = session.agent_config.read_loop_threshold;
     let mut all_node_ids: Vec<NodeId> = Vec::new();
     // Track whether any tool calls have been executed in this session so far.
     // Used to decide whether to inject a continuation message after a text-only turn.
@@ -1197,6 +1198,9 @@ pub async fn run_agent_loop(
     let mut verify_injected = false;
     // Per-file write/edit counts for doom loop detection.
     let mut file_edit_counts: std::collections::HashMap<std::path::PathBuf, u32> =
+        std::collections::HashMap::new();
+    // Per-file read counts for read-loop detection (catches verification doom loops).
+    let mut file_read_counts: std::collections::HashMap<std::path::PathBuf, u32> =
         std::collections::HashMap::new();
 
     events.emit(AgentEvent::AgentStart {
@@ -1353,6 +1357,15 @@ pub async fn run_agent_loop(
             });
             emit_graph_update(session, &response_id, vec![], events).await;
 
+            // Post-verification exit: once the verification checklist has been injected
+            // and the agent responds with a text-only turn (its summary), stop immediately.
+            // Without this guard the auto-continuation below would fire and the agent
+            // would re-read files endlessly in a verification doom loop.
+            if verify_injected {
+                tracing::info!(turn, "Post-verification text turn; exiting loop");
+                break;
+            }
+
             // Auto-continuation: if the agent stopped text-only while work was in progress
             // (evidenced by prior tool calls this session), inject a continuation nudge so
             // it resumes rather than silently leaving the task unfinished.
@@ -1389,11 +1402,10 @@ pub async fn run_agent_loop(
                 tracing::info!(turn, "Injecting pre-completion verification checklist");
                 let verify_content = concat!(
                     "Before marking this task complete, verify your work:\n",
-                    "1. Run `cargo test` on the affected crate(s) — confirm all tests pass.\n",
-                    "2. Run `cargo clippy -- -D warnings` — fix any new lint errors.\n",
-                    "3. Re-read the original task requirements — confirm every requirement is addressed.\n",
-                    "4. Run `git diff --name-only` to see exactly what changed.\n",
-                    "If any check fails, fix it now. When all checks pass, summarize what was done.",
+                    "1. Run the relevant build command (cargo test, npm run build, etc.) — confirm it passes.\n",
+                    "2. Run `cargo clippy -- -D warnings` if Rust was touched — fix any new lint errors.\n",
+                    "3. Run `git diff --name-only` to see exactly what changed.\n",
+                    "Once checks pass, summarize what was done and stop. Do NOT re-read source files after a passing build.",
                 )
                 .to_string();
                 let verify_node = graphirm_graph::nodes::GraphNode::new(
@@ -1447,6 +1459,37 @@ pub async fn run_agent_loop(
                     *file_edit_counts
                         .entry(std::path::PathBuf::from(path_str))
                         .or_insert(0) += 1;
+                    // Reset read counter for this path — a write invalidates
+                    // prior content, so one re-read after a write is expected.
+                    file_read_counts.remove(&std::path::PathBuf::from(path_str));
+                }
+            }
+        }
+
+        // Read-loop tracking: count read/read_many/grep calls per file path.
+        // Catches verification doom loops where the agent re-reads completed files.
+        if read_loop_threshold > 0 {
+            for part in &tool_calls {
+                let ContentPart::ToolCall {
+                    name, arguments, ..
+                } = part
+                else {
+                    continue;
+                };
+                if name == "read"
+                    && let Some(path_str) = arguments.get("path").and_then(|v| v.as_str())
+                {
+                    *file_read_counts
+                        .entry(std::path::PathBuf::from(path_str))
+                        .or_insert(0) += 1;
+                } else if name == "read_many"
+                    && let Some(paths) = arguments.get("paths").and_then(|v| v.as_array())
+                {
+                    for p in paths.iter().filter_map(|v| v.as_str()) {
+                        *file_read_counts
+                            .entry(std::path::PathBuf::from(p))
+                            .or_insert(0) += 1;
+                    }
                 }
             }
         }
@@ -1492,6 +1535,41 @@ pub async fn run_agent_loop(
                     );
                     if let Err(e) = session.record_interaction(advisory_node).await {
                         tracing::warn!(error = %e, "Failed to inject doom loop advisory (non-fatal)");
+                    }
+                }
+            }
+        }
+
+        // Read-loop advisory: warn when the agent re-reads a file too many times
+        // without editing it. Fires once per file (at threshold count) to avoid spam.
+        if read_loop_threshold > 0 {
+            for (file_path, &count) in &file_read_counts {
+                if count == read_loop_threshold {
+                    tracing::warn!(
+                        path = %file_path.display(),
+                        count,
+                        "Read loop detected; injecting advisory"
+                    );
+                    let advisory = format!(
+                        "Warning: you have read `{}` {} times this session without editing it. \
+                         You already know this file's contents. Stop re-reading and either: \
+                         (a) state 'Task complete' and stop, or \
+                         (b) make an edit if something is actually wrong. \
+                         Do NOT re-read files after a passing build.",
+                        file_path.display(),
+                        count,
+                    );
+                    let advisory_node = graphirm_graph::nodes::GraphNode::new(
+                        graphirm_graph::nodes::NodeType::Interaction(
+                            graphirm_graph::nodes::InteractionData {
+                                role: "user".to_string(),
+                                content: advisory,
+                                token_count: None,
+                            },
+                        ),
+                    );
+                    if let Err(e) = session.record_interaction(advisory_node).await {
+                        tracing::warn!(error = %e, "Failed to inject read loop advisory (non-fatal)");
                     }
                 }
             }

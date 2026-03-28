@@ -159,6 +159,7 @@ enable_compaction = true               # compact old turns when context exceeds 
 max_continuations = 2                  # auto-inject continuation after text-only mid-task turns
 pre_completion_verify = true           # force verification pass (tests + lint) before agent declares done
 doom_loop_threshold = 5                # inject advisory after N writes to the same file in one session
+read_loop_threshold = 3                # inject advisory after N reads of same file without editing it
 # budget_warning_thresholds = [0.7, 0.9]  # warn at these fractions of max_tokens (defaults shown)
 enforce_work_loop = true               # inject Plan→Build→Verify→Fix framework into system prompt
 
