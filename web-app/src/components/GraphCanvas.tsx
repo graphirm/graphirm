@@ -11,7 +11,7 @@ import {
   Node,
 } from '@xyflow/react';
 import type { NodeTypes, EdgeTypes } from '@xyflow/react';
-import type { GraphData } from '../types/graph';
+import type { GraphData, PendingApproval } from '../types/graph';
 import { useGraphData, EMPTY_FILTER } from '../hooks/useGraphData';
 import type { LayoutMode, NodeFilter } from '../hooks/useGraphData';
 import { InteractionNode } from './nodes/InteractionNode';
@@ -30,7 +30,9 @@ import { ZoomProvider } from '../context/ZoomContext';
 import { PopoverProvider } from '../context/PopoverContext';
 import type { PopoverActions } from '../context/PopoverContext';
 import { FloatingInput } from './FloatingInput';
+import { HitlOverlay } from './HitlOverlay';
 import styles from './GraphCanvas.module.css';
+import nodeStyles from '../styles/nodes.module.css';
 import { useNodeNavigation } from '../hooks/useNodeNavigation';
 import { api } from '../api/client';
 
@@ -59,6 +61,10 @@ interface GraphCanvasProps {
   chatCollapsed?: boolean;
   onSend?: (content: string) => void;
   isThinking?: boolean;
+  pendingApproval?: PendingApproval | null;
+  onApprove?: (nodeId: string) => void;
+  onReject?: (nodeId: string, reason?: string) => void;
+  onModify?: (nodeId: string, modifiedArgs: string) => void;
 }
 
 const LAYOUT_CYCLE: LayoutMode[] = ['dagre', 'timeline', 'free'];
@@ -73,6 +79,10 @@ function GraphCanvasInner({
   chatCollapsed = false,
   onSend,
   isThinking = false,
+  pendingApproval,
+  onApprove,
+  onReject,
+  onModify,
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -281,6 +291,23 @@ function GraphCanvasInner({
     [openPopover],
   );
 
+  // Add pending approval styling to nodes
+  const nodesWithPendingApproval = useMemo(() => {
+    if (!pendingApproval?.node_id) return nodes;
+    
+    return nodes.map(node => {
+      if (node.id === pendingApproval.node_id) {
+        return {
+          ...node,
+          className: node.className
+            ? `${node.className} ${nodeStyles.pendingApproval}`
+            : nodeStyles.pendingApproval,
+        };
+      }
+      return node;
+    });
+  }, [nodes, pendingApproval]);
+
   // Build popover actions that call the API
   const popoverActions = useMemo((): PopoverActions => ({
     sessionId,
@@ -327,7 +354,7 @@ function GraphCanvasInner({
         <SteerContext.Provider value={steerCallbackRef.current}>
         <ZoomProvider>
         <ReactFlow
-          nodes={nodes.map(node => ({
+          nodes={nodesWithPendingApproval.map(node => ({
             ...node,
             style: {
               ...node.style,
@@ -394,6 +421,15 @@ function GraphCanvasInner({
             node={popoverGraphNode}
             position={popoverState.position}
             onClose={closePopover}
+          />
+        )}
+        {pendingApproval && onApprove && onReject && onModify && (
+          <HitlOverlay
+            approval={pendingApproval}
+            onApprove={onApprove}
+            onReject={onReject}
+            onModify={onModify}
+            className={styles.hitlCanvasOverlay}
           />
         )}
         </PopoverProvider>

@@ -173,6 +173,16 @@
   50%       { box-shadow: 0 0 0 2px var(--accent), 0 0 0 8px color-mix(in srgb, var(--accent) 15%, transparent); }
 }
 
+/* Applied to React Flow node wrapper when HITL is pending for this node */
+.pendingApproval {
+  box-shadow: 0 0 0 2px var(--warning), 0 0 0 4px color-mix(in srgb, var(--warning) 30%, transparent);
+  animation: warningPulse 1.8s ease-in-out infinite;
+}
+@keyframes warningPulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--warning), 0 0 0 4px color-mix(in srgb, var(--warning) 30%, transparent); }
+  50%       { box-shadow: 0 0 0 2px var(--warning), 0 0 0 8px color-mix(in srgb, var(--warning) 15%, transparent); }
+}
+
 /* LOD zoom — annotation compact mode */
 .annotationCardLOD {
   opacity: 0.7;

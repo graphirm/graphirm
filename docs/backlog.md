@@ -132,16 +132,13 @@ Done 2026-03-28. Dogfood sessions 060fbdd2 (implementation) + 98e2c570 (bug fixe
 - First test of Claude Opus 4.6 + DeepSeek V3.2 model fallback chain (7 fallbacks triggered)
 Commits: pending
 
-#### HITL approval on canvas — P2 · S
-When the agent requests approval for a destructive tool, the HITL card appears as a
-popover attached to the relevant Interaction node on the canvas (not in the chat panel).
-The node gets a warning-colored pulsing ring. Approve / Reject / Modify buttons work
-identically. When the chat panel is open, HITL shows in BOTH places (canvas + chat)
-for redundancy. When collapsed, canvas-only.
+#### ✅ HITL approval on canvas — P2 · S
 
-**Key files:**
-- `web-app/src/components/GraphCanvas.tsx` — render HITL popover when `pendingApproval`
-- `web-app/src/components/HitlOverlay.tsx` — extract from `ChatPane.tsx`, make reusable
+Done 2026-03-28. Dogfood session `2791bd3d` + follow-up (CSS module class fix).
+- `HitlOverlay.tsx` — shared approve / reject / modify UI (extracted from `ChatPane.tsx`)
+- `ChatPane` + `App` + `GraphCanvas` — `pendingApproval` and handlers wired; chat still shows HITL when expanded (redundancy with canvas)
+- Canvas: `HitlOverlay` in `canvasWrapper` with `hitlCanvasOverlay` (bottom-center strip, scroll). **Not** a `NodeToolbar` anchored to `node_id` — future polish if desired
+- Pending node: React Flow `className` + `nodes.module.css` `.pendingApproval` — warning pulse ring on the node matching `pendingApproval.node_id`
 
 #### ✅ LOD (level-of-detail) zoom — P2 · S
 

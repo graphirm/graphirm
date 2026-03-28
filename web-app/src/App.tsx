@@ -108,6 +108,10 @@ export function App() {
           chatCollapsed={chatCollapsed}
           onSend={handleSendWithSteer}
           isThinking={isThinking}
+          pendingApproval={pendingApproval}
+          onApprove={approveAction}
+          onReject={rejectAction}
+          onModify={modifyAction}
         />
       </div>
     </div>
