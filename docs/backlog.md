@@ -168,6 +168,53 @@ Done 2026-03-29. Dogfood session `a679fbca` + doom loop bug fix.
 - Position uses graph coordinates as CSS `left`/`top` (same pre-existing pattern as `NodePopover` — decorative only, does not track pan/zoom)
 - **Bug found + fixed:** Doom loop advisory re-fired every turn after threshold because `count == threshold` iterated all accumulated counts. Fixed: collect `edited_this_turn`/`read_this_turn` vecs, only check those paths against thresholds.
 
+#### Timeline cascade layout with role-based node sizing — P1 · M
+
+Turn-aware timeline: user messages + final assistant responses appear on the main horizontal row. Intermediate steps (tool calls, tool results, assistant-with-tool-calls) cascade in a diagonal staircase below each turn. The final response is identified as the last `assistant` node whose `metadata.tool_calls` is absent or empty. Main-row nodes render at full width (280px); cascade nodes render as compact role-tagged cards (~160×50px, icon + first line of content). Clicking a compact card expands it in-place. Non-Interaction nodes (Agent, Content, Knowledge, Task) are pushed below the cascade zone with dynamic Y bands. Swimlane backgrounds update to match the new band positions.
+
+Plan: `docs/plans/2026-03-29-timeline-cascade-layout.md`
+
+**Key files:**
+- `web-app/src/layout/timeline.ts` — `buildTurns()`, cascade algorithm, `TimelineLayoutResult` return type
+- `web-app/src/hooks/useGraphData.ts` — `bandPositions` state, handle new return type
+- `web-app/src/components/GraphCanvas.tsx` — dynamic swimlanes from `bandPositions`
+- `web-app/src/components/nodes/InteractionNode.tsx` — compact card rendering via `data.compact`
+- `web-app/src/styles/nodes.module.css` — `.compactCard`, `.roleIcon`, `.compactLabel`
+
+#### Node editing and annotations — P2 · M
+
+Per-type interaction for editing, dismissal, and annotation:
+
+- **User Interaction nodes**: editable inline. On save, the original node is marked `metadata.edited = true` with the original content backed up, and a new prompt is sent from the preceding node's context root — effectively forking the conversation. Both branches remain visible in the graph.
+- **Knowledge nodes**: dismissable (sets `metadata.dismissed = true`; filtered from `build_context` and `build_repo_briefing` without deleting the node) and summary-editable (`PATCH /api/knowledge/{id}` with `{ summary }`).
+- **Tool Interaction nodes**: annotatable. User adds a freeform note (e.g., "next time prefer grep over find") stored as a Knowledge node with `entity_type: "annotation"` linked to the tool node via a `RelatesTo` edge. Surfaces on the canvas as a connected Knowledge node.
+
+Requires new backend endpoints: `PATCH /api/knowledge/{id}` (dismissed + summary), `PATCH /api/interactions/{id}/edit` (metadata marking), and extension of `POST /api/graph/{session_id}/annotate` with optional `relates_to` node ID.
+
+Plan: `docs/plans/2026-03-29-node-editing-annotations.md`
+
+**Key files:**
+- `web-app/src/components/nodes/NodePopover.tsx` — Edit / Dismiss / Annotate actions per type
+- `web-app/src/components/nodes/InteractionNode.tsx` — inline edit mode for user messages
+- `web-app/src/api/client.ts` — `patchKnowledge()`, `markInteractionEdited()`, `annotateNode()`
+- `crates/server/src/routes.rs` — `PATCH /api/knowledge/:id`, `PATCH /api/interactions/:id/edit`, extend annotate handler
+- `crates/graph/src/store.rs` — `update_knowledge()` (dismissed flag + summary)
+- `crates/agent/src/briefing.rs` + `context.rs` — filter dismissed Knowledge nodes
+
+#### Node-as-input (canvas prompt nodes) — P2 · M
+
+Double-clicking empty canvas creates a `PromptNode` — a temporary node with a textarea and Send/Cancel buttons. On send, the text is forwarded to the agent via the existing `POST /api/sessions/{id}/prompt`, optionally with a `context_root` set by drag-connecting from an existing node to the PromptNode's left handle. The PromptNode is removed from local state immediately on send; the SSE stream brings the real Interaction node. If the user Escapes or clicks Cancel, the node is removed with no side effects.
+
+No backend changes required — uses existing prompt and SSE infrastructure. The current annotation-on-double-click behavior moves exclusively to the toolbar "+ Note" button. A "+ Prompt" toolbar button is added as an alternative to double-click. Double-click remains the primary gesture.
+
+Plan: `docs/plans/2026-03-29-node-as-input.md`
+
+**Key files:**
+- `web-app/src/components/nodes/PromptNode.tsx` — new node type (editable textarea, Send/Cancel, target handle)
+- `web-app/src/components/nodes/PromptNode.module.css` — dashed accent border, compact layout
+- `web-app/src/components/GraphCanvas.tsx` — register node type, double-click handler, `onConnect` for context root, prompt send/cancel handlers
+- `web-app/src/components/Toolbar.tsx` — "+ Prompt" button
+
 ### Smart Layout Engine
 
 The current layout is functional but naive — dagre re-runs on every SSE event with
