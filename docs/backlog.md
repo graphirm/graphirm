@@ -168,15 +168,13 @@ Done 2026-03-29. Dogfood session `a679fbca` + doom loop bug fix.
 - Position uses graph coordinates as CSS `left`/`top` (same pre-existing pattern as `NodePopover` — decorative only, does not track pan/zoom)
 - **Bug found + fixed:** Doom loop advisory re-fired every turn after threshold because `count == threshold` iterated all accumulated counts. Fixed: collect `edited_this_turn`/`read_this_turn` vecs, only check those paths against thresholds.
 
-#### Timeline cascade layout with role-based node sizing — P1 · M
+#### ✅ Timeline cascade layout with role-based node sizing — P1 · M
 
-Turn-aware timeline: user messages + final assistant responses appear on the main horizontal row. Intermediate steps (tool calls, tool results, assistant-with-tool-calls) cascade in a diagonal staircase below each turn. The final response is identified as the last `assistant` node whose `metadata.tool_calls` is absent or empty. Main-row nodes render at full width (280px); cascade nodes render as compact role-tagged cards (~160×50px, icon + first line of content). Clicking a compact card expands it in-place. Non-Interaction nodes (Agent, Content, Knowledge, Task) are pushed below the cascade zone with dynamic Y bands. Swimlane backgrounds update to match the new band positions.
-
-Plan: `docs/plans/2026-03-29-timeline-cascade-layout.md`
+Done 2026-03-29. `buildTurns()` partitions Interaction nodes into turns by user-message boundaries; classifies each as main-row (user/final-assistant) or cascade (intermediate tool/assistant-with-tool-calls). `applyTimelineLayout()` rewritten: user + final-assistant on main row at Y=80, intermediates cascade diagonally (60px X-step, 50px Y-step). Non-Interaction nodes pushed to dynamic Y bands below cascade zone. Returns `TimelineLayoutResult { nodes, bandPositions }` — swimlane heights adapt to actual cascade depth. Compact cards (160×50px, role icon + tool name/preview) click to expand in-place. Commit: `12a0327`.
 
 **Key files:**
 - `web-app/src/layout/timeline.ts` — `buildTurns()`, cascade algorithm, `TimelineLayoutResult` return type
-- `web-app/src/hooks/useGraphData.ts` — `bandPositions` state, handle new return type
+- `web-app/src/hooks/useGraphData.ts` — `bandPositions` state, mode-aware `setLayoutMode`
 - `web-app/src/components/GraphCanvas.tsx` — dynamic swimlanes from `bandPositions`
 - `web-app/src/components/nodes/InteractionNode.tsx` — compact card rendering via `data.compact`
 - `web-app/src/styles/nodes.module.css` — `.compactCard`, `.roleIcon`, `.compactLabel`
