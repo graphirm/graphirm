@@ -6,6 +6,7 @@ const NAV_EDGE_TYPES = new Set(["produces", "responds_to", "contains"]);
 export function useNodeNavigation(nodes: Node[], edges: Edge[]) {
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [activateNodeId, setActivateNodeId] = useState<string | null>(null);
+  const [replyingToNodeId, setReplyingToNodeId] = useState<string | null>(null);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   nodesRef.current = nodes;
@@ -14,6 +15,11 @@ export function useNodeNavigation(nodes: Node[], edges: Edge[]) {
   // Clear the activation after consumers read it (one-shot event).
   const clearActivation = useCallback(() => {
     setActivateNodeId(null);
+  }, []);
+
+  // Clear reply state
+  const clearReply = useCallback(() => {
+    setReplyingToNodeId(null);
   }, []);
 
   useEffect(() => {
@@ -33,6 +39,21 @@ export function useNodeNavigation(nodes: Node[], edges: Edge[]) {
           }
           return current;
         });
+        return;
+      }
+
+      // R key starts quick-reply for Interaction nodes
+      if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        const current = focusedNodeId;
+        if (current) {
+          const nodes = nodesRef.current;
+          const node = nodes.find(n => n.id === current);
+          // Only allow reply for Interaction nodes
+          if (node?.type === "interaction") {
+            setReplyingToNodeId(current);
+          }
+        }
         return;
       }
 
@@ -83,5 +104,5 @@ export function useNodeNavigation(nodes: Node[], edges: Edge[]) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []); // empty dep array - uses refs
 
-  return { focusedNodeId, activateNodeId, clearActivation };
+  return { focusedNodeId, activateNodeId, clearActivation, replyingToNodeId, clearReply };
 }

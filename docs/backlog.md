@@ -159,17 +159,14 @@ Done 2026-03-28. Dogfood session `4610758d` + coordinate-system comment.
 - `GraphCanvas.tsx` — when `layoutMode === 'timeline'`, `swimlaneContainer` + per-type strips using `cssVar(--node-*)` and `TYPE_Y` for `top`; screen-fixed overlay (does not pan/zoom with flow) — comment in source
 - `GraphCanvas.module.css` — `.swimlaneContainer`, `.swimlane` (pointer-events none, z-index 0)
 
-#### Node quick-reply — P3 · M
-Select any Interaction node (keyboard or click) and press `R` to open an inline
-reply input directly on the canvas. The message is sent as a steer-from-node prompt
-(reuses `sendPrompt(content, nodeId)`). The reply appears as a new child node in the
-graph. This completes the loop: you can have an entire conversation without ever
-opening the chat panel.
+#### ✅ Node quick-reply — P3 · M
 
-**Key files:**
-- `web-app/src/components/NodeReplyInput.tsx` — new component (inline textarea below node)
-- `web-app/src/hooks/useNodeNavigation.ts` — `R` key handler
-- `web-app/src/components/GraphCanvas.tsx` — track `replyingToNodeId` state
+Done 2026-03-29. Dogfood session `a679fbca` + doom loop bug fix.
+- `NodeReplyInput.tsx` + `NodeReplyInput.module.css` — inline reply input (textarea + Send/Cancel buttons, Escape dismisses, Enter sends, auto-focus, thinking badge)
+- `useNodeNavigation.ts` — R key handler: only activates for `interaction` node type, sets `replyingToNodeId` state
+- `GraphCanvas.tsx` — `replyingToNodeId` + `clearReply` from hook; `useEffect` sets steer context via `onSteerFromNode`; `NodeReplyInput` rendered with node position
+- Position uses graph coordinates as CSS `left`/`top` (same pre-existing pattern as `NodePopover` — decorative only, does not track pan/zoom)
+- **Bug found + fixed:** Doom loop advisory re-fired every turn after threshold because `count == threshold` iterated all accumulated counts. Fixed: collect `edited_this_turn`/`read_this_turn` vecs, only check those paths against thresholds.
 
 ### Smart Layout Engine
 

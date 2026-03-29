@@ -30,6 +30,7 @@ import { ZoomProvider } from '../context/ZoomContext';
 import { PopoverProvider } from '../context/PopoverContext';
 import type { PopoverActions } from '../context/PopoverContext';
 import { FloatingInput } from './FloatingInput';
+import { NodeReplyInput } from './NodeReplyInput';
 import { HitlOverlay } from './HitlOverlay';
 import { TYPE_Y } from '../layout/timeline';
 import styles from './GraphCanvas.module.css';
@@ -135,7 +136,7 @@ function GraphCanvasInner({
 
   const { fitView, screenToFlowPosition } = useReactFlow();
 
-  const { focusedNodeId, activateNodeId, clearActivation } = useNodeNavigation(nodes, edges);
+  const { focusedNodeId, activateNodeId, clearActivation, replyingToNodeId, clearReply } = useNodeNavigation(nodes, edges);
   
   // Compute dimmed nodes: non-focused nodes that are NOT immediate 1-hop neighbors
   const dimmedNodeIds = useMemo(() => {
@@ -283,6 +284,21 @@ function GraphCanvasInner({
       clearActivation();
     }
   }, [activateNodeId, openPopover, clearActivation]);
+
+  // React to keyboard R activation from useNodeNavigation for quick-reply
+  useEffect(() => {
+    if (replyingToNodeId) {
+      // Set steer context so the reply goes to the right node
+      onSteerFromNode(replyingToNodeId);
+    }
+  }, [replyingToNodeId, onSteerFromNode]);
+
+  // Find the node position for the reply input
+  const replyingNodePosition = useMemo(() => {
+    if (!replyingToNodeId) return null;
+    const rfNode = nodes.find(n => n.id === replyingToNodeId);
+    return rfNode?.position ?? null;
+  }, [replyingToNodeId, nodes]);
 
   // Double-click on a node opens the popover
   const handleNodeDoubleClick = useCallback(
@@ -437,6 +453,15 @@ function GraphCanvasInner({
             node={popoverGraphNode}
             position={popoverState.position}
             onClose={closePopover}
+          />
+        )}
+        {replyingToNodeId && replyingNodePosition && (
+          <NodeReplyInput
+            nodeId={replyingToNodeId}
+            position={replyingNodePosition}
+            onSend={onSend ?? (() => {})}
+            onCancel={clearReply}
+            isThinking={isThinking ?? false}
           />
         )}
         {pendingApproval && onApprove && onReject && onModify && (

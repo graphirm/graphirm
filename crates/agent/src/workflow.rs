@@ -1444,6 +1444,7 @@ pub async fn run_agent_loop(
         }
 
         // Doom loop tracking: count write/edit calls per file path.
+        let mut edited_this_turn: Vec<std::path::PathBuf> = Vec::new();
         if doom_loop_threshold > 0 {
             for part in &tool_calls {
                 let ContentPart::ToolCall {
@@ -1456,18 +1457,17 @@ pub async fn run_agent_loop(
                     && let Some(path_str) = arguments.get("path").and_then(|v| v.as_str())
                 {
                     had_write_calls = true;
-                    *file_edit_counts
-                        .entry(std::path::PathBuf::from(path_str))
-                        .or_insert(0) += 1;
-                    // Reset read counter for this path — a write invalidates
-                    // prior content, so one re-read after a write is expected.
-                    file_read_counts.remove(&std::path::PathBuf::from(path_str));
+                    let p = std::path::PathBuf::from(path_str);
+                    *file_edit_counts.entry(p.clone()).or_insert(0) += 1;
+                    edited_this_turn.push(p.clone());
+                    file_read_counts.remove(&p);
                 }
             }
         }
 
         // Read-loop tracking: count read/read_many/grep calls per file path.
         // Catches verification doom loops where the agent re-reads completed files.
+        let mut read_this_turn: Vec<std::path::PathBuf> = Vec::new();
         if read_loop_threshold > 0 {
             for part in &tool_calls {
                 let ContentPart::ToolCall {
@@ -1479,16 +1479,16 @@ pub async fn run_agent_loop(
                 if name == "read"
                     && let Some(path_str) = arguments.get("path").and_then(|v| v.as_str())
                 {
-                    *file_read_counts
-                        .entry(std::path::PathBuf::from(path_str))
-                        .or_insert(0) += 1;
+                    let p = std::path::PathBuf::from(path_str);
+                    *file_read_counts.entry(p.clone()).or_insert(0) += 1;
+                    read_this_turn.push(p);
                 } else if name == "read_many"
                     && let Some(paths) = arguments.get("paths").and_then(|v| v.as_array())
                 {
                     for p in paths.iter().filter_map(|v| v.as_str()) {
-                        *file_read_counts
-                            .entry(std::path::PathBuf::from(p))
-                            .or_insert(0) += 1;
+                        let pb = std::path::PathBuf::from(p);
+                        *file_read_counts.entry(pb.clone()).or_insert(0) += 1;
+                        read_this_turn.push(pb);
                     }
                 }
             }
@@ -1507,9 +1507,10 @@ pub async fn run_agent_loop(
         all_node_ids.extend(tool_result_ids.iter().cloned());
 
         // Doom loop advisory: warn when the agent has edited a file too many times.
-        // Non-fatal — failure to inject is logged and skipped.
+        // Only check files edited THIS turn to avoid re-firing on stale counts.
         if doom_loop_threshold > 0 {
-            for (file_path, &count) in &file_edit_counts {
+            for file_path in &edited_this_turn {
+                let count = file_edit_counts.get(file_path).copied().unwrap_or(0);
                 if count == doom_loop_threshold {
                     tracing::warn!(
                         path = %file_path.display(),
@@ -1541,9 +1542,10 @@ pub async fn run_agent_loop(
         }
 
         // Read-loop advisory: warn when the agent re-reads a file too many times
-        // without editing it. Fires once per file (at threshold count) to avoid spam.
+        // without editing it. Only check files read THIS turn to avoid re-firing.
         if read_loop_threshold > 0 {
-            for (file_path, &count) in &file_read_counts {
+            for file_path in &read_this_turn {
+                let count = file_read_counts.get(file_path).copied().unwrap_or(0);
                 if count == read_loop_threshold {
                     tracing::warn!(
                         path = %file_path.display(),
