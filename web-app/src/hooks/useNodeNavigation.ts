@@ -9,8 +9,10 @@ export function useNodeNavigation(nodes: Node[], edges: Edge[]) {
   const [replyingToNodeId, setReplyingToNodeId] = useState<string | null>(null);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
+  const focusedNodeIdRef = useRef(focusedNodeId);
   nodesRef.current = nodes;
   edgesRef.current = edges;
+  focusedNodeIdRef.current = focusedNodeId;
 
   // Clear the activation after consumers read it (one-shot event).
   const clearActivation = useCallback(() => {
@@ -45,7 +47,7 @@ export function useNodeNavigation(nodes: Node[], edges: Edge[]) {
       // R key starts quick-reply for Interaction nodes
       if (e.key === "r" || e.key === "R") {
         e.preventDefault();
-        const current = focusedNodeId;
+        const current = focusedNodeIdRef.current;
         if (current) {
           const nodes = nodesRef.current;
           const node = nodes.find(n => n.id === current);
