@@ -229,6 +229,20 @@ are naturally spread apart. Build clean. Commits: `2066d7a` (ref fix), `02e80f5`
 
 Done 2026-03-29. `NODE_DIMENSIONS` in `dagre.ts` already had per-type fallbacks from Phase "actual node dimensions". Updated estimates to match real rendered sizes: Interaction 220×120, Agent 240×70, Knowledge/Content 180×60. Build passes.
 
+#### ✅ Fix blank canvas — `onNodesChange` dropping dimension updates — P1 · S
+
+Done 2026-03-29. Graph canvas was completely blank despite `useGraphData` correctly
+computing 14 nodes with dagre positions and passing them to `<ReactFlow>`. Root cause:
+custom `onNodesChange` handler only applied `position` changes, silently dropping
+`dimensions`, `select`, `reset`, and all other change types. React Flow v12 measures
+each node via ResizeObserver and reports dimensions back through `onNodesChange` — without
+applying those, React Flow couldn't finalize node rendering. Fix: replaced the hand-rolled
+handler with `applyNodeChanges` from `@xyflow/react`. Minimap was already rendering
+(proving React Flow knew about nodes), but actual node cards were invisible.
+
+**Key files:**
+- `web-app/src/hooks/useGraphData.ts` — import `applyNodeChanges`, replace custom handler
+
 ---
 
 ### ✅ Design system + light/dark theme — P3 · S

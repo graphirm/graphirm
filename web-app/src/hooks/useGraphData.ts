@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Node, Edge, XYPosition } from '@xyflow/react';
+import type { Node, Edge, XYPosition, NodeChange } from '@xyflow/react';
+import { applyNodeChanges } from '@xyflow/react';
 import type { GraphData, GraphNode } from '../types/graph';
 import { applyDagreLayout } from '../layout/dagre';
 import { applyTimelineLayout } from '../layout/timeline';
@@ -287,7 +288,7 @@ interface UseGraphDataReturn {
   edges: Edge[];
   layoutMode: LayoutMode;
   setLayoutMode: (mode: LayoutMode) => void;
-  onNodesChange: (changes: unknown) => void;
+  onNodesChange: (changes: NodeChange[]) => void;
   persistPositions: () => void;
   addNode: (node: Node) => void;
   matchCount: number;
@@ -515,24 +516,8 @@ export function useGraphData(
     [applyLayout, edges, graphData, sessionId, filter],
   );
 
-  const onNodesChange = useCallback((changes: unknown) => {
-    const changeArr = changes as Array<{
-      type: string;
-      id: string;
-      position?: { x: number; y: number };
-    }>;
-    setNodes(prev => {
-      const map = new Map(prev.map(n => [n.id, n]));
-      for (const change of changeArr) {
-        if (change.type === 'position' && change.position) {
-          const existing = map.get(change.id);
-          if (existing) {
-            map.set(change.id, { ...existing, position: change.position });
-          }
-        }
-      }
-      return [...map.values()];
-    });
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    setNodes(prev => applyNodeChanges(changes, prev));
   }, []);
 
   const persistPositions = useCallback(() => {
