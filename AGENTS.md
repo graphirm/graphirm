@@ -220,20 +220,35 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - Chat pane (markdown, HITL approval cards), graph pane (d3 force + timeline), session management
 - No build step, no framework, no auth — vanilla JS ES modules, ~1200 lines total
 
-**Interactive whiteboard UI summary (Phase 13):**
+**Interactive whiteboard UI summary (Phase 13 + subsequent):**
 - `web-app/` — React 19 + TypeScript + `@xyflow/react` v12, built with Vite 6
 - Node cards per type: InteractionNode, AgentNode, ContentNode, TaskNode, KnowledgeNode, AnnotationNode
-- Custom `LabelledEdge` — per-type colour, SmoothStep (hierarchical) / Bezier (cross-cutting)
+- Custom `LabelledEdge` — per-type colour + CSS variable cache, SmoothStep (hierarchical) / Bezier (cross-cutting)
 - Three layout modes: DAG (dagre), Timeline (X=time, Y=type band), Free (manual, localStorage)
 - **Node expansion** — click ▼ to expand; Interaction renders markdown (marked), Content shows syntax-highlighted code (hljs); NodeResizer for manual resize
 - **Visual grouping** — each Interaction + its produced nodes rendered inside a React Flow parent/group node with dashed boundary
 - **Steer-from-node** — expand any Interaction node → "↩ Steer from here" button pre-fills chat input with context root; sent via existing `POST /api/sessions/{id}/prompt`
 - **Canvas annotations** — double-click empty canvas or toolbar "+ Note" adds editable AnnotationNode; `POST /api/graph/{session_id}/annotate` persists as Knowledge node
-- **Keyboard shortcuts** — `F` fit-view, `L` cycle layout, `N` new session, `/` focus chat
+- **Keyboard shortcuts** — `F` fit-view, `L` cycle layout, `N` new session, `/` focus chat, `C` collapse/expand chat panel, arrow keys navigate nodes, `Enter` open popover, `R` quick-reply (Interaction nodes), `Escape` clear focus
 - MiniMap, Controls, dotted background grid — full pan/zoom/drag
 - **Auto-approve toggle** — SessionBar button enables/disables HITL gating per session; green when active
 - ChatPane with HITL approve/reject/modify cards, steer context banner; SessionBar with pause/resume/auto-approve
-- Bundle: React Flow 194 kB, highlight 21 kB (trimmed to 20 languages), dagre 43 kB, app 289 kB — all chunks ≤ 500 kB
+- **Collapsible chat panel** — `C` key or ☰ toggle; panel collapses to 40px, graph auto-expands via flex; chat state preserved (no unmount)
+- **Floating command input** — `FloatingInput.tsx`; when chat is collapsed, `/` or `Enter` expands bottom-center input strip; sends via same `handleSend` path; `thinking` badge when agent is running
+- **Keyboard node navigation** — `useNodeNavigation` hook; arrow keys follow `produces`/`responds_to`/`contains` edges; `↑`/`↓` move between Y-sorted siblings; `FocusContext` provides focused ID to all node cards; focused node gets pulsing accent ring (CSS animation)
+- **Node popover** — `Enter` on focused node opens `NodePopover` with per-type actions (steer, rate, task status, pin, edit summary); fade-in animation, theme variables; double-click also opens
+- **Node quick-reply** — `R` on focused Interaction node opens inline `NodeReplyInput` (textarea + Send/Cancel, auto-focus); sets steer context and sends; `Escape` dismisses
+- **HITL on canvas** — `HitlOverlay` renders in canvasWrapper as bottom-center strip when approval pending; node matching `pendingApproval.node_id` gets warning pulse ring via `.pendingApproval` CSS class
+- **LOD (level-of-detail) zoom** — `ZoomContext` + 150ms debounced threshold; at low zoom all nodes collapse regardless of expand state (preferences preserved and restored on zoom-in); AnnotationNode compact at LOD
+- **Timeline swimlane backgrounds** — `swimlaneContainer` + per-type `swimlane` strips using `--node-*` CSS vars; screen-fixed overlay (doesn't pan/zoom with canvas)
+- **Timeline collision avoidance** — two-pass layout in `applyTimelineLayout()`: pass 1 maps timestamps→X; pass 2 groups by type band, sorts by X, nudges overlapping nodes right by nodeWidth+16px gap; unaffected when naturally spaced
+- **Layout stability on live SSE updates** — `positionNewNodes()` helper places incoming nodes relative to parents; `isPatchUpdate` flag skips full dagre re-run on patches, preserving existing positions
+- **Actual node dimensions in dagre** — `getNodeDimensions()` reads `node.measured.width/height`; per-type fallback estimates (Interaction 220×120, Agent 240×70, others 180×60–70)
+- **Animated layout transitions** — `.react-flow__node { transition: transform 0.3s ease }` in `theme.css`; React Flow auto-suspends during drag
+- **Focus-and-context zoom** — `selectedNodeId` + `dimmedNodeIds` (1-hop neighbors); non-neighbors at `opacity: 0.25`; `handlePaneClick` / `Escape` clears
+- **Color-coded nodes** — colored left border stripe + 12% tinted background per node type via `color-mix()` in `BaseCard`; Interaction role split: user=`--accent`, assistant=`--node-agent`
+- **Markdown rendering in chat** — `MarkdownBody` (marked + hljs) for assistant/tool messages; user messages plain text; collapsed-node preview strips markdown syntax
+- Bundle: React Flow 194 kB, highlight 21 kB (trimmed to 20 languages), dagre 43 kB, app ~313 kB — all chunks ≤ 500 kB
 - Dev: `cd web-app && npm run dev` (proxies `/api` → `localhost:3000`)
 - Build: `cd web-app && npm run build` → `web-app/dist/` (served automatically by `graphirm serve`)
 
