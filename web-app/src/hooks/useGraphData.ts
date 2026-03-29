@@ -292,6 +292,7 @@ interface UseGraphDataReturn {
   persistPositions: () => void;
   addNode: (node: Node) => void;
   matchCount: number;
+  bandPositions: Record<string, number>;
 }
 
 export function useGraphData(
@@ -305,6 +306,7 @@ export function useGraphData(
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [matchCount, setMatchCount] = useState<number>(0);
+  const [bandPositions, setBandPositions] = useState<Record<string, number>>({});
   const rawNodesRef = useRef<GraphNode[]>([]);
 
   const rawEdges = useMemo(() => {
@@ -326,22 +328,23 @@ export function useGraphData(
       mode: LayoutMode,
       rawNodes: GraphNode[],
       sid: string | null,
-    ): Node[] => {
+    ): { nodes: Node[]; bandPositions: Record<string, number> } => {
       if (mode === 'dagre') {
-        return applyDagreLayout(baseNodes, currentEdges, 'LR');
+        return { nodes: applyDagreLayout(baseNodes, currentEdges, 'LR'), bandPositions: {} };
       }
       if (mode === 'timeline') {
-        return applyTimelineLayout(baseNodes, rawNodes, currentEdges, canvasWidth);
+        const result = applyTimelineLayout(baseNodes, rawNodes, currentEdges, canvasWidth);
+        return result;
       }
       // free mode: restore persisted positions
       if (sid) {
         const positions = loadPositions(sid);
-        return baseNodes.map(n => ({
-          ...n,
-          position: positions[n.id] ?? n.position,
-        }));
+        return {
+          nodes: baseNodes.map(n => ({ ...n, position: positions[n.id] ?? n.position })),
+          bandPositions: {},
+        };
       }
-      return baseNodes;
+      return { nodes: baseNodes, bandPositions: {} };
     },
     [canvasWidth],
   );
@@ -402,7 +405,8 @@ export function useGraphData(
     const { grouped, groupNodes } = useGroups
       ? buildGroups(baseNodes, flowEdges)
       : { grouped: baseNodes, groupNodes: [] as Node[] };
-    const laid = applyLayout(grouped, flowEdges, layoutMode, graphData.nodes, sessionId);
+    const { nodes: laid, bandPositions: newBandPositions } = applyLayout(grouped, flowEdges, layoutMode, graphData.nodes, sessionId);
+    setBandPositions(newBandPositions);
 
     let finalNodes: Node[];
     if (useGroups && groupNodes.length > 0) {
@@ -487,40 +491,45 @@ export function useGraphData(
   const setLayoutMode = useCallback(
     (mode: LayoutMode) => {
       setLayoutModeState(mode);
-      // Re-derive from raw data rather than mutating existing nodes.
       if (!graphData) return;
-      const baseNodes = graphData.nodes.map(graphNodeToFlowNode);
-      const { grouped, groupNodes } = buildGroups(baseNodes, edges);
-      const laid = applyLayout(grouped, edges, mode, rawNodesRef.current, sessionId);
-      const PAD = 24;
-      const positionedGroups = groupNodes.map(g => {
-        const children = laid.filter(n => n.parentId === g.id);
-        if (children.length === 0) return g;
-        const xs = children.map(c => c.position.x);
-        const ys = children.map(c => c.position.y);
-        const minX = Math.min(...xs) - PAD;
-        const minY = Math.min(...ys) - PAD;
-        const maxX = Math.max(...xs) + 200 + PAD;
-        const maxY = Math.max(...ys) + 120 + PAD;
-        return {
-          ...g,
-          position: { x: minX, y: minY },
-          style: { width: maxX - minX, height: maxY - minY },
-        };
-      });
-      const groupOrigins = new Map(positionedGroups.map(g => [g.id, g.position]));
-      const rebased = laid.map(n => {
-        if (!n.parentId) return n;
-        const origin = groupOrigins.get(n.parentId);
-        if (!origin) return n;
-        return { ...n, position: { x: n.position.x - origin.x, y: n.position.y - origin.y } };
-      });
 
-      const { nodes: withHidden } = applyFilterToNodes(
-        [...positionedGroups, ...rebased],
-        graphData.nodes,
-        filter,
-      );
+      const baseNodes = graphData.nodes.map(graphNodeToFlowNode);
+      const useGroups = mode === 'dagre';
+
+      const { grouped, groupNodes } = useGroups
+        ? buildGroups(baseNodes, edges)
+        : { grouped: baseNodes, groupNodes: [] as Node[] };
+
+      const { nodes: laid, bandPositions: newBandPositions } = applyLayout(grouped, edges, mode, rawNodesRef.current, sessionId);
+      setBandPositions(newBandPositions);
+
+      let finalNodes: Node[];
+      if (useGroups && groupNodes.length > 0) {
+        const PAD = 24;
+        const positionedGroups = groupNodes.map(g => {
+          const children = laid.filter(n => n.parentId === g.id);
+          if (children.length === 0) return g;
+          const xs = children.map(c => c.position.x);
+          const ys = children.map(c => c.position.y);
+          const minX = Math.min(...xs) - PAD;
+          const minY = Math.min(...ys) - PAD;
+          const maxX = Math.max(...xs) + 200 + PAD;
+          const maxY = Math.max(...ys) + 120 + PAD;
+          return { ...g, position: { x: minX, y: minY }, style: { width: maxX - minX, height: maxY - minY } };
+        });
+        const groupOrigins = new Map(positionedGroups.map(g => [g.id, g.position]));
+        const rebased = laid.map(n => {
+          if (!n.parentId) return n;
+          const origin = groupOrigins.get(n.parentId);
+          if (!origin) return n;
+          return { ...n, position: { x: n.position.x - origin.x, y: n.position.y - origin.y } };
+        });
+        finalNodes = [...positionedGroups, ...rebased];
+      } else {
+        finalNodes = laid;
+      }
+
+      const { nodes: withHidden } = applyFilterToNodes(finalNodes, graphData.nodes, filter);
       setNodes(withHidden);
     },
     [applyLayout, edges, graphData, sessionId, filter],
@@ -543,5 +552,5 @@ export function useGraphData(
     setNodes(prev => [...prev, node]);
   }, []);
 
-  return { nodes, edges, layoutMode, setLayoutMode, onNodesChange, persistPositions, addNode, matchCount };
+  return { nodes, edges, layoutMode, setLayoutMode, onNodesChange, persistPositions, addNode, matchCount, bandPositions };
 }
