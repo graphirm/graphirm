@@ -183,6 +183,23 @@ Done 2026-03-29. `buildTurns()` partitions Interaction nodes into turns by user-
 
 Done 2026-03-29. `ROLE_COLORS` map at module level: `user → --accent`, `assistant → --node-agent` (pink), `tool → --node-content` (teal), `system → --fg-muted`. Applied to both full cards (`BaseCard` `color` prop) and compact cascade cards (`borderLeftColor` inline style). Commit: `e77af09`.
 
+#### Highlight file-writing tool nodes with destructive color — P1 · S
+
+Tool cascade cards that invoke destructive tools (`write`, `edit`, `bash`) should be visually distinct from read-only tool calls. Use `--warning` (amber) as their `--compact-color` and full-card border color so they stand out in the cascade staircase. Detection: check `(data.metadata as Record<string, unknown>).tool_name` against `['write', 'edit', 'bash']` in `InteractionNode`. The same color should apply to both compact and expanded (full `BaseCard`) render paths.
+
+**Key files:**
+- `web-app/src/components/nodes/InteractionNode.tsx` — derive `color` from `tool_name` when role is `tool`
+
+#### Collapse-all cascade nodes button — P2 · S
+
+When a compact cascade card is clicked to expand in-place, there is no clear way to collapse it again (the "↑ Collapse" button inside the expanded card is not discoverable). Add a **"⊖ Collapse all"** button to the Toolbar (visible only in Timeline mode) that resets all in-place-expanded cascade cards back to compact state. Implementation: `CascadeCollapseContext` — a React context that exposes a monotonic `collapseGeneration: number`; increment it on button click; each `InteractionNode` resets `localExpanded = false` via a `useEffect` that depends on `collapseGeneration`.
+
+**Key files:**
+- `web-app/src/context/CascadeCollapseContext.tsx` — new context + hook
+- `web-app/src/components/nodes/InteractionNode.tsx` — `useEffect` on `collapseGeneration`
+- `web-app/src/components/Toolbar.tsx` — "⊖ Collapse all" button (timeline mode only)
+- `web-app/src/components/GraphCanvas.tsx` — wrap with provider, pass increment to Toolbar
+
 #### Node editing and annotations — P2 · M
 
 Per-type interaction for editing, dismissal, and annotation:

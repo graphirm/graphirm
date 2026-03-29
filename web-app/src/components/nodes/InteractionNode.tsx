@@ -65,7 +65,7 @@ export function InteractionNode({ id, data: rawData, selected }: NodeProps) {
         className={`${styles.compactCard}${focused ? ` ${styles.focused}` : ''}`}
         onClick={() => setLocalExpanded(true)}
         title={stripMarkdown(nt.content ?? '')}
-        style={{ borderLeftColor: color, borderLeftWidth: 3 }}
+        style={{ '--compact-color': color } as React.CSSProperties}
       >
         <span className={styles.roleIcon}>{icon}</span>
         <span className={styles.compactLabel}>{label}</span>

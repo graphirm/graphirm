@@ -188,7 +188,8 @@
   opacity: 0.7;
 }
 
-/* Cascade compact card — intermediate tool/assistant turns in timeline mode */
+/* Cascade compact card — intermediate tool/assistant turns in timeline mode.
+   --compact-color is set inline by InteractionNode to the role color. */
 .compactCard {
   display: flex;
   align-items: center;
@@ -197,18 +198,20 @@
   height: 50px;
   max-width: 160px;
   border-radius: 6px;
-  border: 1px solid var(--surface-2);
-  background: var(--surface-1);
+  border: 1px solid color-mix(in srgb, var(--compact-color, var(--border)) 40%, var(--surface-2));
+  border-left: 3px solid var(--compact-color, var(--border));
+  background: color-mix(in srgb, var(--compact-color, var(--surface-1)) 12%, var(--surface-1));
   cursor: pointer;
   font-size: var(--text-xs);
   overflow: hidden;
   white-space: nowrap;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
   user-select: none;
 }
 
 .compactCard:hover {
-  border-color: var(--border-hover);
+  background: color-mix(in srgb, var(--compact-color, var(--surface-1)) 22%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--compact-color, var(--border)) 70%, var(--surface-2));
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
@@ -220,7 +223,7 @@
 .roleIcon {
   font-weight: 700;
   font-size: var(--text-sm);
-  opacity: 0.7;
+  color: var(--compact-color, var(--fg-muted));
   flex-shrink: 0;
 }
 
