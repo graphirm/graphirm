@@ -217,13 +217,21 @@ Commit: `6940b28`
 #### ✅ Timeline collision avoidance — P3 · S
 
 Done 2026-03-29. Two-pass layout in `applyTimelineLayout()`: pass 1 computes natural
-X/Y from timestamps (unchanged); pass 2 groups nodes by type band, sorts by X, and
-nudges any node whose natural X would overlap the previous node rightward. Per-type
-widths (Interaction 220, Agent 240, others 180) + 16px gap. Unaffected when nodes
-are naturally spread apart. Build clean. Commits: `2066d7a` (ref fix), `02e80f5` (stagger).
+X/Y from timestamps; pass 2 groups nodes by type band, sorts by X, and nudges any
+node whose natural X would overlap the previous node rightward. Commits: `02e80f5`.
+
+**Overhauled** same day (`ddff4e6`): collision widths raised from 180-240px to 280px
+(matching CSS `--card-max-width`), gap from 16→32px, band spacing from 80→140px.
+Group nodes disabled in Timeline mode (groups only make sense for dagre — in timeline
+they caused parent-relative coordinate misalignment and overlapping cards). Removed
+`computeNodeGroups` and depth-based Y offset entirely. Edge labels hidden when
+zoomed below 0.6x to reduce visual noise. Swimlane backgrounds updated to 120px
+height centered on new TYPE_Y positions.
 
 **Key files:**
-- `web-app/src/layout/timeline.ts` — two-pass layout with band stagger
+- `web-app/src/layout/timeline.ts` — two-pass layout, no groups, 280px collision widths
+- `web-app/src/hooks/useGraphData.ts` — conditional `buildGroups` (dagre only)
+- `web-app/src/components/edges/LabelledEdge.tsx` — zoom-based label visibility
 
 #### ✅ Type-aware spacing in dagre — P3 · S
 

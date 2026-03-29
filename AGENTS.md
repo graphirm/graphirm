@@ -241,8 +241,9 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - **HITL on canvas** — `HitlOverlay` renders in canvasWrapper as bottom-center strip when approval pending; node matching `pendingApproval.node_id` gets warning pulse ring via `.pendingApproval` CSS class
 - **LOD (level-of-detail) zoom** — `ZoomContext` + 150ms debounced threshold; at low zoom all nodes collapse regardless of expand state (preferences preserved and restored on zoom-in); AnnotationNode compact at LOD
 - **Timeline swimlane backgrounds** — `swimlaneContainer` + per-type `swimlane` strips using `--node-*` CSS vars; screen-fixed overlay (doesn't pan/zoom with canvas)
-- **Timeline collision avoidance** — two-pass layout in `applyTimelineLayout()`: pass 1 maps timestamps→X; pass 2 groups by type band, sorts by X, nudges overlapping nodes right by nodeWidth+16px gap; unaffected when naturally spaced
+- **Timeline collision avoidance** — two-pass layout in `applyTimelineLayout()`: pass 1 maps timestamps→X; pass 2 groups by type band, sorts by X, nudges overlapping nodes right by 280px+32px gap; group nodes disabled in timeline mode (dagre only); bands spaced 140px apart; edge labels hidden below 0.6x zoom
 - **Layout stability on live SSE updates** — `positionNewNodes()` helper places incoming nodes relative to parents; `isPatchUpdate` flag skips full dagre re-run on patches, preserving existing positions
+- **Controlled node state** — `onNodesChange` uses `applyNodeChanges` from `@xyflow/react` (not a custom handler); required for React Flow v12 to finalize rendering after ResizeObserver dimension measurements
 - **Actual node dimensions in dagre** — `getNodeDimensions()` reads `node.measured.width/height`; per-type fallback estimates (Interaction 220×120, Agent 240×70, others 180×60–70)
 - **Animated layout transitions** — `.react-flow__node { transition: transform 0.3s ease }` in `theme.css`; React Flow auto-suspends during drag
 - **Focus-and-context zoom** — `selectedNodeId` + `dimmedNodeIds` (1-hop neighbors); non-neighbors at `opacity: 0.25`; `handlePaneClick` / `Escape` clears
