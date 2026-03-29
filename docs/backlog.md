@@ -214,14 +214,16 @@ Done 2026-03-28. Dogfood session b2046968 + manual fixes. Grade: partial.
 - Manual fixes: removed import, wired handler via `useEffect`
 Commit: `6940b28`
 
-#### Timeline collision avoidance — P3 · S
-Nodes with overlapping X positions (similar `created_at` timestamps) should be
-vertically staggered within their type band. Currently they stack directly on top of
-each other. Fix: after computing X positions, sort nodes per band by time, track
-occupied X ranges, and nudge right by `NODE_WIDTH + gap` when overlapping.
+#### ✅ Timeline collision avoidance — P3 · S
+
+Done 2026-03-29. Two-pass layout in `applyTimelineLayout()`: pass 1 computes natural
+X/Y from timestamps (unchanged); pass 2 groups nodes by type band, sorts by X, and
+nudges any node whose natural X would overlap the previous node rightward. Per-type
+widths (Interaction 220, Agent 240, others 180) + 16px gap. Unaffected when nodes
+are naturally spread apart. Build clean. Commits: `2066d7a` (ref fix), `02e80f5` (stagger).
 
 **Key files:**
-- `web-app/src/layout/timeline.ts` — add overlap detection pass after initial positioning
+- `web-app/src/layout/timeline.ts` — two-pass layout with band stagger
 
 #### ✅ Type-aware spacing in dagre — P3 · S
 
