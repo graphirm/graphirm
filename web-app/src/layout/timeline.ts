@@ -1,6 +1,17 @@
 import type { Node, Edge } from '@xyflow/react';
 import type { GraphNode } from '../types/graph';
 
+// Per-type approximate widths used for overlap detection (matches dagre.ts estimates).
+const NODE_WIDTHS: Record<string, number> = {
+  Interaction: 220,
+  Agent: 240,
+  Content: 180,
+  Knowledge: 180,
+  Task: 180,
+};
+const DEFAULT_NODE_WIDTH = 200;
+const BAND_GAP = 16;
+
 export const TYPE_Y: Record<string, number> = {
   Agent: 80,
   Task: 160,
@@ -92,7 +103,8 @@ export function applyTimelineLayout(
 
   const rawById = new Map(rawNodes.map(n => [n.id, n]));
 
-  return nodes.map((node) => {
+  // Pass 1: compute natural X/Y from timestamps.
+  const positioned = nodes.map((node) => {
     const raw = rawById.get(node.id);
     if (!raw) return node;
 
@@ -108,4 +120,28 @@ export function applyTimelineLayout(
 
     return { ...node, position: { x, y } };
   });
+
+  // Pass 2: stagger overlapping nodes within each type band.
+  // Sort each band by natural X and nudge right when nodes would overlap.
+  const byBand = new Map<string, Node[]>();
+  for (const node of positioned) {
+    const raw = rawById.get(node.id);
+    const band = raw?.node_type.type ?? 'Interaction';
+    if (!byBand.has(band)) byBand.set(band, []);
+    byBand.get(band)!.push(node);
+  }
+
+  const staggered = new Map(positioned.map(n => [n.id, n]));
+  for (const [band, bandNodes] of byBand) {
+    const nodeWidth = NODE_WIDTHS[band] ?? DEFAULT_NODE_WIDTH;
+    const sorted = [...bandNodes].sort((a, b) => a.position.x - b.position.x);
+    let nextAllowedX = -Infinity;
+    for (const node of sorted) {
+      const x = Math.max(node.position.x, nextAllowedX);
+      nextAllowedX = x + nodeWidth + BAND_GAP;
+      staggered.set(node.id, { ...node, position: { ...node.position, x } });
+    }
+  }
+
+  return positioned.map(n => staggered.get(n.id) ?? n);
 }
