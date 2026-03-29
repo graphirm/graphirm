@@ -179,6 +179,14 @@ Done 2026-03-29. `buildTurns()` partitions Interaction nodes into turns by user-
 - `web-app/src/components/nodes/InteractionNode.tsx` — compact card rendering via `data.compact`
 - `web-app/src/styles/nodes.module.css` — `.compactCard`, `.roleIcon`, `.compactLabel`
 
+#### Fix role-based color split for Interaction nodes — P2 · S
+
+`InteractionNode.tsx` uses a binary color split: `user → --accent`, everything else → `--node-agent` (pink). This makes `tool` and `assistant` nodes visually identical. Fix: three-way split — `user → --accent`, `assistant → --node-agent`, `tool → --node-content` (teal). Apply to both full cards (the `color` prop passed to `BaseCard`) and compact cascade cards (left border / background tint on `.compactCard`). Also audit `--node-agent` vs `--node-content` naming to confirm the mapping is semantically correct.
+
+**Key files:**
+- `web-app/src/components/nodes/InteractionNode.tsx` — `color` derivation + compact card border
+- `web-app/src/styles/nodes.module.css` — `.compactCard` variant per role (or inline style)
+
 #### Node editing and annotations — P2 · M
 
 Per-type interaction for editing, dismissal, and annotation:
