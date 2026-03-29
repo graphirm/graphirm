@@ -1,6 +1,8 @@
-import { BaseEdge, EdgeLabelRenderer, getBezierPath, getSmoothStepPath } from '@xyflow/react';
+import { BaseEdge, EdgeLabelRenderer, getBezierPath, getSmoothStepPath, useViewport } from '@xyflow/react';
 import type { EdgeProps } from '@xyflow/react';
 import type { EdgeType } from '../../types/graph';
+
+const LABEL_ZOOM_THRESHOLD = 0.6;
 
 let _colorCache: Record<string, string> = {};
 let _cacheTheme = '';
@@ -47,6 +49,7 @@ export function LabelledEdge({
   const color = getEdgeColor(edgeType);
   const strokeWidth = STROKE_WIDTH[edgeType] ?? 1.5;
   const useSmooth = SMOOTH_STEP_TYPES.includes(edgeType);
+  const { zoom } = useViewport();
 
   const pathParams = {
     sourceX, sourceY, targetX, targetY,
@@ -57,6 +60,8 @@ export function LabelledEdge({
     ? getSmoothStepPath(pathParams)
     : getBezierPath(pathParams);
 
+  const showLabel = edgeType && zoom >= LABEL_ZOOM_THRESHOLD;
+
   return (
     <>
       <BaseEdge
@@ -65,7 +70,7 @@ export function LabelledEdge({
         markerEnd={markerEnd}
         style={{ stroke: color, strokeWidth, opacity: 0.85 }}
       />
-      {edgeType && (
+      {showLabel && (
         <EdgeLabelRenderer>
           <div
             style={{

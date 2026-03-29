@@ -374,7 +374,7 @@ function GraphCanvasInner({
                 key={type}
                 className={styles.swimlane}
                 style={{
-                  top: y - 40, /* Center the 80px tall band around the TYPE_Y position */
+                  top: y - 20, /* Center the 120px tall band around the TYPE_Y position */
                   backgroundColor: cssVar(`--node-${type.toLowerCase()}`),
                 }}
               />

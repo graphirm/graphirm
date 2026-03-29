@@ -395,52 +395,62 @@ export function useGraphData(
     }
 
     // Full layout path (non-patch or no existing nodes)
-    // Build groups, then apply layout to content nodes (group nodes get positioned separately).
-    const { grouped, groupNodes } = buildGroups(baseNodes, flowEdges);
+    // Groups only make sense for dagre — timeline positions nodes by timestamp,
+    // so parent-relative coordinates would be wrong.
+    const useGroups = layoutMode === 'dagre';
+
+    const { grouped, groupNodes } = useGroups
+      ? buildGroups(baseNodes, flowEdges)
+      : { grouped: baseNodes, groupNodes: [] as Node[] };
     const laid = applyLayout(grouped, flowEdges, layoutMode, graphData.nodes, sessionId);
 
-    // Position group nodes to wrap their children.
-    const PAD = 24;
-    const positionedGroups = groupNodes.map(g => {
-      const children = laid.filter(n => n.parentId === g.id);
-      if (children.length === 0) return g;
-      const xs = children.map(c => c.position.x);
-      const ys = children.map(c => c.position.y);
-      const minX = Math.min(...xs) - PAD;
-      const minY = Math.min(...ys) - PAD;
-      const maxX = Math.max(...xs) + 200 + PAD; // 200 = approx card width
-      const maxY = Math.max(...ys) + 120 + PAD; // 120 = approx card height
-      // Rebase children positions relative to group origin.
-      return {
-        ...g,
-        position: { x: minX, y: minY },
-        style: { width: maxX - minX, height: maxY - minY },
-      };
-    });
+    let finalNodes: Node[];
+    if (useGroups && groupNodes.length > 0) {
+      // Position group nodes to wrap their children.
+      const PAD = 24;
+      const positionedGroups = groupNodes.map(g => {
+        const children = laid.filter(n => n.parentId === g.id);
+        if (children.length === 0) return g;
+        const xs = children.map(c => c.position.x);
+        const ys = children.map(c => c.position.y);
+        const minX = Math.min(...xs) - PAD;
+        const minY = Math.min(...ys) - PAD;
+        const maxX = Math.max(...xs) + 200 + PAD;
+        const maxY = Math.max(...ys) + 120 + PAD;
+        return {
+          ...g,
+          position: { x: minX, y: minY },
+          style: { width: maxX - minX, height: maxY - minY },
+        };
+      });
 
-    // Adjust children positions to be relative to their group.
-    const groupOrigins = new Map(positionedGroups.map(g => [g.id, g.position]));
-    const rebased = laid.map(n => {
-      if (!n.parentId) return n;
-      const origin = groupOrigins.get(n.parentId);
-      if (!origin) return n;
-      return {
-        ...n,
-        position: {
-          x: n.position.x - origin.x,
-          y: n.position.y - origin.y,
-        },
-      };
-    });
+      // Adjust children positions to be relative to their group.
+      const groupOrigins = new Map(positionedGroups.map(g => [g.id, g.position]));
+      const rebased = laid.map(n => {
+        if (!n.parentId) return n;
+        const origin = groupOrigins.get(n.parentId);
+        if (!origin) return n;
+        return {
+          ...n,
+          position: {
+            x: n.position.x - origin.x,
+            y: n.position.y - origin.y,
+          },
+        };
+      });
+      // Group nodes must come before their children in the array.
+      finalNodes = [...positionedGroups, ...rebased];
+    } else {
+      finalNodes = laid;
+    }
 
     // Apply filter: stamp hidden: true on non-matching nodes.
     const { nodes: withHidden, matchCount: count } = applyFilterToNodes(
-      [...positionedGroups, ...rebased],
+      finalNodes,
       graphData.nodes,
       filter,
     );
     setMatchCount(count);
-    // Group nodes must come before their children in the array.
     setNodes(withHidden);
     setEdges(flowEdges);
     // filter intentionally excluded from deps: filter-only changes are handled by

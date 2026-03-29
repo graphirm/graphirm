@@ -1,23 +1,24 @@
 import type { Node, Edge } from '@xyflow/react';
 import type { GraphNode } from '../types/graph';
 
-// Per-type approximate widths used for overlap detection (matches dagre.ts estimates).
+// Width estimates for collision avoidance — must match or exceed CSS --card-max-width (280px).
 const NODE_WIDTHS: Record<string, number> = {
-  Interaction: 220,
-  Agent: 240,
-  Content: 180,
-  Knowledge: 180,
-  Task: 180,
+  Interaction: 280,
+  Agent: 280,
+  Content: 280,
+  Knowledge: 280,
+  Task: 280,
 };
-const DEFAULT_NODE_WIDTH = 200;
-const BAND_GAP = 16;
+const DEFAULT_NODE_WIDTH = 280;
+const BAND_GAP = 32;
 
+// Y positions per type band — spaced 140px apart to avoid tall cards overlapping.
 export const TYPE_Y: Record<string, number> = {
-  Agent: 80,
-  Task: 160,
-  Interaction: 260,
-  Content: 360,
-  Knowledge: 440,
+  Agent: 0,
+  Task: 140,
+  Interaction: 280,
+  Content: 420,
+  Knowledge: 560,
 };
 
 export const TYPE_LABELS: Record<string, string> = {
@@ -28,67 +29,13 @@ export const TYPE_LABELS: Record<string, string> = {
   Knowledge: 'Knowledge',
 };
 
-interface GroupInfo {
-  groupId: string;
-  depth: number;
-}
-
-function computeNodeGroups(
-  nodes: GraphNode[],
-  edges: Array<{ source: string; target: string; edge_type: string }>,
-): Map<string, GroupInfo> {
-  const groups = new Map<string, GroupInfo>();
-  const processed = new Set<string>();
-
-  const interactions = nodes.filter(n => n.node_type.type === 'Interaction');
-
-  for (const interaction of interactions) {
-    groups.set(interaction.id, { groupId: interaction.id, depth: 0 });
-    processed.add(interaction.id);
-
-    const toolCallIds = edges
-      .filter(e => e.edge_type === 'produces' && e.source === interaction.id)
-      .map(e => e.target);
-
-    for (const toolId of toolCallIds) {
-      groups.set(toolId, { groupId: interaction.id, depth: 1 });
-      processed.add(toolId);
-
-      const resultIds = edges
-        .filter(e => e.edge_type === 'produces' && e.source === toolId)
-        .map(e => e.target);
-
-      for (const resultId of resultIds) {
-        groups.set(resultId, { groupId: interaction.id, depth: 2 });
-        processed.add(resultId);
-      }
-    }
-  }
-
-  for (const node of nodes) {
-    if (!processed.has(node.id)) {
-      groups.set(node.id, { groupId: node.id, depth: 0 });
-    }
-  }
-
-  return groups;
-}
-
 export function applyTimelineLayout(
   nodes: Node[],
   rawNodes: GraphNode[],
-  edges: Edge[],
+  _edges: Edge[],
   canvasWidth: number,
 ): Node[] {
   if (nodes.length === 0) return nodes;
-
-  const rawEdges = edges.map(e => ({
-    source: e.source,
-    target: e.target,
-    edge_type: (e.data as { edge_type?: string } | undefined)?.edge_type ?? '',
-  }));
-
-  const groups = computeNodeGroups(rawNodes, rawEdges);
 
   const times = rawNodes
     .map(n => new Date(n.created_at).getTime())
@@ -113,10 +60,7 @@ export function applyTimelineLayout(
       ? padding
       : padding + ((t - tMin) / tRange) * (canvasWidth - padding * 2);
 
-    const nodeTypeName = raw.node_type.type;
-    const baseY = TYPE_Y[nodeTypeName] ?? 260;
-    const group = groups.get(node.id) ?? { groupId: node.id, depth: 0 };
-    const y = baseY + group.depth * 30;
+    const y = TYPE_Y[raw.node_type.type] ?? 280;
 
     return { ...node, position: { x, y } };
   });

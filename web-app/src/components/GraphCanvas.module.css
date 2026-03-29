@@ -26,9 +26,9 @@
   position: absolute;
   left: 0;
   right: 0;
-  height: 80px; /* Standard row height matching TYPE_Y spacing */
+  height: 120px;
   border-radius: 4px;
-  opacity: 0.05; /* 5% opacity as requested */
+  opacity: 0.05;
 }
 
 /* Canvas HITL card: anchored bottom-center above floating input */
