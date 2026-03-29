@@ -15,6 +15,13 @@ const ROLE_ICONS: Record<string, string> = {
   system: 'S',
 };
 
+const ROLE_COLORS: Record<string, string> = {
+  user: 'var(--accent)',
+  assistant: 'var(--node-agent)',
+  tool: 'var(--node-content)',
+  system: 'var(--fg-muted)',
+};
+
 export function InteractionNode({ id, data: rawData, selected }: NodeProps) {
   const [expanded, setExpanded] = useState(false);
   const [localExpanded, setLocalExpanded] = useState(false);
@@ -25,8 +32,7 @@ export function InteractionNode({ id, data: rawData, selected }: NodeProps) {
   const nt = data.node_type;
   if (nt.type !== 'Interaction') return null;
 
-  const isUser = nt.role === 'user';
-  const color = isUser ? 'var(--accent)' : 'var(--node-agent)';
+  const color = ROLE_COLORS[nt.role] ?? 'var(--node-agent)';
   const roleLabel = nt.role === 'assistant' ? 'agent' : nt.role;
 
   const stripMarkdown = (text: string): string => {
@@ -59,6 +65,7 @@ export function InteractionNode({ id, data: rawData, selected }: NodeProps) {
         className={`${styles.compactCard}${focused ? ` ${styles.focused}` : ''}`}
         onClick={() => setLocalExpanded(true)}
         title={stripMarkdown(nt.content ?? '')}
+        style={{ borderLeftColor: color, borderLeftWidth: 3 }}
       >
         <span className={styles.roleIcon}>{icon}</span>
         <span className={styles.compactLabel}>{label}</span>
