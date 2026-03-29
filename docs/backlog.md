@@ -223,15 +223,9 @@ occupied X ranges, and nudge right by `NODE_WIDTH + gap` when overlapping.
 **Key files:**
 - `web-app/src/layout/timeline.ts` — add overlap detection pass after initial positioning
 
-#### Type-aware spacing in dagre — P3 · S
-Give different node types different default dimensions and spacing in dagre.
-Knowledge/Content nodes are compact (180×60), Interaction nodes are tall (220×120),
-Agent nodes are wide (240×70). Pass per-node dimensions to `g.setNode()` instead of
-the fixed `200×80`. Combined with the "actual dimensions" item above, this provides
-good first-render layout before measured sizes are available.
+#### ✅ Type-aware spacing in dagre — P3 · S
 
-**Key files:**
-- `web-app/src/layout/dagre.ts` — `TYPE_DIMENSIONS` map, use node type from data to look up size
+Done 2026-03-29. `NODE_DIMENSIONS` in `dagre.ts` already had per-type fallbacks from Phase "actual node dimensions". Updated estimates to match real rendered sizes: Interaction 220×120, Agent 240×70, Knowledge/Content 180×60. Build passes.
 
 ---
 

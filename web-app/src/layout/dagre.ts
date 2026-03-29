@@ -1,17 +1,18 @@
 import dagre from '@dagrejs/dagre';
 import type { Node, Edge } from '@xyflow/react';
 
-// Default dimensions for node types when measured dimensions are not available
+// Per-type fallback dimensions used before measured sizes are available (first render).
+// Interaction nodes are tall (markdown content expands them); Agent nodes are wide
+// (they display model/config metadata); Knowledge/Content are compact.
 const NODE_DIMENSIONS: Record<string, { width: number; height: number }> = {
-  interaction: { width: 220, height: 100 },
-  agent: { width: 160, height: 60 },
-  content: { width: 200, height: 80 },
-  task: { width: 180, height: 70 },
-  knowledge: { width: 180, height: 60 },
-  annotation: { width: 200, height: 80 },
-  group: { width: 400, height: 200 },
-  // Default fallback
-  default: { width: 200, height: 80 },
+  interaction: { width: 220, height: 120 },
+  agent:       { width: 240, height: 70  },
+  content:     { width: 200, height: 80  },
+  task:        { width: 180, height: 70  },
+  knowledge:   { width: 180, height: 60  },
+  annotation:  { width: 200, height: 80  },
+  group:       { width: 400, height: 200 },
+  default:     { width: 200, height: 80  },
 };
 
 function getNodeDimensions(node: Node): { width: number; height: number } {
