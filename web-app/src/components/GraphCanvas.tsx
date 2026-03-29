@@ -32,7 +32,7 @@ import type { PopoverActions } from '../context/PopoverContext';
 import { FloatingInput } from './FloatingInput';
 import { NodeReplyInput } from './NodeReplyInput';
 import { HitlOverlay } from './HitlOverlay';
-import { TYPE_Y } from '../layout/timeline';
+// TYPE_Y removed — swimlane positions now come from bandPositions via useGraphData
 import styles from './GraphCanvas.module.css';
 import nodeStyles from '../styles/nodes.module.css';
 import { useNodeNavigation } from '../hooks/useNodeNavigation';
@@ -132,6 +132,7 @@ function GraphCanvasInner({
     persistPositions,
     addNode,
     matchCount,
+    bandPositions,
   } = useGraphData(graphData, sessionId, canvasWidth, filter);
 
   const { fitView, screenToFlowPosition } = useReactFlow();
@@ -366,15 +367,16 @@ function GraphCanvasInner({
       />
       <div className={styles.canvasWrapper}>
         <FloatingInput chatCollapsed={chatCollapsed} onSend={onSend ?? (() => {})} isThinking={isThinking} />
-        {/* Timeline bands: TYPE_Y is graph coordinates; this overlay is screen-fixed (does not pan/zoom with the flow). Decorative hint only — see backlog / future: viewport-transformed layer. */}
-        {layoutMode === 'timeline' && (
+        {/* Timeline bands: positions come from bandPositions returned by applyTimelineLayout.
+            This overlay is screen-fixed (does not pan/zoom with the flow) — decorative hint only. */}
+        {layoutMode === 'timeline' && Object.keys(bandPositions).length > 0 && (
           <div className={styles.swimlaneContainer}>
-            {Object.entries(TYPE_Y).map(([type, y]) => (
+            {Object.entries(bandPositions).map(([type, y]) => (
               <div
                 key={type}
                 className={styles.swimlane}
                 style={{
-                  top: y - 20, /* Center the 120px tall band around the TYPE_Y position */
+                  top: y - 20,
                   backgroundColor: cssVar(`--node-${type.toLowerCase()}`),
                 }}
               />
