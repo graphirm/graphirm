@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@chenglou/pretext": "^0.0.3",
     "@dagrejs/dagre": "^1.0.4",
     "@vitejs/plugin-react": "^4.7.0",
     "@xyflow/react": "^12.10.1",

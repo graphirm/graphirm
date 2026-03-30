@@ -1,5 +1,13 @@
 # Graphirm Development Progress Log
 
+## 2026-03-30: Pretext dagre first-pass sizing (web-app) — COMPLETE ✅
+
+- Dependency: `@chenglou/pretext`
+- `buildPretextSizeMap()` estimates node **height** from collapsed-card preview text (Canvas
+  `measureText` via Pretext); dagre first pass aligns closer to DOM before `node.measured`
+- Files: `web-app/src/layout/pretextDimensions.ts`, `nodeDimensions.ts`; `dagre.ts` optional
+  size map; `useGraphData.ts` passes map in dagre mode
+
 ## 2026-03-20: Session flow traces (`session_trace`) — COMPLETE ✅
 
 - `GraphStore::get_session_chain(session_id)` — interactions filtered by `metadata.session_id`, chronological order

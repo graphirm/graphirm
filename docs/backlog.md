@@ -234,6 +234,101 @@ Plan: `docs/plans/2026-03-29-node-as-input.md`
 - `web-app/src/components/GraphCanvas.tsx` — register node type, double-click handler, `onConnect` for context root, prompt send/cancel handlers
 - `web-app/src/components/Toolbar.tsx` — "+ Prompt" button
 
+### Pretext Integration (`@chenglou/pretext`)
+
+Pure JS/TS library for DOM-free multiline text measurement & layout. `prepare()` does
+one-time segment measurement via Canvas `measureText()`; `layout()` is arithmetic-only
+on cached widths — 480× faster than DOM interleaved in Chrome, 1240× in Safari. 7680/7680
+browser accuracy across Chrome/Safari/Firefox. MIT, 13.7k stars, `npm install @chenglou/pretext`.
+
+See: https://github.com/chenglou/pretext — README, RESEARCH.md, STATUS.md.
+
+#### Hybrid Canvas/DOM rendering — P2 · L
+
+Every graph node is a full React DOM tree today. At 200+ nodes, React Flow struggles.
+Pretext's `layoutWithLines()` gives line-by-line text data. Combined with Canvas `fillText()`,
+render **all non-focused nodes on a single Canvas layer** and only mount real DOM for the
+1–3 nodes the user is interacting with. The LOD zoom system (Phase 27) already collapses
+nodes at low zoom — the leap: draw them to canvas instead of mounting collapsed React
+components. Zero DOM cost. Pan/zoom becomes a single `drawImage()` call.
+
+This is how professional graph tools (yFiles, Cytoscape) achieve 10k+ node performance,
+but they cheat with rectangles. Pretext enables it with real, readable, accurately measured text.
+
+**Key files:**
+- `web-app/src/components/GraphCanvas.tsx` — Canvas overlay layer, LOD threshold switch
+- `web-app/src/hooks/useGraphData.ts` — cache `PreparedText` per node alongside React Flow state
+- `web-app/src/layout/dagre.ts` — pre-compute exact dimensions from Pretext before dagre runs
+
+#### Shrink-wrap balanced nodes via `walkLineRanges` — P2 · M
+
+Binary-search the tightest container width where text fits in N lines using `walkLineRanges()`.
+Instead of fixed 220px-wide node cards, each node shrink-wraps to its content. Short messages
+get narrow cards, long messages expand. The graph becomes visually balanced — like CSS
+`text-wrap: balance` but working across the entire layout. No manual sizing needed.
+
+**Key files:**
+- `web-app/src/layout/dagre.ts` — `shrinkWrapWidth(prepared, lineHeight, maxLines)` utility
+- `web-app/src/hooks/useGraphData.ts` — per-node width computed during layout pass
+
+#### ✅ Accurate dagre first-pass layout — P1 · M
+
+Done 2026-03-30. `buildPretextSizeMap()` runs `prepare()` + `layout()` on the same preview
+strings as collapsed `BaseCard` (Interaction stripMarkdown+80 chars, Content/Task/Agent/
+Knowledge parity with node components). Dagre height uses Pretext output capped at 2 preview
+lines + chrome; width stays per-type. LRU-ish `prepare` cache (400 entries). Fallbacks if
+Canvas/`measureText` throws. `nodeDimensions.ts` holds shared `NODE_DIMENSIONS`.
+
+**Key files:**
+- `web-app/src/layout/pretextDimensions.ts` — preview text, cache, `buildPretextSizeMap`
+- `web-app/src/layout/nodeDimensions.ts` — shared fallbacks
+- `web-app/src/layout/dagre.ts` — optional `pretextSizes` map
+- `web-app/src/hooks/useGraphData.ts` — wires map into `applyDagreLayout`
+
+#### Streaming pre-size during SSE — P2 · M
+
+As the agent streams its response via SSE, call `prepare()` on partial content and `layout()`
+to predict current + final node height. The card grows smoothly as text arrives. Feed dagre
+the predicted final size before the response finishes, so neighboring nodes shift preemptively
+rather than jumping at `stream_end`.
+
+**Key files:**
+- `web-app/src/hooks/useSession.ts` — incremental `prepare()` on `stream` SSE events
+- `web-app/src/hooks/useGraphData.ts` — predicted dimensions fed to dagre before finalization
+
+#### Text-aware edge avoidance — P3 · M
+
+`LabelledEdge` currently routes via SmoothStep/Bezier using only node bounding boxes.
+With Pretext's per-line width data, edges could attach to the widest gap in a node's
+text layout — avoiding overlap with readable content. Detail that makes the graph feel
+"designed" vs. "generated."
+
+**Key files:**
+- `web-app/src/components/edges/LabelledEdge.tsx` — edge anchor offset from Pretext line widths
+- `web-app/src/layout/dagre.ts` — per-node text bounds exported for edge routing
+
+#### Graph-as-image export without headless browser — P3 · M
+
+When Pretext ships server-side support (noted as planned), generate visual graph thumbnails
+entirely in Node/Rust without Puppeteer. `prepare()` + `layoutWithLines()` gives exact text
+positions; draw them into an SVG or PNG with dagre coordinates. The session export (Phase 21)
+currently outputs markdown — could also output a visual snapshot.
+
+**Key files:**
+- `crates/server/src/export.rs` — SVG/PNG export format option alongside markdown
+- `web-app/src/layout/dagre.ts` — shared layout logic between browser and server
+
+#### Agent-side content verification — P3 · S
+
+The agent uses Pretext to sanity-check its own outputs before writing. Before emitting a
+markdown table, verify it renders without wrapping at 80 columns. Before writing a code
+block, check it fits the user's terminal width. The pre-completion verify hook (Phase 42)
+could include a layout check — catching visual regressions before the user sees them.
+
+**Key files:**
+- `crates/tools/src/write.rs` — optional Pretext-based width check before file write
+- `crates/agent/src/workflow.rs` — layout verification in pre-completion hook
+
 ### Smart Layout Engine
 
 The current layout is functional but naive — dagre re-runs on every SSE event with

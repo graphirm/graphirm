@@ -3,6 +3,7 @@ import type { Node, Edge, XYPosition, NodeChange } from '@xyflow/react';
 import { applyNodeChanges } from '@xyflow/react';
 import type { GraphData, GraphNode } from '../types/graph';
 import { applyDagreLayout } from '../layout/dagre';
+import { buildPretextSizeMap } from '../layout/pretextDimensions';
 import { applyTimelineLayout } from '../layout/timeline';
 
 export type LayoutMode = 'dagre' | 'timeline' | 'free';
@@ -330,7 +331,11 @@ export function useGraphData(
       sid: string | null,
     ): { nodes: Node[]; bandPositions: Record<string, number> } => {
       if (mode === 'dagre') {
-        return { nodes: applyDagreLayout(baseNodes, currentEdges, 'LR'), bandPositions: {} };
+        const pretextSizes = buildPretextSizeMap(baseNodes);
+        return {
+          nodes: applyDagreLayout(baseNodes, currentEdges, 'LR', pretextSizes),
+          bandPositions: {},
+        };
       }
       if (mode === 'timeline') {
         const result = applyTimelineLayout(baseNodes, rawNodes, currentEdges, canvasWidth);
