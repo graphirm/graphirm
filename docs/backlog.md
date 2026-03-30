@@ -299,16 +299,16 @@ text and pass predicted sizes into `useGraphData`.
 - `web-app/src/hooks/useSession.ts` — handle `message_delta`, optional predicted-size context
 - `web-app/src/hooks/useGraphData.ts` — merge predicted dimensions during `isThinking`
 
-#### Text-aware edge avoidance — P3 · M
+#### Text-aware edge avoidance — P3 · M (partial, 2026-03-30)
 
-`LabelledEdge` currently routes via SmoothStep/Bezier using only node bounding boxes.
-With Pretext's per-line width data, edges could attach to the widest gap in a node's
-text layout — avoiding overlap with readable content. Detail that makes the graph feel
-"designed" vs. "generated."
+**Done this pass:** Edge labels nudged ~11px perpendicular to the chord (source→target) so
+they sit slightly off the stroke; pill background + border using theme CSS variables for
+contrast on light/dark. **Still open:** Pretext `walkLineRanges` / node-local anchors so
+labels clear dense card text.
 
 **Key files:**
-- `web-app/src/components/edges/LabelledEdge.tsx` — edge anchor offset from Pretext line widths
-- `web-app/src/layout/dagre.ts` — per-node text bounds exported for edge routing
+- `web-app/src/components/edges/LabelledEdge.tsx` — nudge + pill styles
+- `web-app/src/layout/pretextDimensions.ts` — future: export per-line widths for handles
 
 #### Graph-as-image export without headless browser — P3 · M
 
@@ -402,20 +402,21 @@ Ref: `chenglou.me/pretext/rich-note`
 
 #### Virtualized graph with Pretext height prediction — P1 · L (partial, 2026-03-30)
 
-**Done this pass:** `onlyRenderVisibleElements` on `ReactFlow`; after dagre layout,
-`mergePretextNodeDimensions()` stamps `style.width` / `style.height` from
-`buildPretextSizeMap()` so viewport culling has sizes before DOM measure. Masonry mode
-stamps sizes from `applyMasonryLayout`.
+**Done:** `onlyRenderVisibleElements` on `ReactFlow`; after **dagre**,
+`mergePretextNodeDimensions()` stamps `style.width` / `style.height`. **Masonry** stamps
+from `applyMasonryLayout`. After **timeline**, `mergePretextNodeHeightsOnly()` stamps
+`style.height` only (X spacing assumes fixed timeline widths; skips `data.compact` cascade
+cards).
 
-**Still open:** `Node` `width`/`height` fields if RF prefers them over `style`; timeline
-mode sizing; verify large-session perf in DevTools.
+**Still open:** `Node` `width`/`height` fields if RF prefers them over `style`; large-session
+perf verification in DevTools.
 
 Ref: `chenglou.me/pretext/masonry` (height-before-mount principle)
 
 **Key files:**
 - `web-app/src/components/GraphCanvas.tsx` — `onlyRenderVisibleElements`
-- `web-app/src/hooks/useGraphData.ts` — `mergePretextNodeDimensions` after dagre
-- `web-app/src/layout/pretextDimensions.ts` — `mergePretextNodeDimensions`
+- `web-app/src/hooks/useGraphData.ts` — merge after dagre / timeline
+- `web-app/src/layout/pretextDimensions.ts` — `mergePretextNodeDimensions`, `mergePretextNodeHeightsOnly`
 
 ### Smart Layout Engine
 

@@ -62,6 +62,15 @@ export function LabelledEdge({
 
   const showLabel = edgeType && zoom >= LABEL_ZOOM_THRESHOLD;
 
+  // Nudge label slightly off the stroke (perpendicular) for readability — cheap
+  // substitute until Pretext line-aware anchors exist on node cards.
+  const dx = targetX - sourceX;
+  const dy = targetY - sourceY;
+  const len = Math.hypot(dx, dy) || 1;
+  const labelNudge = 11;
+  const ox = (-dy / len) * labelNudge;
+  const oy = (dx / len) * labelNudge;
+
   return (
     <>
       <BaseEdge
@@ -75,11 +84,18 @@ export function LabelledEdge({
           <div
             style={{
               position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              transform: `translate(-50%, -50%) translate(${labelX + ox}px, ${labelY + oy}px)`,
               fontSize: 9,
-              color: '#888',
+              fontWeight: 600,
+              letterSpacing: '0.02em',
+              color: 'var(--fg-muted, #888)',
               pointerEvents: 'none',
               whiteSpace: 'nowrap',
+              padding: '2px 6px',
+              borderRadius: 4,
+              background: 'color-mix(in srgb, var(--surface-2, #1f1f1f) 88%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--border, #2e2e2e) 70%, transparent)',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.25)',
             }}
             className="nodrag nopan"
           >

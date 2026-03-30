@@ -8,6 +8,11 @@
 - Files: `web-app/src/layout/pretextDimensions.ts`, `nodeDimensions.ts`; `dagre.ts` optional
   size map; `useGraphData.ts` passes map in dagre mode
 
+## 2026-03-30: Timeline Pretext heights + edge label pill (web-app) — COMPLETE ✅
+
+- `mergePretextNodeHeightsOnly` after timeline layout (height only; skip compact cascade)
+- `LabelledEdge`: perpendicular nudge + themed pill background for edge type labels
+
 ## 2026-03-30: Pretext expanded-body reserve on all main node types (web-app) — COMPLETE ✅
 
 - `estimateExpandedPlainReserveHeight()`; Content / Knowledge / Task / Agent use `BaseCard.expandedBodyStyle`

@@ -180,6 +180,24 @@ export function mergePretextNodeDimensions(
   });
 }
 
+/**
+ * Timeline layout fixes X spacing for fixed card widths; stamping Pretext **width** would
+ * desync cascade `COMPACT_WIDTH` math. Height-only helps `onlyRenderVisibleElements` without
+ * shifting positions. Skips `data.compact` cascade cards (fixed 50px-tall UI).
+ */
+export function mergePretextNodeHeightsOnly(
+  nodes: Node[],
+  sizeMap: Map<string, { width: number; height: number }>,
+): Node[] {
+  return nodes.map(n => {
+    const s = sizeMap.get(n.id);
+    if (!s || n.type === 'group') return n;
+    const compact = (n.data as { compact?: boolean } | undefined)?.compact === true;
+    if (compact) return n;
+    return { ...n, style: { ...n.style, height: s.height } };
+  });
+}
+
 /** Expanded card: max-width 420px minus padding and border → inner text width. */
 const EXPANDED_INNER_TEXT_WIDTH = 398;
 const EXPANDED_BODY_LINE_HEIGHT = 18;

@@ -7,6 +7,7 @@ import { applyMasonryLayout } from '../layout/masonry';
 import {
   buildPretextSizeMap,
   mergePretextNodeDimensions,
+  mergePretextNodeHeightsOnly,
 } from '../layout/pretextDimensions';
 import { applyTimelineLayout } from '../layout/timeline';
 
@@ -460,11 +461,14 @@ export function useGraphData(
       finalNodes = laid;
     }
 
-    if (layoutMode === 'dagre') {
+    if (layoutMode === 'dagre' || layoutMode === 'timeline') {
       const map = buildPretextSizeMap(
         finalNodes.filter(n => n.type && n.type !== 'group' && n.type !== 'annotation'),
       );
-      finalNodes = mergePretextNodeDimensions(finalNodes, map);
+      finalNodes =
+        layoutMode === 'dagre'
+          ? mergePretextNodeDimensions(finalNodes, map)
+          : mergePretextNodeHeightsOnly(finalNodes, map);
     }
 
     // Apply filter: stamp hidden: true on non-matching nodes.
@@ -548,11 +552,14 @@ export function useGraphData(
         finalNodes = laid;
       }
 
-      if (mode === 'dagre') {
+      if (mode === 'dagre' || mode === 'timeline') {
         const map = buildPretextSizeMap(
           finalNodes.filter(n => n.type && n.type !== 'group' && n.type !== 'annotation'),
         );
-        finalNodes = mergePretextNodeDimensions(finalNodes, map);
+        finalNodes =
+          mode === 'dagre'
+            ? mergePretextNodeDimensions(finalNodes, map)
+            : mergePretextNodeHeightsOnly(finalNodes, map);
       }
 
       const { nodes: withHidden } = applyFilterToNodes(finalNodes, graphData.nodes, filter);
