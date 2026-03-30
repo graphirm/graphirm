@@ -7,6 +7,7 @@ import { useZoom } from '../../context/ZoomContext';
 import { useCascadeCollapseGeneration } from '../../context/CascadeCollapseContext';
 import { BaseCard } from './BaseCard';
 import { MarkdownBody } from './MarkdownBody';
+import { RichInteractionPreview } from './RichPreview';
 import { estimateInteractionExpandedReserveHeight } from '../../layout/pretextDimensions';
 import styles from '../../styles/nodes.module.css';
 
@@ -80,6 +81,11 @@ export function InteractionNode({ id, data: rawData, selected }: NodeProps) {
     }
   }, [expanded, isLODEnabled, nt.content]);
 
+  const previewTitle = useMemo(() => {
+    const t = stripMarkdown(nt.content ?? '');
+    return t.length > 320 ? `${t.slice(0, 320)}…` : t;
+  }, [nt.content]);
+
   // Compact mode: cascade intermediate cards in timeline layout.
   // localExpanded lets the user click to expand in-place.
   const isCompact = data.compact === true && !localExpanded;
@@ -106,6 +112,8 @@ export function InteractionNode({ id, data: rawData, selected }: NodeProps) {
       typeLabel={roleLabel}
       timestamp={data.created_at}
       preview={preview}
+      previewNode={<RichInteractionPreview content={nt.content ?? ''} maxChars={80} />}
+      previewTitle={previewTitle}
       selected={selected}
       expanded={isLODEnabled ? false : expanded}
       onToggleExpand={() => {

@@ -63,6 +63,41 @@
   -webkit-line-clamp: 1;
 }
 
+.previewCode {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--node-content) 22%, var(--surface-3));
+  color: var(--fg);
+  padding: 0.08em 0.35em;
+  border-radius: 3px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  margin: 0 1px;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: baseline;
+}
+
+.previewChip {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--node-knowledge) 32%, var(--surface-3));
+  color: var(--fg);
+  margin-right: 4px;
+  vertical-align: middle;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .body {
   margin-top: 8px;
   color: var(--fg);

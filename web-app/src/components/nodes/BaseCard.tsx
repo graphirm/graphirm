@@ -6,7 +6,12 @@ interface BaseCardProps {
   color: string;
   typeLabel: string;
   timestamp?: string;
+  /** Plain preview for tooltip and fallback. */
   preview: string;
+  /** When set, replaces plain preview in collapsed state (rich inline runs). */
+  previewNode?: ReactNode;
+  /** Optional longer plain string for native `title` (defaults to `preview`). */
+  previewTitle?: string;
   selected?: boolean;
   expanded: boolean;
   onToggleExpand: () => void;
@@ -29,6 +34,8 @@ export function BaseCard({
   typeLabel,
   timestamp,
   preview,
+  previewNode,
+  previewTitle,
   selected,
   expanded,
   onToggleExpand,
@@ -36,6 +43,7 @@ export function BaseCard({
   focused = false,
   expandedBodyStyle,
 }: BaseCardProps) {
+  const titleAttr = previewTitle ?? preview;
   return (
     <div
       className={[
@@ -44,6 +52,7 @@ export function BaseCard({
         expanded ? styles.expanded : '',
         focused ? styles.focused : '',
       ].join(' ')}
+      title={titleAttr || undefined}
       style={{
         borderLeft: `3px solid ${color}`,
         background: `color-mix(in srgb, ${color} 12%, var(--surface-2))`,
@@ -83,7 +92,7 @@ export function BaseCard({
       </div>
 
       {!expanded && (
-        <div className={styles.preview}>{preview}</div>
+        <div className={styles.preview}>{previewNode ?? preview}</div>
       )}
 
       {expanded && (

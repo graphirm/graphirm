@@ -5,6 +5,7 @@ import { useFocusedNodeId } from '../../context/FocusContext';
 import { useZoom } from '../../context/ZoomContext';
 import { estimateExpandedPlainReserveHeight } from '../../layout/pretextDimensions';
 import { BaseCard } from './BaseCard';
+import { KnowledgeEntityPreview } from './RichPreview';
 import styles from '../../styles/nodes.module.css';
 
 export function KnowledgeNode({ id, data: rawData, selected }: NodeProps) {
@@ -17,6 +18,10 @@ export function KnowledgeNode({ id, data: rawData, selected }: NodeProps) {
 
   const color = 'var(--node-knowledge)';
   const preview = `${nt.entity} (${nt.entity_type})`;
+
+  const previewNode = (
+    <KnowledgeEntityPreview entityType={nt.entity_type} entity={nt.entity} maxEntityChars={72} />
+  );
 
   const expandedBodyStyle = useMemo(() => {
     if (isLODEnabled || !expanded) return undefined;
@@ -35,6 +40,8 @@ export function KnowledgeNode({ id, data: rawData, selected }: NodeProps) {
       typeLabel={nt.entity_type}
       timestamp={data.created_at}
       preview={preview}
+      previewNode={previewNode}
+      previewTitle={preview}
       selected={selected}
       expanded={isLODEnabled ? false : expanded}
       onToggleExpand={() => {

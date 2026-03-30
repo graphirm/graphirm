@@ -383,34 +383,31 @@ Ref: `chenglou.me/pretext/accordion`
 - `web-app/src/components/nodes/BaseCard.tsx` — `expandedBodyStyle`
 - `web-app/src/components/nodes/InteractionNode.tsx`, `ContentNode.tsx`, `KnowledgeNode.tsx`, `TaskNode.tsx`, `AgentNode.tsx`
 
-#### Rich inline chips in node cards — P3 · M
+#### Rich inline chips in node cards — P3 · M (partial, 2026-03-30)
 
-Directly from the **Rich Text** demo: render node previews with mixed inline runs —
-`@mentions` as chips, `code` spans with background, entity links with underlines — all
-laid out by Pretext's `layoutNextLine()` cursor-based API with per-run font/width. Today
-previews are stripped plain text. With rich runs, Knowledge nodes could show
-`[entity_type]` as a chip, Interaction nodes could show inline `code` references
-without monospace-wrapping the entire preview.
+**Done this pass:** DOM-based collapsed previews (no Pretext `layoutNextLine` yet):
+- **Interaction:** inline `` `code` `` parsed from raw content → `<code class="previewCode">`;
+  other text still markdown-stripped per segment. `BaseCard` `previewNode` + truncated
+  `previewTitle` for native tooltip.
+- **Knowledge:** `entity_type` as `.previewChip` + truncated entity string.
+- **BaseCard:** optional `previewNode`, `previewTitle`; root `title` for hover.
 
-Each inline segment gets its own `prepare()` handle and `chromeWidth` (chip padding).
-`layoutNextLine()` advances the cursor across segments, wrapping naturally. Chips never
-split mid-word — they're atomic inline items. Same pattern Pretext uses for `@maya` and
-`Cmd+K` in the demo.
+**Still open:** `@mentions`, link underlines, Pretext `prepareWithSegments` /
+`layoutNextLine` for measurement-aligned multi-run layout (rich-note demo parity).
 
 Ref: `chenglou.me/pretext/rich-note`
 
 **Key files:**
-- `web-app/src/components/nodes/RichPreview.tsx` — new component: inline chip + text runs
-- `web-app/src/layout/pretextDimensions.ts` — multi-run `layoutNextLine` integration
-- `web-app/src/styles/nodes.module.css` — `.chip`, `.codeRun` styles
+- `web-app/src/components/nodes/RichPreview.tsx` — `parseInteractionPreviewRuns`, previews
+- `web-app/src/components/nodes/BaseCard.tsx` — `previewNode` / `previewTitle`
+- `web-app/src/styles/nodes.module.css` — `.previewCode`, `.previewChip`
 
 #### Virtualized graph with Pretext height prediction — P1 · L (partial, 2026-03-30)
 
 **Done:** `onlyRenderVisibleElements` on `ReactFlow`; after **dagre**,
-`mergePretextNodeDimensions()` stamps `style.width` / `style.height`. **Masonry** stamps
-from `applyMasonryLayout`. After **timeline**, `mergePretextNodeHeightsOnly()` stamps
-`style.height` only (X spacing assumes fixed timeline widths; skips `data.compact` cascade
-cards).
+`mergePretextNodeDimensions()` stamps sizes. **Masonry** via `applyMasonryLayout`. After
+**timeline**, `mergePretextNodeHeightsOnly()` stamps Pretext height + fixed timeline widths
+(full + compact); top-level `Node.width` / `height` everywhere those merges run.
 
 **Done 2026-03-30:** Top-level `Node.width` / `Node.height` set together with `style` in
 `mergePretextNodeDimensions`, `mergePretextNodeHeightsOnly` (timeline: full cards
