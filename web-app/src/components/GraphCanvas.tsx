@@ -9,6 +9,8 @@ import {
   useReactFlow,
   ReactFlowProvider,
   Node,
+  type Connection,
+  type Edge,
 } from '@xyflow/react';
 import type { NodeTypes, EdgeTypes } from '@xyflow/react';
 import type { GraphData, PendingApproval } from '../types/graph';
@@ -21,6 +23,7 @@ import { TaskNode } from './nodes/TaskNode';
 import { KnowledgeNode } from './nodes/KnowledgeNode';
 import { AnnotationNode } from './nodes/AnnotationNode';
 import { GroupNode } from './nodes/GroupNode';
+import { PromptNode } from './nodes/PromptNode';
 import { NodePopover } from './nodes/NodePopover';
 import { LabelledEdge } from './edges/LabelledEdge';
 import { Toolbar } from './Toolbar';
@@ -49,6 +52,7 @@ const NODE_TYPES: NodeTypes = {
   knowledge: KnowledgeNode,
   annotation: AnnotationNode,
   group: GroupNode,
+  prompt: PromptNode,
 };
 
 const EDGE_TYPES: EdgeTypes = {
@@ -64,7 +68,8 @@ interface GraphCanvasProps {
   onFitViewRef?: (cb: () => void) => void;
   onCycleLayoutRef?: (cb: () => void) => void;
   chatCollapsed?: boolean;
-  onSend?: (content: string) => void;
+  /** Second arg: explicit graph context root (steer); omit for chat / floating input default. */
+  onSend?: (content: string, contextRoot?: string) => void;
   isThinking?: boolean;
   pendingApproval?: PendingApproval | null;
   onApprove?: (nodeId: string) => void;
@@ -135,14 +140,42 @@ function GraphCanvasInner({
     onNodesChange,
     persistPositions,
     addNode,
+    mutateNodes,
     matchCount,
     bandPositions,
   } = useGraphData(graphData, sessionId, canvasWidth, filter);
 
   const { fitView, screenToFlowPosition } = useReactFlow();
 
+  const promptIdRef = useRef<string | null>(null);
+  const promptActionsRef = useRef({
+    send: (_text: string, _ctx: string | null) => {},
+    cancel: () => {},
+  });
+  const [promptContextEdge, setPromptContextEdge] = useState<Edge | null>(null);
+
+  const clearPromptNode = useCallback(() => {
+    const id = promptIdRef.current;
+    promptIdRef.current = null;
+    setPromptContextEdge(null);
+    if (id) {
+      mutateNodes(prev => prev.filter(n => n.id !== id));
+    }
+  }, [mutateNodes]);
+
+  useEffect(() => {
+    promptIdRef.current = null;
+    setPromptContextEdge(null);
+    mutateNodes(prev => prev.filter(n => n.type !== 'prompt'));
+  }, [sessionId, mutateNodes]);
+
   const { focusedNodeId, activateNodeId, clearActivation, replyingToNodeId, clearReply } = useNodeNavigation(nodes, edges);
-  
+
+  const [popoverState, setPopoverState] = useState<{
+    nodeId: string;
+    position: { x: number; y: number };
+  } | null>(null);
+
   // Compute dimmed nodes: non-focused nodes that are NOT immediate 1-hop neighbors
   const dimmedNodeIds = useMemo(() => {
     if (!focusedNodeId) return new Set<string>();
@@ -170,17 +203,22 @@ function GraphCanvasInner({
     return dimmed;
   }, [focusedNodeId, nodes, edges]);
   
+  const flowEdges = useMemo(
+    () => (promptContextEdge ? [...edges, promptContextEdge] : edges),
+    [edges, promptContextEdge],
+  );
+
   // Compute dimmed edges: edges where BOTH source and target are dimmed
   const dimmedEdgeIds = useMemo(() => {
     if (dimmedNodeIds.size === 0) return new Set<string>();
     const dimmed = new Set<string>();
-    for (const edge of edges) {
+    for (const edge of flowEdges) {
       if (dimmedNodeIds.has(edge.source) && dimmedNodeIds.has(edge.target)) {
         dimmed.add(edge.id);
       }
     }
     return dimmed;
-  }, [edges, dimmedNodeIds]);
+  }, [flowEdges, dimmedNodeIds]);
 
   useEffect(() => {
     if (!focusedNodeId) return;
@@ -233,32 +271,105 @@ function GraphCanvasInner({
     }
   }, [layoutMode, persistPositions]);
 
-  // Double-click on empty canvas area adds an annotation node.
+  const openPromptAt = useCallback(
+    (position: { x: number; y: number }) => {
+      if (!sessionId || popoverState) return;
+      const id = `prompt-${Date.now()}`;
+      promptIdRef.current = id;
+      setPromptContextEdge(null);
+      const node: Node = {
+        id,
+        type: 'prompt',
+        position,
+        width: 300,
+        height: 168,
+        style: { width: 300, minHeight: 168 },
+        data: {
+          contextRoot: null,
+          onSend: (text: string, ctx: string | null) => {
+            promptActionsRef.current.send(text, ctx);
+          },
+          onCancel: () => {
+            promptActionsRef.current.cancel();
+          },
+        } as Record<string, unknown>,
+      };
+      mutateNodes(prev => [...prev.filter(n => n.type !== 'prompt'), node]);
+    },
+    [sessionId, popoverState, mutateNodes],
+  );
+
+  promptActionsRef.current = {
+    cancel: clearPromptNode,
+    send: (text: string, ctx: string | null) => {
+      clearPromptNode();
+      const root = ctx && ctx.length > 0 ? ctx : undefined;
+      void onSend?.(text, root);
+    },
+  };
+
+  const handleConnect = useCallback(
+    (c: Connection) => {
+      const pid = promptIdRef.current;
+      if (!pid || c.target !== pid) return;
+      if (c.targetHandle != null && c.targetHandle !== 'context') return;
+      const src = c.source;
+      if (!src) return;
+      setPromptContextEdge({
+        id: `prompt-ctx-${pid}`,
+        source: src,
+        target: pid,
+        sourceHandle: c.sourceHandle ?? undefined,
+        targetHandle: c.targetHandle ?? undefined,
+        selectable: false,
+        focusable: false,
+        style: {
+          strokeDasharray: '6 4',
+          stroke:
+            getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() ||
+            '#a78bfa',
+          strokeWidth: 1.5,
+        },
+      });
+      mutateNodes(prev =>
+        prev.map(n =>
+          n.id === pid
+            ? {
+                ...n,
+                data: {
+                  ...(n.data as Record<string, unknown>),
+                  contextRoot: src,
+                },
+              }
+            : n,
+        ),
+      );
+    },
+    [mutateNodes],
+  );
+
+  // Double-click empty canvas → prompt node (+ Note in toolbar still adds annotations).
   const handlePaneDoubleClick = useCallback(
     (e: React.MouseEvent) => {
+      if (!sessionId || popoverState) return;
       const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-      const newNode: Node = {
-        id: `annotation_${Date.now()}`,
-        type: 'annotation',
-        position,
-        data: { text: '' } as Record<string, unknown>,
-      };
-      addNode(newNode);
+      openPromptAt(position);
     },
-    [screenToFlowPosition, addNode],
+    [sessionId, popoverState, screenToFlowPosition, openPromptAt],
   );
+
+  const handleAddPromptAtViewportCenter = useCallback(() => {
+    const el = containerRef.current;
+    if (!el || !sessionId || popoverState) return;
+    const r = el.getBoundingClientRect();
+    openPromptAt(screenToFlowPosition({ x: r.left + r.width / 2, y: r.top + r.height / 2 }));
+  }, [sessionId, popoverState, screenToFlowPosition, openPromptAt]);
 
   // Clear focus when clicking empty canvas or pressing Escape
   const handlePaneClick = useCallback(() => {
     onNodeSelect(null);
     setPopoverState(null);
   }, [onNodeSelect]);
-
-  // ── Popover state ──
-  const [popoverState, setPopoverState] = useState<{
-    nodeId: string;
-    position: { x: number; y: number };
-  } | null>(null);
 
   // Find the GraphNode data for the active popover
   const popoverGraphNode = useMemo(() => {
@@ -271,7 +382,8 @@ function GraphCanvasInner({
     const rfNode = nodes.find(n => n.id === nodeId);
     if (!rfNode || !graphData) return;
     // Skip annotation nodes — they have inline editing already
-    if (rfNode.type === 'annotation' || rfNode.type === 'group') return;
+    if (rfNode.type === 'annotation' || rfNode.type === 'group' || rfNode.type === 'prompt')
+      return;
     const gn = graphData.nodes.find(n => n.id === nodeId);
     if (!gn) return;
 
@@ -364,6 +476,7 @@ function GraphCanvasInner({
           setTimeout(() => fitView({ padding: 0.1, duration: 400 }), 50);
         }}
         onAddAnnotation={handleAddAnnotation}
+        onAddPrompt={handleAddPromptAtViewportCenter}
         onCollapseTimelineCascades={
           layoutMode === 'timeline'
             ? () => setCascadeCollapseGeneration(g => g + 1)
@@ -405,7 +518,7 @@ function GraphCanvasInner({
               opacity: dimmedNodeIds.has(node.id) ? 0.25 : undefined,
             },
           }))}
-          edges={edges.map(edge => ({
+          edges={flowEdges.map(edge => ({
             ...edge,
             style: {
               ...edge.style,
@@ -415,6 +528,7 @@ function GraphCanvasInner({
           nodeTypes={NODE_TYPES}
           edgeTypes={EDGE_TYPES}
           onNodesChange={onNodesChange}
+          onConnect={handleConnect}
           onNodeClick={handleNodeClick}
           onNodeDoubleClick={handleNodeDoubleClick}
           onNodeDragStop={handleNodeDragStop}
@@ -442,6 +556,7 @@ function GraphCanvasInner({
                 task:        '--node-task',
                 knowledge:   '--node-knowledge',
                 annotation:  '--node-annotation',
+                prompt:      '--accent',
               };
               const v = varMap[n.type ?? ''];
               return v ? cssVar(v) : cssVar('--fg-muted');

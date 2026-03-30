@@ -8,6 +8,11 @@
 - Files: `web-app/src/layout/pretextDimensions.ts`, `nodeDimensions.ts`; `dagre.ts` optional
   size map; `useGraphData.ts` passes map in dagre mode
 
+## 2026-03-30: Canvas PromptNode (node-as-input) — COMPLETE ✅
+
+- `PromptNode` + dashed context edge; double-click canvas or **+ Prompt**; annotations via **+ Note** only
+- `mutateNodes`, merge local `prompt` nodes across layout; `App` routes send with `contextRoot`
+
 ## 2026-03-30: Rich preview markdown links (web-app) — COMPLETE ✅
 
 - `[label](url)` in interaction preview → `.previewLink`; safe href allowlist; stopPropagation

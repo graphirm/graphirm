@@ -283,10 +283,18 @@ function applyFilterToNodes(
       const allHidden = children.length > 0 && children.every(c => !visibleIds.has(c.id));
       return { ...n, hidden: allHidden };
     }
-    if (n.type === 'annotation') return n;
+    if (n.type === 'annotation' || n.type === 'prompt') return n;
     return { ...n, hidden: !visibleIds.has(n.id) };
   });
   return { nodes: mapped, matchCount: visibleIds.size };
+}
+
+/** Re-attach client-only `prompt` nodes after layout from server graph. */
+function mergeLocalPromptNodes(laidOut: Node[], prev: Node[]): Node[] {
+  const prompts = prev.filter(n => n.type === 'prompt');
+  if (prompts.length === 0) return laidOut;
+  const ids = new Set(laidOut.map(n => n.id));
+  return [...laidOut, ...prompts.filter(p => !ids.has(p.id))];
 }
 
 interface UseGraphDataReturn {
@@ -297,6 +305,8 @@ interface UseGraphDataReturn {
   onNodesChange: (changes: NodeChange[]) => void;
   persistPositions: () => void;
   addNode: (node: Node) => void;
+  /** Imperative updates (e.g. prompt node remove / patch). */
+  mutateNodes: (fn: (prev: Node[]) => Node[]) => void;
   matchCount: number;
   bandPositions: Record<string, number>;
 }
@@ -403,7 +413,7 @@ export function useGraphData(
           graphData.nodes,
           filter,
         );
-        setNodes(withHidden);
+        setNodes(prev => mergeLocalPromptNodes(withHidden, prev));
         setEdges(flowEdges);
         setMatchCount(count);
         return;
@@ -463,7 +473,9 @@ export function useGraphData(
 
     if (layoutMode === 'dagre' || layoutMode === 'timeline') {
       const map = buildPretextSizeMap(
-        finalNodes.filter(n => n.type && n.type !== 'group' && n.type !== 'annotation'),
+        finalNodes.filter(
+          n => n.type && n.type !== 'group' && n.type !== 'annotation' && n.type !== 'prompt',
+        ),
       );
       finalNodes =
         layoutMode === 'dagre'
@@ -478,7 +490,7 @@ export function useGraphData(
       filter,
     );
     setMatchCount(count);
-    setNodes(withHidden);
+    setNodes(prev => mergeLocalPromptNodes(withHidden, prev));
     setEdges(flowEdges);
     // filter intentionally excluded from deps: filter-only changes are handled by
     // the second useEffect below to avoid re-running the expensive layout algorithm
@@ -505,7 +517,7 @@ export function useGraphData(
           const allHidden = children.length > 0 && children.every(c => !visibleIds.has(c.id));
           return { ...n, hidden: allHidden };
         }
-        if (n.type === 'annotation') return n;
+        if (n.type === 'annotation' || n.type === 'prompt') return n;
         return { ...n, hidden: !visibleIds.has(n.id) };
       });
     });
@@ -554,7 +566,9 @@ export function useGraphData(
 
       if (mode === 'dagre' || mode === 'timeline') {
         const map = buildPretextSizeMap(
-          finalNodes.filter(n => n.type && n.type !== 'group' && n.type !== 'annotation'),
+          finalNodes.filter(
+            n => n.type && n.type !== 'group' && n.type !== 'annotation' && n.type !== 'prompt',
+          ),
         );
         finalNodes =
           mode === 'dagre'
@@ -563,7 +577,7 @@ export function useGraphData(
       }
 
       const { nodes: withHidden } = applyFilterToNodes(finalNodes, graphData.nodes, filter);
-      setNodes(withHidden);
+      setNodes(prev => mergeLocalPromptNodes(withHidden, prev));
     },
     [applyLayout, edges, graphData, sessionId, filter],
   );
@@ -585,5 +599,20 @@ export function useGraphData(
     setNodes(prev => [...prev, node]);
   }, []);
 
-  return { nodes, edges, layoutMode, setLayoutMode, onNodesChange, persistPositions, addNode, matchCount, bandPositions };
+  const mutateNodes = useCallback((fn: (prev: Node[]) => Node[]) => {
+    setNodes(fn);
+  }, []);
+
+  return {
+    nodes,
+    edges,
+    layoutMode,
+    setLayoutMode,
+    onNodesChange,
+    persistPositions,
+    addNode,
+    mutateNodes,
+    matchCount,
+    bandPositions,
+  };
 }

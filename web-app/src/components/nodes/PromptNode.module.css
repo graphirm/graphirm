@@ -1,0 +1,94 @@
+.promptNode {
+  background: var(--surface-1);
+  border: 2px dashed var(--accent);
+  border-radius: var(--card-radius, 8px);
+  padding: var(--space-3, 12px);
+  min-width: 280px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+  box-shadow: 0 2px 12px color-mix(in srgb, var(--surface-0) 40%, transparent);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  font-size: var(--text-xs, 11px);
+  flex-wrap: wrap;
+}
+
+.label {
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.contextBadge {
+  font-size: var(--text-xs, 10px);
+  color: var(--fg-muted);
+  font-weight: 500;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 4.5rem;
+  resize: vertical;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: var(--space-2, 8px);
+  font-size: var(--text-sm, 13px);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  color: var(--fg);
+  line-height: 1.4;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.textarea::placeholder {
+  color: var(--fg-muted);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2, 8px);
+  justify-content: flex-end;
+}
+
+.sendBtn {
+  padding: var(--space-1, 4px) var(--space-3, 12px);
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: var(--text-xs, 11px);
+  font-weight: 600;
+}
+
+.sendBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cancelBtn {
+  padding: var(--space-1, 4px) var(--space-3, 12px);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: var(--text-xs, 11px);
+  color: var(--fg-muted);
+}
+
+.cancelBtn:hover {
+  color: var(--fg);
+  border-color: var(--border-hover);
+}

@@ -224,19 +224,24 @@ Plan: `docs/plans/2026-03-29-node-editing-annotations.md`
 - `crates/graph/src/store.rs` — `update_knowledge()` (dismissed flag + summary)
 - `crates/agent/src/briefing.rs` + `context.rs` — filter dismissed Knowledge nodes
 
-#### Node-as-input (canvas prompt nodes) — P2 · M
+#### ✅ Node-as-input (canvas prompt nodes) — P2 · M
 
-Double-clicking empty canvas creates a `PromptNode` — a temporary node with a textarea and Send/Cancel buttons. On send, the text is forwarded to the agent via the existing `POST /api/sessions/{id}/prompt`, optionally with a `context_root` set by drag-connecting from an existing node to the PromptNode's left handle. The PromptNode is removed from local state immediately on send; the SSE stream brings the real Interaction node. If the user Escapes or clicks Cancel, the node is removed with no side effects.
-
-No backend changes required — uses existing prompt and SSE infrastructure. The current annotation-on-double-click behavior moves exclusively to the toolbar "+ Note" button. A "+ Prompt" toolbar button is added as an alternative to double-click. Double-click remains the primary gesture.
+Done 2026-03-30. Double-click empty canvas (no session / popover guard) spawns a client-only
+`prompt` node: textarea, Send / Cancel, left target handle `context`. Drag from any node's
+source to that handle sets `contextRoot` and a dashed ephemeral edge; send uses
+`steerFromNode` when root is set, else normal chat path (`handleSendWithSteer`). Prompt
+nodes persist across graph layout refreshes via `mergeLocalPromptNodes` + `mutateNodes`;
+cleared on session change. **+ Note** toolbar only for annotations (double-click no longer
+adds annotations). **+ Prompt** adds a node at viewport center.
 
 Plan: `docs/plans/2026-03-29-node-as-input.md`
 
 **Key files:**
-- `web-app/src/components/nodes/PromptNode.tsx` — new node type (editable textarea, Send/Cancel, target handle)
-- `web-app/src/components/nodes/PromptNode.module.css` — dashed accent border, compact layout
-- `web-app/src/components/GraphCanvas.tsx` — register node type, double-click handler, `onConnect` for context root, prompt send/cancel handlers
-- `web-app/src/components/Toolbar.tsx` — "+ Prompt" button
+- `web-app/src/components/nodes/PromptNode.tsx`, `PromptNode.module.css`
+- `web-app/src/components/GraphCanvas.tsx` — `onConnect`, `flowEdges`, `openPromptAt`
+- `web-app/src/hooks/useGraphData.ts` — `mutateNodes`, prompt merge + filter
+- `web-app/src/components/Toolbar.tsx` — `onAddPrompt`
+- `web-app/src/App.tsx` — `onSend` with optional `contextRoot`
 
 ### Pretext Integration (`@chenglou/pretext`)
 

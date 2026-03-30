@@ -106,7 +106,13 @@ export function App() {
           onFitViewRef={cb => { fitViewCb.current = cb; }}
           onCycleLayoutRef={cb => { cycleLayoutCb.current = cb; }}
           chatCollapsed={chatCollapsed}
-          onSend={handleSendWithSteer}
+          onSend={(content, contextRoot) => {
+            if (contextRoot !== undefined && contextRoot !== '') {
+              sendPrompt(content, contextRoot);
+            } else {
+              handleSendWithSteer(content);
+            }
+          }}
           isThinking={isThinking}
           pendingApproval={pendingApproval}
           onApprove={approveAction}

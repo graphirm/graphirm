@@ -9,6 +9,8 @@ interface ToolbarProps {
   layoutMode: LayoutMode;
   onLayoutChange: (mode: LayoutMode) => void;
   onAddAnnotation: () => void;
+  /** Add a canvas prompt node (or double-click empty canvas). */
+  onAddPrompt?: () => void;
   /** Timeline only: collapse in-place expanded cascade cards on the canvas. */
   onCollapseTimelineCascades?: () => void;
   filter: NodeFilter;
@@ -31,6 +33,7 @@ export function Toolbar({
   layoutMode,
   onLayoutChange,
   onAddAnnotation,
+  onAddPrompt,
   onCollapseTimelineCascades,
   filter,
   onFilterChange,
@@ -111,6 +114,18 @@ export function Toolbar({
           title="Collapse all expanded cascade cards (timeline)"
         >
           ⊖ Collapse all
+        </button>
+      )}
+
+      {onAddPrompt && (
+        <button
+          type="button"
+          className="secondary"
+          style={{ fontSize: 11, padding: '3px 8px' }}
+          onClick={onAddPrompt}
+          title="Add prompt on canvas (or double-click empty area)"
+        >
+          + Prompt
         </button>
       )}
 
