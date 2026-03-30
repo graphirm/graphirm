@@ -390,14 +390,15 @@ impl GraphStore {
         Ok(())
     }
 
-    /// Update summary and/or dismissed flag on a Knowledge node. Other fields stay immutable.
+    /// Update summary, dismissed, and/or pinned flag on a Knowledge node. Other fields stay immutable.
     pub fn patch_knowledge(
         &self,
         node_id: &NodeId,
         dismissed: Option<bool>,
         summary: Option<String>,
+        pinned: Option<bool>,
     ) -> Result<(), GraphError> {
-        if dismissed.is_none() && summary.is_none() {
+        if dismissed.is_none() && summary.is_none() && pinned.is_none() {
             return Ok(());
         }
         let mut node = self.get_node(node_id)?;
@@ -412,6 +413,13 @@ impl GraphStore {
                 node.metadata["dismissed"] = serde_json::json!(true);
             } else if let serde_json::Value::Object(ref mut m) = node.metadata {
                 m.remove("dismissed");
+            }
+        }
+        if let Some(p) = pinned {
+            if p {
+                node.metadata["pinned"] = serde_json::json!(true);
+            } else if let serde_json::Value::Object(ref mut m) = node.metadata {
+                m.remove("pinned");
             }
         }
         self.update_node(node_id, node)
@@ -1509,7 +1517,7 @@ mod tests {
         let id = kn.id.clone();
         store.add_node(kn).unwrap();
         store
-            .patch_knowledge(&id, Some(true), Some("new".to_string()))
+            .patch_knowledge(&id, Some(true), Some("new".to_string()), None)
             .unwrap();
         let n = store.get_node(&id).unwrap();
         assert_eq!(n.metadata.get("dismissed"), Some(&serde_json::json!(true)));
@@ -1517,6 +1525,25 @@ mod tests {
             NodeType::Knowledge(k) => assert_eq!(k.summary, "new"),
             _ => panic!("expected Knowledge"),
         }
+    }
+
+    #[test]
+    fn patch_knowledge_sets_and_clears_pinned() {
+        let store = GraphStore::open_memory().unwrap();
+        let kn = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "e".to_string(),
+            entity_type: "note".to_string(),
+            summary: "s".to_string(),
+            confidence: 1.0,
+        }));
+        let id = kn.id.clone();
+        store.add_node(kn).unwrap();
+        store.patch_knowledge(&id, None, None, Some(true)).unwrap();
+        let n = store.get_node(&id).unwrap();
+        assert_eq!(n.metadata.get("pinned"), Some(&serde_json::json!(true)));
+        store.patch_knowledge(&id, None, None, Some(false)).unwrap();
+        let n2 = store.get_node(&id).unwrap();
+        assert!(n2.metadata.get("pinned").is_none());
     }
 
     #[test]

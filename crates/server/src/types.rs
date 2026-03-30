@@ -320,6 +320,8 @@ pub struct PatchKnowledgeRequest {
     pub dismissed: Option<bool>,
     #[serde(default)]
     pub summary: Option<String>,
+    #[serde(default)]
+    pub pinned: Option<bool>,
 }
 
 /// `PATCH /api/interactions/{id}/edit` — mark original user message as edited (audit).
@@ -500,6 +502,12 @@ mod tests {
         let r: PatchKnowledgeRequest = serde_json::from_str(j).unwrap();
         assert_eq!(r.dismissed, Some(true));
         assert!(r.summary.is_none());
+        assert!(r.pinned.is_none());
+
+        let j2 = r#"{"pinned": true}"#;
+        let r2: PatchKnowledgeRequest = serde_json::from_str(j2).unwrap();
+        assert_eq!(r2.pinned, Some(true));
+        assert!(r2.dismissed.is_none());
     }
 
     #[test]

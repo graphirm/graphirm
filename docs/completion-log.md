@@ -1,5 +1,12 @@
 # Graphirm Development Progress Log
 
+## 2026-03-30: Knowledge pin toggle API + web-app — COMPLETE ✅
+
+- `GraphStore::patch_knowledge` accepts optional `pinned` (`true` sets metadata, `false` removes key)
+- `PATCH /api/knowledge/{id}` body may include `pinned`; `PatchKnowledgeRequest` + handler validation updated
+- `client.toggleKnowledgePin` → `PATCH` with `{ pinned }`; `GraphCanvas` optimistic `metadata.pinned` update
+- Tests: `patch_knowledge_sets_and_clears_pinned`, types deserialize for `{ "pinned": true }`
+
 ## 2026-03-30: Node editing & annotations (server + web-app) — COMPLETE ✅
 
 - `PATCH /api/knowledge/{id}`, `PATCH /api/interactions/{id}/edit`, annotate `relates_to`, prompt `context_root`

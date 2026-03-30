@@ -850,22 +850,23 @@ async fn node_action(
     }
 }
 
-/// `PATCH /api/knowledge/{id}` — update summary and/or soft-dismiss a Knowledge node.
+/// `PATCH /api/knowledge/{id}` — update summary, soft-dismiss, and/or pin/unpin a Knowledge node.
 async fn patch_knowledge(
     State(state): State<AppState>,
     Path(node_id): Path<String>,
     Json(req): Json<PatchKnowledgeRequest>,
 ) -> Result<StatusCode, ServerError> {
-    if req.dismissed.is_none() && req.summary.is_none() {
+    if req.dismissed.is_none() && req.summary.is_none() && req.pinned.is_none() {
         return Err(ServerError::BadRequest(
-            "At least one of dismissed or summary is required".to_string(),
+            "At least one of dismissed, summary, or pinned is required".to_string(),
         ));
     }
     let id = NodeId::from(node_id.as_str());
     let graph = state.graph.clone();
     let dismissed = req.dismissed;
     let summary = req.summary;
-    tokio::task::spawn_blocking(move || graph.patch_knowledge(&id, dismissed, summary))
+    let pinned = req.pinned;
+    tokio::task::spawn_blocking(move || graph.patch_knowledge(&id, dismissed, summary, pinned))
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?
         .map_err(|e| match e {

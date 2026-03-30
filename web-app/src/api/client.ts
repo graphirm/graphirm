@@ -60,7 +60,7 @@ export const api = {
 
   patchKnowledge: (
     nodeId: string,
-    patch: { dismissed?: boolean; summary?: string },
+    patch: { dismissed?: boolean; summary?: string; pinned?: boolean },
   ): Promise<void> =>
     apiFetch(`/api/knowledge/${nodeId}`, {
       method: 'PATCH',
@@ -146,10 +146,11 @@ export const api = {
     return Promise.resolve();
   },
 
-  toggleKnowledgePin: (sessionId: string, nodeId: string, pinned: boolean): Promise<void> => {
-    console.warn('toggleKnowledgePin not implemented yet', { sessionId, nodeId, pinned });
-    return Promise.resolve();
-  },
+  toggleKnowledgePin: (_sessionId: string, nodeId: string, pinned: boolean): Promise<void> =>
+    apiFetch(`/api/knowledge/${nodeId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ pinned }),
+    }),
 
   editKnowledgeSummary: (_sessionId: string, nodeId: string, summary: string): Promise<void> =>
     apiFetch(`/api/knowledge/${nodeId}`, {

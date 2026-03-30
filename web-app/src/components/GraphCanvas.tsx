@@ -475,6 +475,20 @@ function GraphCanvasInner({
     onTogglePin: async (nodeId: string, pinned: boolean) => {
       if (!sessionId) return;
       await api.toggleKnowledgePin(sessionId, nodeId, pinned);
+      mutateNodes(prev =>
+        prev.map(n => {
+          if (n.id !== nodeId) return n;
+          const d = n.data as unknown as GraphNode;
+          if (d.node_type.type !== 'Knowledge') return n;
+          const metadata = { ...d.metadata };
+          if (pinned) metadata.pinned = true;
+          else delete metadata.pinned;
+          return {
+            ...n,
+            data: { ...d, metadata } as unknown as Record<string, unknown>,
+          };
+        }),
+      );
     },
     onEditSummary: async (nodeId: string, summary: string) => {
       if (!sessionId) return;
