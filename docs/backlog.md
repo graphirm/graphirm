@@ -332,6 +332,106 @@ could include a layout check — catching visual regressions before the user see
 - `crates/tools/src/write.rs` — optional Pretext-based width check before file write
 - `crates/agent/src/workflow.rs` — layout verification in pre-completion hook
 
+#### Obstacle-aware text flow around expanded nodes — P2 · L
+
+Inspired by the **Dynamic Layout** + **Editorial Engine** demos (obstacle routing with
+`layoutNextLine` + slot carving). When a node is expanded (300+ px tall with full markdown),
+neighboring collapsed nodes' text could flow *around* the expanded node — like a magazine
+article flowing around an image. Implementation: each expanded node becomes a rectangular
+obstacle; `carveTextLineSlots()` (from editorial engine pattern) subtracts obstacle intervals
+from each Y band; `layoutNextLine()` emits text into remaining slots with variable widths
+per line. This replaces the current "everything shifts out of the way" dagre behavior with
+a dense, editorial-quality canvas where nothing moves — content reflows in place.
+
+Even a simpler version works: when a node card is tall enough, its edge labels could use
+`layoutNextLine()` with width constrained by the gap between overlapping nodes, avoiding
+text-on-text overlap that happens today with SmoothStep labels.
+
+Refs: `chenglou.me/pretext/dynamic-layout`, `chenglou.me/pretext/editorial-engine`
+
+**Key files:**
+- `web-app/src/layout/dagre.ts` — obstacle extraction from expanded node rects
+- `web-app/src/components/edges/LabelledEdge.tsx` — variable-width label lines
+- `web-app/src/layout/pretextDimensions.ts` — Pretext `layoutNextLine` integration
+
+#### Masonry card layout mode — P2 · M
+
+Directly from the **Masonry** demo: a column-based layout where each node card's height
+is predicted by Pretext and cards pack into the shortest column. No overlap detection needed
+because heights are known upfront. This would be a 4th `LayoutMode` (dagre / timeline / free
+/ **masonry**) suited for browsing large sessions where edge topology matters less than
+scanning content. Think Pinterest for conversation turns.
+
+Pattern from demo: `prepare()` all cards once → on resize, walk columns, pick shortest column,
+`layout(prepared, textWidth, lineHeight)` for height → position absolutely. Pure arithmetic,
+handles thousands of cards in <1ms. Viewport culling (only mount DOM for visible cards) makes
+it viable for 500+ node sessions.
+
+Ref: `chenglou.me/pretext/masonry`
+
+**Key files:**
+- `web-app/src/layout/masonry.ts` — new file: column-based layout using Pretext heights
+- `web-app/src/hooks/useGraphData.ts` — add `'masonry'` to `LayoutMode`, wire in `applyLayout`
+- `web-app/src/components/Toolbar.tsx` — masonry button in layout mode switcher
+
+#### Expandable node accordion (DOM-free height) — P2 · S
+
+Directly from the **Accordion** demo: when node cards collapse/expand, animate the body
+height using Pretext's pre-computed pixel value rather than CSS `auto` height + transition.
+Today, `BaseCard` uses `max-height: 300px; overflow-y: auto` which can't animate smoothly.
+With `layout(prepared, innerWidth, lineHeight).height`, the expand target is known instantly;
+set it as an inline `height` + CSS transition for buttery 60 fps open/close. Works for all
+node types that render text bodies (Interaction markdown, Content code, Knowledge summary).
+
+Also enables: "peek" mode — partially expand a node to show exactly N more lines, with a
+"show N more…" affordance, height known before the DOM mounts.
+
+Ref: `chenglou.me/pretext/accordion`
+
+**Key files:**
+- `web-app/src/components/nodes/BaseCard.tsx` — Pretext-driven `height` on `.body` div
+- `web-app/src/layout/pretextDimensions.ts` — expanded-body height API
+
+#### Rich inline chips in node cards — P3 · M
+
+Directly from the **Rich Text** demo: render node previews with mixed inline runs —
+`@mentions` as chips, `code` spans with background, entity links with underlines — all
+laid out by Pretext's `layoutNextLine()` cursor-based API with per-run font/width. Today
+previews are stripped plain text. With rich runs, Knowledge nodes could show
+`[entity_type]` as a chip, Interaction nodes could show inline `code` references
+without monospace-wrapping the entire preview.
+
+Each inline segment gets its own `prepare()` handle and `chromeWidth` (chip padding).
+`layoutNextLine()` advances the cursor across segments, wrapping naturally. Chips never
+split mid-word — they're atomic inline items. Same pattern Pretext uses for `@maya` and
+`Cmd+K` in the demo.
+
+Ref: `chenglou.me/pretext/rich-note`
+
+**Key files:**
+- `web-app/src/components/nodes/RichPreview.tsx` — new component: inline chip + text runs
+- `web-app/src/layout/pretextDimensions.ts` — multi-run `layoutNextLine` integration
+- `web-app/src/styles/nodes.module.css` — `.chip`, `.codeRun` styles
+
+#### Virtualized graph with Pretext height prediction — P1 · L
+
+Combine the **Masonry** demo's height-prediction-before-mount pattern with React Flow's
+built-in viewport culling. Today, all nodes mount DOM even when off-screen (React Flow
+measures them, then hides). With Pretext-predicted dimensions set as `initialWidth` /
+`initialHeight` on each `Node` object, React Flow can skip mounting off-screen nodes entirely
+because their sizes are known. For 500+ node sessions, this could cut initial mount time
+10×+.
+
+This is distinct from the Hybrid Canvas/DOM item (which replaces React components with
+Canvas drawing). This keeps the existing React component tree but tells React Flow
+the answer before it asks the DOM.
+
+Ref: `chenglou.me/pretext/masonry` (height-before-mount principle)
+
+**Key files:**
+- `web-app/src/hooks/useGraphData.ts` — set `initialWidth`/`initialHeight` on `Node` objects
+- `web-app/src/layout/pretextDimensions.ts` — provide per-node dimension map
+
 ### Smart Layout Engine
 
 The current layout is functional but naive — dagre re-runs on every SSE event with
