@@ -8,6 +8,12 @@
 - Files: `web-app/src/layout/pretextDimensions.ts`, `nodeDimensions.ts`; `dagre.ts` optional
   size map; `useGraphData.ts` passes map in dagre mode
 
+## 2026-03-30: Pretext shrink-wrap widths for dagre (web-app) — COMPLETE ✅
+
+- `shrinkWrapInnerWidth()` — binary search on Pretext `layout().lineCount` for ≤2 preview lines
+- Card outer width clamped 160–280px; height uses chosen inner width
+- `docs/backlog.md`: streaming pre-size item documented as backend-blocked
+
 ## 2026-03-20: Session flow traces (`session_trace`) — COMPLETE ✅
 
 - `GraphStore::get_session_chain(session_id)` — interactions filtered by `metadata.session_id`, chronological order

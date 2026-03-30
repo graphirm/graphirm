@@ -260,16 +260,15 @@ but they cheat with rectangles. Pretext enables it with real, readable, accurate
 - `web-app/src/hooks/useGraphData.ts` — cache `PreparedText` per node alongside React Flow state
 - `web-app/src/layout/dagre.ts` — pre-compute exact dimensions from Pretext before dagre runs
 
-#### Shrink-wrap balanced nodes via `walkLineRanges` — P2 · M
+#### ✅ Shrink-wrap balanced nodes (Pretext `layout` line-count search) — P2 · M
 
-Binary-search the tightest container width where text fits in N lines using `walkLineRanges()`.
-Instead of fixed 220px-wide node cards, each node shrink-wraps to its content. Short messages
-get narrow cards, long messages expand. The graph becomes visually balanced — like CSS
-`text-wrap: balance` but working across the entire layout. No manual sizing needed.
+Done 2026-03-30. `shrinkWrapInnerWidth()` binary-searches the minimum inner width where the
+preview fits in ≤2 lines (same break rules as `walkLineRanges` / `layout()`). Outer width =
+inner + 22px chrome, clamped 160–280 (`theme.css` card min/max). Height recomputed at that
+inner width. Wired via existing `buildPretextSizeMap()` → dagre.
 
 **Key files:**
-- `web-app/src/layout/dagre.ts` — `shrinkWrapWidth(prepared, lineHeight, maxLines)` utility
-- `web-app/src/hooks/useGraphData.ts` — per-node width computed during layout pass
+- `web-app/src/layout/pretextDimensions.ts` — `shrinkWrapInnerWidth`, `estimateSizeFromPreview`
 
 #### ✅ Accurate dagre first-pass layout — P1 · M
 
@@ -285,16 +284,20 @@ Canvas/`measureText` throws. `nodeDimensions.ts` holds shared `NODE_DIMENSIONS`.
 - `web-app/src/layout/dagre.ts` — optional `pretextSizes` map
 - `web-app/src/hooks/useGraphData.ts` — wires map into `applyDagreLayout`
 
-#### Streaming pre-size during SSE — P2 · M
+#### Streaming pre-size during SSE — P2 · M (blocked on backend graph writes)
 
-As the agent streams its response via SSE, call `prepare()` on partial content and `layout()`
-to predict current + final node height. The card grows smoothly as text arrives. Feed dagre
-the predicted final size before the response finishes, so neighboring nodes shift preemptively
-rather than jumping at `stream_end`.
+Assistant `Interaction` nodes are persisted once per turn with full `text_content()` in
+`workflow.rs` — there is no incremental graph node during LLM token streaming. `MessageDelta`
+exists in `AgentEvent` but `agent_event_to_sse` maps it to `heartbeat`, so the web app never
+receives token chunks. **To implement:** emit real `message_delta` SSE (and optionally persist
+or shadow a provisional node), then `useSession` can drive Pretext `prepare`/`layout` on partial
+text and pass predicted sizes into `useGraphData`.
 
 **Key files:**
-- `web-app/src/hooks/useSession.ts` — incremental `prepare()` on `stream` SSE events
-- `web-app/src/hooks/useGraphData.ts` — predicted dimensions fed to dagre before finalization
+- `crates/server/src/routes.rs` — `agent_event_to_sse`: `MessageStart` / `MessageDelta` / `MessageEnd`
+- `crates/agent/src/workflow.rs` — if/when true streaming records partial content
+- `web-app/src/hooks/useSession.ts` — handle `message_delta`, optional predicted-size context
+- `web-app/src/hooks/useGraphData.ts` — merge predicted dimensions during `isThinking`
 
 #### Text-aware edge avoidance — P3 · M
 

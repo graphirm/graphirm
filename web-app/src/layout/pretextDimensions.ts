@@ -6,8 +6,15 @@ import { NODE_DIMENSIONS } from './nodeDimensions';
 /** Matches collapsed card: `nodes.module.css` 12px × line-height 1.4 on preview. */
 const PREVIEW_FONT = '12px system-ui, sans-serif';
 const PREVIEW_LINE_HEIGHT = 17;
-/** `--card-max-width` 280 − horizontal padding 20 − border ~2 */
+/** Max inner text width: `--card-max-width` 280 − horizontal padding 20 − border ~2 */
 const INNER_TEXT_MAX_WIDTH = 256;
+/** Horizontal padding (10+10) + border (1+1) → outer card width = inner + this */
+const CARD_HORIZONTAL_CHROME = 22;
+/** `--card-min-width` / `--card-max-width` from theme */
+const MIN_CARD_OUTER_WIDTH = 160;
+const MAX_CARD_OUTER_WIDTH = 280;
+/** Narrowest inner width to try when shrink-wrapping (single grapheme clusters can go smaller) */
+const SHRINK_MIN_INNER_WIDTH = 32;
 /**
  * Vertical chrome: top padding + header row + header margin + bottom padding.
  * Tuned to match BaseCard (badge row + preview area).
@@ -87,19 +94,62 @@ export function previewTextForDagreLayout(node: Node): string {
   }
 }
 
-function estimateHeightFromPreview(preview: string): number {
+/**
+ * Smallest inner (text) width in [minInner, maxInner] such that the paragraph uses at most
+ * `maxLines` lines — same break semantics as Pretext `walkLineRanges` / `layout()`.
+ * Pure arithmetic after `prepare()`.
+ */
+export function shrinkWrapInnerWidth(
+  prepared: PreparedText,
+  maxLines: number,
+  minInner: number,
+  maxInner: number,
+): number {
+  const atMax = layout(prepared, maxInner, 1).lineCount;
+  if (atMax === 0) return minInner;
+  if (atMax > maxLines) {
+    return maxInner;
+  }
+  let lo = minInner;
+  let hi = maxInner;
+  let best = maxInner;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const lines = layout(prepared, mid, 1).lineCount;
+    if (lines <= maxLines) {
+      best = mid;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return best;
+}
+
+function estimateSizeFromPreview(preview: string): { width: number; height: number } {
   const slice = preview.slice(0, MAX_PREVIEW_CHARS);
   const prepared = getPrepared(slice);
-  const { height } = layout(prepared, INNER_TEXT_MAX_WIDTH, PREVIEW_LINE_HEIGHT);
-  const textHeight = Math.min(height, PREVIEW_MAX_LINES * PREVIEW_LINE_HEIGHT);
-  const raw = PREVIEW_CHROME_HEIGHT + textHeight;
-  const fallback = NODE_DIMENSIONS.default.height;
-  return Math.max(raw, fallback);
+  const innerW = shrinkWrapInnerWidth(
+    prepared,
+    PREVIEW_MAX_LINES,
+    SHRINK_MIN_INNER_WIDTH,
+    INNER_TEXT_MAX_WIDTH,
+  );
+  const { height: layH } = layout(prepared, innerW, PREVIEW_LINE_HEIGHT);
+  const textHeight = Math.min(layH, PREVIEW_MAX_LINES * PREVIEW_LINE_HEIGHT);
+  const bodyH = PREVIEW_CHROME_HEIGHT + textHeight;
+  const outerW = Math.min(
+    MAX_CARD_OUTER_WIDTH,
+    Math.max(MIN_CARD_OUTER_WIDTH, innerW + CARD_HORIZONTAL_CHROME),
+  );
+  const minH = NODE_DIMENSIONS.default.height;
+  return { width: outerW, height: Math.max(bodyH, minH) };
 }
 
 /**
- * Map node id → dagre box size. Width stays per-type (stable handles); height from Pretext
- * on the collapsed preview text. Omits group/annotation and empty previews.
+ * Map node id → dagre box size. Width and height from Pretext on the collapsed preview:
+ * width shrink-wraps between theme min/max; height uses the same inner width.
+ * Omits group/annotation and empty previews.
  */
 export function buildPretextSizeMap(nodes: Node[]): Map<string, { width: number; height: number }> {
   const map = new Map<string, { width: number; height: number }>();
@@ -108,10 +158,9 @@ export function buildPretextSizeMap(nodes: Node[]): Map<string, { width: number;
     if (t === 'group' || t === 'annotation' || !t) continue;
     const preview = previewTextForDagreLayout(node);
     if (!preview.trim()) continue;
-    const dims = NODE_DIMENSIONS[t] ?? NODE_DIMENSIONS.default;
     try {
-      const height = estimateHeightFromPreview(preview);
-      map.set(node.id, { width: dims.width, height });
+      const { width, height } = estimateSizeFromPreview(preview);
+      map.set(node.id, { width, height });
     } catch {
       // Canvas/measureText unavailable — omit override; dagre uses fallbacks.
     }
