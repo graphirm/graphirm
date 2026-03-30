@@ -58,6 +58,21 @@ export const api = {
       body: JSON.stringify({ content }),
     }),
 
+  patchKnowledge: (
+    nodeId: string,
+    patch: { dismissed?: boolean; summary?: string },
+  ): Promise<void> =>
+    apiFetch(`/api/knowledge/${nodeId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+
+  markInteractionEdited: (nodeId: string, originalContent: string): Promise<void> =>
+    apiFetch(`/api/interactions/${nodeId}/edit`, {
+      method: 'PATCH',
+      body: JSON.stringify({ original_content: originalContent }),
+    }),
+
   steerFromNode: (id: string, content: string, contextRoot: string): Promise<void> =>
     apiFetch(`/api/sessions/${id}/prompt`, {
       method: 'POST',
@@ -105,12 +120,20 @@ export const api = {
     entity: string,
     entityType: string,
     summary: string,
-    position?: { x: number; y: number },
-  ): Promise<GraphNode> =>
-    apiFetch(`/api/graph/${sessionId}/annotate`, {
+    options?: { position?: { x: number; y: number }; relatesTo?: string },
+  ): Promise<GraphNode> => {
+    const body: Record<string, unknown> = {
+      entity,
+      entity_type: entityType,
+      summary,
+    };
+    if (options?.position) body.position = options.position;
+    if (options?.relatesTo) body.relates_to = options.relatesTo;
+    return apiFetch(`/api/graph/${sessionId}/annotate`, {
       method: 'POST',
-      body: JSON.stringify({ entity, entity_type: entityType, summary, position }),
-    }),
+      body: JSON.stringify(body),
+    });
+  },
 
   rateTurn: (sessionId: string, turnId: string, rating: number): Promise<void> =>
     apiFetch(`/api/sessions/${sessionId}/turns/${turnId}/rating`, {
@@ -128,8 +151,9 @@ export const api = {
     return Promise.resolve();
   },
 
-  editKnowledgeSummary: (sessionId: string, nodeId: string, summary: string): Promise<void> => {
-    console.warn('editKnowledgeSummary not implemented yet', { sessionId, nodeId, summary });
-    return Promise.resolve();
-  },
+  editKnowledgeSummary: (_sessionId: string, nodeId: string, summary: string): Promise<void> =>
+    apiFetch(`/api/knowledge/${nodeId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ summary }),
+    }),
 };

@@ -13,7 +13,7 @@ import {
   type Edge,
 } from '@xyflow/react';
 import type { NodeTypes, EdgeTypes } from '@xyflow/react';
-import type { GraphData, PendingApproval } from '../types/graph';
+import type { GraphData, GraphNode, PendingApproval } from '../types/graph';
 import { useGraphData, EMPTY_FILTER } from '../hooks/useGraphData';
 import type { LayoutMode, NodeFilter } from '../hooks/useGraphData';
 import { InteractionNode } from './nodes/InteractionNode';
@@ -35,6 +35,10 @@ import {
   CascadeCollapseGenerationContext,
 } from '../context/CascadeCollapseContext';
 import type { PopoverActions } from '../context/PopoverContext';
+import {
+  GraphCanvasActionsProvider,
+  type GraphCanvasActionsValue,
+} from '../context/GraphCanvasActionsContext';
 import { FloatingInput } from './FloatingInput';
 import { NodeReplyInput } from './NodeReplyInput';
 import { HitlOverlay } from './HitlOverlay';
@@ -105,6 +109,7 @@ function GraphCanvasInner({
 
   const [filter, setFilter] = useState<NodeFilter>(EMPTY_FILTER);
   const [cascadeCollapseGeneration, setCascadeCollapseGeneration] = useState(0);
+  const [editingUserNodeId, setEditingUserNodeId] = useState<string | null>(null);
 
   // Ctrl+F (or Cmd+F) focuses the search bar when hovering the graph pane.
   // Escape clears the filter and blurs the input when it is focused.
@@ -442,6 +447,17 @@ function GraphCanvasInner({
     });
   }, [nodes, pendingApproval]);
 
+  const graphCanvasActions = useMemo(
+    (): GraphCanvasActionsValue => ({
+      sendFromGraph: (content: string, contextRoot?: string) => {
+        onSend?.(content, contextRoot);
+      },
+      editingUserNodeId,
+      setEditingUserNodeId,
+    }),
+    [onSend, editingUserNodeId],
+  );
+
   // Build popover actions that call the API
   const popoverActions = useMemo((): PopoverActions => ({
     sessionId,
@@ -463,8 +479,37 @@ function GraphCanvasInner({
     onEditSummary: async (nodeId: string, summary: string) => {
       if (!sessionId) return;
       await api.editKnowledgeSummary(sessionId, nodeId, summary);
+      mutateNodes(prev =>
+        prev.map(n => {
+          if (n.id !== nodeId) return n;
+          const d = n.data as unknown as GraphNode;
+          if (d.node_type.type !== 'Knowledge') return n;
+          return {
+            ...n,
+            data: {
+              ...d,
+              node_type: { ...d.node_type, summary },
+            } as unknown as Record<string, unknown>,
+          };
+        }),
+      );
     },
-  }), [sessionId, onSteerFromNode]);
+    onDismissKnowledge: async (nodeId: string) => {
+      await api.patchKnowledge(nodeId, { dismissed: true });
+      mutateNodes(prev =>
+        prev.map(n => (n.id === nodeId ? { ...n, hidden: true } : n)),
+      );
+    },
+    onStartEditUserMessage: (nodeId: string) => {
+      setEditingUserNodeId(nodeId);
+    },
+    onAnnotateToolNode: async (toolNodeId: string, text: string) => {
+      if (!sessionId) return;
+      await api.createAnnotation(sessionId, 'Tool note', 'annotation', text, {
+        relatesTo: toolNodeId,
+      });
+    },
+  }), [sessionId, onSteerFromNode, mutateNodes]);
 
   return (
     <CascadeCollapseGenerationContext.Provider value={cascadeCollapseGeneration}>
@@ -506,6 +551,7 @@ function GraphCanvasInner({
             ))}
           </div>
         )}
+        <GraphCanvasActionsProvider value={graphCanvasActions}>
         <PopoverProvider value={popoverActions}>
         <FocusContext.Provider value={focusedNodeId}>
         <SteerContext.Provider value={steerCallbackRef.current}>
@@ -602,6 +648,7 @@ function GraphCanvasInner({
           />
         )}
         </PopoverProvider>
+        </GraphCanvasActionsProvider>
       </div>
     </div>
     </CascadeCollapseGenerationContext.Provider>

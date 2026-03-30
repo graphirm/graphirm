@@ -13,6 +13,12 @@ export interface PopoverActions {
   onTogglePin: (nodeId: string, pinned: boolean) => Promise<void>;
   /** Edit a knowledge node's summary */
   onEditSummary: (nodeId: string, summary: string) => Promise<void>;
+  /** Soft-dismiss a knowledge node (hidden from context / briefing) */
+  onDismissKnowledge?: (nodeId: string) => Promise<void>;
+  /** User message: open inline edit + re-send from preceding context */
+  onStartEditUserMessage?: (nodeId: string) => void;
+  /** Tool interaction: persist note linked via RelatesTo */
+  onAnnotateToolNode?: (toolNodeId: string, text: string) => Promise<void>;
 }
 
 const PopoverContext = createContext<PopoverActions | null>(null);

@@ -1,5 +1,11 @@
 # Graphirm Development Progress Log
 
+## 2026-03-30: Node editing & annotations (server + web-app) — COMPLETE ✅
+
+- `PATCH /api/knowledge/{id}`, `PATCH /api/interactions/{id}/edit`, annotate `relates_to`, prompt `context_root`
+- `add_user_message_with_context`, `patch_knowledge`, `mark_interaction_edited`, `GraphNode::is_dismissed`
+- Briefing / context / `repo_briefing` skip dismissed Knowledge; popover + inline user edit + tool notes
+
 ## 2026-03-30: Pretext dagre first-pass sizing (web-app) — COMPLETE ✅
 
 - Dependency: `@chenglou/pretext`

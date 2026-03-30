@@ -390,6 +390,48 @@ impl GraphStore {
         Ok(())
     }
 
+    /// Update summary and/or dismissed flag on a Knowledge node. Other fields stay immutable.
+    pub fn patch_knowledge(
+        &self,
+        node_id: &NodeId,
+        dismissed: Option<bool>,
+        summary: Option<String>,
+    ) -> Result<(), GraphError> {
+        if dismissed.is_none() && summary.is_none() {
+            return Ok(());
+        }
+        let mut node = self.get_node(node_id)?;
+        let NodeType::Knowledge(ref mut kd) = node.node_type else {
+            return Err(GraphError::NotKnowledgeNode(node_id.0.clone()));
+        };
+        if let Some(s) = summary {
+            kd.summary = s;
+        }
+        if let Some(d) = dismissed {
+            if d {
+                node.metadata["dismissed"] = serde_json::json!(true);
+            } else if let serde_json::Value::Object(ref mut m) = node.metadata {
+                m.remove("dismissed");
+            }
+        }
+        self.update_node(node_id, node)
+    }
+
+    /// Mark a user Interaction node as edited (audit trail); does not change visible `content`.
+    pub fn mark_interaction_edited(
+        &self,
+        node_id: &NodeId,
+        original_content: &str,
+    ) -> Result<(), GraphError> {
+        let mut node = self.get_node(node_id)?;
+        let NodeType::Interaction(_) = node.node_type else {
+            return Err(GraphError::NotInteractionNode(node_id.0.clone()));
+        };
+        node.metadata["edited"] = serde_json::json!(true);
+        node.metadata["original_content"] = serde_json::json!(original_content);
+        self.update_node(node_id, node)
+    }
+
     pub fn count_session_nodes(
         &self,
         session_id: &NodeId,
@@ -1339,7 +1381,7 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    use crate::nodes::{InteractionData, NodeType};
+    use crate::nodes::{InteractionData, KnowledgeData, NodeType};
 
     #[test]
     fn add_and_get_node_roundtrip() {
@@ -1452,6 +1494,47 @@ mod tests {
         assert_eq!(
             fetched.metadata.get("label_ver"),
             Some(&serde_json::json!(5))
+        );
+    }
+
+    #[test]
+    fn patch_knowledge_updates_summary_and_dismissed() {
+        let store = GraphStore::open_memory().unwrap();
+        let kn = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "e".to_string(),
+            entity_type: "note".to_string(),
+            summary: "old".to_string(),
+            confidence: 1.0,
+        }));
+        let id = kn.id.clone();
+        store.add_node(kn).unwrap();
+        store
+            .patch_knowledge(&id, Some(true), Some("new".to_string()))
+            .unwrap();
+        let n = store.get_node(&id).unwrap();
+        assert_eq!(n.metadata.get("dismissed"), Some(&serde_json::json!(true)));
+        match &n.node_type {
+            NodeType::Knowledge(k) => assert_eq!(k.summary, "new"),
+            _ => panic!("expected Knowledge"),
+        }
+    }
+
+    #[test]
+    fn mark_interaction_edited_sets_metadata() {
+        let store = GraphStore::open_memory().unwrap();
+        let node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "hi".to_string(),
+            token_count: None,
+        }));
+        let id = node.id.clone();
+        store.add_node(node).unwrap();
+        store.mark_interaction_edited(&id, "hi").unwrap();
+        let n = store.get_node(&id).unwrap();
+        assert_eq!(n.metadata.get("edited"), Some(&serde_json::json!(true)));
+        assert_eq!(
+            n.metadata.get("original_content"),
+            Some(&serde_json::json!("hi"))
         );
     }
 
@@ -2212,7 +2295,7 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    use crate::nodes::{KnowledgeData, TaskData, TaskStatus};
+    use crate::nodes::{TaskData, TaskStatus};
 
     #[test]
     fn list_nodes_by_type_filters_by_session_and_metadata() {

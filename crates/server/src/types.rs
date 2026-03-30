@@ -175,6 +175,9 @@ pub struct CreateSessionRequest {
 pub struct PromptRequest {
     /// The user message content to submit to the agent.
     pub content: String,
+    /// Optional graph node id: new user message `RespondsTo` this node (steer / fork from here).
+    #[serde(default)]
+    pub context_root: Option<String>,
 }
 
 /// Query parameters for `GET /api/sessions/:id/export`.
@@ -305,6 +308,24 @@ pub struct AnnotationRequest {
     pub summary: String,
     /// Optional canvas position hint stored in node metadata.
     pub position: Option<AnnotationPosition>,
+    /// Optional interaction/tool node id: add `RelatesTo` from the new Knowledge node to this id.
+    #[serde(default)]
+    pub relates_to: Option<String>,
+}
+
+/// `PATCH /api/knowledge/{id}` request body.
+#[derive(Debug, Deserialize)]
+pub struct PatchKnowledgeRequest {
+    #[serde(default)]
+    pub dismissed: Option<bool>,
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+/// `PATCH /api/interactions/{id}/edit` — mark original user message as edited (audit).
+#[derive(Debug, Deserialize)]
+pub struct EditInteractionRequest {
+    pub original_content: String,
 }
 
 /// `POST /api/knowledge` request body.
@@ -466,6 +487,19 @@ mod tests {
         let json = r#"{"content": "Hello world"}"#;
         let req: PromptRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.content, "Hello world");
+        assert!(req.context_root.is_none());
+
+        let json2 = r#"{"content": "Hi", "context_root": "node-abc"}"#;
+        let req2: PromptRequest = serde_json::from_str(json2).unwrap();
+        assert_eq!(req2.context_root, Some("node-abc".to_string()));
+    }
+
+    #[test]
+    fn patch_knowledge_request_deserialize() {
+        let j = r#"{"dismissed": true}"#;
+        let r: PatchKnowledgeRequest = serde_json::from_str(j).unwrap();
+        assert_eq!(r.dismissed, Some(true));
+        assert!(r.summary.is_none());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Node, Edge, XYPosition, NodeChange } from '@xyflow/react';
 import { applyNodeChanges } from '@xyflow/react';
-import type { GraphData, GraphNode } from '../types/graph';
+import type { GraphData, GraphEdge, GraphNode } from '../types/graph';
 import { applyDagreLayout } from '../layout/dagre';
 import { applyMasonryLayout } from '../layout/masonry';
 import {
@@ -153,6 +153,30 @@ function graphNodeToFlowNode(gn: GraphNode): Node {
   };
 }
 
+/** Outgoing `responds_to` source → target (predecessor in the conversation chain). */
+function enrichInteractionPredecessors(nodes: Node[], graphEdges: GraphEdge[]): Node[] {
+  const pred = new Map<string, string>();
+  for (const e of graphEdges) {
+    if (e.edge_type === 'responds_to') pred.set(e.source, e.target);
+  }
+  return nodes.map(n => {
+    if (n.type !== 'interaction') return n;
+    const p = pred.get(n.id);
+    if (!p) return n;
+    return {
+      ...n,
+      data: {
+        ...(n.data as Record<string, unknown>),
+        precedingInteractionId: p,
+      },
+    };
+  });
+}
+
+function isKnowledgeDismissed(gn: GraphNode): boolean {
+  return gn.node_type.type === 'Knowledge' && gn.metadata?.dismissed === true;
+}
+
 function graphEdgeToFlowEdge(ge: {
   id: string;
   source: string;
@@ -271,11 +295,28 @@ function applyFilterToNodes(
   filter: NodeFilter,
 ): { nodes: Node[]; matchCount: number } {
   const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
+  const visibleNodeCount = graphNodes.filter(gn => !isKnowledgeDismissed(gn)).length;
+
   if (!isFiltering) {
-    return { nodes: nodes.map(n => ({ ...n, hidden: false })), matchCount: graphNodes.length };
+    const mapped = nodes.map(n => {
+      if (n.type === 'annotation' || n.type === 'prompt') return { ...n, hidden: false };
+      if (n.type === 'group') return n;
+      const gn = graphNodes.find(g => g.id === n.id);
+      const hidden = gn ? isKnowledgeDismissed(gn) : false;
+      return { ...n, hidden };
+    });
+    const withGroups = mapped.map(n => {
+      if (n.type !== 'group') return n;
+      const children = mapped.filter(c => c.parentId === n.id);
+      const allHidden = children.length > 0 && children.every(c => c.hidden);
+      return { ...n, hidden: allHidden };
+    });
+    return { nodes: withGroups, matchCount: visibleNodeCount };
   }
   const visibleIds = new Set(
-    graphNodes.filter(gn => nodeMatchesFilter(gn, filter)).map(gn => gn.id),
+    graphNodes
+      .filter(gn => !isKnowledgeDismissed(gn) && nodeMatchesFilter(gn, filter))
+      .map(gn => gn.id),
   );
   const mapped = nodes.map(n => {
     if (n.type === 'group') {
@@ -284,6 +325,8 @@ function applyFilterToNodes(
       return { ...n, hidden: allHidden };
     }
     if (n.type === 'annotation' || n.type === 'prompt') return n;
+    const gn = graphNodes.find(g => g.id === n.id);
+    if (gn && isKnowledgeDismissed(gn)) return { ...n, hidden: true };
     return { ...n, hidden: !visibleIds.has(n.id) };
   });
   return { nodes: mapped, matchCount: visibleIds.size };
@@ -380,7 +423,10 @@ export function useGraphData(
     }
 
     rawNodesRef.current = graphData.nodes;
-    const baseNodes = graphData.nodes.map(graphNodeToFlowNode);
+    const baseNodes = enrichInteractionPredecessors(
+      graphData.nodes.map(graphNodeToFlowNode),
+      graphData.edges,
+    );
     const flowEdges = rawEdges;
 
     // If this is a patch update with only a few new nodes, position them incrementally
@@ -502,15 +548,39 @@ export function useGraphData(
     if (!graphData) return;
     const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
 
+    const dismissed = new Set(
+      graphData.nodes.filter(isKnowledgeDismissed).map(g => g.id),
+    );
+
     // Compute visibleIds and matchCount outside the state updater — updaters must be pure.
     const visibleIds = isFiltering
-      ? new Set(graphData.nodes.filter(gn => nodeMatchesFilter(gn, filter)).map(gn => gn.id))
+      ? new Set(
+          graphData.nodes
+            .filter(gn => !isKnowledgeDismissed(gn) && nodeMatchesFilter(gn, filter))
+            .map(gn => gn.id),
+        )
       : null;
-    setMatchCount(visibleIds ? visibleIds.size : graphData.nodes.length);
+    setMatchCount(
+      visibleIds
+        ? visibleIds.size
+        : graphData.nodes.filter(gn => !isKnowledgeDismissed(gn)).length,
+    );
 
     // Apply hidden flags using a pure functional updater (visibleIds is already fully computed).
     setNodes(prev => {
-      if (!visibleIds) return prev.map(n => ({ ...n, hidden: false }));
+      if (!visibleIds) {
+        const step = prev.map(n => {
+          if (n.type === 'annotation' || n.type === 'prompt') return { ...n, hidden: false };
+          if (n.type === 'group') return n;
+          return { ...n, hidden: dismissed.has(n.id) };
+        });
+        return step.map(n => {
+          if (n.type !== 'group') return n;
+          const children = step.filter(c => c.parentId === n.id);
+          const allHidden = children.length > 0 && children.every(c => c.hidden);
+          return { ...n, hidden: allHidden };
+        });
+      }
       return prev.map(n => {
         if (n.type === 'group') {
           const children = prev.filter(c => c.parentId === n.id);
@@ -518,6 +588,7 @@ export function useGraphData(
           return { ...n, hidden: allHidden };
         }
         if (n.type === 'annotation' || n.type === 'prompt') return n;
+        if (dismissed.has(n.id)) return { ...n, hidden: true };
         return { ...n, hidden: !visibleIds.has(n.id) };
       });
     });
@@ -528,7 +599,10 @@ export function useGraphData(
       setLayoutModeState(mode);
       if (!graphData) return;
 
-      const baseNodes = graphData.nodes.map(graphNodeToFlowNode);
+      const baseNodes = enrichInteractionPredecessors(
+        graphData.nodes.map(graphNodeToFlowNode),
+        graphData.edges,
+      );
       const useGroups = mode === 'dagre';
 
       const { grouped, groupNodes } = useGroups

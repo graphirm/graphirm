@@ -14,6 +14,8 @@ export function NodePopover({ node, position, onClose }: NodePopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [editingSummary, setEditingSummary] = useState(false);
   const [summaryText, setSummaryText] = useState('');
+  const [toolNoteOpen, setToolNoteOpen] = useState(false);
+  const [toolNoteText, setToolNoteText] = useState('');
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -73,6 +75,27 @@ export function NodePopover({ node, position, onClose }: NodePopoverProps) {
     }
   };
 
+  const handleDismissKnowledge = () => {
+    if (actions?.onDismissKnowledge) {
+      actions.onDismissKnowledge(node.id).then(() => onClose());
+    }
+  };
+
+  const handleStartEditUser = () => {
+    actions?.onStartEditUserMessage?.(node.id);
+    onClose();
+  };
+
+  const handleSaveToolNote = () => {
+    const t = toolNoteText.trim();
+    if (!t || !actions?.onAnnotateToolNode) return;
+    actions.onAnnotateToolNode(node.id, t).then(() => {
+      setToolNoteOpen(false);
+      setToolNoteText('');
+      onClose();
+    });
+  };
+
   const handleCopyToClipboard = async () => {
     const content = node.node_type.type === 'Content' ? node.node_type.body : '';
     if (content) {
@@ -95,9 +118,60 @@ export function NodePopover({ node, position, onClose }: NodePopoverProps) {
       {nodeType === 'Interaction' && (
         <>
           {node.node_type.role === 'user' ? (
-            <button className={styles.popoverBtn} onClick={handleSteer}>
-              ↩ Steer from here
-            </button>
+            <>
+              <button className={styles.popoverBtn} onClick={handleSteer}>
+                ↩ Steer from here
+              </button>
+              {actions?.onStartEditUserMessage && (
+                <button className={styles.popoverBtn} onClick={handleStartEditUser}>
+                  ✏️ Edit & re-send
+                </button>
+              )}
+            </>
+          ) : node.node_type.role === 'tool' ? (
+            <>
+              <button className={styles.popoverBtn} onClick={handleSteer}>
+                ↩ Steer from here
+              </button>
+              {actions?.onAnnotateToolNode &&
+                (toolNoteOpen ? (
+                  <div className={styles.editSection}>
+                    <textarea
+                      className={styles.summaryInput}
+                      value={toolNoteText}
+                      onChange={(e) => setToolNoteText(e.target.value)}
+                      placeholder="Note for next time…"
+                      rows={3}
+                      autoFocus
+                    />
+                    <div className={styles.editActions}>
+                      <button
+                        className={styles.popoverBtn}
+                        onClick={handleSaveToolNote}
+                        disabled={!toolNoteText.trim()}
+                      >
+                        Save note
+                      </button>
+                      <button
+                        className={styles.popoverBtn}
+                        onClick={() => {
+                          setToolNoteOpen(false);
+                          setToolNoteText('');
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    className={styles.popoverBtn}
+                    onClick={() => setToolNoteOpen(true)}
+                  >
+                    📝 Add note
+                  </button>
+                ))}
+            </>
           ) : (
             <>
               <button className={styles.popoverBtn} onClick={handleSteer}>
@@ -153,6 +227,11 @@ export function NodePopover({ node, position, onClose }: NodePopoverProps) {
 
       {nodeType === 'Knowledge' && (
         <>
+          {actions?.onDismissKnowledge && !node.metadata?.dismissed && (
+            <button className={styles.popoverBtn} onClick={handleDismissKnowledge}>
+              🗑️ Dismiss
+            </button>
+          )}
           <button
             className={styles.popoverBtn}
             onClick={() => handleTogglePin(!node.metadata?.pinned)}

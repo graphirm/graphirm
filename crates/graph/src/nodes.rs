@@ -150,6 +150,14 @@ impl GraphNode {
             .entry("label_ver".to_string())
             .or_insert_with(|| serde_json::json!(1));
     }
+
+    /// Soft-dismiss flag (used for Knowledge nodes — excluded from context and repo briefing).
+    pub fn is_dismissed(&self) -> bool {
+        self.metadata
+            .get("dismissed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(test)]

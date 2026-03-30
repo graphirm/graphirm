@@ -204,25 +204,22 @@ increments it when Toolbar **⊖ Collapse all** is clicked (Timeline layout only
 - `web-app/src/components/Toolbar.tsx` — `onCollapseTimelineCascades` button
 - `web-app/src/components/GraphCanvas.tsx` — provider + state + toolbar wiring
 
-#### Node editing and annotations — P2 · M
+#### ✅ Node editing and annotations — P2 · M
 
-Per-type interaction for editing, dismissal, and annotation:
+Done 2026-03-30. Backend + web-app wired per plan.
 
-- **User Interaction nodes**: editable inline. On save, the original node is marked `metadata.edited = true` with the original content backed up, and a new prompt is sent from the preceding node's context root — effectively forking the conversation. Both branches remain visible in the graph.
-- **Knowledge nodes**: dismissable (sets `metadata.dismissed = true`; filtered from `build_context` and `build_repo_briefing` without deleting the node) and summary-editable (`PATCH /api/knowledge/{id}` with `{ summary }`).
-- **Tool Interaction nodes**: annotatable. User adds a freeform note (e.g., "next time prefer grep over find") stored as a Knowledge node with `entity_type: "annotation"` linked to the tool node via a `RelatesTo` edge. Surfaces on the canvas as a connected Knowledge node.
-
-Requires new backend endpoints: `PATCH /api/knowledge/{id}` (dismissed + summary), `PATCH /api/interactions/{id}/edit` (metadata marking), and extension of `POST /api/graph/{session_id}/annotate` with optional `relates_to` node ID.
+- **`PATCH /api/knowledge/{id}`** — `dismissed` / `summary`; `GraphStore::patch_knowledge`; wrong type → 400.
+- **`PATCH /api/interactions/{id}/edit`** — `original_content`; `mark_interaction_edited` sets `metadata.edited` + `original_content`.
+- **`POST /api/graph/{session_id}/annotate`** — optional `relates_to`; extra `RelatesTo` edge from new Knowledge node → tool node (agent→annotation edge unchanged).
+- **`POST /api/sessions/:id/prompt`** — `context_root` optional; `Session::add_user_message_with_context` forks `RespondsTo` when set (steer / edit re-send).
+- **Agent:** dismissed Knowledge filtered in `build_context` (`collect_context_nodes`, `node_to_message`), `build_knowledge_summary`, `build_pinned_summary`, `build_lessons_summary`, `repo_briefing` tool section; `GraphNode::is_dismissed()`.
+- **Web:** Popover — Edit & re-send (user), Dismiss + real summary PATCH (knowledge), Add note (tool); `InteractionNode` inline edit; `enrichInteractionPredecessors` for `context_root`; dismiss hides nodes locally; `GraphCanvasActionsContext`.
 
 Plan: `docs/plans/2026-03-29-node-editing-annotations.md`
 
 **Key files:**
-- `web-app/src/components/nodes/NodePopover.tsx` — Edit / Dismiss / Annotate actions per type
-- `web-app/src/components/nodes/InteractionNode.tsx` — inline edit mode for user messages
-- `web-app/src/api/client.ts` — `patchKnowledge()`, `markInteractionEdited()`, `annotateNode()`
-- `crates/server/src/routes.rs` — `PATCH /api/knowledge/:id`, `PATCH /api/interactions/:id/edit`, extend annotate handler
-- `crates/graph/src/store.rs` — `update_knowledge()` (dismissed flag + summary)
-- `crates/agent/src/briefing.rs` + `context.rs` — filter dismissed Knowledge nodes
+- `web-app/src/components/nodes/NodePopover.tsx`, `InteractionNode.tsx`, `GraphCanvas.tsx`, `GraphCanvasActionsContext.tsx`, `useGraphData.ts`, `client.ts`
+- `crates/agent/src/session.rs`, `crates/server/src/routes.rs`, `crates/graph/src/store.rs`, `crates/graph/src/nodes.rs`, `crates/agent/src/context.rs`, `crates/agent/src/briefing.rs`, `crates/tools/src/repo_briefing.rs`
 
 #### ✅ Node-as-input (canvas prompt nodes) — P2 · M
 

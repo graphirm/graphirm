@@ -188,6 +188,19 @@ impl Session {
     /// Add a user message to this session's conversation.
     /// Returns the NodeId of the created Interaction node.
     pub async fn add_user_message(&self, content: &str) -> Result<NodeId, AgentError> {
+        self.add_user_message_with_context(content, None).await
+    }
+
+    /// Add a user message, optionally linking `RespondsTo` to a specific prior node (steer / fork).
+    ///
+    /// When `responds_to` is `None`, the new message chains to the session's previous interaction
+    /// (same as [`add_user_message`]). When set, the new user node `RespondsTo` that node instead,
+    /// enabling branch-from-here without rewriting history.
+    pub async fn add_user_message_with_context(
+        &self,
+        content: &str,
+        responds_to: Option<NodeId>,
+    ) -> Result<NodeId, AgentError> {
         let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst) + 1;
         self.turn_pos_counter.store(1, Ordering::SeqCst);
         let mut interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
@@ -197,7 +210,8 @@ impl Session {
         }));
         interaction_node.metadata["session_id"] = serde_json::json!(self.id.to_string());
         interaction_node.set_label(format!("interaction_{turn}_1_1"));
-        self.persist_interaction(interaction_node).await
+        self.persist_interaction(interaction_node, responds_to)
+            .await
     }
 
     pub fn current_turn(&self) -> u32 {
@@ -217,15 +231,20 @@ impl Session {
         let pos = self.next_turn_pos();
         node.metadata["session_id"] = serde_json::json!(self.id.to_string());
         node.set_label(format!("interaction_{turn}_{pos}_1"));
-        self.persist_interaction(node).await
+        self.persist_interaction(node, None).await
     }
 
-    async fn persist_interaction(&self, node: GraphNode) -> Result<NodeId, AgentError> {
+    async fn persist_interaction(
+        &self,
+        node: GraphNode,
+        responds_to_override: Option<NodeId>,
+    ) -> Result<NodeId, AgentError> {
         let graph = self.graph.clone();
         let node_id = tokio::task::spawn_blocking(move || graph.add_node(node))
             .await
             .map_err(|e| AgentError::Join(e.to_string()))??;
-        self.link_interaction(&node_id).await?;
+        self.link_interaction(&node_id, responds_to_override)
+            .await?;
         Ok(node_id)
     }
 
@@ -235,7 +254,11 @@ impl Session {
     /// - A `Produces` edge from the Agent node to the new Interaction node.
     /// - A `RespondsTo` edge from the new node to the previous Interaction node
     ///   (if any), forming a traversable conversation chain.
-    pub async fn link_interaction(&self, node_id: &NodeId) -> Result<(), AgentError> {
+    pub async fn link_interaction(
+        &self,
+        node_id: &NodeId,
+        responds_to_override: Option<NodeId>,
+    ) -> Result<(), AgentError> {
         let graph = self.graph.clone();
         let agent_id = self.id.clone();
         let node_id_clone = node_id.clone();
@@ -247,7 +270,7 @@ impl Session {
                 .last_interaction_id
                 .lock()
                 .expect("last_interaction_id lock poisoned");
-            let prev = last.clone();
+            let prev = responds_to_override.or_else(|| last.clone());
             *last = Some(node_id.clone());
             prev
         };
@@ -427,6 +450,26 @@ mod tests {
             .unwrap();
         assert_eq!(msg3_responds.len(), 1);
         assert_eq!(msg3_responds[0].id, id2);
+    }
+
+    #[tokio::test]
+    async fn test_add_user_message_with_context_forks_responds_to() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig::default();
+        let session = Session::new(graph.clone(), config).unwrap();
+
+        let id1 = session.add_user_message("first").await.unwrap();
+        let _id2 = session.add_user_message("second").await.unwrap();
+        let fork = session
+            .add_user_message_with_context("forked", Some(id1.clone()))
+            .await
+            .unwrap();
+
+        let fork_responds: Vec<_> = graph
+            .neighbors(&fork, Some(EdgeType::RespondsTo), Direction::Outgoing)
+            .unwrap();
+        assert_eq!(fork_responds.len(), 1);
+        assert_eq!(fork_responds[0].id, id1);
     }
 
     #[test]

@@ -14,7 +14,7 @@ use tower_http::trace::TraceLayer;
 
 use graphirm_agent::workspace::sanitize_workspace_name;
 use graphirm_agent::{AgentConfig, EventBus, HitlDecision, HitlGate, Session, run_agent_loop};
-use graphirm_graph::{Direction, EdgeType, GraphNode, NodeId, NodeType};
+use graphirm_graph::{Direction, EdgeType, GraphEdge, GraphNode, NodeId, NodeType};
 
 use crate::error::ServerError;
 use crate::middleware::request_logging;
@@ -22,10 +22,10 @@ use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
     AnnotationRequest, AutoApproveRequest, ContextReportRow, CreateKnowledgeRequest,
-    CreateSessionRequest, ExportQuery, GraphResponse, HealthResponse, NodeAction,
-    NodeActionRequest, PinnedKnowledgeQuery, PromptRequest, RateTurnRequest, RenameSessionRequest,
-    SessionId, SessionResponse, SessionStatus, SseEvent, SseEventType, StrategyReport,
-    SubgraphQuery,
+    CreateSessionRequest, EditInteractionRequest, ExportQuery, GraphResponse, HealthResponse,
+    NodeAction, NodeActionRequest, PatchKnowledgeRequest, PinnedKnowledgeQuery, PromptRequest,
+    RateTurnRequest, RenameSessionRequest, SessionId, SessionResponse, SessionStatus, SseEvent,
+    SseEventType, StrategyReport, SubgraphQuery,
 };
 
 /// Build a brief workspace context block to inject into the system prompt.
@@ -123,7 +123,9 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/graph/{session_id}/annotate", post(create_annotation))
         .route("/api/knowledge", post(create_knowledge))
+        .route("/api/knowledge/{id}", patch(patch_knowledge))
         .route("/api/knowledge/pinned", get(list_pinned_knowledge))
+        .route("/api/interactions/{id}/edit", patch(patch_interaction_edit))
         .route(
             "/api/sessions/{id}/turns/{turn_id}/rating",
             patch(rate_turn),
@@ -435,8 +437,9 @@ async fn prompt_session(
 
     // Record the user message outside the lock so we don't hold a write guard
     // across the async spawn_blocking call inside add_user_message.
+    let responds_to = body.context_root.as_ref().map(|s| NodeId::from(s.as_str()));
     session
-        .add_user_message(&body.content)
+        .add_user_message_with_context(&body.content, responds_to)
         .await
         .map_err(ServerError::Agent)?;
 
@@ -847,6 +850,50 @@ async fn node_action(
     }
 }
 
+/// `PATCH /api/knowledge/{id}` — update summary and/or soft-dismiss a Knowledge node.
+async fn patch_knowledge(
+    State(state): State<AppState>,
+    Path(node_id): Path<String>,
+    Json(req): Json<PatchKnowledgeRequest>,
+) -> Result<StatusCode, ServerError> {
+    if req.dismissed.is_none() && req.summary.is_none() {
+        return Err(ServerError::BadRequest(
+            "At least one of dismissed or summary is required".to_string(),
+        ));
+    }
+    let id = NodeId::from(node_id.as_str());
+    let graph = state.graph.clone();
+    let dismissed = req.dismissed;
+    let summary = req.summary;
+    tokio::task::spawn_blocking(move || graph.patch_knowledge(&id, dismissed, summary))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(|e| match e {
+            graphirm_graph::GraphError::NotKnowledgeNode(m) => ServerError::BadRequest(m),
+            other => ServerError::Graph(other),
+        })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `PATCH /api/interactions/{id}/edit` — mark a user interaction as edited (audit trail).
+async fn patch_interaction_edit(
+    State(state): State<AppState>,
+    Path(node_id): Path<String>,
+    Json(req): Json<EditInteractionRequest>,
+) -> Result<StatusCode, ServerError> {
+    let id = NodeId::from(node_id.as_str());
+    let original = req.original_content;
+    let graph = state.graph.clone();
+    tokio::task::spawn_blocking(move || graph.mark_interaction_edited(&id, &original))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(|e| match e {
+            graphirm_graph::GraphError::NotInteractionNode(m) => ServerError::BadRequest(m),
+            other => ServerError::Graph(other),
+        })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// `POST /api/graph/{session_id}/annotate` — create a user annotation Knowledge node.
 ///
 /// Stores the node in the graph associated with the session's agent node via a `RelatesTo` edge.
@@ -856,7 +903,7 @@ async fn create_annotation(
     Path(session_id): Path<SessionId>,
     Json(body): Json<AnnotationRequest>,
 ) -> Result<Json<GraphNode>, ServerError> {
-    use graphirm_graph::{GraphEdge, KnowledgeData};
+    use graphirm_graph::KnowledgeData;
 
     // Verify session exists and get its agent node ID.
     let agent_node_id = {
@@ -866,6 +913,8 @@ async fn create_annotation(
             .ok_or_else(|| ServerError::NotFound(format!("session {session_id}")))?;
         handle.session.id.clone()
     };
+
+    let optional_relates_to = body.relates_to.clone();
 
     let mut metadata = serde_json::Map::new();
     if let Some(pos) = &body.position {
@@ -899,6 +948,17 @@ async fn create_annotation(
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?
         .map_err(ServerError::Graph)?;
+
+    if let Some(rel) = optional_relates_to.as_ref() {
+        let rel_id = NodeId::from(rel.as_str());
+        let from = annotation_id.clone();
+        let graph = state.graph.clone();
+        let tool_edge = GraphEdge::new(EdgeType::RelatesTo, from, rel_id);
+        tokio::task::spawn_blocking(move || graph.add_edge(tool_edge))
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?
+            .map_err(ServerError::Graph)?;
+    }
 
     // Return the created node.
     let graph = state.graph.clone();

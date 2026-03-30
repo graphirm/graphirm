@@ -184,6 +184,7 @@ pub fn build_knowledge_summary(store: &GraphStore, limit: usize) -> Option<Strin
 
     let lines: Vec<String> = nodes
         .iter()
+        .filter(|n| !n.is_dismissed())
         .filter_map(|n| {
             if let NodeType::Knowledge(ref kd) = n.node_type {
                 let summary = kd.summary.trim();
@@ -243,6 +244,7 @@ pub fn build_lessons_summary(store: &GraphStore, limit: usize) -> Option<String>
 
     let lines: Vec<String> = lesson_nodes
         .iter()
+        .filter(|n| !n.is_dismissed())
         .filter_map(|n| {
             if let NodeType::Knowledge(ref kd) = n.node_type {
                 let summary = kd.summary.trim();
@@ -286,6 +288,7 @@ pub fn build_pinned_summary(store: &GraphStore, limit: usize) -> Option<String> 
 
     let lines: Vec<String> = nodes
         .iter()
+        .filter(|n| !n.is_dismissed())
         .filter_map(|n| {
             if let NodeType::Knowledge(ref kd) = n.node_type {
                 let summary = kd.summary.trim();

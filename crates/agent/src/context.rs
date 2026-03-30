@@ -237,10 +237,15 @@ pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
             };
             Some(LlmMessage::human(label))
         }
-        NodeType::Knowledge(data) => Some(LlmMessage::human(format!(
-            "[Knowledge: {} ({})]\n{}",
-            data.entity, data.entity_type, data.summary
-        ))),
+        NodeType::Knowledge(data) => {
+            if node.is_dismissed() {
+                return None;
+            }
+            Some(LlmMessage::human(format!(
+                "[Knowledge: {} ({})]\n{}",
+                data.entity, data.entity_type, data.summary
+            )))
+        }
         _ => None,
     }
 }
@@ -452,8 +457,13 @@ fn collect_context_nodes(
                         continue;
                     }
                     match &neighbor.node_type {
-                        NodeType::Content(_) | NodeType::Knowledge(_) => {
+                        NodeType::Content(_) => {
                             context_nodes.push(neighbor);
+                        }
+                        NodeType::Knowledge(_) => {
+                            if !neighbor.is_dismissed() {
+                                context_nodes.push(neighbor);
+                            }
                         }
                         _ => {}
                     }

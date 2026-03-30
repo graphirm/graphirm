@@ -14,6 +14,12 @@ pub enum GraphError {
     #[error("Node not found: {0}")]
     NodeNotFound(String),
 
+    #[error("Node is not a knowledge node: {0}")]
+    NotKnowledgeNode(String),
+
+    #[error("Node is not an interaction node: {0}")]
+    NotInteractionNode(String),
+
     #[error("Edge not found: {0}")]
     EdgeNotFound(String),
 

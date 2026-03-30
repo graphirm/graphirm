@@ -135,7 +135,7 @@ fn build_knowledge_section(store: &GraphStore) -> String {
         return "## Knowledge\n(no knowledge nodes in graph)".to_string();
     }
     let mut lines = vec!["## Knowledge (recent 10)".to_string()];
-    for node in &nodes {
+    for node in nodes.iter().filter(|n| !n.is_dismissed()) {
         if let graphirm_graph::NodeType::Knowledge(ref kd) = node.node_type {
             let summary = if kd.summary.is_empty() {
                 String::new()
