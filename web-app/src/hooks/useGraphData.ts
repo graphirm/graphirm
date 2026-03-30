@@ -3,10 +3,14 @@ import type { Node, Edge, XYPosition, NodeChange } from '@xyflow/react';
 import { applyNodeChanges } from '@xyflow/react';
 import type { GraphData, GraphNode } from '../types/graph';
 import { applyDagreLayout } from '../layout/dagre';
-import { buildPretextSizeMap } from '../layout/pretextDimensions';
+import { applyMasonryLayout } from '../layout/masonry';
+import {
+  buildPretextSizeMap,
+  mergePretextNodeDimensions,
+} from '../layout/pretextDimensions';
 import { applyTimelineLayout } from '../layout/timeline';
 
-export type LayoutMode = 'dagre' | 'timeline' | 'free';
+export type LayoutMode = 'dagre' | 'timeline' | 'masonry' | 'free';
 
 export interface NodeFilter {
   query: string;
@@ -341,6 +345,9 @@ export function useGraphData(
         const result = applyTimelineLayout(baseNodes, rawNodes, currentEdges, canvasWidth);
         return result;
       }
+      if (mode === 'masonry') {
+        return { nodes: applyMasonryLayout(baseNodes, rawNodes, canvasWidth), bandPositions: {} };
+      }
       // free mode: restore persisted positions
       if (sid) {
         const positions = loadPositions(sid);
@@ -453,6 +460,13 @@ export function useGraphData(
       finalNodes = laid;
     }
 
+    if (layoutMode === 'dagre') {
+      const map = buildPretextSizeMap(
+        finalNodes.filter(n => n.type && n.type !== 'group' && n.type !== 'annotation'),
+      );
+      finalNodes = mergePretextNodeDimensions(finalNodes, map);
+    }
+
     // Apply filter: stamp hidden: true on non-matching nodes.
     const { nodes: withHidden, matchCount: count } = applyFilterToNodes(
       finalNodes,
@@ -532,6 +546,13 @@ export function useGraphData(
         finalNodes = [...positionedGroups, ...rebased];
       } else {
         finalNodes = laid;
+      }
+
+      if (mode === 'dagre') {
+        const map = buildPretextSizeMap(
+          finalNodes.filter(n => n.type && n.type !== 'group' && n.type !== 'annotation'),
+        );
+        finalNodes = mergePretextNodeDimensions(finalNodes, map);
       }
 
       const { nodes: withHidden } = applyFilterToNodes(finalNodes, graphData.nodes, filter);

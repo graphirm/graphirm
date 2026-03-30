@@ -69,7 +69,7 @@ interface GraphCanvasProps {
   onModify?: (nodeId: string, modifiedArgs: string) => void;
 }
 
-const LAYOUT_CYCLE: LayoutMode[] = ['dagre', 'timeline', 'free'];
+const LAYOUT_CYCLE: LayoutMode[] = ['dagre', 'timeline', 'masonry', 'free'];
 
 function GraphCanvasInner({
   graphData,
@@ -415,6 +415,7 @@ function GraphCanvasInner({
           minZoom={0.05}
           maxZoom={4}
           deleteKeyCode={null}
+          onlyRenderVisibleElements
           proOptions={{ hideAttribution: true }}
         >
           <Background

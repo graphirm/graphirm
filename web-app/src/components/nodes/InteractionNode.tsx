@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { GraphNode } from '../../types/graph';
 import { useSteer } from '../../context/SteerContext';
@@ -6,6 +6,7 @@ import { useFocusedNodeId } from '../../context/FocusContext';
 import { useZoom } from '../../context/ZoomContext';
 import { BaseCard } from './BaseCard';
 import { MarkdownBody } from './MarkdownBody';
+import { estimateInteractionExpandedReserveHeight } from '../../layout/pretextDimensions';
 import styles from '../../styles/nodes.module.css';
 
 const ROLE_ICONS: Record<string, string> = {
@@ -52,6 +53,20 @@ export function InteractionNode({ id, data: rawData, selected }: NodeProps) {
 
   const preview = stripMarkdown(nt.content ?? '').slice(0, 80) + ((nt.content ?? '').length > 80 ? '…' : '');
 
+  const expandedBodyStyle = useMemo(() => {
+    if (isLODEnabled || !expanded) return undefined;
+    try {
+      const minH = estimateInteractionExpandedReserveHeight(nt.content ?? '');
+      return {
+        minHeight: minH,
+        maxHeight: 480,
+        overflowY: 'auto' as const,
+      };
+    } catch {
+      return undefined;
+    }
+  }, [expanded, isLODEnabled, nt.content]);
+
   // Compact mode: cascade intermediate cards in timeline layout.
   // localExpanded lets the user click to expand in-place.
   const isCompact = data.compact === true && !localExpanded;
@@ -87,6 +102,7 @@ export function InteractionNode({ id, data: rawData, selected }: NodeProps) {
         }
       }}
       focused={focusedNodeId === id}
+      expandedBodyStyle={expandedBodyStyle}
     >
       {localExpanded && (
         <button

@@ -19,10 +19,11 @@ interface ToolbarProps {
 const LAYOUT_LABELS: Record<LayoutMode, string> = {
   dagre: 'DAG',
   timeline: 'Timeline',
+  masonry: 'Masonry',
   free: 'Free',
 };
 
-const MODES: LayoutMode[] = ['dagre', 'timeline', 'free'];
+const MODES: LayoutMode[] = ['dagre', 'timeline', 'masonry', 'free'];
 
 export function Toolbar({
   layoutMode,

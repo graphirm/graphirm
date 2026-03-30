@@ -167,3 +167,36 @@ export function buildPretextSizeMap(nodes: Node[]): Map<string, { width: number;
   }
   return map;
 }
+
+/** Stamp `style.width` / `style.height` so React Flow can cull off-screen nodes without measuring first. */
+export function mergePretextNodeDimensions(
+  nodes: Node[],
+  sizeMap: Map<string, { width: number; height: number }>,
+): Node[] {
+  return nodes.map(n => {
+    const s = sizeMap.get(n.id);
+    if (!s || n.type === 'group') return n;
+    return { ...n, style: { ...n.style, width: s.width, height: s.height } };
+  });
+}
+
+/** Expanded card: max-width 420px minus padding and border → inner text width. */
+const EXPANDED_INNER_TEXT_WIDTH = 398;
+const EXPANDED_BODY_LINE_HEIGHT = 18;
+
+/**
+ * Reserve vertical space for expanded Interaction markdown (accordion-style).
+ * Caps text block at 320px to match `MarkdownBody` maxHeight; adds slack for buttons/footer.
+ */
+export function estimateInteractionExpandedReserveHeight(content: string): number {
+  const slice = (content ?? '').slice(0, 16_000);
+  if (!slice.trim()) return 140;
+  try {
+    const prepared = prepare(slice, PREVIEW_FONT);
+    const { height } = layout(prepared, EXPANDED_INNER_TEXT_WIDTH, EXPANDED_BODY_LINE_HEIGHT);
+    const textBlock = Math.min(height, 320);
+    return textBlock + 96;
+  } catch {
+    return 420;
+  }
+}

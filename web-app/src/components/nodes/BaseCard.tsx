@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { Handle, NodeResizer, Position } from '@xyflow/react';
 import styles from '../../styles/nodes.module.css';
 
@@ -12,6 +12,8 @@ interface BaseCardProps {
   onToggleExpand: () => void;
   children?: ReactNode;
   focused?: boolean;
+  /** Pretext-reserved height / overflow for expanded body (accordion-style). */
+  expandedBodyStyle?: CSSProperties;
 }
 
 function formatTimestamp(iso: string): string {
@@ -32,6 +34,7 @@ export function BaseCard({
   onToggleExpand,
   children,
   focused = false,
+  expandedBodyStyle,
 }: BaseCardProps) {
   return (
     <div
@@ -83,7 +86,11 @@ export function BaseCard({
         <div className={styles.preview}>{preview}</div>
       )}
 
-      {expanded && <div className={styles.expandedBody}>{children}</div>}
+      {expanded && (
+        <div className={styles.expandedBody} style={expandedBodyStyle}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }

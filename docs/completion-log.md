@@ -8,6 +8,12 @@
 - Files: `web-app/src/layout/pretextDimensions.ts`, `nodeDimensions.ts`; `dagre.ts` optional
   size map; `useGraphData.ts` passes map in dagre mode
 
+## 2026-03-30: Pretext masonry layout + Interaction accordion + RF culling (web-app) — COMPLETE ✅
+
+- `LayoutMode` `'masonry'`: `applyMasonryLayout()` (shortest column, Pretext heights, `L` + Toolbar)
+- `estimateInteractionExpandedReserveHeight` + `BaseCard.expandedBodyStyle` (Interaction expand reserve)
+- `mergePretextNodeDimensions` after dagre; `onlyRenderVisibleElements` on `ReactFlow`
+
 ## 2026-03-30: Pretext shrink-wrap widths for dagre (web-app) — COMPLETE ✅
 
 - `shrinkWrapInnerWidth()` — binary search on Pretext `layout().lineCount` for ≤2 preview lines
