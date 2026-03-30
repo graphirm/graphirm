@@ -2,26 +2,51 @@ import { useMemo, type ReactNode } from 'react';
 import { stripMarkdownForPreview } from '../../layout/pretextDimensions';
 import styles from '../../styles/nodes.module.css';
 
-export type PreviewRun = { kind: 'text' | 'code'; text: string };
+export type PreviewRun =
+  | { kind: 'text'; text: string }
+  | { kind: 'code'; text: string }
+  | { kind: 'mention'; text: string };
+
+/** Handles @user, @repo-2, @snake_case (common in agent transcripts). */
+const MENTION_SPLIT = /(@[A-Za-z0-9_.-]+)/;
 
 /**
- * Split interaction content into text + inline `code` runs; strip markdown in text only.
- * Respects a total character budget (plain + code).
+ * Split interaction content into text + inline `code` + @mention runs; strip markdown in
+ * text-only segments. Respects a total character budget (plain + code + mentions).
  */
 export function parseInteractionPreviewRuns(content: string, maxChars: number): PreviewRun[] {
   const runs: PreviewRun[] = [];
   let budget = maxChars;
   let i = 0;
 
-  const pushText = (raw: string) => {
-    if (!raw || budget <= 0) return;
-    const cleaned = stripMarkdownForPreview(raw);
-    if (!cleaned) return;
+  const pushPlain = (cleaned: string) => {
+    if (!cleaned || budget <= 0) return;
     const take = Math.min(cleaned.length, budget);
     let piece = cleaned.slice(0, take);
     if (take < cleaned.length) piece += '…';
     runs.push({ kind: 'text', text: piece });
     budget -= take;
+  };
+
+  const pushMention = (m: string) => {
+    if (!m || budget <= 0) return;
+    const take = Math.min(m.length, budget);
+    let piece = m.slice(0, take);
+    if (take < m.length) piece += '…';
+    runs.push({ kind: 'mention', text: piece });
+    budget -= take;
+  };
+
+  const pushTextWithMentions = (raw: string) => {
+    if (!raw || budget <= 0) return;
+    const cleaned = stripMarkdownForPreview(raw);
+    if (!cleaned) return;
+    const parts = cleaned.split(MENTION_SPLIT);
+    for (const part of parts) {
+      if (!part || budget <= 0) continue;
+      if (part.startsWith('@')) pushMention(part);
+      else pushPlain(part);
+    }
   };
 
   const pushCode = (raw: string) => {
@@ -36,13 +61,13 @@ export function parseInteractionPreviewRuns(content: string, maxChars: number): 
   while (i < content.length && budget > 0) {
     const bt = content.indexOf('`', i);
     if (bt === -1) {
-      pushText(content.slice(i));
+      pushTextWithMentions(content.slice(i));
       break;
     }
-    if (bt > i) pushText(content.slice(i, bt));
+    if (bt > i) pushTextWithMentions(content.slice(i, bt));
     const bt2 = content.indexOf('`', bt + 1);
     if (bt2 === -1) {
-      pushText(content.slice(bt));
+      pushTextWithMentions(content.slice(bt));
       break;
     }
     pushCode(content.slice(bt + 1, bt2));
@@ -69,6 +94,10 @@ export function RichInteractionPreview({
           <code key={idx} className={styles.previewCode}>
             {r.text}
           </code>
+        ) : r.kind === 'mention' ? (
+          <span key={idx} className={styles.previewMention}>
+            {r.text}
+          </span>
         ) : (
           <span key={idx}>{r.text}</span>
         ),

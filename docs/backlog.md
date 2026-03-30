@@ -386,13 +386,13 @@ Ref: `chenglou.me/pretext/accordion`
 #### Rich inline chips in node cards — P3 · M (partial, 2026-03-30)
 
 **Done this pass:** DOM-based collapsed previews (no Pretext `layoutNextLine` yet):
-- **Interaction:** inline `` `code` `` parsed from raw content → `<code class="previewCode">`;
-  other text still markdown-stripped per segment. `BaseCard` `previewNode` + truncated
-  `previewTitle` for native tooltip.
+- **Interaction:** inline `` `code` `` → `.previewCode`; **`@handle`** tokens (after markdown
+  strip) → `.previewMention`; remaining text markdown-stripped per segment. `BaseCard`
+  `previewNode` + truncated `previewTitle`.
 - **Knowledge:** `entity_type` as `.previewChip` + truncated entity string.
 - **BaseCard:** optional `previewNode`, `previewTitle`; root `title` for hover.
 
-**Still open:** `@mentions`, link underlines, Pretext `prepareWithSegments` /
+**Still open:** Markdown link underlines in preview, Pretext `prepareWithSegments` /
 `layoutNextLine` for measurement-aligned multi-run layout (rich-note demo parity).
 
 Ref: `chenglou.me/pretext/rich-note`
