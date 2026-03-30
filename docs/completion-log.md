@@ -8,6 +8,14 @@
 - Files: `web-app/src/layout/pretextDimensions.ts`, `nodeDimensions.ts`; `dagre.ts` optional
   size map; `useGraphData.ts` passes map in dagre mode
 
+## 2026-03-30: Rich preview markdown links (web-app) — COMPLETE ✅
+
+- `[label](url)` in interaction preview → `.previewLink`; safe href allowlist; stopPropagation
+
+## 2026-03-30: Rich preview @mentions (web-app) — COMPLETE ✅
+
+- `parseInteractionPreviewRuns`: `@handle` runs + `.previewMention` styling
+
 ## 2026-03-30: Rich collapsed previews — code + knowledge chip (web-app) — COMPLETE ✅
 
 - `RichPreview.tsx`: inline `code` runs for Interaction; Knowledge entity-type chip + entity

@@ -80,6 +80,23 @@
   vertical-align: baseline;
 }
 
+.previewLink {
+  display: inline-block;
+  color: var(--info);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+.previewLink:hover {
+  color: var(--accent);
+}
+
 .previewMention {
   display: inline-block;
   font-weight: 600;
