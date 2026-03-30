@@ -69,8 +69,14 @@ const CASCADE_Y_START = 180; // Y of first intermediate in cascade
 const CASCADE_STEP_X = 60;   // horizontal nudge per cascade step
 const CASCADE_STEP_Y = 50;   // vertical drop per cascade step
 const TURN_GAP = 80;         // gap between consecutive turns on the main row
-const NODE_WIDTH = 280;      // full-width card (matches --card-max-width)
-const COMPACT_WIDTH = 160;   // compact card width
+/** Full interaction / band card width — matches `--card-max-width` and X advance in this layout. */
+export const TIMELINE_NODE_WIDTH = 280;
+/** Cascade compact card — matches `nodes.module.css` `.compactCard`. */
+export const TIMELINE_COMPACT_WIDTH = 160;
+export const TIMELINE_COMPACT_HEIGHT = 50;
+
+const NODE_WIDTH = TIMELINE_NODE_WIDTH;
+const COMPACT_WIDTH = TIMELINE_COMPACT_WIDTH;
 const PADDING = 80;          // left padding
 
 // ─── Return type ─────────────────────────────────────────────────────────────

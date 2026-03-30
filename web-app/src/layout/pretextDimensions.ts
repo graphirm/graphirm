@@ -2,6 +2,11 @@ import type { Node } from '@xyflow/react';
 import { prepare, layout, type PreparedText } from '@chenglou/pretext';
 import type { GraphNode } from '../types/graph';
 import { NODE_DIMENSIONS } from './nodeDimensions';
+import {
+  TIMELINE_COMPACT_HEIGHT,
+  TIMELINE_COMPACT_WIDTH,
+  TIMELINE_NODE_WIDTH,
+} from './timeline';
 
 /** Matches collapsed card: `nodes.module.css` 12px × line-height 1.4 on preview. */
 const PREVIEW_FONT = '12px system-ui, sans-serif';
@@ -168,7 +173,10 @@ export function buildPretextSizeMap(nodes: Node[]): Map<string, { width: number;
   return map;
 }
 
-/** Stamp `style.width` / `style.height` so React Flow can cull off-screen nodes without measuring first. */
+/**
+ * Stamp `style` and top-level `width` / `height` (React Flow `NodeBase`) so viewport culling
+ * (`onlyRenderVisibleElements`) and internals see sizes before ResizeObserver measures.
+ */
 export function mergePretextNodeDimensions(
   nodes: Node[],
   sizeMap: Map<string, { width: number; height: number }>,
@@ -176,7 +184,12 @@ export function mergePretextNodeDimensions(
   return nodes.map(n => {
     const s = sizeMap.get(n.id);
     if (!s || n.type === 'group') return n;
-    return { ...n, style: { ...n.style, width: s.width, height: s.height } };
+    return {
+      ...n,
+      width: s.width,
+      height: s.height,
+      style: { ...n.style, width: s.width, height: s.height },
+    };
   });
 }
 
@@ -193,8 +206,28 @@ export function mergePretextNodeHeightsOnly(
     const s = sizeMap.get(n.id);
     if (!s || n.type === 'group') return n;
     const compact = (n.data as { compact?: boolean } | undefined)?.compact === true;
-    if (compact) return n;
-    return { ...n, style: { ...n.style, height: s.height } };
+    if (compact) {
+      return {
+        ...n,
+        width: TIMELINE_COMPACT_WIDTH,
+        height: TIMELINE_COMPACT_HEIGHT,
+        style: {
+          ...n.style,
+          width: TIMELINE_COMPACT_WIDTH,
+          height: TIMELINE_COMPACT_HEIGHT,
+        },
+      };
+    }
+    return {
+      ...n,
+      width: TIMELINE_NODE_WIDTH,
+      height: s.height,
+      style: {
+        ...n.style,
+        width: TIMELINE_NODE_WIDTH,
+        height: s.height,
+      },
+    };
   });
 }
 

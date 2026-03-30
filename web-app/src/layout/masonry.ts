@@ -109,6 +109,8 @@ export function applyMasonryLayout(nodes: Node[], rawNodes: GraphNode[], canvasW
     return {
       ...n,
       position: { x: u.x, y: u.y },
+      width: u.width,
+      height: u.height,
       style: { ...n.style, width: u.width, height: u.height },
     };
   });

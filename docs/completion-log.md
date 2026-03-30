@@ -8,6 +8,11 @@
 - Files: `web-app/src/layout/pretextDimensions.ts`, `nodeDimensions.ts`; `dagre.ts` optional
   size map; `useGraphData.ts` passes map in dagre mode
 
+## 2026-03-30: React Flow node.width/height + timeline compact cull box (web-app) — COMPLETE ✅
+
+- Pretext merge + masonry stamp `width`/`height` on `Node` (not only `style`) for culling
+- Timeline: compact cascade cards get explicit 160×50; full cards use `TIMELINE_NODE_WIDTH` + Pretext height
+
 ## 2026-03-30: Destructive tool highlight + timeline collapse-all (web-app) — COMPLETE ✅
 
 - Interaction nodes: `write`/`edit`/`bash` tool calls use `var(--warning)` on compact + full cards

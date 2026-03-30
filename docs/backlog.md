@@ -412,15 +412,20 @@ from `applyMasonryLayout`. After **timeline**, `mergePretextNodeHeightsOnly()` s
 `style.height` only (X spacing assumes fixed timeline widths; skips `data.compact` cascade
 cards).
 
-**Still open:** `Node` `width`/`height` fields if RF prefers them over `style`; large-session
-perf verification in DevTools.
+**Done 2026-03-30:** Top-level `Node.width` / `Node.height` set together with `style` in
+`mergePretextNodeDimensions`, `mergePretextNodeHeightsOnly` (timeline: full cards
+`TIMELINE_NODE_WIDTH`, compact `TIMELINE_COMPACT_*`), and masonry `applyMasonryLayout`.
+
+**Still open:** large-session perf verification in DevTools.
 
 Ref: `chenglou.me/pretext/masonry` (height-before-mount principle)
 
 **Key files:**
 - `web-app/src/components/GraphCanvas.tsx` — `onlyRenderVisibleElements`
 - `web-app/src/hooks/useGraphData.ts` — merge after dagre / timeline
-- `web-app/src/layout/pretextDimensions.ts` — `mergePretextNodeDimensions`, `mergePretextNodeHeightsOnly`
+- `web-app/src/layout/pretextDimensions.ts` — merge helpers
+- `web-app/src/layout/masonry.ts` — `width`/`height` on laid-out nodes
+- `web-app/src/layout/timeline.ts` — exported `TIMELINE_*` sizing constants
 
 ### Smart Layout Engine
 
