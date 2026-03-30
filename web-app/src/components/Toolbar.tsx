@@ -9,6 +9,8 @@ interface ToolbarProps {
   layoutMode: LayoutMode;
   onLayoutChange: (mode: LayoutMode) => void;
   onAddAnnotation: () => void;
+  /** Timeline only: collapse in-place expanded cascade cards on the canvas. */
+  onCollapseTimelineCascades?: () => void;
   filter: NodeFilter;
   onFilterChange: (f: NodeFilter) => void;
   matchCount: number;
@@ -29,6 +31,7 @@ export function Toolbar({
   layoutMode,
   onLayoutChange,
   onAddAnnotation,
+  onCollapseTimelineCascades,
   filter,
   onFilterChange,
   matchCount,
@@ -98,6 +101,18 @@ export function Toolbar({
           </button>
         ))}
       </div>
+
+      {onCollapseTimelineCascades && (
+        <button
+          type="button"
+          className="secondary"
+          style={{ fontSize: 11, padding: '3px 8px' }}
+          onClick={onCollapseTimelineCascades}
+          title="Collapse all expanded cascade cards (timeline)"
+        >
+          ⊖ Collapse all
+        </button>
+      )}
 
       <button className="secondary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={onAddAnnotation}>
         + Note

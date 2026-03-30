@@ -28,6 +28,9 @@ import { SteerContext } from '../context/SteerContext';
 import { FocusContext } from '../context/FocusContext';
 import { ZoomProvider } from '../context/ZoomContext';
 import { PopoverProvider } from '../context/PopoverContext';
+import {
+  CascadeCollapseGenerationContext,
+} from '../context/CascadeCollapseContext';
 import type { PopoverActions } from '../context/PopoverContext';
 import { FloatingInput } from './FloatingInput';
 import { NodeReplyInput } from './NodeReplyInput';
@@ -96,6 +99,7 @@ function GraphCanvasInner({
     getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
   const [filter, setFilter] = useState<NodeFilter>(EMPTY_FILTER);
+  const [cascadeCollapseGeneration, setCascadeCollapseGeneration] = useState(0);
 
   // Ctrl+F (or Cmd+F) focuses the search bar when hovering the graph pane.
   // Escape clears the filter and blurs the input when it is focused.
@@ -351,6 +355,7 @@ function GraphCanvasInner({
   }), [sessionId, onSteerFromNode]);
 
   return (
+    <CascadeCollapseGenerationContext.Provider value={cascadeCollapseGeneration}>
     <div className={styles.graphPane} ref={containerRef}>
       <Toolbar
         layoutMode={layoutMode}
@@ -359,6 +364,11 @@ function GraphCanvasInner({
           setTimeout(() => fitView({ padding: 0.1, duration: 400 }), 50);
         }}
         onAddAnnotation={handleAddAnnotation}
+        onCollapseTimelineCascades={
+          layoutMode === 'timeline'
+            ? () => setCascadeCollapseGeneration(g => g + 1)
+            : undefined
+        }
         filter={filter}
         onFilterChange={setFilter}
         matchCount={matchCount}
@@ -479,6 +489,7 @@ function GraphCanvasInner({
         </PopoverProvider>
       </div>
     </div>
+    </CascadeCollapseGenerationContext.Provider>
   );
 }
 

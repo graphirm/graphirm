@@ -8,6 +8,11 @@
 - Files: `web-app/src/layout/pretextDimensions.ts`, `nodeDimensions.ts`; `dagre.ts` optional
   size map; `useGraphData.ts` passes map in dagre mode
 
+## 2026-03-30: Destructive tool highlight + timeline collapse-all (web-app) — COMPLETE ✅
+
+- Interaction nodes: `write`/`edit`/`bash` tool calls use `var(--warning)` on compact + full cards
+- Timeline: Toolbar **⊖ Collapse all** increments shared generation; cascade cards reset in-place expand
+
 ## 2026-03-30: Timeline Pretext heights + edge label pill (web-app) — COMPLETE ✅
 
 - `mergePretextNodeHeightsOnly` after timeline layout (height only; skip compact cascade)

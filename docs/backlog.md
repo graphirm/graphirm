@@ -183,22 +183,26 @@ Done 2026-03-29. `buildTurns()` partitions Interaction nodes into turns by user-
 
 Done 2026-03-29. `ROLE_COLORS` map at module level: `user → --accent`, `assistant → --node-agent` (pink), `tool → --node-content` (teal), `system → --fg-muted`. Applied to both full cards (`BaseCard` `color` prop) and compact cascade cards (`borderLeftColor` inline style). Commit: `e77af09`.
 
-#### Highlight file-writing tool nodes with destructive color — P1 · S
+#### ✅ Highlight file-writing tool nodes with destructive color — P1 · S
 
-Tool cascade cards that invoke destructive tools (`write`, `edit`, `bash`) should be visually distinct from read-only tool calls. Use `--warning` (amber) as their `--compact-color` and full-card border color so they stand out in the cascade staircase. Detection: check `(data.metadata as Record<string, unknown>).tool_name` against `['write', 'edit', 'bash']` in `InteractionNode`. The same color should apply to both compact and expanded (full `BaseCard`) render paths.
-
-**Key files:**
-- `web-app/src/components/nodes/InteractionNode.tsx` — derive `color` from `tool_name` when role is `tool`
-
-#### Collapse-all cascade nodes button — P2 · S
-
-When a compact cascade card is clicked to expand in-place, there is no clear way to collapse it again (the "↑ Collapse" button inside the expanded card is not discoverable). Add a **"⊖ Collapse all"** button to the Toolbar (visible only in Timeline mode) that resets all in-place-expanded cascade cards back to compact state. Implementation: `CascadeCollapseContext` — a React context that exposes a monotonic `collapseGeneration: number`; increment it on button click; each `InteractionNode` resets `localExpanded = false` via a `useEffect` that depends on `collapseGeneration`.
+Done 2026-03-30. `tool_name` from metadata (case-insensitive) matched against `write` / `edit` /
+`bash` when `role === 'tool'` → `color` is `var(--warning)` for both compact cascade cards
+(`--compact-color`) and full `BaseCard` borders.
 
 **Key files:**
-- `web-app/src/context/CascadeCollapseContext.tsx` — new context + hook
-- `web-app/src/components/nodes/InteractionNode.tsx` — `useEffect` on `collapseGeneration`
-- `web-app/src/components/Toolbar.tsx` — "⊖ Collapse all" button (timeline mode only)
-- `web-app/src/components/GraphCanvas.tsx` — wrap with provider, pass increment to Toolbar
+- `web-app/src/components/nodes/InteractionNode.tsx` — `DESTRUCTIVE_TOOL_NAMES`, `isDestructiveTool`
+
+#### ✅ Collapse-all cascade nodes button — P2 · S
+
+Done 2026-03-30. `CascadeCollapseGenerationContext` holds a monotonic counter; `GraphCanvasInner`
+increments it when Toolbar **⊖ Collapse all** is clicked (Timeline layout only). Each
+`InteractionNode` runs `useEffect` on that value to `setLocalExpanded(false)`.
+
+**Key files:**
+- `web-app/src/context/CascadeCollapseContext.tsx` — context + `useCascadeCollapseGeneration`
+- `web-app/src/components/nodes/InteractionNode.tsx` — effect on generation
+- `web-app/src/components/Toolbar.tsx` — `onCollapseTimelineCascades` button
+- `web-app/src/components/GraphCanvas.tsx` — provider + state + toolbar wiring
 
 #### Node editing and annotations — P2 · M
 

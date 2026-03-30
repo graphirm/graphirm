@@ -1,13 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { GraphNode } from '../../types/graph';
 import { useSteer } from '../../context/SteerContext';
 import { useFocusedNodeId } from '../../context/FocusContext';
 import { useZoom } from '../../context/ZoomContext';
+import { useCascadeCollapseGeneration } from '../../context/CascadeCollapseContext';
 import { BaseCard } from './BaseCard';
 import { MarkdownBody } from './MarkdownBody';
 import { estimateInteractionExpandedReserveHeight } from '../../layout/pretextDimensions';
 import styles from '../../styles/nodes.module.css';
+
+const DESTRUCTIVE_TOOL_NAMES = new Set(['write', 'edit', 'bash']);
 
 const ROLE_ICONS: Record<string, string> = {
   user: 'U',
@@ -29,12 +32,22 @@ export function InteractionNode({ id, data: rawData, selected }: NodeProps) {
   const onSteer = useSteer();
   const focusedNodeId = useFocusedNodeId();
   const { isLODEnabled } = useZoom();
+  const cascadeCollapseGeneration = useCascadeCollapseGeneration();
   const data = rawData as unknown as GraphNode & { compact?: boolean };
   const nt = data.node_type;
   if (nt.type !== 'Interaction') return null;
 
-  const color = ROLE_COLORS[nt.role] ?? 'var(--node-agent)';
+  const toolNameRaw = (data.metadata as Record<string, unknown>)?.tool_name as string | undefined;
+  const toolNameNorm = toolNameRaw?.toLowerCase();
+  const isDestructiveTool =
+    nt.role === 'tool' && toolNameNorm != null && DESTRUCTIVE_TOOL_NAMES.has(toolNameNorm);
+
+  const color = isDestructiveTool ? 'var(--warning)' : (ROLE_COLORS[nt.role] ?? 'var(--node-agent)');
   const roleLabel = nt.role === 'assistant' ? 'agent' : nt.role;
+
+  useEffect(() => {
+    setLocalExpanded(false);
+  }, [cascadeCollapseGeneration]);
 
   const stripMarkdown = (text: string): string => {
     return text
@@ -71,8 +84,7 @@ export function InteractionNode({ id, data: rawData, selected }: NodeProps) {
   // localExpanded lets the user click to expand in-place.
   const isCompact = data.compact === true && !localExpanded;
   if (isCompact) {
-    const toolName = (data.metadata as Record<string, unknown>)?.tool_name as string | undefined;
-    const label = toolName ?? (stripMarkdown(nt.content ?? '').slice(0, 60) || roleLabel);
+    const label = toolNameRaw ?? (stripMarkdown(nt.content ?? '').slice(0, 60) || roleLabel);
     const icon = ROLE_ICONS[nt.role] ?? '?';
     const focused = focusedNodeId === id;
     return (
