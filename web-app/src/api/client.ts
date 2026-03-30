@@ -141,10 +141,11 @@ export const api = {
       body: JSON.stringify({ rating }),
     }),
 
-  updateTaskStatus: (sessionId: string, nodeId: string, status: string): Promise<void> => {
-    console.warn('updateTaskStatus not implemented yet', { sessionId, nodeId, status });
-    return Promise.resolve();
-  },
+  updateTaskStatus: (sessionId: string, nodeId: string, status: string): Promise<void> =>
+    apiFetch(`/api/graph/${sessionId}/tasks/${nodeId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
 
   toggleKnowledgePin: (_sessionId: string, nodeId: string, pinned: boolean): Promise<void> =>
     apiFetch(`/api/knowledge/${nodeId}`, {

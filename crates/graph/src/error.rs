@@ -20,6 +20,9 @@ pub enum GraphError {
     #[error("Node is not an interaction node: {0}")]
     NotInteractionNode(String),
 
+    #[error("Node is not a task node: {0}")]
+    NotTaskNode(String),
+
     #[error("Edge not found: {0}")]
     EdgeNotFound(String),
 

@@ -425,6 +425,20 @@ impl GraphStore {
         self.update_node(node_id, node)
     }
 
+    /// Set `TaskData.status` on a Task node.
+    pub fn patch_task_status(
+        &self,
+        node_id: &NodeId,
+        status: crate::nodes::TaskStatus,
+    ) -> Result<(), GraphError> {
+        let mut node = self.get_node(node_id)?;
+        let NodeType::Task(ref mut td) = node.node_type else {
+            return Err(GraphError::NotTaskNode(node_id.0.clone()));
+        };
+        td.status = status;
+        self.update_node(node_id, node)
+    }
+
     /// Mark a user Interaction node as edited (audit trail); does not change visible `content`.
     pub fn mark_interaction_edited(
         &self,
@@ -1544,6 +1558,29 @@ mod tests {
         store.patch_knowledge(&id, None, None, Some(false)).unwrap();
         let n2 = store.get_node(&id).unwrap();
         assert!(n2.metadata.get("pinned").is_none());
+    }
+
+    #[test]
+    fn patch_task_status_updates_status() {
+        let store = GraphStore::open_memory().unwrap();
+        let task = GraphNode::new(NodeType::Task(crate::nodes::TaskData {
+            title: "t".to_string(),
+            description: "d".to_string(),
+            status: crate::nodes::TaskStatus::Pending,
+            priority: None,
+        }));
+        let id = task.id.clone();
+        store.add_node(task).unwrap();
+        store
+            .patch_task_status(&id, crate::nodes::TaskStatus::Completed)
+            .unwrap();
+        let n = store.get_node(&id).unwrap();
+        match n.node_type {
+            NodeType::Task(ref d) => {
+                assert_eq!(d.status, crate::nodes::TaskStatus::Completed);
+            }
+            _ => panic!("expected Task"),
+        }
     }
 
     #[test]

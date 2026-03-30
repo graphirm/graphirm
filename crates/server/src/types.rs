@@ -6,7 +6,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use graphirm_graph::{GraphEdge, GraphNode};
+use graphirm_graph::{GraphEdge, GraphNode, TaskStatus};
 
 // ── Newtypes ──────────────────────────────────────────────────────────────────
 
@@ -313,6 +313,12 @@ pub struct AnnotationRequest {
     pub relates_to: Option<String>,
 }
 
+/// `PATCH /api/graph/{session_id}/tasks/{node_id}` — manual completion (popover).
+#[derive(Debug, Deserialize)]
+pub struct PatchTaskStatusRequest {
+    pub status: TaskStatus,
+}
+
 /// `PATCH /api/knowledge/{id}` request body.
 #[derive(Debug, Deserialize)]
 pub struct PatchKnowledgeRequest {
@@ -508,6 +514,14 @@ mod tests {
         let r2: PatchKnowledgeRequest = serde_json::from_str(j2).unwrap();
         assert_eq!(r2.pinned, Some(true));
         assert!(r2.dismissed.is_none());
+    }
+
+    #[test]
+    fn patch_task_status_request_deserialize() {
+        use graphirm_graph::TaskStatus as TS;
+        let j = r#"{"status": "completed"}"#;
+        let r: PatchTaskStatusRequest = serde_json::from_str(j).unwrap();
+        assert_eq!(r.status, TS::Completed);
     }
 
     #[test]

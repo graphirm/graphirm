@@ -1,5 +1,11 @@
 # Graphirm Development Progress Log
 
+## 2026-03-30: Task status PATCH + popover wiring — COMPLETE ✅
+
+- `GraphStore::patch_task_status`, `GraphError::NotTaskNode`; `TaskStatus` re-exported from `graphirm-graph`
+- `PATCH /api/graph/{session_id}/tasks/{node_id}` — body `{ "status": "completed" | "failed" }`; task must appear in session subgraph (depth 10)
+- Web-app `updateTaskStatus` + optimistic Task node data in `GraphCanvas`
+
 ## 2026-03-30: Knowledge pin toggle API + web-app — COMPLETE ✅
 
 - `GraphStore::patch_knowledge` accepts optional `pinned` (`true` sets metadata, `false` removes key)

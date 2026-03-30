@@ -14,7 +14,7 @@ use tower_http::trace::TraceLayer;
 
 use graphirm_agent::workspace::sanitize_workspace_name;
 use graphirm_agent::{AgentConfig, EventBus, HitlDecision, HitlGate, Session, run_agent_loop};
-use graphirm_graph::{Direction, EdgeType, GraphEdge, GraphNode, NodeId, NodeType};
+use graphirm_graph::{Direction, EdgeType, GraphEdge, GraphNode, NodeId, NodeType, TaskStatus};
 
 use crate::error::ServerError;
 use crate::middleware::request_logging;
@@ -23,7 +23,8 @@ use crate::state::{AppState, SessionHandle};
 use crate::types::{
     AnnotationRequest, AutoApproveRequest, ContextReportRow, CreateKnowledgeRequest,
     CreateSessionRequest, EditInteractionRequest, ExportQuery, GraphResponse, HealthResponse,
-    NodeAction, NodeActionRequest, PatchKnowledgeRequest, PinnedKnowledgeQuery, PromptRequest,
+    NodeAction, NodeActionRequest, PatchKnowledgeRequest, PatchTaskStatusRequest,
+    PinnedKnowledgeQuery, PromptRequest,
     RateTurnRequest, RenameSessionRequest, SessionId, SessionResponse, SessionStatus, SseEvent,
     SseEventType, StrategyReport, SubgraphQuery,
 };
@@ -116,6 +117,10 @@ pub fn create_router(state: AppState) -> Router {
             get(get_subgraph),
         )
         .route("/api/graph/{session_id}/tasks", get(get_tasks))
+        .route(
+            "/api/graph/{session_id}/tasks/{node_id}",
+            patch(patch_session_task_status),
+        )
         .route("/api/graph/{session_id}/knowledge", get(get_knowledge))
         .route(
             "/api/graph/{session_id}/node/{node_id}/action",
@@ -752,6 +757,50 @@ async fn get_tasks(
         .collect();
 
     Ok(Json(tasks))
+}
+
+/// `PATCH /api/graph/{session_id}/tasks/{node_id}` — set task status (manual complete/fail from UI).
+async fn patch_session_task_status(
+    State(state): State<AppState>,
+    Path((session_id, node_id)): Path<(String, String)>,
+    Json(req): Json<PatchTaskStatusRequest>,
+) -> Result<StatusCode, ServerError> {
+    if !matches!(req.status, TaskStatus::Completed | TaskStatus::Failed) {
+        return Err(ServerError::BadRequest(
+            "status must be \"completed\" or \"failed\"".to_string(),
+        ));
+    }
+    let key = SessionId::from(session_id.as_str());
+    let session_node_id = {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&key)
+            .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+        handle.session.id.clone()
+    };
+    let task_nid = NodeId::from(node_id.as_str());
+    let graph = state.graph.clone();
+    let status = req.status;
+    tokio::task::spawn_blocking(move || {
+        let (nodes, _) = graph
+            .subgraph(&session_node_id, 10)
+            .map_err(ServerError::Graph)?;
+        if !nodes.iter().any(|n| n.id == task_nid) {
+            return Err(ServerError::NotFound(format!(
+                "Node {node_id} is not in this session graph (within depth 10)"
+            )));
+        }
+        graph.patch_task_status(&task_nid, status).map_err(|e| match e {
+            graphirm_graph::GraphError::NotTaskNode(m) => ServerError::BadRequest(m),
+            graphirm_graph::GraphError::NodeNotFound(m) => {
+                ServerError::NotFound(format!("Node not found: {m}"))
+            }
+            other => ServerError::Graph(other),
+        })
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))??;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `GET /api/graph/{session_id}/knowledge` — list Knowledge nodes produced by this session.
@@ -2284,6 +2333,116 @@ mod tests {
             .unwrap();
         let tasks: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
         assert!(tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_patch_task_status_success() {
+        use graphirm_graph::{GraphEdge, GraphNode, NodeType, TaskData, TaskStatus};
+
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let agent_id = {
+            let sessions = state.sessions.read().await;
+            sessions
+                .get(&SessionId::from(created.id.as_str()))
+                .unwrap()
+                .session
+                .id
+                .clone()
+        };
+
+        let task = GraphNode::new(NodeType::Task(TaskData {
+            title: "Do work".to_string(),
+            description: "desc".to_string(),
+            status: TaskStatus::Pending,
+            priority: None,
+        }));
+        let task_id = task.id.clone();
+        state.graph.add_node(task).unwrap();
+        state
+            .graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id,
+                task_id.clone(),
+            ))
+            .unwrap();
+
+        let patch = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/graph/{}/tasks/{}", created.id, task_id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"completed"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(patch.status(), StatusCode::NO_CONTENT);
+
+        let n = state.graph.get_node(&task_id).unwrap();
+        match &n.node_type {
+            NodeType::Task(d) => assert_eq!(d.status, TaskStatus::Completed),
+            _ => panic!("expected Task"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_patch_task_status_rejects_pending_status() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!(
+                        "/api/graph/{}/tasks/{}",
+                        created.id,
+                        uuid::Uuid::new_v4()
+                    ))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"pending"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     // ── HITL pause / resume ───────────────────────────────────────────────────

@@ -467,6 +467,20 @@ function GraphCanvasInner({
     onUpdateTaskStatus: async (nodeId: string, status: 'completed' | 'failed') => {
       if (!sessionId) return;
       await api.updateTaskStatus(sessionId, nodeId, status);
+      mutateNodes(prev =>
+        prev.map(n => {
+          if (n.id !== nodeId) return n;
+          const d = n.data as unknown as GraphNode;
+          if (d.node_type.type !== 'Task') return n;
+          return {
+            ...n,
+            data: {
+              ...d,
+              node_type: { ...d.node_type, status },
+            } as unknown as Record<string, unknown>,
+          };
+        }),
+      );
     },
     onRateTurn: async (nodeId: string, rating: number) => {
       if (!sessionId) return;

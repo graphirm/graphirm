@@ -128,7 +128,7 @@ Done 2026-03-28. Dogfood sessions 060fbdd2 (implementation) + 98e2c570 (bug fixe
 - `NodePopover.tsx` + `NodePopover.module.css` — popover component with per-type UI, fade-in animation, theme variables
 - `useNodeNavigation.ts` — Enter key activates focused node via one-shot `activateNodeId` pattern
 - `GraphCanvas.tsx` — popover state, open/close, double-click handler, context provider wrapping
-- `client.ts` — `rateTurn`, `editKnowledgeSummary`, `patchKnowledge`, `toggleKnowledgePin` (`PATCH /api/knowledge/{id}` with `{ pinned }`); `updateTaskStatus` remains a stub pending backend
+- `client.ts` — `rateTurn`, `editKnowledgeSummary`, `patchKnowledge`, `toggleKnowledgePin`, `updateTaskStatus` (`PATCH /api/graph/{session}/tasks/{id}` with `{ status: completed|failed }`)
 - First test of Claude Opus 4.6 + DeepSeek V3.2 model fallback chain (7 fallbacks triggered)
 Commits: pending
 
