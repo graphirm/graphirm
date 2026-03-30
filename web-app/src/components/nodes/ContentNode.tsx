@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { GraphNode } from '../../types/graph';
 import { useFocusedNodeId } from '../../context/FocusContext';
 import { useZoom } from '../../context/ZoomContext';
+import { estimateExpandedPlainReserveHeight } from '../../layout/pretextDimensions';
 import { BaseCard } from './BaseCard';
 import { CodeBody } from './CodeBody';
 
@@ -19,6 +20,17 @@ export function ContentNode({ id, data: rawData, selected }: NodeProps) {
   const bodyPreview = (nt.body ?? '').slice(0, 60) + ((nt.body ?? '').length > 60 ? '…' : '');
   const preview = `${label}: ${bodyPreview}`;
 
+  const expandedBodyStyle = useMemo(() => {
+    if (isLODEnabled || !expanded) return undefined;
+    try {
+      const text = [nt.path, nt.body ?? ''].filter(Boolean).join('\n');
+      const minH = estimateExpandedPlainReserveHeight(text, 360, 88);
+      return { minHeight: minH, maxHeight: 520, overflowY: 'auto' as const };
+    } catch {
+      return undefined;
+    }
+  }, [expanded, isLODEnabled, nt.path, nt.body]);
+
   return (
     <BaseCard
       color={color}
@@ -33,6 +45,7 @@ export function ContentNode({ id, data: rawData, selected }: NodeProps) {
         }
       }}
       focused={focusedNodeId === id}
+      expandedBodyStyle={expandedBodyStyle}
     >
       {nt.path && (
         <div style={{ fontSize: 10, color: 'var(--fg-muted)' }}>

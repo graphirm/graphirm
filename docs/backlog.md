@@ -365,20 +365,19 @@ Sorted by `created_at`. Annotations stack on the right. Toolbar + `L` cycle incl
 - `web-app/src/hooks/useGraphData.ts` — `LayoutMode`, `applyLayout`
 - `web-app/src/components/Toolbar.tsx`, `GraphCanvas.tsx`
 
-#### ✅ Expandable Interaction accordion (Pretext reserve height) — P2 · S (partial)
+#### ✅ Expandable card accordion (Pretext reserve height) — P2 · S (partial)
 
-Done 2026-03-30 for **Interaction** nodes only. `estimateInteractionExpandedReserveHeight()`
-uses Pretext on full message text (inner width 398px, line height 18); `BaseCard` accepts
-`expandedBodyStyle` → `minHeight` + `maxHeight` + `overflow-y: auto` + CSS transition on
-`.expandedBody`. Reduces expand jump vs unreserved flex. **Not yet:** Content / Task /
-Knowledge cards; true height animation from 0 (body still mounts on expand).
+Done 2026-03-30 / extended same day. Shared `estimateExpandedPlainReserveHeight()`; per-type
+caps/slack match main body widgets (`MarkdownBody` 320px, `CodeBody` 360px, etc.). Wired on
+Interaction, Content, Knowledge, Task, Agent. **Not yet:** height animation from 0 (expanded
+body still mounts on expand).
 
 Ref: `chenglou.me/pretext/accordion`
 
 **Key files:**
-- `web-app/src/layout/pretextDimensions.ts` — `estimateInteractionExpandedReserveHeight`
+- `web-app/src/layout/pretextDimensions.ts` — `estimateExpandedPlainReserveHeight`, `estimateInteractionExpandedReserveHeight`
 - `web-app/src/components/nodes/BaseCard.tsx` — `expandedBodyStyle`
-- `web-app/src/components/nodes/InteractionNode.tsx`
+- `web-app/src/components/nodes/InteractionNode.tsx`, `ContentNode.tsx`, `KnowledgeNode.tsx`, `TaskNode.tsx`, `AgentNode.tsx`
 
 #### Rich inline chips in node cards — P3 · M
 

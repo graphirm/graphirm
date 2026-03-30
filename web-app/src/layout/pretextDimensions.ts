@@ -184,19 +184,30 @@ export function mergePretextNodeDimensions(
 const EXPANDED_INNER_TEXT_WIDTH = 398;
 const EXPANDED_BODY_LINE_HEIGHT = 18;
 
+const EXPANDED_MAX_CHARS = 16_000;
+
 /**
- * Reserve vertical space for expanded Interaction markdown (accordion-style).
- * Caps text block at 320px to match `MarkdownBody` maxHeight; adds slack for buttons/footer.
+ * Pretext-based reserve height for any expanded `BaseCard` body (plain text / code / summary).
+ * `maxTextBlockPx` should match the main scrollable region (`MarkdownBody`, `CodeBody`, etc.).
  */
-export function estimateInteractionExpandedReserveHeight(content: string): number {
-  const slice = (content ?? '').slice(0, 16_000);
-  if (!slice.trim()) return 140;
+export function estimateExpandedPlainReserveHeight(
+  content: string,
+  maxTextBlockPx: number,
+  slackPx: number,
+): number {
+  const slice = (content ?? '').slice(0, EXPANDED_MAX_CHARS);
+  if (!slice.trim()) return Math.max(120, slackPx);
   try {
     const prepared = prepare(slice, PREVIEW_FONT);
     const { height } = layout(prepared, EXPANDED_INNER_TEXT_WIDTH, EXPANDED_BODY_LINE_HEIGHT);
-    const textBlock = Math.min(height, 320);
-    return textBlock + 96;
+    const textBlock = Math.min(height, maxTextBlockPx);
+    return textBlock + slackPx;
   } catch {
-    return 420;
+    return maxTextBlockPx + slackPx;
   }
+}
+
+/** Interaction: caps at `MarkdownBody` maxHeight 320px + buttons/footer slack. */
+export function estimateInteractionExpandedReserveHeight(content: string): number {
+  return estimateExpandedPlainReserveHeight(content, 320, 96);
 }

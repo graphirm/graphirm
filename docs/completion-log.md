@@ -8,6 +8,11 @@
 - Files: `web-app/src/layout/pretextDimensions.ts`, `nodeDimensions.ts`; `dagre.ts` optional
   size map; `useGraphData.ts` passes map in dagre mode
 
+## 2026-03-30: Pretext expanded-body reserve on all main node types (web-app) — COMPLETE ✅
+
+- `estimateExpandedPlainReserveHeight()`; Content / Knowledge / Task / Agent use `BaseCard.expandedBodyStyle`
+  (Interaction keeps `estimateInteractionExpandedReserveHeight` wrapper)
+
 ## 2026-03-30: Pretext masonry layout + Interaction accordion + RF culling (web-app) — COMPLETE ✅
 
 - `LayoutMode` `'masonry'`: `applyMasonryLayout()` (shortest column, Pretext heights, `L` + Toolbar)
