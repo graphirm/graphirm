@@ -9,7 +9,7 @@ name = "graphirm"
 model = "openrouter/deepseek/deepseek-v3.2"
 max_iterations = 50
 parallel_tool_calls = true
-max_output_tokens = 1500
+max_output_tokens = 4096
 timeout_seconds = 300
 # Soft escalation thresholds
 soft_escalation_turn = 8      # Turn at which to start checking for repeated calls

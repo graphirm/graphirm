@@ -106,6 +106,7 @@ export function useSession(): UseSessionReturn {
         const root = ev.data as { data?: { node_id?: string } };
         const payload = root?.data ?? (ev.data as { node_id?: string });
         const nodeId = typeof payload?.node_id === 'string' ? payload.node_id : '';
+        console.log(`[SSE] message_start  t=${Date.now()}  node=${nodeId}`);
         if (nodeId) {
           setStreamingMessage({
             id: nodeId,
@@ -118,10 +119,12 @@ export function useSession(): UseSessionReturn {
         const root = ev.data as { data?: { text?: string } };
         const payload = root?.data ?? (ev.data as { text?: string });
         const text = typeof payload?.text === 'string' ? payload.text : '';
+        console.log(`[SSE] message_delta  t=${Date.now()}  len=${text.length}  text=${JSON.stringify(text.slice(0, 40))}`);
         setStreamingMessage(prev =>
           prev ? { ...prev, content: prev.content + text } : prev,
         );
       } else if (ev.event === 'message_end') {
+        console.log(`[SSE] message_end    t=${Date.now()}`);
         setStreamingMessage(null);
         api.getMessages(sessionId).then(setMessages).catch(console.error);
       } else if (ev.event === 'awaiting_approval') {
