@@ -15,6 +15,7 @@ interface UseSessionReturn {
   currentSession: Session | null;
   messages: Message[];
   graphData: GraphData | null;
+  streamingMessage: Message | null;
   isThinking: boolean;
   pendingApproval: PendingApproval | null;
   selectSession: (id: string) => Promise<void>;
@@ -36,6 +37,7 @@ export function useSession(): UseSessionReturn {
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
+  const [streamingMessage, setStreamingMessage] = useState<Message | null>(null);
   const [isThinking, setIsThinking] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [autoApprove, setAutoApprove] = useState(false);
@@ -86,6 +88,7 @@ export function useSession(): UseSessionReturn {
         setIsThinking(true);
       } else if (ev.event === 'agent_end' || ev.event === 'error') {
         setIsThinking(false);
+        setStreamingMessage(null);
         if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = setTimeout(() => {
           refreshTimerRef.current = null;
@@ -99,7 +102,27 @@ export function useSession(): UseSessionReturn {
         if (Array.isArray(nodes) && Array.isArray(edges)) {
           patchGraphData(nodes, edges);
         }
+      } else if (ev.event === 'message_start') {
+        const root = ev.data as { data?: { node_id?: string } };
+        const payload = root?.data ?? (ev.data as { node_id?: string });
+        const nodeId = typeof payload?.node_id === 'string' ? payload.node_id : '';
+        if (nodeId) {
+          setStreamingMessage({
+            id: nodeId,
+            role: 'assistant',
+            content: '',
+            created_at: new Date().toISOString(),
+          });
+        }
+      } else if (ev.event === 'message_delta') {
+        const root = ev.data as { data?: { text?: string } };
+        const payload = root?.data ?? (ev.data as { text?: string });
+        const text = typeof payload?.text === 'string' ? payload.text : '';
+        setStreamingMessage(prev =>
+          prev ? { ...prev, content: prev.content + text } : prev,
+        );
       } else if (ev.event === 'message_end') {
+        setStreamingMessage(null);
         api.getMessages(sessionId).then(setMessages).catch(console.error);
       } else if (ev.event === 'awaiting_approval') {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -115,6 +138,7 @@ export function useSession(): UseSessionReturn {
     const session = sessions.find(s => s.id === id) ?? { id } as Session;
     setCurrentSession(session);
     setPendingApproval(null);
+    setStreamingMessage(null);
     setIsThinking(false);
     await refresh(id);
     subscribeSse(id);
@@ -150,6 +174,7 @@ export function useSession(): UseSessionReturn {
     setMessages([]);
     setGraphData(null);
     setPendingApproval(null);
+    setStreamingMessage(null);
     setIsThinking(false);
     subscribeSse(session.id);
     return session;
@@ -237,6 +262,7 @@ export function useSession(): UseSessionReturn {
     currentSession,
     messages,
     graphData,
+    streamingMessage,
     isThinking,
     pendingApproval,
     selectSession,

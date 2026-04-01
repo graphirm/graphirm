@@ -1,5 +1,12 @@
 # Graphirm Development Progress Log
 
+## 2026-04-01: SSE streaming assistant text (Phase A) — COMPLETE ✅
+
+- `agent_event_to_sse`: `MessageStart`, `MessageDelta` (text from `StreamEvent::TextDelta`)
+- `stream_and_record`: `llm.stream()` + `consume_llm_stream`; preallocated `NodeId` matches persisted node; test `MockProvider::stream` mirrors `complete` responses
+- Web-app: `streamingMessage` in `useSession`, `ChatPane` + `App`; clear on `message_end` / `agent_end` / `error` / session switch
+- Test: `agent_event_message_start_and_delta_map_to_sse`
+
 ## 2026-03-30: Task status PATCH + popover wiring — COMPLETE ✅
 
 - `GraphStore::patch_task_status`, `GraphError::NotTaskNode`; `TaskStatus` re-exported from `graphirm-graph`

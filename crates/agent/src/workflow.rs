@@ -1,10 +1,15 @@
 // Agent workflow: async state machine with plan -> act -> observe -> reflect loop
 
+use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
 
+use futures::StreamExt;
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{ContentData, GraphNode, InteractionData, NodeId, NodeType};
-use graphirm_llm::{CompletionConfig, ContentPart, LlmProvider, LlmResponse};
+use graphirm_llm::{
+    CompletionConfig, ContentPart, LlmProvider, LlmResponse, StopReason, StreamEvent, TokenUsage,
+};
 use graphirm_tools::ToolContext;
 use graphirm_tools::registry::ToolRegistry;
 use tokio::task::JoinSet;
@@ -15,6 +20,87 @@ use crate::error::AgentError;
 use crate::event::{AgentEvent, EventBus};
 use crate::hitl::HitlDecision;
 use crate::session::Session;
+
+fn flush_text_segment(text_buf: &mut String, parts: &mut Vec<ContentPart>) {
+    if text_buf.is_empty() {
+        return;
+    }
+    parts.push(ContentPart::text(std::mem::take(text_buf)));
+}
+
+/// Consumes a provider stream, emits [`AgentEvent::MessageDelta`] for each text chunk, and builds [`LlmResponse`].
+async fn consume_llm_stream(
+    mut stream: Pin<Box<dyn futures::Stream<Item = StreamEvent> + Send>>,
+    preview_node_id: &NodeId,
+    events: &EventBus,
+) -> Result<LlmResponse, graphirm_llm::LlmError> {
+    let mut text_buf = String::new();
+    let mut parts: Vec<ContentPart> = Vec::new();
+    let mut tool_build: HashMap<String, (String, String)> = HashMap::new();
+    let mut usage = TokenUsage::default();
+    let mut saw_done = false;
+
+    while let Some(ev) = stream.next().await {
+        match ev {
+            StreamEvent::TextDelta(t) => {
+                if !t.is_empty() {
+                    events.emit(AgentEvent::MessageDelta {
+                        node_id: preview_node_id.clone(),
+                        delta: StreamEvent::TextDelta(t.clone()),
+                    });
+                }
+                text_buf.push_str(&t);
+            }
+            StreamEvent::ThinkingDelta(_) => {}
+            StreamEvent::ToolCallStart { id, name } => {
+                flush_text_segment(&mut text_buf, &mut parts);
+                tool_build.insert(id, (name, String::new()));
+            }
+            StreamEvent::ToolCallDelta {
+                id,
+                arguments_delta,
+            } => {
+                if let Some((_, buf)) = tool_build.get_mut(&id) {
+                    buf.push_str(&arguments_delta);
+                }
+            }
+            StreamEvent::ToolCallEnd { id } => {
+                if let Some((name, args_str)) = tool_build.remove(&id) {
+                    let arguments = serde_json::from_str(&args_str).unwrap_or(serde_json::json!({}));
+                    parts.push(ContentPart::tool_call(id, name, arguments));
+                }
+            }
+            StreamEvent::Done(u) => {
+                usage = u;
+                saw_done = true;
+                break;
+            }
+            StreamEvent::Error(msg) => return Err(graphirm_llm::LlmError::stream(msg)),
+        }
+    }
+
+    if !saw_done {
+        return Err(graphirm_llm::LlmError::stream(
+            "stream ended without Done event",
+        ));
+    }
+
+    flush_text_segment(&mut text_buf, &mut parts);
+    let stop_reason = if parts
+        .iter()
+        .any(|p| matches!(p, ContentPart::ToolCall { .. }))
+    {
+        StopReason::ToolUse
+    } else {
+        StopReason::EndTurn
+    };
+
+    Ok(LlmResponse {
+        content: parts,
+        usage,
+        stop_reason,
+    })
+}
 
 /// Call the LLM with the current conversation context and record the
 /// assistant response as an Interaction node in the graph.
@@ -324,8 +410,9 @@ pub async fn stream_and_record(
         })
         .unwrap_or_else(|| vec![selected_model.clone()]);
 
+    let preview_node_id = NodeId::new();
     let mut fallback_chain: Vec<crate::router::FallbackAttempt> = Vec::new();
-    let mut response = None;
+    let mut response: Option<LlmResponse> = None;
 
     for (i, model) in fallback_models.iter().enumerate() {
         let is_last = i == fallback_models.len() - 1;
@@ -334,15 +421,37 @@ pub async fn stream_and_record(
             .with_temperature(temperature);
         let start = std::time::Instant::now();
         match llm
-            .complete(context.clone(), &tool_defs, &comp_config)
+            .stream(context.clone(), &tool_defs, &comp_config)
             .await
         {
-            Ok(resp) => {
-                if i > 0 {
-                    selected_model = model.clone();
+            Ok(stream) => {
+                events.emit(AgentEvent::MessageStart {
+                    node_id: preview_node_id.clone(),
+                });
+                match consume_llm_stream(stream, &preview_node_id, events).await {
+                    Ok(resp) => {
+                        if i > 0 {
+                            selected_model = model.clone();
+                        }
+                        response = Some(resp);
+                        break;
+                    }
+                    Err(e) if e.is_retryable() && !is_last => {
+                        let latency_ms = start.elapsed().as_millis() as u64;
+                        tracing::warn!(
+                            model,
+                            error = %e,
+                            attempt = i + 1,
+                            "LLM stream failed, trying next fallback model"
+                        );
+                        fallback_chain.push(crate::router::FallbackAttempt {
+                            model: model.clone(),
+                            error: e.to_string(),
+                            latency_ms,
+                        });
+                    }
+                    Err(e) => return Err(e.into()),
                 }
-                response = Some(resp);
-                break;
             }
             Err(e) if e.is_retryable() && !is_last => {
                 let latency_ms = start.elapsed().as_millis() as u64;
@@ -442,6 +551,7 @@ pub async fn stream_and_record(
         content: response.text_content(),
         token_count: Some(response.usage.output_tokens),
     }));
+    interaction_node.id = preview_node_id.clone();
     interaction_node.metadata = serde_json::Value::Object(metadata);
 
     let node_id = session.record_interaction(interaction_node).await?;
@@ -593,19 +703,6 @@ pub async fn stream_and_record(
 
     info!(node_id = %node_id, "Recorded assistant response");
 
-    // Emit the full response as a stream of events so the TUI can render it.
-    // We use complete() rather than true streaming, so we synthesise the
-    // MessageStart → MessageDelta(s) → MessageEnd sequence after the fact.
-    events.emit(AgentEvent::MessageStart {
-        node_id: node_id.clone(),
-    });
-    let text = response.text_content();
-    if !text.is_empty() {
-        events.emit(AgentEvent::MessageDelta {
-            node_id: node_id.clone(),
-            delta: graphirm_llm::StreamEvent::TextDelta(text),
-        });
-    }
     events.emit(AgentEvent::MessageEnd {
         node_id: node_id.clone(),
     });
@@ -1623,8 +1720,8 @@ mod test_helpers {
 
     use super::*;
     use graphirm_llm::{
-        CompletionConfig, LlmError, LlmMessage, LlmProvider, LlmResponse, StopReason, TokenUsage,
-        ToolDefinition,
+        CompletionConfig, ContentPart, LlmError, LlmMessage, LlmProvider, LlmResponse, StopReason,
+        StreamEvent, TokenUsage, ToolDefinition,
     };
 
     /// Mock LLM provider that returns pre-configured responses in order.
@@ -1668,10 +1765,41 @@ mod test_helpers {
             _tools: &[ToolDefinition],
             _config: &CompletionConfig,
         ) -> Result<
-            std::pin::Pin<Box<dyn futures::Stream<Item = graphirm_llm::StreamEvent> + Send>>,
+            std::pin::Pin<Box<dyn futures::Stream<Item = StreamEvent> + Send>>,
             LlmError,
         > {
-            Ok(Box::pin(futures::stream::empty()))
+            let idx = self.call_index.fetch_add(1, Ordering::SeqCst);
+            let response = if idx < self.responses.len() {
+                self.responses[idx].clone()
+            } else {
+                return Err(LlmError::Provider("No more mock responses".to_string()));
+            };
+
+            let mut events: Vec<StreamEvent> = Vec::new();
+            for part in &response.content {
+                match part {
+                    ContentPart::Text { text } => {
+                        for chunk in text.as_bytes().chunks(10) {
+                            events.push(StreamEvent::text_delta(String::from_utf8_lossy(chunk)));
+                        }
+                    }
+                    ContentPart::ToolCall {
+                        id,
+                        name,
+                        arguments,
+                    } => {
+                        events.push(StreamEvent::tool_call_start(id.clone(), name.clone()));
+                        events.push(StreamEvent::tool_call_delta(
+                            id.clone(),
+                            serde_json::to_string(arguments).unwrap_or_default(),
+                        ));
+                        events.push(StreamEvent::tool_call_end(id.clone()));
+                    }
+                    ContentPart::ToolResult { .. } => {}
+                }
+            }
+            events.push(StreamEvent::done(response.usage.clone()));
+            Ok(Box::pin(futures::stream::iter(events)))
         }
 
         fn provider_name(&self) -> &str {

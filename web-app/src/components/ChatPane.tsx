@@ -10,6 +10,8 @@ interface SteerContext {
 
 interface ChatPaneProps {
   messages: Message[];
+  /** In-flight assistant text from SSE message_delta (cleared on message_end). */
+  streamingMessage?: Message | null;
   isThinking: boolean;
   pendingApproval: PendingApproval | null;
   sessionId: string | null;
@@ -27,6 +29,7 @@ interface ChatPaneProps {
 
 export function ChatPane({
   messages,
+  streamingMessage = null,
   isThinking,
   pendingApproval,
   steerContext,
@@ -80,6 +83,15 @@ export function ChatPane({
             )}
           </div>
         ))}
+        {streamingMessage && (
+          <div
+            key={streamingMessage.id}
+            className={[styles.message, styles.assistant ?? ''].filter(Boolean).join(' ')}
+          >
+            <div className={styles.roleLabel}>assistant</div>
+            <MarkdownBody content={streamingMessage.content || '…'} maxHeight={250} />
+          </div>
+        )}
         {pendingApproval && (
           <HitlOverlay
             approval={pendingApproval}

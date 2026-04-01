@@ -12,6 +12,7 @@ export function App() {
     currentSession,
     messages,
     graphData,
+    streamingMessage,
     isThinking,
     pendingApproval,
     selectSession,
@@ -83,6 +84,7 @@ export function App() {
       <div className={styles.main}>
         <ChatPane
           messages={messages}
+          streamingMessage={streamingMessage}
           isThinking={isThinking}
           pendingApproval={pendingApproval}
           sessionId={currentSession?.id ?? null}

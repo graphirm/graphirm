@@ -290,20 +290,25 @@ Canvas/`measureText` throws. `nodeDimensions.ts` holds shared `NODE_DIMENSIONS`.
 - `web-app/src/layout/dagre.ts` — optional `pretextSizes` map
 - `web-app/src/hooks/useGraphData.ts` — wires map into `applyDagreLayout`
 
-#### Streaming pre-size during SSE — P2 · M (blocked on backend graph writes)
+#### Streaming chat via SSE — P2 · M (Phase A done 2026-04-01; Phase B open)
 
-Assistant `Interaction` nodes are persisted once per turn with full `text_content()` in
-`workflow.rs` — there is no incremental graph node during LLM token streaming. `MessageDelta`
-exists in `AgentEvent` but `agent_event_to_sse` maps it to `heartbeat`, so the web app never
-receives token chunks. **To implement:** emit real `message_delta` SSE (and optionally persist
-or shadow a provisional node), then `useSession` can drive Pretext `prepare`/`layout` on partial
-text and pass predicted sizes into `useGraphData`.
+**Done (Phase A):** `stream_and_record` uses `llm.stream()`, emits `MessageStart` with a
+preallocated `NodeId` (same id as persisted node), incremental `MessageDelta` for each
+`TextDelta`, then `record_interaction` + `MessageEnd`. `agent_event_to_sse` maps
+`MessageStart` / `MessageDelta` to SSE (no longer `heartbeat`). Web-app `useSession` keeps
+`streamingMessage`; `ChatPane` renders it with `MarkdownBody` until `message_end` refreshes
+messages.
+
+**Still open (Phase B — Pretext pre-size on canvas):** provisional React Flow node + Pretext
+sizing on partial text during streaming; thread `streamingMessage` into `useGraphData` (see
+plan in repo if present).
 
 **Key files:**
-- `crates/server/src/routes.rs` — `agent_event_to_sse`: `MessageStart` / `MessageDelta` / `MessageEnd`
-- `crates/agent/src/workflow.rs` — if/when true streaming records partial content
-- `web-app/src/hooks/useSession.ts` — handle `message_delta`, optional predicted-size context
-- `web-app/src/hooks/useGraphData.ts` — merge predicted dimensions during `isThinking`
+- `crates/server/src/routes.rs` — `agent_event_to_sse` (`MessageStart`, `MessageDelta`)
+- `crates/agent/src/workflow.rs` — `consume_llm_stream`, fallback loop uses `stream()`
+- `web-app/src/hooks/useSession.ts` — `streamingMessage`, SSE handlers
+- `web-app/src/components/ChatPane.tsx`, `App.tsx` — render / pass-through
+- `web-app/src/hooks/useGraphData.ts` — Phase B: provisional node + Pretext
 
 #### Text-aware edge avoidance — P3 · M (partial, 2026-03-30)
 

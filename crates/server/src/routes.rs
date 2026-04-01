@@ -1361,6 +1361,20 @@ fn agent_event_to_sse(session_id: &str, event: &graphirm_agent::AgentEvent) -> S
                 "tool_result_count": tool_result_ids.len(),
             }),
         ),
+        AgentEvent::MessageStart { node_id } => (
+            SseEventType::MessageStart,
+            serde_json::json!({ "node_id": node_id.to_string() }),
+        ),
+        AgentEvent::MessageDelta { node_id, delta } => {
+            let text = match delta {
+                graphirm_llm::StreamEvent::TextDelta(t) => t.clone(),
+                _ => String::new(),
+            };
+            (
+                SseEventType::MessageDelta,
+                serde_json::json!({ "node_id": node_id.to_string(), "text": text }),
+            )
+        },
         AgentEvent::MessageEnd { node_id } => (
             SseEventType::MessageEnd,
             serde_json::json!({ "node_id": node_id.to_string() }),
@@ -2688,6 +2702,37 @@ mod tests {
     }
 
     // ── agent_event_to_sse ────────────────────────────────────────────────────
+
+    #[test]
+    fn agent_event_message_start_and_delta_map_to_sse() {
+        use graphirm_agent::AgentEvent;
+        use graphirm_graph::NodeId;
+        use graphirm_llm::StreamEvent;
+
+        let nid = NodeId::from("stream-node-1");
+        let sse_start = agent_event_to_sse("session-1", &AgentEvent::MessageStart {
+            node_id: nid.clone(),
+        });
+        assert!(matches!(
+            sse_start.event_type,
+            crate::types::SseEventType::MessageStart
+        ));
+        assert_eq!(sse_start.data["node_id"], "stream-node-1");
+
+        let sse_delta = agent_event_to_sse(
+            "session-1",
+            &AgentEvent::MessageDelta {
+                node_id: nid.clone(),
+                delta: StreamEvent::TextDelta("chunk".into()),
+            },
+        );
+        assert!(matches!(
+            sse_delta.event_type,
+            crate::types::SseEventType::MessageDelta
+        ));
+        assert_eq!(sse_delta.data["node_id"], "stream-node-1");
+        assert_eq!(sse_delta.data["text"], "chunk");
+    }
 
     #[test]
     fn agent_event_awaiting_approval_maps_to_sse_awaiting_approval() {
