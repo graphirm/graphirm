@@ -13,7 +13,7 @@ import {
   type Edge,
 } from '@xyflow/react';
 import type { NodeTypes, EdgeTypes } from '@xyflow/react';
-import type { GraphData, GraphNode, PendingApproval } from '../types/graph';
+import type { GraphData, GraphNode, Message, PendingApproval } from '../types/graph';
 import { useGraphData, EMPTY_FILTER } from '../hooks/useGraphData';
 import type { LayoutMode, NodeFilter } from '../hooks/useGraphData';
 import { InteractionNode } from './nodes/InteractionNode';
@@ -75,6 +75,8 @@ interface GraphCanvasProps {
   /** Second arg: explicit graph context root (steer); omit for chat / floating input default. */
   onSend?: (content: string, contextRoot?: string) => void;
   isThinking?: boolean;
+  /** Provisional assistant node on canvas while SSE streams (Phase B). */
+  streamingMessage?: Message | null;
   pendingApproval?: PendingApproval | null;
   onApprove?: (nodeId: string) => void;
   onReject?: (nodeId: string, reason?: string) => void;
@@ -93,6 +95,7 @@ function GraphCanvasInner({
   chatCollapsed = false,
   onSend,
   isThinking = false,
+  streamingMessage = null,
   pendingApproval,
   onApprove,
   onReject,
@@ -148,7 +151,7 @@ function GraphCanvasInner({
     mutateNodes,
     matchCount,
     bandPositions,
-  } = useGraphData(graphData, sessionId, canvasWidth, filter);
+  } = useGraphData(graphData, sessionId, canvasWidth, filter, false, streamingMessage);
 
   const { fitView, screenToFlowPosition } = useReactFlow();
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Node, Edge, XYPosition, NodeChange } from '@xyflow/react';
 import { applyNodeChanges } from '@xyflow/react';
-import type { GraphData, GraphEdge, GraphNode } from '../types/graph';
+import type { GraphData, GraphEdge, GraphNode, Message } from '../types/graph';
 import { applyDagreLayout } from '../layout/dagre';
 import { applyMasonryLayout } from '../layout/masonry';
 import {
@@ -113,6 +113,84 @@ function positionNewNodes(
   }
 
   return result;
+}
+
+function syntheticAssistantFromStreaming(msg: Message): GraphNode {
+  return {
+    id: msg.id,
+    node_type: {
+      type: 'Interaction',
+      role: 'assistant',
+      content: msg.content,
+    },
+    created_at: msg.created_at,
+    updated_at: msg.created_at,
+    metadata: { streaming_preview: true },
+  };
+}
+
+/** Latest interaction in the session graph — anchor for provisional assistant placement. */
+function precedingInteractionIdForStreaming(graphNodes: GraphNode[]): string | undefined {
+  const interactions = graphNodes
+    .filter(g => g.node_type.type === 'Interaction')
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  return interactions[interactions.length - 1]?.id;
+}
+
+function stampStreamingNodePretext(
+  nodes: Node[],
+  streamingId: string,
+  layoutMode: LayoutMode,
+): Node[] {
+  const targets = nodes.filter(n => n.id === streamingId);
+  if (targets.length === 0) return nodes;
+  const map = buildPretextSizeMap(targets);
+  if (layoutMode === 'dagre') {
+    return mergePretextNodeDimensions(nodes, map);
+  }
+  if (layoutMode === 'timeline') {
+    return mergePretextNodeHeightsOnly(nodes, map);
+  }
+  return nodes;
+}
+
+/**
+ * While the server has not yet persisted the assistant node, show a provisional card
+ * with Pretext-sized dimensions. Same id as the final node so SSE patches merge cleanly.
+ */
+function appendProvisionalStreamingNode(
+  finalNodes: Node[],
+  flowEdges: Edge[],
+  graphNodes: GraphNode[],
+  streamingMessage: Message | null,
+  layoutMode: LayoutMode,
+): Node[] {
+  if (!streamingMessage || graphNodes.some(g => g.id === streamingMessage.id)) {
+    return finalNodes;
+  }
+  if (finalNodes.some(n => n.id === streamingMessage.id)) {
+    return finalNodes;
+  }
+  const syn = syntheticAssistantFromStreaming(streamingMessage);
+  let prov = graphNodeToFlowNode(syn);
+  const pred = precedingInteractionIdForStreaming(graphNodes);
+  if (pred) {
+    prov = {
+      ...prov,
+      data: {
+        ...(prov.data as Record<string, unknown>),
+        precedingInteractionId: pred,
+      },
+    };
+  }
+  const existingPositions = new Map(finalNodes.map(n => [n.id, n.position]));
+  const merged = positionNewNodes(
+    new Set([streamingMessage.id]),
+    [...finalNodes, prov],
+    flowEdges,
+    existingPositions,
+  );
+  return stampStreamingNodePretext(merged, streamingMessage.id, layoutMode);
 }
 
 function loadPositions(sessionId: string): Record<string, { x: number; y: number }> {
@@ -360,6 +438,7 @@ export function useGraphData(
   canvasWidth: number,
   filter: NodeFilter = EMPTY_FILTER,
   isPatchUpdate: boolean = false,
+  streamingMessage: Message | null = null,
 ): UseGraphDataReturn {
   const [layoutMode, setLayoutModeState] = useState<LayoutMode>('dagre');
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -367,6 +446,8 @@ export function useGraphData(
   const [matchCount, setMatchCount] = useState<number>(0);
   const [bandPositions, setBandPositions] = useState<Record<string, number>>({});
   const rawNodesRef = useRef<GraphNode[]>([]);
+  const streamingRef = useRef<Message | null>(null);
+  streamingRef.current = streamingMessage;
 
   const rawEdges = useMemo(() => {
     if (!graphData) return [];
@@ -454,8 +535,16 @@ export function useGraphData(
         
         // Apply grouping and filter as usual, but preserve positions from positionNewNodes
         const { grouped, groupNodes } = buildGroups(positioned, flowEdges);
+        let combined = [...groupNodes, ...grouped.filter(n => n.parentId)];
+        combined = appendProvisionalStreamingNode(
+          combined,
+          flowEdges,
+          graphData.nodes,
+          streamingRef.current,
+          layoutMode,
+        );
         const { nodes: withHidden, matchCount: count } = applyFilterToNodes(
-          [...groupNodes, ...grouped.filter(n => n.parentId)],
+          combined,
           graphData.nodes,
           filter,
         );
@@ -529,6 +618,14 @@ export function useGraphData(
           : mergePretextNodeHeightsOnly(finalNodes, map);
     }
 
+    finalNodes = appendProvisionalStreamingNode(
+      finalNodes,
+      flowEdges,
+      graphData.nodes,
+      streamingRef.current,
+      layoutMode,
+    );
+
     // Apply filter: stamp hidden: true on non-matching nodes.
     const { nodes: withHidden, matchCount: count } = applyFilterToNodes(
       finalNodes,
@@ -543,6 +640,39 @@ export function useGraphData(
     // on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphData, rawEdges, sessionId, isPatchUpdate, layoutMode]);
+
+  // Add or resize provisional assistant while SSE streams (no full dagre relayout).
+  useEffect(() => {
+    if (!streamingMessage || !graphData) return;
+    if (graphData.nodes.some(g => g.id === streamingMessage.id)) return;
+
+    setNodes(prev => {
+      const i = prev.findIndex(n => n.id === streamingMessage.id);
+      if (i < 0) {
+        return appendProvisionalStreamingNode(
+          prev,
+          rawEdges,
+          graphData.nodes,
+          streamingMessage,
+          layoutMode,
+        );
+      }
+      const syn = syntheticAssistantFromStreaming(streamingMessage);
+      let next: Node = {
+        ...prev[i],
+        data: syn as unknown as Record<string, unknown>,
+      };
+      const pred = precedingInteractionIdForStreaming(graphData.nodes);
+      if (pred) {
+        next = {
+          ...next,
+          data: { ...next.data, precedingInteractionId: pred },
+        };
+      }
+      const replaced = prev.map((n, j) => (j === i ? next : n));
+      return stampStreamingNodePretext(replaced, streamingMessage.id, layoutMode);
+    });
+  }, [streamingMessage, graphData, layoutMode, rawEdges]);
 
   useEffect(() => {
     if (!graphData) return;
@@ -649,6 +779,14 @@ export function useGraphData(
             ? mergePretextNodeDimensions(finalNodes, map)
             : mergePretextNodeHeightsOnly(finalNodes, map);
       }
+
+      finalNodes = appendProvisionalStreamingNode(
+        finalNodes,
+        edges,
+        graphData.nodes,
+        streamingRef.current,
+        mode,
+      );
 
       const { nodes: withHidden } = applyFilterToNodes(finalNodes, graphData.nodes, filter);
       setNodes(prev => mergeLocalPromptNodes(withHidden, prev));

@@ -1,5 +1,14 @@
 # Graphirm Development Progress Log
 
+## 2026-04-01: Streaming canvas provisional node + Pretext (Phase B) — COMPLETE ✅
+
+- `useGraphData(..., streamingMessage)`: provisional assistant `interaction` before server
+  persists it; `positionNewNodes` + Pretext width/height (dagre/timeline); `streamingRef` for
+  layout passes without re-dagre on every delta
+- Effect adds/updates provisional when `graphData` lacks that id; skips duplicate append if node
+  already in flow state
+- `GraphCanvas` / `App`: pass `streamingMessage` into `useGraphData`
+
 ## 2026-04-01: SSE streaming assistant text (Phase A) — COMPLETE ✅
 
 - `agent_event_to_sse`: `MessageStart`, `MessageDelta` (text from `StreamEvent::TextDelta`)

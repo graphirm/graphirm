@@ -116,6 +116,7 @@ export function App() {
             }
           }}
           isThinking={isThinking}
+          streamingMessage={streamingMessage}
           pendingApproval={pendingApproval}
           onApprove={approveAction}
           onReject={rejectAction}

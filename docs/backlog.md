@@ -290,25 +290,24 @@ Canvas/`measureText` throws. `nodeDimensions.ts` holds shared `NODE_DIMENSIONS`.
 - `web-app/src/layout/dagre.ts` — optional `pretextSizes` map
 - `web-app/src/hooks/useGraphData.ts` — wires map into `applyDagreLayout`
 
-#### Streaming chat via SSE — P2 · M (Phase A done 2026-04-01; Phase B open)
+#### Streaming chat via SSE — P2 · M (Phase A + B done 2026-04-01)
 
-**Done (Phase A):** `stream_and_record` uses `llm.stream()`, emits `MessageStart` with a
-preallocated `NodeId` (same id as persisted node), incremental `MessageDelta` for each
-`TextDelta`, then `record_interaction` + `MessageEnd`. `agent_event_to_sse` maps
-`MessageStart` / `MessageDelta` to SSE (no longer `heartbeat`). Web-app `useSession` keeps
-`streamingMessage`; `ChatPane` renders it with `MarkdownBody` until `message_end` refreshes
-messages.
+**Done (Phase A):** `stream_and_record` uses `llm.stream()`; SSE `message_start` /
+`message_delta` / `message_end`; chat `streamingMessage` + `ChatPane`.
 
-**Still open (Phase B — Pretext pre-size on canvas):** provisional React Flow node + Pretext
-sizing on partial text during streaming; thread `streamingMessage` into `useGraphData` (see
-plan in repo if present).
+**Done (Phase B):** While the assistant node is not yet in `graphData`, `useGraphData` injects a
+provisional `interaction` node (same id as the final node). Placement uses
+`positionNewNodes`; dimensions use existing `buildPretextSizeMap` + merge helpers per layout
+mode. A dedicated effect updates content/size on each delta **without** re-running full dagre;
+`streamingRef` feeds the main layout effect so graph refreshes do not add duplicates.
 
 **Key files:**
 - `crates/server/src/routes.rs` — `agent_event_to_sse` (`MessageStart`, `MessageDelta`)
-- `crates/agent/src/workflow.rs` — `consume_llm_stream`, fallback loop uses `stream()`
+- `crates/agent/src/workflow.rs` — `consume_llm_stream`, `stream()` fallback loop
 - `web-app/src/hooks/useSession.ts` — `streamingMessage`, SSE handlers
-- `web-app/src/components/ChatPane.tsx`, `App.tsx` — render / pass-through
-- `web-app/src/hooks/useGraphData.ts` — Phase B: provisional node + Pretext
+- `web-app/src/components/ChatPane.tsx`, `App.tsx` — chat + `GraphCanvas` pass-through
+- `web-app/src/hooks/useGraphData.ts` — `appendProvisionalStreamingNode`, streaming effect, `streamingRef`
+- `web-app/src/components/GraphCanvas.tsx` — `streamingMessage` → `useGraphData`
 
 #### Text-aware edge avoidance — P3 · M (partial, 2026-03-30)
 
