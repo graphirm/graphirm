@@ -1283,9 +1283,6 @@ pub async fn run_agent_loop(
     let doom_loop_threshold = session.agent_config.doom_loop_threshold;
     let read_loop_threshold = session.agent_config.read_loop_threshold;
     let mut all_node_ids: Vec<NodeId> = Vec::new();
-    // Track whether any tool calls have been executed in this session so far.
-    // Used to decide whether to inject a continuation message after a text-only turn.
-    let mut had_tool_calls = false;
     // True only when the agent has executed at least one write or edit tool call.
     // pre_completion_verify uses this so the checklist fires after actual file changes,
     // not after read-only planning turns.
@@ -1463,10 +1460,12 @@ pub async fn run_agent_loop(
                 break;
             }
 
-            // Auto-continuation: if the agent stopped text-only while work was in progress
-            // (evidenced by prior tool calls this session), inject a continuation nudge so
-            // it resumes rather than silently leaving the task unfinished.
-            if had_tool_calls && continuation_count < max_continuations {
+            // Auto-continuation: if the agent stopped text-only while implementation was
+            // in progress (evidenced by prior write/edit calls), inject a continuation
+            // nudge so it resumes rather than silently leaving the task unfinished.
+            // Keyed on had_write_calls (not had_tool_calls) so read-only sessions
+            // (Q&A, repo_briefing, graph_query) don't get spurious continuations.
+            if had_write_calls && continuation_count < max_continuations {
                 continuation_count += 1;
                 tracing::info!(
                     turn,
@@ -1524,7 +1523,6 @@ pub async fn run_agent_loop(
             break;
         }
 
-        had_tool_calls = true;
         let tool_calls: Vec<&ContentPart> = response.tool_calls();
         for part in &tool_calls {
             let ContentPart::ToolCall {
