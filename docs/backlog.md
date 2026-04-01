@@ -290,7 +290,7 @@ Canvas/`measureText` throws. `nodeDimensions.ts` holds shared `NODE_DIMENSIONS`.
 - `web-app/src/layout/dagre.ts` — optional `pretextSizes` map
 - `web-app/src/hooks/useGraphData.ts` — wires map into `applyDagreLayout`
 
-#### Streaming chat via SSE — P2 · M (Phase A + B done 2026-04-01)
+#### Streaming chat via SSE — P2 · M (Phase A + B + C done 2026-04-01)
 
 **Done (Phase A):** `stream_and_record` uses `llm.stream()`; SSE `message_start` /
 `message_delta` / `message_end`; chat `streamingMessage` + `ChatPane`.
@@ -301,9 +301,15 @@ provisional `interaction` node (same id as the final node). Placement uses
 mode. A dedicated effect updates content/size on each delta **without** re-running full dagre;
 `streamingRef` feeds the main layout effect so graph refreshes do not add duplicates.
 
+**Done (Phase C):** OpenRouter `stream()` replaced fake complete+chunk with real SSE streaming
+via direct reqwest POST (`stream: true`). SSE line parser, `process_sse_chunk`, tool call
+lifecycle, mpsc channel → `ReceiverStream`. Verified on `app.graphirm.ai`: deltas arrive
+over ~1s with natural inter-token gaps (was 2ms dump). 8 new tests.
+
 **Key files:**
 - `crates/server/src/routes.rs` — `agent_event_to_sse` (`MessageStart`, `MessageDelta`)
 - `crates/agent/src/workflow.rs` — `consume_llm_stream`, `stream()` fallback loop
+- `crates/llm/src/openrouter.rs` — real SSE streaming, `build_openai_body`, chunk parsing
 - `web-app/src/hooks/useSession.ts` — `streamingMessage`, SSE handlers
 - `web-app/src/components/ChatPane.tsx`, `App.tsx` — chat + `GraphCanvas` pass-through
 - `web-app/src/hooks/useGraphData.ts` — `appendProvisionalStreamingNode`, streaming effect, `streamingRef`

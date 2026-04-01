@@ -1,5 +1,18 @@
 # Graphirm Development Progress Log
 
+## 2026-04-01: Real SSE streaming from OpenRouter (Phase 51 / streaming Phase C) — COMPLETE ✅
+
+- `OpenRouterProvider::stream()` replaced fake complete+chunk with direct reqwest POST
+  (`stream: true`, `stream_options.include_usage: true`)
+- `build_openai_body()` converts `LlmMessage`/`ToolDefinition` to OpenAI JSON format
+- SSE line parser: buffers `response.chunk()` bytes, splits on `\n`, parses `data: {...}`
+- `SseChunk`/`SseChoice`/`SseDelta` deserialization structs for OpenAI streaming format
+- `process_sse_chunk()` emits `StreamEvent`s via `mpsc::channel(128)` → `ReceiverStream`
+- Tool call lifecycle: `ToolCallStart` → `ToolCallDelta` → `ToolCallEnd`
+- Graceful: `[DONE]` → `Done(usage)`; no-DONE fallback; SSE comments/unparseable skipped
+- Verified on `app.graphirm.ai`: deltas arrive over ~1s (was 2ms with fake streaming)
+- 8 new tests (body construction, chunk parsing, tool lifecycle)
+
 ## 2026-04-01: Streaming canvas provisional node + Pretext (Phase B) — COMPLETE ✅
 
 - `useGraphData(..., streamingMessage)`: provisional assistant `interaction` before server

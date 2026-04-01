@@ -172,6 +172,15 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 48 | Verification doom-loop fix — read-loop detection (`file_read_counts`, `read_loop_threshold`), post-verification exit guard, trimmed verify checklist, pinned convention | ✅ done |
 | 49 | Doom/read-loop advisory re-fire fix — `edited_this_turn`/`read_this_turn` vecs; advisory check only iterates paths touched in current turn, not all accumulated counts; prevents infinite apology loops | ✅ done |
 | 50 | Timeline cascade layout — `buildTurns()` partitions Interaction nodes by user-message boundaries; main row (user + final-assistant) at Y=80; intermediates cascade diagonally (60px X, 50px Y per step); compact 160×50px role-icon cards click to expand; `TimelineLayoutResult { nodes, bandPositions }` drives dynamic swimlane heights; `setLayoutMode` made mode-aware (no groups in timeline) | ✅ done |
+| 51 | Real SSE streaming — OpenRouter `stream()` replaced fake complete+chunk with direct reqwest POST (`stream: true`); SSE line parser, `process_sse_chunk`, tool call lifecycle, mpsc channel; verified on `app.graphirm.ai` with console timestamps (deltas over ~1s vs prior 2ms dump); 8 new tests | ✅ done |
+
+**Real SSE streaming (Phase 51):**
+- `crates/llm/src/openrouter.rs` — `OpenRouterProvider` now holds `http: reqwest::Client` + `api_key: String` alongside rig `CompletionsClient`; `complete()` unchanged (still uses rig)
+- `build_openai_body(messages, tools, config)` — converts `LlmMessage` to OpenAI JSON format (system/user/assistant/tool roles); tools to `function` format; sets `stream: true` + `stream_options.include_usage: true`
+- `stream()` — direct reqwest POST to `{base_url}/chat/completions`; spawns tokio task reading `response.chunk()`, buffering lines, parsing `data: {...}` SSE events; `SseChunk` deserialization structs; `process_sse_chunk()` emits `StreamEvent`s through `mpsc::channel(128)` → `ReceiverStream`
+- Tool call lifecycle: `ToolCallStart` on `id`+`name`, `ToolCallDelta` on argument fragments, `ToolCallEnd` on `finish_reason`; `active_tools: HashMap<usize, (String, String)>` tracks by stream index
+- Graceful: `data: [DONE]` → `Done(usage)`; stream-without-DONE → fallback `Done`; SSE comments (`: ...`) and unparseable lines silently skipped
+- Other providers (Anthropic, DeepSeek) still use fake streaming — to be updated when needed
 
 **Phases 42–46+48 — Harness Engineering (agent loop reliability):**
 - **Pre-completion verify (42):** `verify_injected: bool` in `run_agent_loop`; fires once when `pre_completion_verify && had_write_calls && !verify_injected`; injects user message with checklist (build, clippy, git diff). Config: `pre_completion_verify = true` in `default.toml`. Tests using mock providers set `pre_completion_verify: false`. `had_write_calls` (distinct from `had_tool_calls`) prevents premature firing on read-only planning turns.
