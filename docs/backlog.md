@@ -15,6 +15,76 @@ Single source of truth for planned work. Completed items are recorded in `docs/c
 
 ---
 
+## Security & Public Readiness
+
+Prerequisites before `app.graphirm.ai` or any public Graphirm instance is open to untrusted users.
+See [security gap analysis chat](../../.cursor/projects/home-krs-graphirm-repo/agent-transcripts) for full context.
+
+### ✅ API key authentication middleware — P1 · S
+
+**Done (2026-04-01).** `GRAPHIRM_API_KEY` required for `graphirm serve`; `api_key_auth` middleware
+(Bearer + `?token=` for SSE). Clients: `web-app` (`VITE_API_KEY`), VS Code (`graphirm.apiKey`),
+`graphirm-eval` harness. Plan: `docs/plans/2026-04-01-public-readiness-p1.md`.
+
+### ✅ Rate limiting (per-IP) — P1 · S
+
+**Done (2026-04-01).** `tower_governor` on API routes (health ungoverned); sharded key extractor for
+tests. Plan: `docs/plans/2026-04-01-public-readiness-p1.md`.
+
+### ✅ CORS restriction — P1 · S
+
+**Done (2026-04-01).** `GRAPHIRM_ALLOWED_ORIGINS` (comma-separated); empty = `Any` for local dev.
+Plan: `docs/plans/2026-04-01-public-readiness-p1.md`.
+
+### ✅ README + AGENTS.md: HTTP security and client setup — P2 · S
+
+**Done (2026-04-02).** `README.md` (Browser UI → HTTP server security) and `AGENTS.md` (Build & Test)
+now document `GRAPHIRM_API_KEY`, `GRAPHIRM_ALLOWED_ORIGINS`, web-app `VITE_API_KEY` / `.env.local`,
+VS Code `graphirm.apiKey`, and SSE `?token=`; cross-link to
+`docs/plans/2026-04-01-public-readiness-p1-design.md`.
+
+### Bash tool disable flag (public mode) — P1 · M
+
+The `bash` tool runs arbitrary shell commands on the server. HITL gates it, but
+`POST /api/sessions/{id}/auto-approve` (which also requires no auth currently) can bypass it.
+With auth in place this risk is lower, but for a shared public instance bash should be
+opt-in. Add `disable_bash: bool` (default `false`) to `AgentConfig`; when true, `BashTool::execute`
+returns `ExecutionFailed("bash is disabled on this server")`. Announce the restriction in
+the session system prompt so the agent adapts.
+
+**Key files:**
+- `crates/agent/src/config.rs` — `disable_bash: bool`
+- `crates/tools/src/bash.rs` — early-return when flag is set
+- `crates/server/src/routes.rs` — inject flag into session config at creation
+- `config/default.toml` — `disable_bash = false` (commented example for public installs)
+
+### Per-session LLM spend cap — P2 · S
+
+No guard against a single session burning unlimited API credits. Add `max_session_tokens: Option<u64>`
+to `AgentConfig`. In `stream_and_record`, accumulate usage tokens from `Done` events into a
+session-scoped counter (can live in `SessionHandle`). When the cap is exceeded, abort the
+current prompt with a user-visible error and set session status to `TokenCapExceeded`.
+
+**Key files:**
+- `crates/agent/src/config.rs` — `max_session_tokens: Option<u64>`
+- `crates/server/src/session.rs` — `token_usage: Arc<AtomicU64>` in `SessionHandle`
+- `crates/agent/src/workflow.rs` — cap check in `stream_and_record` after each `Done` event
+- `config/default.toml` — `# max_session_tokens = 500000` (commented example)
+
+### TLS + reverse proxy deployment guide — P2 · S
+
+The server runs plain HTTP. For public exposure, document and provide a reference config for
+TLS termination via Caddy (simplest) or nginx. Include a `Caddyfile` example in `docs/deploy/`.
+Also document the required env vars (`GRAPHIRM_API_KEY`, `OPENROUTER_API_KEY`) and the
+`[server] allowed_origins` + `disable_bash` settings for a production deploy.
+
+**Key files:**
+- `docs/deploy/Caddyfile.example` — new file
+- `docs/deploy/production-checklist.md` — new file
+- `README.md` — link to deploy docs
+
+---
+
 ## Deployment & Operations
 
 ### ✅ Coolify on always-on spoke — P1 · M
@@ -290,7 +360,7 @@ Canvas/`measureText` throws. `nodeDimensions.ts` holds shared `NODE_DIMENSIONS`.
 - `web-app/src/layout/dagre.ts` — optional `pretextSizes` map
 - `web-app/src/hooks/useGraphData.ts` — wires map into `applyDagreLayout`
 
-#### Streaming chat via SSE — P2 · M (Phase A + B + C done 2026-04-01)
+#### ✅ Streaming chat via SSE — P2 · M (Phases A–C, 2026-04-01)
 
 **Done (Phase A):** `stream_and_record` uses `llm.stream()`; SSE `message_start` /
 `message_delta` / `message_end`; chat `streamingMessage` + `ChatPane`.
@@ -551,6 +621,62 @@ Plan: `docs/plans/2026-03-19-graph-node-search.md`
 Done 2026-03-19. `GET /api/sessions/:id/export?format=markdown` returns conversation (user + assistant turns, tool interactions excluded) + extracted knowledge table as a `.md` download (`Content-Disposition: attachment`). `format=html` → 400. New `crates/server/src/export.rs` with `render_session_markdown` (5 unit tests). "↓ Export" button in `SessionBar` triggers browser download via `window.open`.
 Plan: `docs/plans/2026-03-19-export-session.md`
 
+### Workspace Visibility
+
+Inspired by [marcus/sidecar](https://github.com/marcus/sidecar) — give users direct visibility
+into the workspace the agent is operating on. Today, users can only see file contents through
+tool result messages in chat or by SSH-ing into the server. These features close that gap.
+
+#### Workspace file browser — P2 · M
+
+Read-only file tree + content viewer in the web UI. Users can browse the session workspace,
+click files to view syntax-highlighted content, and see live change indicators when the agent
+writes or edits files.
+
+**Backend:** Two new axum endpoints:
+- `GET /api/sessions/:id/files?path=src/` — directory listing (name, type, size) via `tokio::fs::read_dir`
+- `GET /api/sessions/:id/files/content?path=src/auth.rs` — raw file content with size cap (~1 MB); binary detection + reject
+
+Both endpoints validate the path stays inside the session workspace root (path traversal protection).
+
+**Frontend:** `[Graph] [Files]` tab bar above the right panel — clicking Files swaps the graph canvas
+for a two-pane file browser (tree left, content right). Reuses existing `highlight.js` (already
+in bundle) for syntax highlighting. Keyboard shortcut `B` toggles between views.
+
+**Live updates:** When SSE `tool_end` events fire for `write`/`edit`, the tree highlights changed
+files (accent pulse). If the user is viewing that file, content auto-refreshes with a subtle
+"Updated just now" indicator. Files modified during the session accumulate a change dot badge.
+
+**Clickable paths in chat:** File paths in tool result messages become links — clicking switches
+to the Files tab and opens that file.
+
+**Scope (v1):** Read-only. No editing, no search, no git status, no multi-file tabs. One file at
+a time.
+
+**Key files:**
+- `crates/server/src/routes.rs` — `list_files`, `get_file_content` handlers + path validation
+- `web-app/src/components/FileBrowser.tsx` — tree + content viewer panel
+- `web-app/src/components/Toolbar.tsx` — `[Graph] [Files]` tab bar
+- `web-app/src/hooks/useSession.ts` — SSE handler for file change indicators
+
+#### Git status & diff panel — P3 · M
+
+Read-only git status view: changed files (staged/unstaged/untracked), click to see diffs,
+recent commit history. Gives users review capability without SSH access. The agent does the
+committing — this is visibility only.
+
+**Backend:**
+- `GET /api/sessions/:id/git/status` — runs `git status --porcelain` in workspace, returns structured JSON
+- `GET /api/sessions/:id/git/diff?path=src/auth.rs` — runs `git diff` for a specific file, returns unified diff
+- `GET /api/sessions/:id/git/log?limit=10` — recent commits as JSON
+
+**Frontend:** A third tab `[Graph] [Files] [Git]` or a sub-view within Files. Changed file list
+with status indicators (M/A/D/?), click to view diff with syntax-highlighted unified diff rendering.
+
+**Key files:**
+- `crates/server/src/routes.rs` — git status/diff/log handlers
+- `web-app/src/components/GitStatus.tsx` — changed files list + diff viewer
+
 ---
 
 ## Agent Capability
@@ -700,6 +826,101 @@ Done 2026-03-27. Audited actual output of 21 successfully-processed repos (of 95
 ### ~~Adaptive model router (A/B routing, token tracking, composite objective)~~ — ✅ done Phase 36
 ~~Replace the static rule-based router (Phase 34) with an adaptive routing framework.~~ Shipped: `RoutingStrategy` trait, `RuleRouter`, `PromptRouter`, `ExperimentRouter`, per-turn `TurnOutcome` metadata on Interaction nodes, `ObjectiveWeights` presets, `PATCH /rating` + `GET /routing/report` API. Phase 2 (statistical/learned router) remains as future work once data exists.
 Design: `docs/plans/2026-03-26-adaptive-model-router-design.md`
+
+### ✅ Embedding cache: replace JSON with binary format — P1 · S
+
+**Done (2026-04-01).** Replaced `serde_json` with `bincode` in the Rust `EmbeddingCache` (`src/embedding.rs`).
+`save_state()` writes `cache_state.bin` (atomic rename via `.tmp`); `load_state()` tries `.bin` first,
+falls back to legacy `.json` for automatic migration. Added `bincode = "1.3"` to `Cargo.toml`.
+
+Results on 252k-entry cache: **8.5 GB → 1.6 GB** (5.3× smaller), **load 29s → 2.1s** (13.6× faster),
+**save ~30s → 2.6s** (~12× faster). Batch startup went from 20+ minutes stuck on cache parse to instant.
+
+### Clean 100-repo batch run — P1 · M
+
+The Phase 3 Cross-Repo Study (14 repos, March 2026) was run before several critical bugs were fixed: TFIDF edges not persisted, cycle cap of 20, hotspot display showing cache paths, C/C++ extractor queries missing, TypeScript parser API wrong. A clean batch run on the full intended corpus has never happened.
+
+Run `run_full_graph_pipeline` across all ~41 repos in `batch_output/` (plus any missing from the target list) with all fixes in place, then regenerate `batch_summary.json` and the Phase 3 study document.
+
+**Prerequisite checks before running:**
+- TFIDF persistence fix (commit 8dfbe3e) ✅
+- Cycle cap raised to 100 (commit 1db0f1c) ✅
+- C/C++ extractor queries (commit ceccd3c) ✅
+- TypeScript `language_typescript()` API fix ✅
+- Embedding batch safe wrapper (`_embed_one_batch_safe`) ✅
+- Hotspot noise filter (`_is_noise_path`) ✅
+- Duplicate cluster `_resolve_file_path` fix ✅
+
+**Key files:** `scripts/processing/`, `run_full_graph_pipeline()`, `batch_output/`
+
+**Nodestradamus100 spoke (verified 2026-04-02 via SSH on `91.98.94.217`):**
+- **Runner:** `/root/project/scripts/run_batch_full_corpus.sh` — `cd /root/project`, sources `/root/.config/graphirm-ndstrms.env`, activates `.venv`, `PYTHONPATH=/root/project`, runs  
+  `python -u -m src.nodestradamus.cli insights batch-cache --output-base /root/project/batch_output --config config/downloader.yaml --resume --workers 2`.  
+  **Note:** script uses **`--resume`** (skip repos that already have `insights.json`). For a **clean full re-run** of every cached repo, drop `--resume` from the script or invoke `batch-cache` without that flag.
+- **CLI implementation:** `src/nodestradamus/insights/batch.py` (`batch_cache`), wired from `src/nodestradamus/cli.py` as `insights batch-cache`. Flags: `--output-base` (required), `--config`, `--cache-dir`, `--limit`, `--resume`, `--workers` (default 4), **`--experiment <ID>`** (writes under `OUTPUT_BASE/_experiments/<ID>/` with `manifest.json` + `batch_summary.json`).
+- **Numbered experiments:** `scripts/run_experiment.sh <EXPERIMENT_ID> [extra flags…]` — same env as full corpus runner, passes `--experiment` automatically. Plan: [`docs/plans/2026-04-02-ndstrms-batch-experiment-infra.md`](plans/2026-04-02-ndstrms-batch-experiment-infra.md).
+- **Related scripts:** `scripts/generate_phase3_report.py`, `scripts/reextract_insights.py`, `scripts/test_pipeline.py`, `scripts/processing/*.py` (older per-cohort processors).
+- **Graphirm on spoke:** `http://91.98.94.217:5555` — `GET /api/health` OK; API needs `GRAPHIRM_API_KEY` from same env file.
+- **Logs:** `/tmp/ndstrms_batch_*.log` (if you redirect nohup); otherwise stdout from the shell running the script.
+- **Embedding cache:** Large legacy `cache_state.json` can block startup; prefer bincode migration in ndstrms (see backlog item above). Spoke may still use `~/.cache/nodestradamus/embeddings/`.
+
+### Import resolution for Go / Rust / Ruby — P1 · M
+
+Coupling is always 0 for Go, Rust, and Ruby repos because `ImportResolutionService` cannot resolve cross-file CALLS edges for these languages — Go import resolution is ~6% effective, Rust and Ruby effectively 0%. This blocks hotspot PageRank propagation and dead code analysis for the majority of the target corpus.
+
+Without this, the 100-repo meta-analysis can only produce meaningful structural insights for Python and JavaScript repos.
+
+**Approach:**
+- Go: resolve `import "pkg/path"` to actual files via module graph (`go.mod` + `go list`)
+- Rust: resolve `use crate::module` / `mod` declarations via the crate file tree
+- Ruby: resolve `require_relative` and `require` by path-walking from the file's location
+
+**Key files:** `src/nodestradamus/layer3/import_resolution.py` — `ImportResolutionService._resolve_go_import`, `_resolve_rust_import`
+
+### Language gap closures (R, Swift, Kotlin, PHP) — P2 · M
+
+Four languages in the 100-repo corpus have zero structural coverage because no tree-sitter grammar is installed:
+
+| Language | Repos affected | Blocker |
+|----------|---------------|---------|
+| R | tidyverse/dplyr, ggplot2 | No `tree-sitter-r` |
+| Swift | vapor | No `tree-sitter-swift` |
+| Kotlin | (any Kotlin repos) | No `tree-sitter-kotlin` |
+| PHP | (any PHP repos) | No `tree-sitter-php` |
+
+Java has queries added but was not included in any batch run — verify and include.
+TypeScript API fix applied but not re-batched at scale — verify in clean run.
+
+**Key files:** `src/nodestradamus/layer3/` extractors, `pyproject.toml` (grammar deps)
+
+### 100-repo meta-analysis — P1 · L
+
+The whole point of Nodestradamus100: after a clean batch run across ~100 repos, analyze the aggregate output and produce conclusions about what to change in Nodestradamus MCP v1.
+
+**Framework (methodology + pre-corpus signals):** [`docs/reports/100-repo-meta-analysis.md`](reports/100-repo-meta-analysis.md). **Numerical findings and synthesis table** still depend on completing *Clean 100-repo batch run* above.
+
+**Questions to answer:**
+
+1. **Hotspot quality** — Are PageRank hotspots actually the files developers care about? Compare vs. git churn, PR size, issue references.
+2. **Cycle signal** — Every repo has cycles at the symbol level. Are they noise, or do they predict bugs/rework? What cycle patterns recur across languages?
+3. **Semantic vs. structural** — Semantic edges (10k–70k per repo) dwarf structural edges (0–3k). When does semantic similarity add signal vs. noise? What threshold generalizes across languages?
+4. **Coupling blindspot** — Coupling is 0 for Go/Rust/Ruby due to import resolution limits. What would useful coupling data look like if we fixed it?
+5. **Dead code false positives** — Currently only meaningful for Python. What language patterns cause false positives?
+6. **MCP tool gaps** — Which insights from `batch_output/` are not exposed by the 8 MCP tools? What do Cursor/Graphirm queries actually need that isn't there?
+
+**Output:** `docs/reports/100-repo-meta-analysis.md` with per-finding recommendations mapped to specific MCP tool changes.
+
+### MCP v1 enhancement recommendations — P2 · M
+
+Translate the meta-analysis findings into a concrete change list for Nodestradamus MCP v1. The 8 current tools (`list_repos`, `get_hotspots`, `get_cycles`, `get_duplicates`, `get_dead_code`, `get_coupling`, `search_repos`, `batch_summary`) were designed before any real corpus data existed.
+
+Likely candidates based on Phase 3 findings:
+- `get_hotspots` — currently returns PageRank on CALLS graph only; may need semantic centrality option for languages with weak import resolution
+- `get_cycles` — cycle cap was 20, now 100, but no grouping by cycle length or severity; need deduplication across re-runs
+- `get_coupling` — returns 0 for Go/Rust/Ruby; needs honest language-coverage metadata so callers know what's reliable
+- `search_repos` — currently keyword-only; semantic search across all Knowledge nodes would be more useful
+
+**Output:** Concrete backlog items for ndstrms repo with file-level targets.
 
 ---
 
