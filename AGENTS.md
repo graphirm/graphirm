@@ -50,6 +50,7 @@ graphirm-vscode/            # VS Code / Cursor extension (TypeScript)
 | `web-app/` | React + React Flow interactive whiteboard UI (Vite, TypeScript) |
 | `web/` | Vanilla JS browser UI (legacy fallback, still served if `web-app/dist/` not present) |
 | `config/default.toml` | default model, agent, knowledge, graph, TUI, server settings |
+| `experiments/` | optional ad-hoc probes (not workspace members unless listed); see `experiments/AGENTS.md` |
 
 Each significant directory has its own `AGENTS.md` with purpose, key files, integration points, and test command.
 

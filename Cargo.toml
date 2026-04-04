@@ -7,6 +7,7 @@ members = [
     "crates/tui",
     "crates/server",
     "graphirm-eval",
+    "experiments/gliner2-segment-probe",
 ]
 resolver = "2"
 
