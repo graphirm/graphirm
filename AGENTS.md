@@ -94,6 +94,8 @@ cd web-app && npm run dev   # served at http://localhost:5173
 cargo run -p graphirm-eval -- --suite coding
 ```
 
+**HTTP server security (`serve`):** set **`GRAPHIRM_API_KEY`** — required; clients use **`Authorization: Bearer <key>`** on REST calls and **`?token=<key>`** on SSE URLs. **`GRAPHIRM_ALLOWED_ORIGINS`** (comma-separated) restricts CORS for browser clients; when unset, any origin is allowed (local dev). React web-app: **`VITE_API_KEY`** in `web-app/.env.local`, then rebuild. VS Code extension: **`graphirm.apiKey`**. For **shared or public** instances, set **`disable_bash = true`** in **`[agent]`** in `config/default.toml` (or your deploy config) so the shell tool is refused and omitted from the model’s tool list; restored sessions use the server’s current config on restart. See `config/default.toml` header comments and `docs/plans/2026-04-01-public-readiness-p1-design.md`.
+
 Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db /path/to/graph.db`.
 
 ---
@@ -112,7 +114,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 - New built-in tool → implement `Tool` trait in `crates/tools/src/<name>.rs`, register in `build_tool_registry()` in `src/main.rs`
 - Script plugin → create `~/.graphirm/plugins/<name>/plugin.toml` (see `examples/plugins/hello/`); loaded automatically at startup; no recompile required
 - New LLM provider → implement `LlmProvider` trait in `crates/llm/`
-- `bash`, `write`, `edit` are destructive tools — subject to HITL gate (unless auto-approve is enabled)
+- `bash`, `write`, `edit` are destructive tools — subject to HITL gate (unless auto-approve is enabled); optional **`disable_bash`** in **`[agent]`** disables `bash` entirely for public servers (see Build & Test → HTTP server security)
 - `read`, `grep`, `find`, `ls`, `graph_query` are non-destructive — always run without confirmation
 - `read` auto-truncates files > 300 lines when no `offset`/`limit` is provided — returns first 300 lines + notice; callers should use `offset`/`limit` for targeted reads
 - Auto-approve: `POST /api/sessions/{id}/auto-approve` with `{ "enabled": true }` — skips HITL gating for all destructive tools in that session

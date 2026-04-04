@@ -178,6 +178,12 @@ export class GraphirmPanel implements vscode.Disposable {
     const mediaUri = this.panel.webview.asWebviewUri(vscode.Uri.file(mediaPath));
     html = html.replace(/\{\{mediaUri\}\}/g, mediaUri.toString());
     html = html.replace(/\{\{cspSource\}\}/g, this.panel.webview.cspSource);
+
+    const cfg = vscode.workspace.getConfiguration('graphirm');
+    const serverUrl = cfg.get<string>('serverUrl', 'http://localhost:5555');
+    const apiKey = cfg.get<string>('apiKey', '');
+    const boot = `<script>window.__GRAPHIRM_SERVER__=${JSON.stringify(serverUrl)};window.__GRAPHIRM_API_KEY__=${JSON.stringify(apiKey)};</script>`;
+    html = html.replace('</body>', `${boot}\n</body>`);
     return html;
   }
 

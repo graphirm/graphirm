@@ -1,5 +1,12 @@
 # Graphirm Development Progress Log
 
+## 2026-04-05: `disable_bash` for public / shared servers — COMPLETE ✅
+
+- `AgentConfig.disable_bash` + TOML `[agent]`; `apply_disable_bash_system_notice()` (idempotent)
+- `Session::new` / `Session::restore` apply notice; `ToolContext.disable_bash`; `BashTool` early return
+- LLM tool list excludes `bash` when disabled; `build_scoped_tools` + `spawn_subagent(..., parent_disable_bash)` for subagents
+- Tests: agent config + tools `bash_disabled_returns_execution_failed`; `config/default.toml` commented example
+
 ## 2026-04-01: Real SSE streaming from OpenRouter (Phase 51 / streaming Phase C) — COMPLETE ✅
 
 - `OpenRouterProvider::stream()` replaced fake complete+chunk with direct reqwest POST

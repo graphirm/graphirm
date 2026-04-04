@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 
+import { graphirmAuthHeaders } from './authHeaders';
+
 export interface Session {
   id: string;
   agent: string;
@@ -51,9 +53,14 @@ function serverUrl(): string {
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${serverUrl()}${path}`;
+  const extra = (options?.headers as Record<string, string> | undefined) ?? {};
   const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...graphirmAuthHeaders(),
+      ...extra,
+    },
   });
   if (!res.ok) {
     throw new Error(`API error ${res.status}: ${await res.text()}`);

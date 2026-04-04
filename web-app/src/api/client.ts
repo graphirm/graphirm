@@ -1,9 +1,19 @@
 import type { GraphData, GraphNode, Message, Session } from '../types/graph';
 
+function authHeaders(): Record<string, string> {
+  const key = import.meta.env.VITE_API_KEY as string | undefined;
+  return key ? { Authorization: `Bearer ${key}` } : {};
+}
+
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const extra = (options.headers as Record<string, string> | undefined) ?? {};
   const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(),
+      ...extra,
+    },
   });
   if (!res.ok) {
     const text = await res.text();

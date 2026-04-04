@@ -66,7 +66,8 @@ async fn consume_llm_stream(
             }
             StreamEvent::ToolCallEnd { id } => {
                 if let Some((name, args_str)) = tool_build.remove(&id) {
-                    let arguments = serde_json::from_str(&args_str).unwrap_or(serde_json::json!({}));
+                    let arguments =
+                        serde_json::from_str(&args_str).unwrap_or(serde_json::json!({}));
                     parts.push(ContentPart::tool_call(id, name, arguments));
                 }
             }
@@ -241,6 +242,7 @@ pub async fn stream_and_record(
     let raw_defs = tools.definitions();
     let tool_defs: Vec<graphirm_llm::ToolDefinition> = raw_defs
         .into_iter()
+        .filter(|t| !(session.agent_config.disable_bash && t.name == "bash"))
         .map(|t| graphirm_llm::ToolDefinition::new(t.name, t.description, t.parameters))
         .collect();
 
@@ -420,10 +422,7 @@ pub async fn stream_and_record(
             .with_max_tokens(max_output)
             .with_temperature(temperature);
         let start = std::time::Instant::now();
-        match llm
-            .stream(context.clone(), &tool_defs, &comp_config)
-            .await
-        {
+        match llm.stream(context.clone(), &tool_defs, &comp_config).await {
             Ok(stream) => {
                 events.emit(AgentEvent::MessageStart {
                     node_id: preview_node_id.clone(),
@@ -752,6 +751,7 @@ async fn execute_tools_parallel(
         turn_pos_counter: session.turn_position_counter(),
         knowledge_retriever,
         impact_provider: impact_provider.clone(),
+        disable_bash: session.agent_config.disable_bash,
     };
 
     // Partition tool calls: destructive ones go through sequential HITL approval,
@@ -1762,10 +1762,8 @@ mod test_helpers {
             _messages: Vec<LlmMessage>,
             _tools: &[ToolDefinition],
             _config: &CompletionConfig,
-        ) -> Result<
-            std::pin::Pin<Box<dyn futures::Stream<Item = StreamEvent> + Send>>,
-            LlmError,
-        > {
+        ) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = StreamEvent> + Send>>, LlmError>
+        {
             let idx = self.call_index.fetch_add(1, Ordering::SeqCst);
             let response = if idx < self.responses.len() {
                 self.responses[idx].clone()

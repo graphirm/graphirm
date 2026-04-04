@@ -6,6 +6,9 @@ use std::time::Instant;
 use crate::client::GraphirmClient;
 use crate::task::{EvalTask, TaskResult, Verifier};
 
+/// Must match `GRAPHIRM_API_KEY` on the spawned `graphirm serve` process.
+const EVAL_HARNESS_API_KEY: &str = "graphirm-eval-harness-key";
+
 pub struct TestHarness {
     pub client: GraphirmClient,
     /// Temp directory for the SQLite DB — kept alive for the harness lifetime.
@@ -38,7 +41,8 @@ impl TestHarness {
             &port.to_string(),
         ])
         .env("EMBEDDING_BACKEND", "") // disable memory for most tasks
-        .env("GRAPHIRM_MODEL", &eval_model);
+        .env("GRAPHIRM_MODEL", &eval_model)
+        .env("GRAPHIRM_API_KEY", EVAL_HARNESS_API_KEY);
         // Forward API keys and model config from environment
         for key in &[
             "ANTHROPIC_API_KEY",
@@ -54,7 +58,8 @@ impl TestHarness {
         }
         let server = cmd.spawn()?;
 
-        let client = GraphirmClient::new(format!("http://127.0.0.1:{port}"));
+        let client = GraphirmClient::new(format!("http://127.0.0.1:{port}"))
+            .with_api_key(EVAL_HARNESS_API_KEY);
 
         // Wait up to 10s for the server to become healthy
         let deadline = Instant::now() + std::time::Duration::from_secs(10);

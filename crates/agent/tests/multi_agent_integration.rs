@@ -203,6 +203,7 @@ async fn test_multi_agent_graph_isolation() {
         vec![],
         cancel,
         None,
+        false,
     )
     .await
     .unwrap();
@@ -338,6 +339,7 @@ async fn test_subagent_file_operations_use_workspace() {
         vec![],
         cancel,
         Some(parent_dir),
+        false,
     )
     .await
     .unwrap();

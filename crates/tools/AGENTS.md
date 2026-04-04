@@ -13,7 +13,7 @@ description, JSON schema for parameters, and an async `execute` method. Tools ar
 | `registry.rs` | `ToolRegistry` — registers tools, dispatches calls by name |
 | `executor.rs` | Parallel tool execution — runs multiple tool calls concurrently |
 | `permissions.rs` | Per-agent allow/deny list — checked before dispatch |
-| `bash.rs` | Shell command execution in working directory (**destructive**) |
+| `bash.rs` | Shell command execution in working directory (**destructive**); respects `ToolContext.disable_bash` |
 | `read.rs` | File reading with line numbers |
 | `write.rs` | File creation/overwrite (**destructive**) |
 | `edit.rs` | Exact string replacement in files (**destructive**) |

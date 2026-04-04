@@ -60,6 +60,22 @@ cd web-app && npm install && npm run build && cd ..
 
 Features: interactive graph whiteboard (pan/zoom/drag), node expansion with markdown + syntax highlighting, three layout modes (DAG, timeline, free), canvas annotations, steer-from-node, HITL approval cards, per-session auto-approve.
 
+#### HTTP server security
+
+`graphirm serve` expects a shared API key on every `/api/*` route except `/api/health`:
+
+- Set **`GRAPHIRM_API_KEY`** in the environment before starting the server.
+- REST clients send **`Authorization: Bearer <key>`**. Browser **`EventSource`** cannot set headers; use **`?token=<key>`** on the SSE URL (supported for streams).
+- **`GRAPHIRM_ALLOWED_ORIGINS`** — optional comma-separated CORS allowlist for browser apps. If unset, any origin is allowed (local development only).
+
+**Disabling shell on shared hosts:** in `config/default.toml`, under **`[agent]`**, set **`disable_bash = true`**. The agent will not receive the `bash` tool in its API schema, and any direct `bash` call fails with a clear error; a short system-prompt notice explains the restriction. Subagents spawned via `delegate` inherit the same lock when the parent session has it enabled.
+
+**Web app:** put the same secret in `web-app/.env.local` as **`VITE_API_KEY=...`**, then `npm run build` (the value is embedded at build time).
+
+**VS Code / Cursor extension:** **Graphirm → `graphirm.apiKey`** in settings.
+
+Design notes and production checklist: [`docs/plans/2026-04-01-public-readiness-p1-design.md`](docs/plans/2026-04-01-public-readiness-p1-design.md).
+
 ### VS Code / Cursor extension
 
 ```bash

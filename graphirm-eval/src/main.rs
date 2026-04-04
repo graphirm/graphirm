@@ -17,9 +17,14 @@ struct Cli {
     #[arg(long)]
     filter: Option<String>,
 
-    /// Write results JSON to this path
-    #[arg(long, default_value = "results/latest.json")]
-    report: std::path::PathBuf,
+    /// Numbered experiment id — writes to `results/experiments/<id>/eval.json` (+ `.md`) unless
+    /// `--report` is also set (explicit `--report` wins).
+    #[arg(long, value_name = "ID")]
+    experiment: Option<String>,
+
+    /// Write results JSON to this path (overrides experiment default path)
+    #[arg(long)]
+    report: Option<std::path::PathBuf>,
 
     /// Skip memory tasks (requires EMBEDDING_BACKEND)
     #[arg(long)]
@@ -51,6 +56,16 @@ async fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+
+    let report_path = cli
+        .report
+        .clone()
+        .or_else(|| {
+            cli.experiment
+                .as_ref()
+                .map(|id| std::path::PathBuf::from(format!("results/experiments/{id}/eval.json")))
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("results/latest.json"));
 
     let harness = harness::TestHarness::start(cli.binary).await?;
 
@@ -91,8 +106,8 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    report::write_report(&results, &cli.report)?;
-    println!("Report written to {}", cli.report.display());
+    report::write_report(&results, &report_path, cli.experiment.as_deref())?;
+    println!("Report written to {}", report_path.display());
 
     Ok(())
 }

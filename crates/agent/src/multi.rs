@@ -113,6 +113,9 @@ pub struct SubagentHandle {
 fn build_scoped_tools(base_tools: &ToolRegistry, config: &AgentConfig) -> ToolRegistry {
     let mut scoped = ToolRegistry::new();
     for name in base_tools.list() {
+        if config.disable_bash && name == "bash" {
+            continue;
+        }
         if config.is_tool_allowed(name)
             && let Ok(tool) = base_tools.get(name)
         {
@@ -136,6 +139,9 @@ fn build_scoped_tools(base_tools: &ToolRegistry, config: &AgentConfig) -> ToolRe
 /// - Its own Session (creating an Agent node in the graph)
 ///
 /// Returns a `SubagentHandle` with the JoinHandle to await completion.
+///
+/// When `parent_disable_bash` is true, the subagent's config is forced to
+/// [`AgentConfig::disable_bash`] so delegated work cannot run shell on a locked-down parent.
 pub async fn spawn_subagent(
     graph: &Arc<GraphStore>,
     agents: &AgentRegistry,
@@ -148,12 +154,17 @@ pub async fn spawn_subagent(
     context_nodes: Vec<NodeId>,
     cancel: CancellationToken,
     parent_working_dir: Option<PathBuf>,
+    parent_disable_bash: bool,
 ) -> Result<SubagentHandle, AgentError> {
     // Look up agent config
     let mut agent_config = agents
         .get(agent_name)
         .ok_or_else(|| AgentError::AgentNotFound(agent_name.to_string()))?
         .clone();
+
+    if parent_disable_bash {
+        agent_config.disable_bash = true;
+    }
 
     // Create Task node (we need task_id for subagent dir name before spawn_blocking).
     let task_node = GraphNode::new(NodeType::Task(TaskData {
@@ -654,6 +665,7 @@ max_turns = 10
             vec![],
             cancel,
             None,
+            false,
         )
         .await
         .unwrap();
@@ -718,6 +730,7 @@ max_turns = 10
             vec![],
             cancel,
             None,
+            false,
         )
         .await;
 
@@ -761,6 +774,7 @@ max_turns = 10
             vec![],
             cancel,
             Some(parent_dir.clone()),
+            false,
         )
         .await
         .unwrap();
@@ -811,6 +825,7 @@ max_turns = 10
             vec![],
             cancel,
             None,
+            false,
         )
         .await
         .unwrap();
@@ -853,6 +868,7 @@ max_turns = 10
             vec![],
             cancel.clone(),
             None,
+            false,
         )
         .await
         .unwrap();
@@ -869,6 +885,7 @@ max_turns = 10
             vec![],
             cancel.clone(),
             None,
+            false,
         )
         .await
         .unwrap();
@@ -935,6 +952,7 @@ max_turns = 10
             vec![],
             cancel.clone(),
             None,
+            false,
         )
         .await
         .unwrap();
@@ -985,6 +1003,7 @@ max_turns = 10
             vec![],
             cancel.clone(),
             None,
+            false,
         )
         .await
         .unwrap();
@@ -1037,6 +1056,7 @@ max_turns = 10
                 vec![],
                 cancel.clone(),
                 None,
+                false,
             )
             .await
             .unwrap();
@@ -1095,6 +1115,7 @@ max_turns = 10
             vec![],
             cancel,
             None,
+            false,
         )
         .await
         .unwrap();
@@ -1147,6 +1168,7 @@ max_turns = 10
             vec![],
             cancel.clone(),
             None,
+            false,
         )
         .await
         .unwrap();

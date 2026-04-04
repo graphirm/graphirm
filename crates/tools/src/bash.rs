@@ -61,6 +61,12 @@ impl Tool for BashTool {
         args: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
+        if ctx.disable_bash {
+            return Err(ToolError::ExecutionFailed(
+                "bash is disabled on this server".into(),
+            ));
+        }
+
         let command = args["command"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("missing 'command' field".into()))?;
@@ -156,6 +162,20 @@ mod tests {
         let mut ctx = make_test_context();
         ctx.working_dir = dir.path().to_path_buf();
         ctx
+    }
+
+    #[tokio::test]
+    async fn bash_disabled_returns_execution_failed() {
+        let tool = BashTool::new();
+        let mut ctx = make_test_context();
+        ctx.disable_bash = true;
+        let err = tool
+            .execute(json!({"command": "echo hi"}), &ctx)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ToolError::ExecutionFailed(ref s) if s == "bash is disabled on this server")
+        );
     }
 
     #[tokio::test]

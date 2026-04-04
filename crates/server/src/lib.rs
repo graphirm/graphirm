@@ -20,7 +20,7 @@ pub use session::restore_sessions_from_graph;
 // Re-export the most commonly used types at the crate root.
 pub use error::ServerError;
 pub use routes::create_router;
-pub use state::{AppState, SessionHandle};
+pub use state::{AppState, SessionHandle, next_test_rate_limit_shard};
 pub use types::{
     CreateSessionRequest, ErrorResponse, GraphResponse, HealthResponse, PromptRequest, SessionId,
     SessionResponse, SessionStatus, SseEvent, SseEventType, SubgraphQuery,
@@ -29,6 +29,7 @@ pub use types::{
 // ── Server entry point ────────────────────────────────────────────────────────
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -49,6 +50,10 @@ pub struct ServerConfig {
     pub host: String,
     /// TCP port to listen on (must be between 1 and 65535).
     pub port: u16,
+    /// Required for `graphirm serve` — passed into [`AppState::api_key`].
+    pub api_key: String,
+    /// Origins for CORS allowlist; empty = permissive `Any` (local dev).
+    pub allowed_origins: Vec<String>,
 }
 
 impl ServerConfig {
@@ -63,7 +68,12 @@ impl ServerConfig {
                 port
             ));
         }
-        Ok(Self { host, port })
+        Ok(Self {
+            host,
+            port,
+            api_key: String::new(),
+            allowed_origins: vec![],
+        })
     }
 }
 
@@ -72,6 +82,8 @@ impl Default for ServerConfig {
         Self {
             host: "127.0.0.1".to_string(),
             port: 3000,
+            api_key: String::new(),
+            allowed_origins: vec![],
         }
     }
 }
@@ -143,6 +155,9 @@ pub async fn start_server(
         default_config: agent_config,
         memory_retriever,
         web_dir,
+        api_key: server_config.api_key.clone(),
+        allowed_origins: server_config.allowed_origins.clone(),
+        rate_limit_shard: 0,
     };
 
     if let Some(ref dir) = state.web_dir {
@@ -155,9 +170,12 @@ pub async fn start_server(
     info!("Starting Graphirm server on {addr}");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     info!("Server shutdown complete");
     Ok(())

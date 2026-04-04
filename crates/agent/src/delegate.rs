@@ -129,6 +129,7 @@ impl Tool for SubagentTool {
             context_nodes,
             cancel,
             Some(ctx.working_dir.clone()),
+            ctx.disable_bash,
         )
         .await
         .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
@@ -235,6 +236,7 @@ mod tests {
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
             knowledge_retriever: None,
             impact_provider: None,
+            disable_bash: false,
         }
     }
 

@@ -12,7 +12,7 @@ structure, adversarial robustness, and structured response segments.
 
 | File | What |
 |------|------|
-| `main.rs` | CLI entrypoint — `--filter <tag>` to select tasks, `--list` to enumerate |
+| `main.rs` | CLI entrypoint — `--filter <tag>` to select tasks, `--list` to enumerate, `--experiment <ID>` → `results/experiments/<ID>/eval.json` |
 | `client.rs` | `GraphirmClient` — thin HTTP wrapper (sessions, prompts, graph queries) |
 | `harness.rs` | `TestHarness` — spawns server subprocess, runs tasks, collects results |
 | `report.rs` | Result aggregation, pass/fail counts, JSON output |

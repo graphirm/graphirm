@@ -32,7 +32,9 @@ export class SseClient {
 
   subscribe(sessionId: string): void {
     this.unsubscribe();
-    const url = `/api/events/${encodeURIComponent(sessionId)}`;
+    const key = (import.meta.env.VITE_API_KEY as string | undefined) ?? '';
+    const tokenParam = key ? `?token=${encodeURIComponent(key)}` : '';
+    const url = `/api/events/${encodeURIComponent(sessionId)}${tokenParam}`;
     this._source = new EventSource(url);
 
     for (const type of SSE_EVENT_TYPES) {

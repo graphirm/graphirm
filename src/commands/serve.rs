@@ -74,7 +74,37 @@ pub async fn run(db_path: &Path, host: String, port: u16) -> Result<(), Graphirm
         tracing::info!("No web/ directory found — web UI disabled");
     }
 
-    let server_config = graphirm_server::ServerConfig { host, port };
+    let api_key = std::env::var("GRAPHIRM_API_KEY").map_err(|_| {
+        GraphirmError::Config(
+            "GRAPHIRM_API_KEY environment variable is not set. \
+             Set it to a strong secret to protect the API. \
+             Example: GRAPHIRM_API_KEY=$(openssl rand -hex 32) ./graphirm serve"
+                .to_string(),
+        )
+    })?;
+
+    let allowed_origins: Vec<String> = std::env::var("GRAPHIRM_ALLOWED_ORIGINS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+
+    if !allowed_origins.is_empty() {
+        tracing::info!(origins = ?allowed_origins, "CORS restricted to configured origins");
+    } else {
+        tracing::warn!(
+            "GRAPHIRM_ALLOWED_ORIGINS not set — CORS allows any origin (fine for local dev)"
+        );
+    }
+
+    let server_config = graphirm_server::ServerConfig {
+        host,
+        port,
+        api_key,
+        allowed_origins,
+    };
     graphirm_server::start_server(
         graph,
         llm,

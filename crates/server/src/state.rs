@@ -42,6 +42,19 @@ pub struct AppState {
     /// Optional path to the web UI static files directory.
     /// When `Some`, the server serves these files as a fallback for non-API routes.
     pub web_dir: Option<PathBuf>,
+    /// API key for `Authorization: Bearer` / `?token=` (empty = auth disabled, tests only).
+    pub api_key: String,
+    /// CORS allowed origins; empty = allow any origin (local dev).
+    pub allowed_origins: Vec<String>,
+    /// Isolates rate-limit buckets (tests use unique values; production uses `0`).
+    pub rate_limit_shard: u64,
+}
+
+/// Unique per call — use in test [`AppState`] builders so parallel tests do not share one rate bucket.
+pub fn next_test_rate_limit_shard() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Bookkeeping for a single active or completed session.

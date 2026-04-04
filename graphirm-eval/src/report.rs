@@ -4,7 +4,11 @@ use std::path::Path;
 
 use crate::task::TaskResult;
 
-pub fn write_report(results: &[TaskResult], path: &Path) -> anyhow::Result<()> {
+pub fn write_report(
+    results: &[TaskResult],
+    path: &Path,
+    experiment_id: Option<&str>,
+) -> anyhow::Result<()> {
     // JSON
     std::fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))?;
     let json = serde_json::to_string_pretty(results)?;
@@ -13,9 +17,13 @@ pub fn write_report(results: &[TaskResult], path: &Path) -> anyhow::Result<()> {
     // Markdown (same path, .md extension)
     let md_path = path.with_extension("md");
     let mut md = format!(
-        "# graphirm-eval results\n\n**Date:** {}\n\n",
+        "# graphirm-eval results\n\n**Date:** {}\n",
         chrono::Utc::now().format("%Y-%m-%d %H:%M UTC")
     );
+    if let Some(id) = experiment_id {
+        md.push_str(&format!("**Experiment:** `{id}`\n"));
+    }
+    md.push('\n');
     let passed = results.iter().filter(|r| r.passed).count();
     md.push_str(&format!(
         "**Score:** {}/{} ({:.0}%)\n\n",

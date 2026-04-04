@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 
+import { graphirmAuthHeaders } from './authHeaders';
+
 export interface SseEvent {
   event: string;
   data: unknown;
@@ -34,7 +36,10 @@ export class SseSubscriber implements vscode.Disposable {
     try {
       const res = await fetch(url, {
         signal: this.abortController.signal,
-        headers: { Accept: 'text/event-stream' },
+        headers: {
+          Accept: 'text/event-stream',
+          ...graphirmAuthHeaders(),
+        },
       });
 
       if (!res.ok || !res.body) {

@@ -13,7 +13,7 @@ use graphirm_agent::AgentConfig;
 use graphirm_graph::GraphStore;
 use graphirm_llm::MockProvider;
 use graphirm_server::types::SseEvent;
-use graphirm_server::{AppState, create_router};
+use graphirm_server::{AppState, create_router, next_test_rate_limit_shard};
 use graphirm_tools::ToolRegistry;
 
 fn test_app_state_with_web_dir(web_dir: PathBuf) -> AppState {
@@ -29,6 +29,9 @@ fn test_app_state_with_web_dir(web_dir: PathBuf) -> AppState {
         default_config: AgentConfig::default(),
         memory_retriever: None,
         web_dir: Some(web_dir),
+        api_key: String::new(),
+        allowed_origins: vec![],
+        rate_limit_shard: next_test_rate_limit_shard(),
     }
 }
 
@@ -117,6 +120,9 @@ async fn test_no_web_dir_returns_404_for_root() {
         default_config: AgentConfig::default(),
         memory_retriever: None,
         web_dir: None,
+        api_key: String::new(),
+        allowed_origins: vec![],
+        rate_limit_shard: next_test_rate_limit_shard(),
     };
     let app = create_router(state);
 

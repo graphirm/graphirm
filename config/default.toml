@@ -1,3 +1,19 @@
+# -----------------------------------------------------------------------------
+# HTTP server security (environment variables — wired in `src/commands/serve.rs`)
+#
+# - GRAPHIRM_API_KEY (required for `graphirm serve`): shared secret; all `/api/*`
+#   routes except `/api/health` require `Authorization: Bearer <key>` or `?token=<key>`
+#   (needed for browser EventSource / SSE).
+# - GRAPHIRM_ALLOWED_ORIGINS: comma-separated CORS allowlist; when unset, any origin
+#   is allowed (local dev only).
+# - React web-app: set `VITE_API_KEY` in `web-app/.env.local` to match (embedded at build).
+# - VS Code extension: Settings → Graphirm → `graphirm.apiKey`.
+# - Eval harness: sets a fixed key on the child process; no manual env needed.
+# - [agent] disable_bash = true — refuse the bash tool and hide it from the LLM tool list
+#   (recommended for public / multi-tenant servers). See README → HTTP server security.
+# See: docs/plans/2026-04-01-public-readiness-p1-design.md
+# -----------------------------------------------------------------------------
+
 [model]
 provider = "openrouter"
 name = "deepseek/deepseek-v3.2"
@@ -11,6 +27,9 @@ max_iterations = 50
 parallel_tool_calls = true
 max_output_tokens = 4096
 timeout_seconds = 300
+# Public / shared servers: set `disable_bash = true` so the bash tool is refused
+# and the model is told not to use shell (see `AgentConfig::disable_bash`).
+# disable_bash = true
 # Soft escalation thresholds
 soft_escalation_turn = 8      # Turn at which to start checking for repeated calls
 soft_escalation_threshold = 2  # Number of repeated calls to trigger escalation

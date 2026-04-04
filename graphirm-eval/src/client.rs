@@ -8,6 +8,8 @@ use serde_json::Value;
 pub struct GraphirmClient {
     base: String,
     http: reqwest::Client,
+    /// When set, adds `Authorization: Bearer` to non-health API calls.
+    api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,6 +35,19 @@ impl GraphirmClient {
         Self {
             base: base_url.into(),
             http: reqwest::Client::new(),
+            api_key: None,
+        }
+    }
+
+    pub fn with_api_key(mut self, key: impl Into<String>) -> Self {
+        self.api_key = Some(key.into());
+        self
+    }
+
+    fn authorized(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.api_key {
+            Some(k) => req.bearer_auth(k),
+            None => req,
         }
     }
 
@@ -57,13 +72,15 @@ impl GraphirmClient {
         if let Some(filter) = segment_filter {
             body["segment_filter"] = serde_json::json!(filter);
         }
-        self.http
-            .post(format!("{}/api/sessions", self.base))
-            .json(&body)
-            .send()
-            .await?
-            .json()
-            .await
+        self.authorized(
+            self.http
+                .post(format!("{}/api/sessions", self.base))
+                .json(&body),
+        )
+        .send()
+        .await?
+        .json()
+        .await
     }
 
     pub async fn prompt(&self, session_id: &str, content: &str) -> reqwest::Result<()> {
@@ -71,11 +88,13 @@ impl GraphirmClient {
         struct Prompt<'a> {
             content: &'a str,
         }
-        self.http
-            .post(format!("{}/api/sessions/{}/prompt", self.base, session_id))
-            .json(&Prompt { content })
-            .send()
-            .await?;
+        self.authorized(
+            self.http
+                .post(format!("{}/api/sessions/{}/prompt", self.base, session_id))
+                .json(&Prompt { content }),
+        )
+        .send()
+        .await?;
         Ok(())
     }
 
@@ -92,8 +111,10 @@ impl GraphirmClient {
                 return Ok("timeout".to_string());
             }
             let resp: SessionResponse = self
-                .http
-                .get(format!("{}/api/sessions/{}", self.base, session_id))
+                .authorized(
+                    self.http
+                        .get(format!("{}/api/sessions/{}", self.base, session_id)),
+                )
                 .send()
                 .await?
                 .json()
@@ -106,40 +127,45 @@ impl GraphirmClient {
     }
 
     pub async fn get_messages(&self, session_id: &str) -> reqwest::Result<Vec<Value>> {
-        self.http
-            .get(format!(
-                "{}/api/sessions/{}/messages",
-                self.base, session_id
-            ))
-            .send()
-            .await?
-            .json()
-            .await
+        self.authorized(self.http.get(format!(
+            "{}/api/sessions/{}/messages",
+            self.base, session_id
+        )))
+        .send()
+        .await?
+        .json()
+        .await
     }
 
     pub async fn get_knowledge(&self, session_id: &str) -> reqwest::Result<Vec<Value>> {
-        self.http
-            .get(format!("{}/api/graph/{}/knowledge", self.base, session_id))
-            .send()
-            .await?
-            .json()
-            .await
+        self.authorized(
+            self.http
+                .get(format!("{}/api/graph/{}/knowledge", self.base, session_id)),
+        )
+        .send()
+        .await?
+        .json()
+        .await
     }
 
     pub async fn get_graph(&self, session_id: &str) -> reqwest::Result<GraphResponse> {
-        self.http
-            .get(format!("{}/api/graph/{}", self.base, session_id))
-            .send()
-            .await?
-            .json()
-            .await
+        self.authorized(
+            self.http
+                .get(format!("{}/api/graph/{}", self.base, session_id)),
+        )
+        .send()
+        .await?
+        .json()
+        .await
     }
 
     /// Cancel and remove a session. Fires the CancellationToken, stopping any in-flight agent loop.
     pub async fn delete_session(&self, session_id: &str) -> reqwest::Result<()> {
         let _ = self
-            .http
-            .delete(format!("{}/api/sessions/{}", self.base, session_id))
+            .authorized(
+                self.http
+                    .delete(format!("{}/api/sessions/{}", self.base, session_id)),
+            )
             .send()
             .await?;
         Ok(())

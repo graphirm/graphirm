@@ -26,6 +26,8 @@ Powers the VS Code/Cursor extension and the `graphirm-eval` harness. Built on `a
 
 ## Session Options
 
+New sessions clone **`AppState.default_config`** (`AgentConfig` from `config/default.toml` at startup), including **`disable_bash`**. There is no per-request override; use TOML for public deploys.
+
 `CreateSessionRequest` supports two segment-related fields:
 
 | Field | Type | Effect |

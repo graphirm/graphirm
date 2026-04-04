@@ -43,20 +43,17 @@ now document `GRAPHIRM_API_KEY`, `GRAPHIRM_ALLOWED_ORIGINS`, web-app `VITE_API_K
 VS Code `graphirm.apiKey`, and SSE `?token=`; cross-link to
 `docs/plans/2026-04-01-public-readiness-p1-design.md`.
 
-### Bash tool disable flag (public mode) — P1 · M
+### ✅ Bash tool disable flag (public mode) — P1 · M
 
-The `bash` tool runs arbitrary shell commands on the server. HITL gates it, but
-`POST /api/sessions/{id}/auto-approve` (which also requires no auth currently) can bypass it.
-With auth in place this risk is lower, but for a shared public instance bash should be
-opt-in. Add `disable_bash: bool` (default `false`) to `AgentConfig`; when true, `BashTool::execute`
-returns `ExecutionFailed("bash is disabled on this server")`. Announce the restriction in
-the session system prompt so the agent adapts.
+**Done (2026-04-05).** `AgentConfig.disable_bash` (default `false`) in `[agent]` TOML. When true:
+`BashTool::execute` returns `ExecutionFailed("bash is disabled on this server")`; `ToolContext`
+carries the flag; `stream_and_record` omits `bash` from tool definitions sent to the LLM;
+`Session::new` / `Session::restore` append an idempotent system-prompt notice via
+`apply_disable_bash_system_notice()`; subagents inherit lock-down from `delegate` (`parent_disable_bash`)
+and `build_scoped_tools` skips `bash`. Commented example in `config/default.toml`.
 
-**Key files:**
-- `crates/agent/src/config.rs` — `disable_bash: bool`
-- `crates/tools/src/bash.rs` — early-return when flag is set
-- `crates/server/src/routes.rs` — inject flag into session config at creation
-- `config/default.toml` — `disable_bash = false` (commented example for public installs)
+**Key files:** `crates/agent/src/config.rs`, `session.rs`, `workflow.rs`, `multi.rs`, `delegate.rs`;
+`crates/tools/src/bash.rs`, `lib.rs` (`ToolContext`); `config/default.toml`.
 
 ### Per-session LLM spend cap — P2 · S
 
@@ -384,6 +381,23 @@ over ~1s with natural inter-token gaps (was 2ms dump). 8 new tests.
 - `web-app/src/components/ChatPane.tsx`, `App.tsx` — chat + `GraphCanvas` pass-through
 - `web-app/src/hooks/useGraphData.ts` — `appendProvisionalStreamingNode`, streaming effect, `streamingRef`
 - `web-app/src/components/GraphCanvas.tsx` — `streamingMessage` → `useGraphData`
+
+#### Cinematic structured-response UX (epic) — P2 · L
+
+**Epic:** Evolve chat + canvas from a single streaming markdown blob to **staged, typographically distinct** presentation: segment “classes” (and optional richer rhetorical labels), plus **optional motion** that ties streaming text, structured segments, and extracted entities/Knowledge to the graph — without hiding meaning behind animation or breaking accessibility.
+
+**Already in the product (foundation, not this epic):** Real SSE token streaming (`docs/plans/2026-03-31-streaming-sse-delta.md`). Assistant **segments** as child `Content` nodes + structured JSON from the model + **GLiNER2 fallback** + `segment_filter` for context (`docs/plans/2026-03-10-structured-llm-responses.md`, `docs/plans/2026-03-15-structured-segments-phase5-6.md`, `docs/plans/2026-03-15-segment-context-filter-wiring.md`). **Gap:** segment extraction and knowledge persistence still run **after** the turn completes; the web UI does not yet treat segments as first-class **live** chat/canvas affordances (labels, beats, entity choreography).
+
+**Open design (before implementation):**
+
+- **Taxonomy** — align UI with current segment types (`observation`, `reasoning`, `code`, `plan`, `answer`) vs extend toward rhetorical roles (e.g. question, option, conclusion, “understanding”) and how that maps to prompts + GLiNER labels.
+- **Protocol** — mid-stream segment/entity hints via SSE vs post-hoc reveal only; ordering vs `message_delta`; payload size and backpressure.
+- **Presentation** — chat-only vs synchronized highlights on the whiteboard (e.g. Knowledge nodes appearing or linking with controlled motion); respect **`prefers-reduced-motion`** and ensure critical content is available without animation.
+- **Perf** — avoid layout thrash on every token; optional Pretext/canvas paths if dense text animation is pursued (see Pretext subsection above).
+
+**Suggested workstreams when a plan exists:** (1) UX + content design spec, (2) server/SSE + agent ordering for segment/entity events, (3) web-app `ChatPane` + `InteractionNode` + optional graph choreography, (4) eval smoke + a11y checklist.
+
+**Plan:** TBD — add `docs/plans/YYYY-MM-DD-cinematic-structured-response-ux.md` when this epic is kicked off.
 
 #### Text-aware edge avoidance — P3 · M (partial, 2026-03-30)
 

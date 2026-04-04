@@ -188,13 +188,11 @@ fn build_openai_body(
                 .content
                 .iter()
                 .filter_map(|p| match p {
-                    ContentPart::ToolResult { id, content, .. } => {
-                        Some(serde_json::json!({
-                            "role": "tool",
-                            "tool_call_id": id,
-                            "content": content,
-                        }))
-                    }
+                    ContentPart::ToolResult { id, content, .. } => Some(serde_json::json!({
+                        "role": "tool",
+                        "tool_call_id": id,
+                        "content": content,
+                    })),
                     _ => None,
                 })
                 .collect(),
@@ -548,16 +546,12 @@ mod tests {
         let tc = &chunk.choices[0].delta.tool_calls.as_ref().unwrap()[0];
         assert_eq!(tc.index, 0);
         assert_eq!(tc.id.as_deref(), Some("call_1"));
-        assert_eq!(
-            tc.function.as_ref().unwrap().name.as_deref(),
-            Some("bash")
-        );
+        assert_eq!(tc.function.as_ref().unwrap().name.as_deref(), Some("bash"));
     }
 
     #[test]
     fn test_parse_sse_usage_chunk() {
-        let json =
-            r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50}}"#;
+        let json = r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50}}"#;
         let chunk: SseChunk = serde_json::from_str(json).unwrap();
         let u = chunk.usage.unwrap();
         assert_eq!(u.prompt_tokens, 100);
@@ -604,10 +598,14 @@ mod tests {
         drop(tx);
 
         let e1 = rx.recv().await.unwrap();
-        assert!(matches!(e1, StreamEvent::ToolCallStart { ref id, ref name } if id == "c1" && name == "bash"));
+        assert!(
+            matches!(e1, StreamEvent::ToolCallStart { ref id, ref name } if id == "c1" && name == "bash")
+        );
 
         let e2 = rx.recv().await.unwrap();
-        assert!(matches!(e2, StreamEvent::ToolCallDelta { ref id, ref arguments_delta } if id == "c1" && arguments_delta == r#"{"cmd":"#));
+        assert!(
+            matches!(e2, StreamEvent::ToolCallDelta { ref id, ref arguments_delta } if id == "c1" && arguments_delta == r#"{"cmd":"#)
+        );
 
         let e3 = rx.recv().await.unwrap();
         assert!(matches!(e3, StreamEvent::ToolCallEnd { ref id } if id == "c1"));

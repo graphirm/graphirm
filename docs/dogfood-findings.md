@@ -4,6 +4,8 @@ Cursor evaluation log for graphirm agent sessions. One row per completed task.
 
 | Date | Session ID | Task | Grade | Finding |
 |------|-----------|------|-------|---------|
+| 2026-04-04 | 9fb3330c | dogfood-create-session-workspace-test | hung | Task: add `CreateSessionRequest.workspace` serde test in `types.rs` (~L470). `POST /prompt` → 202; ~3.5 min polling — `status=running`, messages length 1 (user only), no assistant/tool rows. Aborted `POST .../abort` → 204. Same failure mode as fa29edc5 on this `:3000` instance. |
+| 2026-04-04 | fa29edc5 | options-mip-bs-scaffold | hung | `POST /prompt` accepted; session stayed `running` ~4+ min with only user message in `/messages` — no assistant/tool rows. Aborted via `POST /api/sessions/:id/abort` (204). Likely LLM stall on `:3000` server (Docker/spoke) or upstream timeout. |
 | 2026-03-20 | 6cb219fe | message-count-field | partial | Struct field correct; session failed mid-run — agent used `cd` in bash (state not persisted) and was misled by Cursor worktree paths in ls output |
 | 2026-03-20 | 94ce01fd | tool-call-count-field | partial | All code correct and compiles; session failed at context overflow (273k > 262k) — agent read full routes.rs (2000+ lines) multiple times instead of grep → targeted read |
 | 2026-03-20 | 0b1fde7d | health-session-count | partial | All code correct and compiles (incl. test update); context overflow again — Qwen ignores grep-first system prompt instruction; fix is to provide exact line numbers in task prompt |

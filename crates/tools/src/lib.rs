@@ -55,6 +55,8 @@ pub struct ToolContext {
     /// Optional impact provider — present when `pre_edit_impact` is enabled.
     /// Used by the pre-execution hook in `workflow.rs` to generate impact briefs.
     pub impact_provider: Option<Arc<dyn crate::impact::ImpactProvider>>,
+    /// When true, `bash` refuses execution (matches session `AgentConfig::disable_bash`).
+    pub disable_bash: bool,
 }
 
 impl ToolContext {
@@ -206,6 +208,7 @@ pub(crate) mod tests {
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
             knowledge_retriever: None,
             impact_provider: None,
+            disable_bash: false,
         }
     }
 

@@ -206,6 +206,10 @@ pub struct AgentConfig {
     /// execution without excessive discussion. Default true.
     #[serde(default = "default_enforce_work_loop")]
     pub enforce_work_loop: bool,
+    /// When true, the `bash` tool refuses all invocations (public / shared servers).
+    /// A short notice is appended to the system prompt when a session starts.
+    #[serde(default)]
+    pub disable_bash: bool,
 }
 
 /// Objective weights for composite score optimisation.
@@ -396,6 +400,7 @@ impl Default for AgentConfig {
             read_loop_threshold: default_read_loop_threshold(),
             budget_warning_thresholds: default_budget_warning_thresholds(),
             enforce_work_loop: default_enforce_work_loop(),
+            disable_bash: false,
         }
     }
 }
@@ -475,6 +480,8 @@ struct AgentConfigSection {
     budget_warning_thresholds: Vec<f64>,
     #[serde(default = "default_enforce_work_loop")]
     enforce_work_loop: bool,
+    #[serde(default)]
+    disable_bash: bool,
 }
 
 fn default_system_prompt() -> String {
@@ -526,6 +533,7 @@ impl AgentConfig {
             read_loop_threshold: file.agent.read_loop_threshold,
             budget_warning_thresholds: file.agent.budget_warning_thresholds,
             enforce_work_loop: file.agent.enforce_work_loop,
+            disable_bash: file.agent.disable_bash,
         })
     }
 
@@ -541,6 +549,23 @@ impl AgentConfig {
     /// Default: allow (tools not listed in permissions are permitted).
     pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
         !matches!(self.permissions.get(tool_name), Some(Permission::Deny))
+    }
+
+    /// Appends a system-prompt notice when [`Self::disable_bash`] is true.
+    /// Idempotent if the notice fragment is already present.
+    pub fn apply_disable_bash_system_notice(&mut self) {
+        if !self.disable_bash {
+            return;
+        }
+        const SNIPPET: &str = "## Server restriction\nThe `bash` tool is disabled on this server.";
+        if self.system_prompt.contains(SNIPPET) {
+            return;
+        }
+        self.system_prompt.push_str(concat!(
+            "\n\n## Server restriction\n",
+            "The `bash` tool is disabled on this server. Do not invoke `bash`; use `read`, ",
+            "`write`, `edit`, `grep`, `find`, `ls`, `cargo_check`, and other non-shell tools.\n",
+        ));
     }
 }
 
@@ -632,6 +657,36 @@ mod tests {
             vec![0.5, 0.8],
             "budget_warning_thresholds should read [0.5, 0.8] from TOML"
         );
+    }
+
+    #[test]
+    fn test_disable_bash_default_false() {
+        let config = AgentConfig::default();
+        assert!(!config.disable_bash);
+    }
+
+    #[test]
+    fn test_disable_bash_toml_parse() {
+        let toml_str = r#"
+            [agent]
+            name = "test"
+            model = "gpt-4"
+            system_prompt = "test"
+            disable_bash = true
+        "#;
+        let config = AgentConfig::from_toml(toml_str).unwrap();
+        assert!(config.disable_bash);
+    }
+
+    #[test]
+    fn test_apply_disable_bash_system_notice_idempotent() {
+        let mut config = AgentConfig::default();
+        config.disable_bash = true;
+        config.apply_disable_bash_system_notice();
+        let once = config.system_prompt.clone();
+        config.apply_disable_bash_system_notice();
+        assert_eq!(once, config.system_prompt);
+        assert!(config.system_prompt.contains("Do not invoke `bash`"));
     }
 
     #[test]

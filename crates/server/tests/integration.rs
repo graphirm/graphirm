@@ -18,7 +18,7 @@ use graphirm_llm::MockProvider;
 use graphirm_server::types::{
     GraphResponse, HealthResponse, SessionResponse, SessionStatus, SseEvent,
 };
-use graphirm_server::{AppState, create_router};
+use graphirm_server::{AppState, create_router, next_test_rate_limit_shard};
 use graphirm_tools::ToolRegistry;
 
 fn test_app_state() -> AppState {
@@ -34,6 +34,9 @@ fn test_app_state() -> AppState {
         default_config: AgentConfig::default(),
         memory_retriever: None,
         web_dir: None,
+        api_key: String::new(),
+        allowed_origins: vec![],
+        rate_limit_shard: next_test_rate_limit_shard(),
     }
 }
 

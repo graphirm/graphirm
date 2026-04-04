@@ -7,8 +7,14 @@ use axum::extract::{Json, Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, patch, post};
 use chrono::Utc;
+use http::Request as HttpRequest;
+use std::net::IpAddr;
 use tokio_util::sync::CancellationToken;
-use tower_http::cors::{Any, CorsLayer};
+use tower_governor::GovernorLayer;
+use tower_governor::errors::GovernorError;
+use tower_governor::governor::GovernorConfigBuilder;
+use tower_governor::key_extractor::{KeyExtractor, PeerIpKeyExtractor};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
@@ -17,16 +23,15 @@ use graphirm_agent::{AgentConfig, EventBus, HitlDecision, HitlGate, Session, run
 use graphirm_graph::{Direction, EdgeType, GraphEdge, GraphNode, NodeId, NodeType, TaskStatus};
 
 use crate::error::ServerError;
-use crate::middleware::request_logging;
+use crate::middleware::{api_key_auth, request_logging};
 use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
     AnnotationRequest, AutoApproveRequest, ContextReportRow, CreateKnowledgeRequest,
     CreateSessionRequest, EditInteractionRequest, ExportQuery, GraphResponse, HealthResponse,
     NodeAction, NodeActionRequest, PatchKnowledgeRequest, PatchTaskStatusRequest,
-    PinnedKnowledgeQuery, PromptRequest,
-    RateTurnRequest, RenameSessionRequest, SessionId, SessionResponse, SessionStatus, SseEvent,
-    SseEventType, StrategyReport, SubgraphQuery,
+    PinnedKnowledgeQuery, PromptRequest, RateTurnRequest, RenameSessionRequest, SessionId,
+    SessionResponse, SessionStatus, SseEvent, SseEventType, StrategyReport, SubgraphQuery,
 };
 
 /// Build a brief workspace context block to inject into the system prompt.
@@ -76,19 +81,33 @@ async fn build_workspace_context(path: &std::path::Path) -> String {
 
 /// Build the axum router with all routes wired to shared [`AppState`].
 ///
-/// Middleware applied (outermost → innermost):
-/// - [`CorsLayer`] — permissive CORS, allows any origin/method/header.
-/// - [`TraceLayer`] — per-request tracing spans at INFO level.
+/// Middleware applied on the merged router (outermost → innermost):
+/// - [`TraceLayer`], request logging, [`CorsLayer`]
+///
+/// `/api/health` has no API key check and no rate limit. All other routes (including unknown
+/// `/api/*` → 404) require `Authorization: Bearer` when an API key is configured, and are
+/// rate-limited per IP. SSE routes are rate-limited but hold long connections (each request
+/// still counts once at connect time).
 pub fn create_router(state: AppState) -> Router {
     let web_dir = state.web_dir.clone();
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors = build_cors_layer(&state.allowed_origins);
 
-    let mut router = Router::new()
-        .route("/api/health", get(health))
+    let governor_conf = Arc::new({
+        let mut b = GovernorConfigBuilder::default();
+        b.period(std::time::Duration::from_secs(1));
+        // Allow interactive bursts (e.g. web UI + scenario tests); sustained cap ~60/min per key.
+        b.burst_size(60);
+        b.key_extractor(ShardedIpKeyExtractor {
+            shard: state.rate_limit_shard,
+        })
+        .finish()
+        .expect("governor config")
+    });
+
+    let health_router = Router::new().route("/api/health", get(health));
+
+    let main_router = Router::new()
         // Session management
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
@@ -143,7 +162,16 @@ pub fn create_router(state: AppState) -> Router {
         // SSE event streams
         .route("/api/events", get(sse_handler))
         .route("/api/events/{session_id}", get(sse_session_handler))
-        // Middleware
+        .fallback(fallback_not_found)
+        .layer(GovernorLayer::new(governor_conf));
+
+    let mut router = Router::new()
+        .merge(health_router)
+        .merge(main_router)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            api_key_auth,
+        ))
         .layer(axum::middleware::from_fn(request_logging))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
@@ -154,6 +182,56 @@ pub fn create_router(state: AppState) -> Router {
     }
 
     router
+}
+
+fn build_cors_layer(allowed_origins: &[String]) -> CorsLayer {
+    let origins: Vec<axum::http::HeaderValue> = allowed_origins
+        .iter()
+        .filter_map(|o| o.trim().parse().ok())
+        .collect();
+
+    if origins.is_empty() {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        tracing::info!(count = origins.len(), "CORS allowlist active");
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods(Any)
+            .allow_headers(Any)
+    }
+}
+
+async fn fallback_not_found() -> StatusCode {
+    StatusCode::NOT_FOUND
+}
+
+/// Rate-limit by peer IP + [`AppState::rate_limit_shard`] so in-process tests get isolated buckets.
+#[derive(Clone, Copy)]
+struct ShardedIpKeyExtractor {
+    shard: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct RateLimitKey {
+    ip: IpAddr,
+    shard: u64,
+}
+
+impl KeyExtractor for ShardedIpKeyExtractor {
+    type Key = RateLimitKey;
+
+    fn extract<T>(&self, req: &HttpRequest<T>) -> Result<Self::Key, GovernorError> {
+        let ip = PeerIpKeyExtractor
+            .extract(req)
+            .unwrap_or(IpAddr::from([127, 0, 0, 1]));
+        Ok(RateLimitKey {
+            ip,
+            shard: self.shard,
+        })
+    }
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -790,13 +868,15 @@ async fn patch_session_task_status(
                 "Node {node_id} is not in this session graph (within depth 10)"
             )));
         }
-        graph.patch_task_status(&task_nid, status).map_err(|e| match e {
-            graphirm_graph::GraphError::NotTaskNode(m) => ServerError::BadRequest(m),
-            graphirm_graph::GraphError::NodeNotFound(m) => {
-                ServerError::NotFound(format!("Node not found: {m}"))
-            }
-            other => ServerError::Graph(other),
-        })
+        graph
+            .patch_task_status(&task_nid, status)
+            .map_err(|e| match e {
+                graphirm_graph::GraphError::NotTaskNode(m) => ServerError::BadRequest(m),
+                graphirm_graph::GraphError::NodeNotFound(m) => {
+                    ServerError::NotFound(format!("Node not found: {m}"))
+                }
+                other => ServerError::Graph(other),
+            })
     })
     .await
     .map_err(|e| ServerError::Internal(e.to_string()))??;
@@ -1374,7 +1454,7 @@ fn agent_event_to_sse(session_id: &str, event: &graphirm_agent::AgentEvent) -> S
                 SseEventType::MessageDelta,
                 serde_json::json!({ "node_id": node_id.to_string(), "text": text }),
             )
-        },
+        }
         AgentEvent::MessageEnd { node_id } => (
             SseEventType::MessageEnd,
             serde_json::json!({ "node_id": node_id.to_string() }),
@@ -1451,7 +1531,7 @@ pub(crate) mod test_helpers {
     use graphirm_graph::GraphStore;
     use graphirm_llm::MockProvider;
 
-    use crate::state::AppState;
+    use crate::state::{AppState, next_test_rate_limit_shard};
     use crate::types::SseEvent;
 
     /// Build a minimal [`AppState`] backed by an in-memory graph and a noop LLM.
@@ -1468,6 +1548,9 @@ pub(crate) mod test_helpers {
             default_config: AgentConfig::default(),
             memory_retriever: None,
             web_dir: None,
+            api_key: String::new(),
+            allowed_origins: vec![],
+            rate_limit_shard: next_test_rate_limit_shard(),
         }
     }
 }
@@ -1508,6 +1591,61 @@ mod tests {
         let health: HealthResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(health.status, "ok");
         assert!(!health.version.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_health_ok_without_bearer_when_api_key_configured() {
+        let mut state = test_app_state();
+        state.api_key = "secret".to_string();
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_sessions_401_without_bearer_when_api_key_configured() {
+        let mut state = test_app_state();
+        state.api_key = "secret".to_string();
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_sessions_ok_with_bearer_when_api_key_configured() {
+        let mut state = test_app_state();
+        state.api_key = "secret".to_string();
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions")
+                    .header("Authorization", "Bearer secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -2710,9 +2848,12 @@ mod tests {
         use graphirm_llm::StreamEvent;
 
         let nid = NodeId::from("stream-node-1");
-        let sse_start = agent_event_to_sse("session-1", &AgentEvent::MessageStart {
-            node_id: nid.clone(),
-        });
+        let sse_start = agent_event_to_sse(
+            "session-1",
+            &AgentEvent::MessageStart {
+                node_id: nid.clone(),
+            },
+        );
         assert!(matches!(
             sse_start.event_type,
             crate::types::SseEventType::MessageStart

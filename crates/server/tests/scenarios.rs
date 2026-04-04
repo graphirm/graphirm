@@ -21,7 +21,7 @@ use graphirm_graph::GraphStore;
 use graphirm_llm::MockProvider;
 use graphirm_server::request_log::RequestLogger;
 use graphirm_server::types::{GraphResponse, SessionResponse, SseEvent};
-use graphirm_server::{AppState, create_router};
+use graphirm_server::{AppState, create_router, next_test_rate_limit_shard};
 use graphirm_tools::ToolRegistry;
 
 fn scenario_state() -> AppState {
@@ -39,6 +39,9 @@ fn scenario_state() -> AppState {
         default_config: AgentConfig::default(),
         memory_retriever: None,
         web_dir: None,
+        api_key: String::new(),
+        allowed_origins: vec![],
+        rate_limit_shard: next_test_rate_limit_shard(),
     }
 }
 

@@ -1,5 +1,21 @@
 import { getCurrentSessionId } from './main.js';
 
+/** Absolute API URL (webview origin is vscode-webview://). */
+function graphirmApiUrl(path) {
+  const base =
+    typeof window !== 'undefined' && window.__GRAPHIRM_SERVER__
+      ? String(window.__GRAPHIRM_SERVER__).replace(/\/$/, '')
+      : '';
+  return base ? `${base}${path}` : path;
+}
+
+function graphirmAuthHeaders(extra = {}) {
+  const h = { ...extra };
+  const k = typeof window !== 'undefined' && window.__GRAPHIRM_API_KEY__;
+  if (k) h.Authorization = `Bearer ${k}`;
+  return h;
+}
+
 let _send;
 let _thinking = false;
 let hitlPaused = false;
@@ -138,7 +154,10 @@ export function syncPauseButtonState(isPaused) {
 function toggleHitlPause(sessionId, btn) {
   hitlPaused = !hitlPaused;
   const endpoint = hitlPaused ? 'pause' : 'resume';
-  fetch(`/api/sessions/${sessionId}/${endpoint}`, { method: 'POST' })
+  fetch(graphirmApiUrl(`/api/sessions/${sessionId}/${endpoint}`), {
+    method: 'POST',
+    headers: graphirmAuthHeaders(),
+  })
     .catch((err) => console.error('[HITL] pause/resume failed:', err));
   btn.textContent = hitlPaused ? '▶ Resume' : '⏸ Pause';
   btn.classList.toggle('hitl-paused', hitlPaused);
@@ -195,9 +214,9 @@ export function renderApprovalCard({ node_id, tool_name, arguments: args, is_pau
 }
 
 function postHitlAction(sessionId, nodeId, body) {
-  fetch(`/api/graph/${sessionId}/node/${nodeId}/action`, {
+  fetch(graphirmApiUrl(`/api/graph/${sessionId}/node/${nodeId}/action`), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: graphirmAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   }).catch((err) => console.error('[HITL] action request failed:', err));
 }
@@ -244,7 +263,10 @@ window.hitlModifyConfirm = function hitlModifyConfirm(sessionId, nodeId) {
 };
 
 window.hitlResume = function hitlResume(sessionId, nodeId) {
-  fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' })
+  fetch(graphirmApiUrl(`/api/sessions/${sessionId}/resume`), {
+    method: 'POST',
+    headers: graphirmAuthHeaders(),
+  })
     .catch((err) => console.error('[HITL] resume request failed:', err));
   resolveHitlCard(nodeId, '▶ Resumed');
   syncPauseButtonState(false);

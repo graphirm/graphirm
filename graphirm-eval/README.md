@@ -28,13 +28,18 @@ cargo run -p graphirm-eval -- --filter coding
 # Run all non-memory tasks
 cargo run -p graphirm-eval -- --skip-memory
 
+# Numbered experiment — from repo root, writes ./results/experiments/<ID>/eval.json and eval.md
+# (use any label, e.g. E1, 2026-04-02-smoke). Overrides default report path unless you pass --report.
+cargo run -p graphirm-eval -- --skip-memory --experiment E1 --filter basic
+
 # Run all tasks (including memory — requires EMBEDDING_BACKEND)
 export EMBEDDING_BACKEND=mistral/codestral-embed
 cargo run -p graphirm-eval
 
 # Results are written to:
-#   results/latest.json   — machine-readable
+#   results/latest.json   — machine-readable (default)
 #   results/latest.md     — human-readable Markdown table
+#   ./results/experiments/<ID>/eval.json + eval.md — when using --experiment <ID> (cwd = repo root)
 ```
 
 ## Task categories
@@ -67,7 +72,7 @@ graphirm-eval/
 ```
 
 The harness:
-1. Spawns a `graphirm serve` process against a temporary SQLite database
+1. Spawns a `graphirm serve` process against a temporary SQLite database (sets `GRAPHIRM_API_KEY` to a fixed test secret and sends `Authorization: Bearer` on API calls)
 2. Polls `GET /api/health` until the server is ready (up to 10s)
 3. For each task: creates a session, sends prompts sequentially, waits for idle
 4. Applies the verifier (response substring, file contents, command exit code, API query)

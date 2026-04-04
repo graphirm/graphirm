@@ -35,6 +35,11 @@
           "type": "string",
           "default": "http://localhost:5555",
           "description": "URL of the running graphirm server"
+        },
+        "graphirm.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Bearer token for GRAPHIRM_API_KEY (leave empty if the server has no API key)"
         }
       }
     }
