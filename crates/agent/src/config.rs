@@ -56,6 +56,13 @@ pub struct SegmentConfig {
     /// Minimum confidence threshold for GLiNER2 spans (0.0–1.0).
     #[serde(default = "default_segment_min_confidence")]
     pub min_confidence: f64,
+    /// Optional per-label text appended after `entities` in the GLiNER schema (Fastino-style
+    /// `[DESCRIPTION] label: ...`) to improve zero-shot span recall.
+    #[serde(default)]
+    pub label_descriptions: Option<HashMap<String, String>>,
+    /// Optional per-label confidence overrides; keys not listed use `min_confidence`.
+    #[serde(default)]
+    pub label_min_confidence: Option<HashMap<String, f64>>,
 }
 
 fn default_segment_labels() -> Vec<String> {
@@ -88,6 +95,8 @@ impl Default for SegmentConfig {
             structured_output: default_structured_output(),
             gliner2_fallback: default_gliner2_fallback(),
             min_confidence: default_segment_min_confidence(),
+            label_descriptions: None,
+            label_min_confidence: None,
         }
     }
 }
@@ -916,6 +925,40 @@ mod tests {
         assert_eq!(cfg.labels, vec!["code", "answer"]);
         assert!(!cfg.structured_output);
         assert!((cfg.min_confidence - 0.6).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_segment_config_label_maps_deserialize() {
+        let toml_str = r#"
+            enabled = true
+            labels = ["plan"]
+            min_confidence = 0.4
+
+            [label_descriptions]
+            plan = "Phased steps or roadmap"
+
+            [label_min_confidence]
+            plan = 0.35
+        "#;
+        let cfg: SegmentConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            cfg.label_descriptions
+                .as_ref()
+                .unwrap()
+                .get("plan")
+                .unwrap(),
+            "Phased steps or roadmap"
+        );
+        assert!(
+            (cfg.label_min_confidence
+                .as_ref()
+                .unwrap()
+                .get("plan")
+                .unwrap()
+                - 0.35)
+                .abs()
+                < f64::EPSILON
+        );
     }
 
     #[test]

@@ -152,7 +152,7 @@ pub async fn run_label_exploration(
         total_chars += text_len;
 
         let raw = extractor
-            .extract_raw(&turn.text, labels, min_confidence)
+            .extract_raw(&turn.text, labels, min_confidence, None, None)
             .await?;
 
         if raw.is_empty() {

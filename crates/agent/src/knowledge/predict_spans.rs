@@ -38,7 +38,7 @@ pub async fn run_predict_spans(
     let mut out = Vec::with_capacity(turns.len());
     for turn in turns {
         let raw: Vec<RawOnnxEntity> = extractor
-            .extract_raw(&turn.text, labels, min_confidence)
+            .extract_raw(&turn.text, labels, min_confidence, None, None)
             .await?;
         let spans: Vec<SpanPrediction> = raw
             .into_iter()

@@ -278,3 +278,8 @@ labels = ["observation", "reasoning", "code", "plan", "answer"]
 structured_output = true
 gliner2_fallback = true
 min_confidence = 0.5
+# Optional GLiNER tuning (see docs/guides/gliner2-setup.md — Segment fallback):
+# [agent.segments.label_descriptions]
+# plan = "Roadmap or phased execution outline"
+# [agent.segments.label_min_confidence]
+# plan = 0.35

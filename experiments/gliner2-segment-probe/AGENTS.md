@@ -1,6 +1,6 @@
 # gliner2-segment-probe
 
-Runs **GLiNER2 ONNX** over arbitrary text using the **same code path** as segment fallback in `graphirm_agent::knowledge::segments::segment_extract_gliner2` (labels + `min_confidence` match `SegmentConfig` defaults unless overridden).
+Runs **GLiNER2 ONNX** over arbitrary text using the **same code path** as segment fallback in `graphirm_agent::knowledge::segments::segment_extract_gliner2` (labels + `min_confidence` match `SegmentConfig` defaults unless overridden). Optional `label_descriptions` / `label_min_confidence` are **TOML-only** for `graphirm serve`; the probe passes `None` for both (see `docs/guides/gliner2-setup.md` — Segment fallback).
 
 ## Prerequisites
 
@@ -35,6 +35,8 @@ cargo run -p gliner2-segment-probe -- \
 ## Output
 
 JSON array of objects: `segment_type`, `content`, `start`, `end` (byte offsets into the **original** input string). Order follows GLiNER dedupe logic (score-based), not necessarily top-to-bottom reading order.
+
+A full multi-threshold sweep for `fixtures/sample_planning.txt` (local run, pinned model path in `meta`) is saved at **`results/sample_planning-gliner2-sweep.json`**.
 
 ## How to test
 

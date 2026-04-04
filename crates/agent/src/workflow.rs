@@ -648,6 +648,8 @@ pub async fn stream_and_record(
                                 &raw_text,
                                 &seg_config.labels,
                                 seg_config.min_confidence,
+                                seg_config.label_descriptions.as_ref(),
+                                seg_config.label_min_confidence.as_ref(),
                             )
                             .await
                             .map(|s| (s, "gliner2"))
@@ -687,6 +689,8 @@ pub async fn stream_and_record(
                                 &raw_text,
                                 &seg_config.labels,
                                 seg_config.min_confidence,
+                                seg_config.label_descriptions.as_ref(),
+                                seg_config.label_min_confidence.as_ref(),
                             )
                             .await
                             .map(|s| (s, "gliner2"))

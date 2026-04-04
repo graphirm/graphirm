@@ -34,6 +34,23 @@ use serde::Deserialize;
 
 use crate::error::AgentError;
 
+/// Maximum sequence length for the GLiNER ONNX encoder (DeBERTa-style; matches `gliner2_onnx` expectations).
+/// HF `tokenizer_config.model_max_length` is often a useless sentinel; we cap explicitly.
+const GLINER_ENCODER_MAX_LEN: usize = 512;
+
+/// Resolve per-label GLiNER confidence threshold (`min_confidence` default, optional map overrides).
+pub(crate) fn gliner_threshold_for_label(
+    label_idx: usize,
+    entity_types: &[String],
+    min_confidence: f64,
+    overrides: Option<&HashMap<String, f64>>,
+) -> f64 {
+    overrides
+        .and_then(|m| m.get(&entity_types[label_idx]))
+        .copied()
+        .unwrap_or(min_confidence)
+}
+
 // ─── Config types ─────────────────────────────────────────────────────────────
 
 /// GLiNER2 ONNX model configuration, loaded from `gliner2_config.json`.
@@ -195,13 +212,15 @@ impl OnnxExtractor {
         text: &str,
         entity_types: &[String],
         min_confidence: f64,
+        label_descriptions: Option<&HashMap<String, String>>,
+        label_min_confidence: Option<&HashMap<String, f64>>,
     ) -> Result<Vec<RawOnnxEntity>, AgentError> {
         if text.is_empty() || entity_types.is_empty() {
             return Ok(vec![]);
         }
 
         let (input_ids, e_positions, word_offsets, text_start_idx, first_token_positions) =
-            self.build_ner_input(text, entity_types);
+            self.build_ner_input(text, entity_types, label_descriptions);
 
         if word_offsets.is_empty() {
             return Ok(vec![]);
@@ -329,7 +348,13 @@ impl OnnxExtractor {
         for (span_idx, &(word_start, word_end)) in spans.iter().enumerate() {
             for label_idx in 0..entity_types.len() {
                 let score = scores[[span_idx, label_idx]] as f64;
-                if score >= min_confidence {
+                let thresh = gliner_threshold_for_label(
+                    label_idx,
+                    entity_types,
+                    min_confidence,
+                    label_min_confidence,
+                );
+                if score >= thresh {
                     raw_entities.push((word_start, word_end, label_idx, score));
                 }
             }
@@ -372,7 +397,9 @@ impl OnnxExtractor {
         entity_types: &[String],
         min_confidence: f64,
     ) -> Result<super::extraction::ExtractionResponse, AgentError> {
-        let raw = self.extract_raw(text, entity_types, min_confidence).await?;
+        let raw = self
+            .extract_raw(text, entity_types, min_confidence, None, None)
+            .await?;
         Ok(raw_entities_to_extraction_response(raw))
     }
 
@@ -380,6 +407,9 @@ impl OnnxExtractor {
     ///
     /// Output format:
     /// `( [P] entities ( [E] label1 [E] label2 ... ) ) [SEP_TEXT] word1 word2 ...`
+    ///
+    /// Optional `label_descriptions` extend the task segment as in Fastino GLiNER2:
+    /// `entities [DESCRIPTION] label: text ...` before the inner `(` and `[E]` labels.
     ///
     /// Returns:
     /// - `input_ids`: full token sequence as i64 vec
@@ -392,6 +422,7 @@ impl OnnxExtractor {
         &self,
         text: &str,
         entity_types: &[String],
+        label_descriptions: Option<&HashMap<String, String>>,
     ) -> (Vec<i64>, Vec<usize>, Vec<(usize, usize)>, usize, Vec<usize>) {
         let mut tokens: Vec<i64> = Vec::new();
 
@@ -406,10 +437,21 @@ impl OnnxExtractor {
         let open_ids = encode_str("(");
         let close_ids = encode_str(")");
 
-        // ( [P] entities (
+        let mut task_segment = String::from("entities");
+        if let Some(map) = label_descriptions {
+            for label in entity_types {
+                if let Some(desc) = map.get(label)
+                    && !desc.is_empty()
+                {
+                    task_segment.push_str(&format!(" [DESCRIPTION] {}: {}", label, desc));
+                }
+            }
+        }
+
+        // ( [P] task_segment (
         tokens.extend_from_slice(&open_ids);
         tokens.push(self.tok_p);
-        tokens.extend_from_slice(&encode_str("entities"));
+        tokens.extend_from_slice(&encode_str(&task_segment));
         tokens.extend_from_slice(&open_ids);
 
         // [E] label1 [E] label2 ...
@@ -437,11 +479,19 @@ impl OnnxExtractor {
         let mut token_idx: usize = 0;
 
         for m in self.word_re.find_iter(text) {
-            word_offsets.push((m.start(), m.end()));
-            first_token_positions.push(token_idx);
-
             let word_lower = m.as_str().to_lowercase();
             let word_ids = encode_str(&word_lower);
+            if tokens.len() + word_ids.len() > GLINER_ENCODER_MAX_LEN {
+                tracing::warn!(
+                    kept_words = word_offsets.len(),
+                    dropped_tail_words = "at least 1",
+                    max_len = GLINER_ENCODER_MAX_LEN,
+                    "GLiNER NER input truncated to encoder max length"
+                );
+                break;
+            }
+            word_offsets.push((m.start(), m.end()));
+            first_token_positions.push(token_idx);
             token_idx += word_ids.len();
             tokens.extend(word_ids);
         }
@@ -672,6 +722,24 @@ pub async fn get_or_init_onnx_extractor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_gliner_threshold_for_label() {
+        let types = vec!["a".to_string(), "b".to_string()];
+        let mut m = HashMap::new();
+        m.insert("b".to_string(), 0.9);
+        assert!(
+            (super::gliner_threshold_for_label(0, &types, 0.5, Some(&m)) - 0.5).abs()
+                < f64::EPSILON
+        );
+        assert!(
+            (super::gliner_threshold_for_label(1, &types, 0.5, Some(&m)) - 0.9).abs()
+                < f64::EPSILON
+        );
+        assert!(
+            (super::gliner_threshold_for_label(1, &types, 0.5, None) - 0.5).abs() < f64::EPSILON
+        );
+    }
 
     #[test]
     fn test_build_schema_prefix_has_e_positions() {

@@ -94,6 +94,38 @@ GLINER2_MODEL_DIR=~/.cache/huggingface/hub/models--lmo3--gliner2-large-v1-onnx/s
 Both tests pass as of 2026-03-09 on the verified snapshot
 `6adb78ae8098685d239dda324cc124d948962c21`.
 
+## Segment fallback (structured assistant responses)
+
+When `[agent.segments]` is enabled and the LLM does not emit segment JSON, Graphirm runs GLiNER2 ONNX span extraction on the assistant text using the same `OnnxExtractor` stack as knowledge NER. You need:
+
+- `cargo build --features local-extraction`
+- `[agent.extraction]` with `local` or `hybrid` and a downloaded model directory (same as `GLINER2_MODEL_DIR` / `graphirm model download`)
+
+**Config (`SegmentConfig` in TOML):**
+
+| Field | Purpose |
+|-------|---------|
+| `min_confidence` | Default score floor for all labels (0.0–1.0). |
+| `label_descriptions` | Optional map: label → short description. Appended to the task segment after the word `entities` as ` [DESCRIPTION] label: text` (Fastino-style; improves zero-shot recall versus label names alone). The minimal `gliner2_onnx` Python runtime only encodes `"entities"`; this is an optional extension. |
+| `label_min_confidence` | Optional per-label score floors; keys not listed use `min_confidence`. |
+
+**Encoder length:** The combined schema + text is capped at **512 tokens** (DeBERTa-style; the tokenizer’s `model_max_length` is often a useless sentinel). Words are taken from the **start** of the assistant text; the tail is dropped if needed and a **`tracing::warn!`** is emitted (`kept_words`, `max_len`).
+
+Example:
+
+```toml
+[agent.segments]
+enabled = true
+# ...
+min_confidence = 0.5
+
+[agent.segments.label_descriptions]
+plan = "Roadmap, phases, or structured execution outline"
+
+[agent.segments.label_min_confidence]
+plan = 0.35
+```
+
 ## ONNX model tensor names (verified)
 
 Inspected with `onnxruntime` on the downloaded model:

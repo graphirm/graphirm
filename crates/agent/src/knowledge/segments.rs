@@ -1,5 +1,7 @@
 //! Structured response segment parsing and graph persistence.
 
+#[cfg(feature = "local-extraction")]
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use graphirm_graph::{ContentData, EdgeType, GraphEdge, GraphNode, GraphStore, NodeId, NodeType};
@@ -207,8 +209,18 @@ pub async fn segment_extract_gliner2(
     text: &str,
     labels: &[String],
     min_confidence: f64,
+    label_descriptions: Option<&HashMap<String, String>>,
+    label_min_confidence: Option<&HashMap<String, f64>>,
 ) -> Result<Vec<Segment>, AgentError> {
-    let raw = extractor.extract_raw(text, labels, min_confidence).await?;
+    let raw = extractor
+        .extract_raw(
+            text,
+            labels,
+            min_confidence,
+            label_descriptions,
+            label_min_confidence,
+        )
+        .await?;
     let segments = raw
         .into_iter()
         .map(|e| Segment {
@@ -233,6 +245,8 @@ pub async fn try_gliner2_fallback(
     text: &str,
     labels: &[String],
     min_confidence: f64,
+    label_descriptions: Option<&HashMap<String, String>>,
+    label_min_confidence: Option<&HashMap<String, f64>>,
 ) -> Option<Vec<Segment>> {
     let extractor = match super::local_extraction::get_or_init_onnx_extractor(model_dir).await {
         Ok(e) => e,
@@ -242,7 +256,16 @@ pub async fn try_gliner2_fallback(
         }
     };
 
-    match segment_extract_gliner2(extractor.as_ref(), text, labels, min_confidence).await {
+    match segment_extract_gliner2(
+        extractor.as_ref(),
+        text,
+        labels,
+        min_confidence,
+        label_descriptions,
+        label_min_confidence,
+    )
+    .await
+    {
         Ok(segs) if !segs.is_empty() => {
             tracing::info!(count = segs.len(), "GLiNER2 segment fallback succeeded");
             Some(segs)

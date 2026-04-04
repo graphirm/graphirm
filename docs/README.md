@@ -76,7 +76,7 @@ Welcome to the Graphirm project documentation. This folder contains planning doc
 | dag-timeline-layout-completion.md | Shipped ✅ | 2026-03-06 |
 | agent-trace-export task | Shipped ✅ | 2026-03-06 |
 | cross-session-memory.md | Shipped ✅ | 2026-03-09 |
-| gliner2-setup.md | Updated ✅ | 2026-03-10 |
+| gliner2-setup.md | Updated ✅ | 2026-04-05 |
 | embedding-setup.md | Updated ✅ | 2026-03-10 |
 | graphirm-eval pipeline | Shipped ✅ | 2026-03-10 |
 

@@ -63,9 +63,16 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let extractor = get_or_init_onnx_extractor(&cli.model_dir).await?;
-    let segments = segment_extract_gliner2(extractor.as_ref(), &text, &labels, cli.min_confidence)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let segments = segment_extract_gliner2(
+        extractor.as_ref(),
+        &text,
+        &labels,
+        cli.min_confidence,
+        None,
+        None,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let value = serde_json::to_value(&segments)?;
     println!("{}", serde_json::to_string_pretty(&value)?);
