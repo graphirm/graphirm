@@ -6,8 +6,16 @@ export interface Session {
   id: string;
   agent: string;
   model: string;
-  status: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status:
+    | 'idle'
+    | 'running'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'token_cap_exceeded';
   created_at: string;
+  tokens_used?: number;
+  max_session_tokens?: number | null;
 }
 
 export interface Message {

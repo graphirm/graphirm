@@ -70,6 +70,8 @@ Features: interactive graph whiteboard (pan/zoom/drag), node expansion with mark
 
 **Disabling shell on shared hosts:** in `config/default.toml`, under **`[agent]`**, set **`disable_bash = true`**. The agent will not receive the `bash` tool in its API schema, and any direct `bash` call fails with a clear error; a short system-prompt notice explains the restriction. Subagents spawned via `delegate` inherit the same lock when the parent session has it enabled.
 
+**Per-session LLM token cap:** set **`max_session_tokens`** (e.g. `500000`) under **`[agent]`** to limit cumulative completion usage (each turn adds `input_tokens + output_tokens` from the provider). When the cap is exceeded, the in-flight assistant message is still saved, streaming ends with **`message_end`**, and the session status becomes **`token_cap_exceeded`**. `GET /api/sessions/:id` includes **`tokens_used`** and **`max_session_tokens`**. Omit the field or set it only in deploy config for unlimited usage (default).
+
 **Web app:** put the same secret in `web-app/.env.local` as **`VITE_API_KEY=...`**, then `npm run build` (the value is embedded at build time).
 
 **VS Code / Cursor extension:** **Graphirm → `graphirm.apiKey`** in settings.

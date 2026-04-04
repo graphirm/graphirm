@@ -1,5 +1,13 @@
 # Graphirm Development Progress Log
 
+## 2026-04-05: Per-session LLM token cap (`max_session_tokens`) — COMPLETE ✅
+
+- `AgentConfig.max_session_tokens`, `Session.llm_tokens_used` + `add_llm_completion_tokens`;
+  `stream_and_record` pre-call gate and post-completion enforcement; `AgentError::SessionTokenCapExceeded { used, cap, assistant_node_id }`
+- `run_agent_loop`: `AgentEnd` + `set_status("token_cap_exceeded")` on cap; server maps to `SessionStatus::TokenCapExceeded` (not logged as error)
+- `SessionResponse`: `tokens_used`, `max_session_tokens`; restore treats `token_cap_exceeded` agent status as completed in list metadata
+- Tests: config TOML + two `stream_and_record` cap scenarios; server serde/status tests updated
+
 ## 2026-04-05: `disable_bash` for public / shared servers — COMPLETE ✅
 
 - `AgentConfig.disable_bash` + TOML `[agent]`; `apply_disable_bash_system_notice()` (idempotent)

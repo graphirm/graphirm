@@ -210,6 +210,12 @@ pub struct AgentConfig {
     /// A short notice is appended to the system prompt when a session starts.
     #[serde(default)]
     pub disable_bash: bool,
+    /// Maximum total LLM tokens (input + output summed from completion usage)
+    /// allowed per session. `None` disables the cap. When exceeded, the current
+    /// turn's assistant message is still recorded, then the agent loop stops with
+    /// [`crate::error::AgentError::SessionTokenCapExceeded`].
+    #[serde(default)]
+    pub max_session_tokens: Option<u64>,
 }
 
 /// Objective weights for composite score optimisation.
@@ -401,6 +407,7 @@ impl Default for AgentConfig {
             budget_warning_thresholds: default_budget_warning_thresholds(),
             enforce_work_loop: default_enforce_work_loop(),
             disable_bash: false,
+            max_session_tokens: None,
         }
     }
 }
@@ -482,6 +489,8 @@ struct AgentConfigSection {
     enforce_work_loop: bool,
     #[serde(default)]
     disable_bash: bool,
+    #[serde(default)]
+    max_session_tokens: Option<u64>,
 }
 
 fn default_system_prompt() -> String {
@@ -534,6 +543,7 @@ impl AgentConfig {
             budget_warning_thresholds: file.agent.budget_warning_thresholds,
             enforce_work_loop: file.agent.enforce_work_loop,
             disable_bash: file.agent.disable_bash,
+            max_session_tokens: file.agent.max_session_tokens,
         })
     }
 
@@ -687,6 +697,25 @@ mod tests {
         config.apply_disable_bash_system_notice();
         assert_eq!(once, config.system_prompt);
         assert!(config.system_prompt.contains("Do not invoke `bash`"));
+    }
+
+    #[test]
+    fn test_max_session_tokens_default_none() {
+        let config = AgentConfig::default();
+        assert!(config.max_session_tokens.is_none());
+    }
+
+    #[test]
+    fn test_max_session_tokens_toml_parse() {
+        let toml_str = r#"
+            [agent]
+            name = "test"
+            model = "gpt-4"
+            system_prompt = "test"
+            max_session_tokens = 500000
+        "#;
+        let config = AgentConfig::from_toml(toml_str).unwrap();
+        assert_eq!(config.max_session_tokens, Some(500_000));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 // Session management: create, resume, list, archive sessions
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
@@ -78,6 +78,10 @@ pub struct Session {
     last_interaction_id: Arc<Mutex<Option<NodeId>>>,
     turn_counter: AtomicU32,
     turn_pos_counter: Arc<AtomicU32>,
+    /// Cumulative LLM usage tokens (input + output) for this session across
+    /// [`crate::workflow::stream_and_record`] completions. Used with
+    /// [`AgentConfig::max_session_tokens`].
+    pub(crate) llm_tokens_used: Arc<AtomicU64>,
 }
 
 impl Session {
@@ -107,6 +111,7 @@ impl Session {
             last_interaction_id: Arc::new(Mutex::new(None)),
             turn_counter: AtomicU32::new(0),
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
+            llm_tokens_used: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -133,7 +138,24 @@ impl Session {
             last_interaction_id: Arc::new(Mutex::new(None)),
             turn_counter: AtomicU32::new(0),
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
+            llm_tokens_used: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Total LLM tokens (input + output) accumulated for this session from
+    /// completion [`graphirm_llm::TokenUsage`] totals.
+    pub fn llm_tokens_used(&self) -> u64 {
+        self.llm_tokens_used.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn add_llm_completion_tokens(&self, delta: u64) {
+        self.llm_tokens_used.fetch_add(delta, Ordering::SeqCst);
+    }
+
+    /// Seeds cumulative LLM token usage (crate tests only).
+    #[cfg(test)]
+    pub fn test_set_llm_tokens_used(&self, n: u64) {
+        self.llm_tokens_used.store(n, Ordering::SeqCst);
     }
 
     /// Attach a [`HitlGate`] to this session, enabling HITL approval flow.

@@ -102,6 +102,10 @@ mod tests {
         assert_eq!(SessionStatus::Completed.to_string(), "completed");
         assert_eq!(SessionStatus::Failed.to_string(), "failed");
         assert_eq!(SessionStatus::Cancelled.to_string(), "cancelled");
+        assert_eq!(
+            SessionStatus::TokenCapExceeded.to_string(),
+            "token_cap_exceeded"
+        );
     }
 
     #[test]

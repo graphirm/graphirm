@@ -3,7 +3,13 @@
 
 export type NodeRole = 'user' | 'assistant' | 'tool' | 'system';
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed';
-export type AgentStatus = 'idle' | 'running' | 'completed' | 'failed';
+export type AgentStatus =
+  | 'idle'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'token_cap_exceeded';
 export type ContentType = 'code' | 'reasoning' | 'observation' | 'plan' | 'answer' | string;
 
 export type NodeType =
@@ -59,6 +65,8 @@ export interface Session {
   agent?: string;
   status?: AgentStatus;
   created_at?: string;
+  tokens_used?: number;
+  max_session_tokens?: number | null;
 }
 
 export interface Message {

@@ -64,6 +64,8 @@ pub enum SessionStatus {
     Failed,
     /// The agent loop was cancelled via [`CancellationToken`].
     Cancelled,
+    /// Stopped because [`graphirm_agent::AgentConfig::max_session_tokens`] was exceeded.
+    TokenCapExceeded,
 }
 
 impl SessionStatus {
@@ -75,6 +77,7 @@ impl SessionStatus {
             SessionStatus::Completed => "completed",
             SessionStatus::Failed => "failed",
             SessionStatus::Cancelled => "cancelled",
+            SessionStatus::TokenCapExceeded => "token_cap_exceeded",
         }
     }
 }
@@ -241,6 +244,11 @@ pub struct SessionResponse {
     /// Absolute path to the workspace directory (only set when `workspace` is `Some`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_path: Option<String>,
+    /// Cumulative LLM tokens (input + output from completions) used in this session.
+    pub tokens_used: u64,
+    /// Configured per-session LLM token cap, if any (`None` = unlimited).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_session_tokens: Option<u64>,
 }
 
 /// Request body for `PATCH /api/sessions/:id`.
@@ -425,6 +433,8 @@ mod tests {
             status: SessionStatus::Idle,
             workspace: None,
             workspace_path: None,
+            tokens_used: 0,
+            max_session_tokens: None,
         };
         let json = serde_json::to_string(&session).unwrap();
         let back: SessionResponse = serde_json::from_str(&json).unwrap();
@@ -449,6 +459,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(SessionStatus::Cancelled).unwrap(),
             serde_json::json!("cancelled")
+        );
+        assert_eq!(
+            serde_json::to_value(SessionStatus::TokenCapExceeded).unwrap(),
+            serde_json::json!("token_cap_exceeded")
         );
     }
 

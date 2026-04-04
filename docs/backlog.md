@@ -55,18 +55,21 @@ and `build_scoped_tools` skips `bash`. Commented example in `config/default.toml
 **Key files:** `crates/agent/src/config.rs`, `session.rs`, `workflow.rs`, `multi.rs`, `delegate.rs`;
 `crates/tools/src/bash.rs`, `lib.rs` (`ToolContext`); `config/default.toml`.
 
-### Per-session LLM spend cap — P2 · S
+### ✅ Per-session LLM spend cap — P2 · S
 
-No guard against a single session burning unlimited API credits. Add `max_session_tokens: Option<u64>`
-to `AgentConfig`. In `stream_and_record`, accumulate usage tokens from `Done` events into a
-session-scoped counter (can live in `SessionHandle`). When the cap is exceeded, abort the
-current prompt with a user-visible error and set session status to `TokenCapExceeded`.
+**Done (2026-04-05).** `AgentConfig.max_session_tokens: Option<u64>` (`None` = unlimited).
+`Session.llm_tokens_used` (`Arc<AtomicU64>`) accumulates `TokenUsage::total()` after each
+`stream_and_record` completion. Before a new LLM call, `used >= cap` returns
+`AgentError::SessionTokenCapExceeded` with `assistant_node_id: None`. After a completion that
+would push `prev + delta > cap`, the assistant Interaction is still recorded (metadata
+`session_token_cap_exceeded`), `MessageEnd` is emitted, tokens are added, then the same error
+returns with `assistant_node_id: Some`. `run_agent_loop` sets Agent status `token_cap_exceeded`,
+emits `AgentEnd`, maps to `SessionStatus::TokenCapExceeded`. API: `SessionResponse.tokens_used`,
+`max_session_tokens`. Restore maps graph status `token_cap_exceeded` → completed metadata.
 
-**Key files:**
-- `crates/agent/src/config.rs` — `max_session_tokens: Option<u64>`
-- `crates/server/src/session.rs` — `token_usage: Arc<AtomicU64>` in `SessionHandle`
-- `crates/agent/src/workflow.rs` — cap check in `stream_and_record` after each `Done` event
-- `config/default.toml` — `# max_session_tokens = 500000` (commented example)
+**Key files:** `crates/agent/src/config.rs`, `session.rs`, `error.rs`, `workflow.rs`;
+`crates/server/src/types.rs`, `routes.rs`, `session.rs` (restore); `config/default.toml`;
+`web-app` / `graphirm-vscode` session types.
 
 ### TLS + reverse proxy deployment guide — P2 · S
 

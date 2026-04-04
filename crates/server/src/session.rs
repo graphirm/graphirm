@@ -40,6 +40,7 @@ pub async fn restore_sessions_from_graph(
             "idle" => SessionStatus::Idle,
             "completed" => SessionStatus::Completed,
             "failed" => SessionStatus::Failed,
+            "token_cap_exceeded" => SessionStatus::Completed,
             _ => SessionStatus::Running, // Default to Running for unknown statuses
         };
 

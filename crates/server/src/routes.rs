@@ -358,6 +358,8 @@ async fn create_session(
         status: SessionStatus::Idle,
         workspace: session.agent_config.workspace_name.clone(),
         workspace_path: session_workspace_path(&session.agent_config),
+        tokens_used: session.llm_tokens_used(),
+        max_session_tokens: session.agent_config.max_session_tokens,
     };
 
     let handle = SessionHandle {
@@ -554,7 +556,11 @@ async fn prompt_session(
         // it here risks overwriting Some(handle) set by the spawner with None.
         // The handle is cleaned up when the session is deleted.
         if let Err(ref e) = result
-            && !matches!(e, graphirm_agent::AgentError::Cancelled)
+            && !matches!(
+                e,
+                graphirm_agent::AgentError::Cancelled
+                    | graphirm_agent::AgentError::SessionTokenCapExceeded { .. }
+            )
         {
             tracing::error!(session_id = %bg_key, error = %e, "Agent loop failed");
         }
@@ -564,6 +570,9 @@ async fn prompt_session(
             h.status = match &result {
                 Ok(()) => SessionStatus::Completed,
                 Err(graphirm_agent::AgentError::Cancelled) => SessionStatus::Cancelled,
+                Err(graphirm_agent::AgentError::SessionTokenCapExceeded { .. }) => {
+                    SessionStatus::TokenCapExceeded
+                }
                 Err(_) => SessionStatus::Failed,
             };
         }
@@ -1408,6 +1417,8 @@ fn session_handle_to_response(id: &str, handle: &SessionHandle) -> SessionRespon
         status: handle.status,
         workspace: handle.session.agent_config.workspace_name.clone(),
         workspace_path: session_workspace_path(&handle.session.agent_config),
+        tokens_used: handle.session.llm_tokens_used(),
+        max_session_tokens: handle.session.agent_config.max_session_tokens,
     }
 }
 

@@ -26,6 +26,15 @@ pub enum AgentError {
     #[error("Agent loop cancelled")]
     Cancelled,
 
+    /// Session cap hit. `assistant_node_id` is `Some` when the assistant turn was
+    /// recorded before stopping; `None` when the cap blocked starting an LLM call.
+    #[error("Session LLM token cap exceeded (used {used}, cap {cap})")]
+    SessionTokenCapExceeded {
+        used: u64,
+        cap: u64,
+        assistant_node_id: Option<graphirm_graph::nodes::NodeId>,
+    },
+
     #[error("Task join error: {0}")]
     Join(String),
 

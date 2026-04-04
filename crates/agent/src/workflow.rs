@@ -412,6 +412,17 @@ pub async fn stream_and_record(
         })
         .unwrap_or_else(|| vec![selected_model.clone()]);
 
+    if let Some(cap) = session.agent_config.max_session_tokens {
+        let used = session.llm_tokens_used();
+        if used >= cap {
+            return Err(AgentError::SessionTokenCapExceeded {
+                used,
+                cap,
+                assistant_node_id: None,
+            });
+        }
+    }
+
     let preview_node_id = NodeId::new();
     let mut fallback_chain: Vec<crate::router::FallbackAttempt> = Vec::new();
     let mut response: Option<LlmResponse> = None;
@@ -471,6 +482,11 @@ pub async fn stream_and_record(
     }
 
     let response = response.expect("fallback loop must produce a response or return an error");
+
+    let delta = u64::from(response.usage.total());
+    let prev = session.llm_tokens_used();
+    let cap = session.agent_config.max_session_tokens;
+    let over_cap = cap.is_some_and(|c| prev.saturating_add(delta) > c);
 
     // Build metadata to persist tool_calls so build_context can reconstruct them
     let mut metadata = serde_json::Map::new();
@@ -545,6 +561,13 @@ pub async fn stream_and_record(
         );
     }
 
+    if over_cap {
+        metadata.insert(
+            "session_token_cap_exceeded".to_string(),
+            serde_json::json!(true),
+        );
+    }
+
     let mut interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
         role: "assistant".to_string(),
         content: response.text_content(),
@@ -553,7 +576,27 @@ pub async fn stream_and_record(
     interaction_node.id = preview_node_id.clone();
     interaction_node.metadata = serde_json::Value::Object(metadata);
 
+    session.add_llm_completion_tokens(delta);
+
     let node_id = session.record_interaction(interaction_node).await?;
+
+    if over_cap {
+        let cap = cap.expect("over_cap implies cap is Some");
+        info!(
+            node_id = %node_id,
+            used = prev.saturating_add(delta),
+            cap,
+            "Recorded assistant response; session token cap exceeded"
+        );
+        events.emit(AgentEvent::MessageEnd {
+            node_id: node_id.clone(),
+        });
+        return Err(AgentError::SessionTokenCapExceeded {
+            used: prev.saturating_add(delta),
+            cap,
+            assistant_node_id: Some(node_id),
+        });
+    }
 
     // Structured response segmentation — opt-in, non-fatal.
     // Only runs on final text turns (no tool calls).
@@ -1357,7 +1400,29 @@ pub async fn run_agent_loop(
         // hung provider connections don't leave the session stuck forever.
         let llm_timeout = std::time::Duration::from_secs(session.agent_config.timeout_seconds);
         let (response, response_id) = tokio::select! {
-            result = stream_and_record(session, llm.clone(), tools, events) => result?,
+            result = stream_and_record(session, llm.clone(), tools, events) => match result {
+                Ok(pair) => pair,
+                Err(AgentError::SessionTokenCapExceeded {
+                    used,
+                    cap,
+                    assistant_node_id,
+                }) => {
+                    if let Some(ref nid) = assistant_node_id {
+                        all_node_ids.push(nid.clone());
+                    }
+                    let _ = session.set_status("token_cap_exceeded").await;
+                    events.emit(AgentEvent::AgentEnd {
+                        agent_id: session.id.clone(),
+                        node_ids: all_node_ids.clone(),
+                    });
+                    return Err(AgentError::SessionTokenCapExceeded {
+                        used,
+                        cap,
+                        assistant_node_id,
+                    });
+                }
+                Err(e) => return Err(e),
+            },
             _ = cancel.cancelled() => {
                 info!("Agent loop cancelled during LLM call at turn {}", turn);
                 let _ = session.set_status("cancelled").await;
@@ -1888,6 +1953,7 @@ mod tests {
     use super::test_helpers::*;
     use super::*;
     use crate::config::AgentConfig;
+    use crate::error::AgentError;
     use crate::hitl::{HitlDecision, HitlGate};
     use graphirm_graph::edges::EdgeType;
     use graphirm_graph::nodes::NodeType;
@@ -1920,6 +1986,77 @@ mod tests {
             }
             _ => panic!("expected Interaction node"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_stream_and_record_session_token_cap_exceeded_on_second_turn() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let mut config = AgentConfig::default();
+        config.max_session_tokens = Some(200);
+        config.pre_completion_verify = false;
+        let session = Session::new(graph.clone(), config).unwrap();
+        session.add_user_message("q1").await.unwrap();
+
+        let provider = Arc::new(MockProvider::new(vec![
+            text_response("a1"),
+            text_response("a2"),
+        ]));
+        let tools = ToolRegistry::new();
+        let bus = EventBus::new();
+
+        stream_and_record(&session, provider.clone(), &tools, &bus)
+            .await
+            .unwrap();
+        assert_eq!(session.llm_tokens_used(), 120);
+
+        session.add_user_message("q2").await.unwrap();
+        let err = stream_and_record(&session, provider.clone(), &tools, &bus)
+            .await
+            .unwrap_err();
+        match err {
+            AgentError::SessionTokenCapExceeded {
+                used,
+                cap,
+                assistant_node_id,
+            } => {
+                assert_eq!(cap, 200);
+                assert_eq!(used, 240);
+                assert!(assistant_node_id.is_some());
+            }
+            _ => panic!("expected SessionTokenCapExceeded, got {err:?}"),
+        }
+        assert_eq!(session.llm_tokens_used(), 240);
+    }
+
+    #[tokio::test]
+    async fn test_stream_and_record_session_token_cap_blocks_before_llm_when_already_at_cap() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let mut config = AgentConfig::default();
+        config.max_session_tokens = Some(50);
+        let session = Session::new(graph.clone(), config).unwrap();
+        session.test_set_llm_tokens_used(50);
+        session.add_user_message("q").await.unwrap();
+
+        let provider = Arc::new(MockProvider::new(vec![text_response("never")]));
+        let tools = ToolRegistry::new();
+        let bus = EventBus::new();
+
+        let err = stream_and_record(&session, provider.clone(), &tools, &bus)
+            .await
+            .unwrap_err();
+        match err {
+            AgentError::SessionTokenCapExceeded {
+                used,
+                cap,
+                assistant_node_id,
+            } => {
+                assert_eq!(used, 50);
+                assert_eq!(cap, 50);
+                assert!(assistant_node_id.is_none());
+            }
+            _ => panic!("expected SessionTokenCapExceeded, got {err:?}"),
+        }
+        assert_eq!(provider.call_count(), 0);
     }
 
     #[tokio::test]
