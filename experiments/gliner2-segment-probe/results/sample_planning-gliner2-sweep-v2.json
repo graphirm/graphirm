@@ -1,0 +1,613 @@
+{
+  "baseline": {
+    "label_descriptions": null,
+    "label_min_confidence": null,
+    "runs": [
+      {
+        "min_confidence": 0.5,
+        "segment_count": 0,
+        "segments": []
+      },
+      {
+        "min_confidence": 0.4,
+        "segment_count": 1,
+        "segments": [
+          {
+            "content": "Phased Execution Plan",
+            "end": 508,
+            "segment_type": "plan",
+            "start": 487
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.35,
+        "segment_count": 1,
+        "segments": [
+          {
+            "content": "Phased Execution Plan",
+            "end": 508,
+            "segment_type": "plan",
+            "start": 487
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.25,
+        "segment_count": 1,
+        "segments": [
+          {
+            "content": "Phased Execution Plan",
+            "end": 508,
+            "segment_type": "plan",
+            "start": 487
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.2,
+        "segment_count": 2,
+        "segments": [
+          {
+            "content": "Phased Execution Plan",
+            "end": 508,
+            "segment_type": "plan",
+            "start": 487
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 102,
+            "segment_type": "plan",
+            "start": 92
+          }
+        ]
+      }
+    ]
+  },
+  "fixture": "experiments/gliner2-segment-probe/fixtures/sample_planning.txt",
+  "generated_at": "2026-04-04T22:42:40Z",
+  "host": "local (gliner2-segment-probe --sweep-json-out)",
+  "labels": [
+    "observation",
+    "reasoning",
+    "code",
+    "plan",
+    "answer"
+  ],
+  "model_dir": "/home/krs/.cache/huggingface/hub/models--lmo3--gliner2-large-v1-onnx/snapshots/6adb78ae8098685d239dda324cc124d948962c21",
+  "notes": [
+    "Offsets in each run's segments are byte indices into the UTF-8 input.",
+    "baseline uses no label_descriptions; with_descriptions is null when no --description/--descriptions-file.",
+    "Reproduce: GLINER2_MODEL_DIR=... cargo run -p gliner2-segment-probe --release -- --file <fixture> --sweep-json-out <path> [--descriptions-file <toml>]"
+  ],
+  "sweep_thresholds": [
+    0.5,
+    0.4,
+    0.35,
+    0.25,
+    0.2
+  ],
+  "tool": "gliner2-segment-probe sweep (segment_extract_gliner2)",
+  "with_descriptions": {
+    "label_descriptions": {
+      "answer": "Direct reply, closing question, or user-facing conclusion.",
+      "code": "Code snippets, commands, file paths, or technical identifiers.",
+      "observation": "Facts, context, requirements, or stated constraints in the document.",
+      "plan": "Roadmap, phases, milestones, epics, execution outline, or next steps.",
+      "reasoning": "Analysis, trade-offs, risks, mitigations, or justification."
+    },
+    "label_min_confidence": null,
+    "runs": [
+      {
+        "min_confidence": 0.5,
+        "segment_count": 4,
+        "segments": [
+          {
+            "content": "Risks & Mitigations",
+            "end": 675,
+            "segment_type": "reasoning",
+            "start": 656
+          },
+          {
+            "content": "Next Immediate Steps",
+            "end": 819,
+            "segment_type": "plan",
+            "start": 799
+          },
+          {
+            "content": "Phased Execution Plan",
+            "end": 508,
+            "segment_type": "plan",
+            "start": 487
+          },
+          {
+            "content": "Data security",
+            "end": 689,
+            "segment_type": "reasoning",
+            "start": 676
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.4,
+        "segment_count": 9,
+        "segments": [
+          {
+            "content": "Risks & Mitigations",
+            "end": 675,
+            "segment_type": "reasoning",
+            "start": 656
+          },
+          {
+            "content": "Next Immediate Steps",
+            "end": 819,
+            "segment_type": "plan",
+            "start": 799
+          },
+          {
+            "content": "Phased Execution Plan",
+            "end": 508,
+            "segment_type": "plan",
+            "start": 487
+          },
+          {
+            "content": "Data security",
+            "end": 689,
+            "segment_type": "reasoning",
+            "start": 676
+          },
+          {
+            "content": "User adoption",
+            "end": 747,
+            "segment_type": "reasoning",
+            "start": 734
+          },
+          {
+            "content": "Phase 1",
+            "end": 516,
+            "segment_type": "plan",
+            "start": 509
+          },
+          {
+            "content": "Epics",
+            "end": 370,
+            "segment_type": "plan",
+            "start": 365
+          },
+          {
+            "content": "Simple application tracking",
+            "end": 654,
+            "segment_type": "observation",
+            "start": 627
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 56,
+            "segment_type": "code",
+            "start": 46
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.35,
+        "segment_count": 15,
+        "segments": [
+          {
+            "content": "Risks & Mitigations",
+            "end": 675,
+            "segment_type": "reasoning",
+            "start": 656
+          },
+          {
+            "content": "Next Immediate Steps",
+            "end": 819,
+            "segment_type": "plan",
+            "start": 799
+          },
+          {
+            "content": "Phased Execution Plan",
+            "end": 508,
+            "segment_type": "plan",
+            "start": 487
+          },
+          {
+            "content": "Data security",
+            "end": 689,
+            "segment_type": "reasoning",
+            "start": 676
+          },
+          {
+            "content": "User adoption",
+            "end": 747,
+            "segment_type": "reasoning",
+            "start": 734
+          },
+          {
+            "content": "Phase 1",
+            "end": 516,
+            "segment_type": "plan",
+            "start": 509
+          },
+          {
+            "content": "Epics",
+            "end": 370,
+            "segment_type": "plan",
+            "start": 365
+          },
+          {
+            "content": "Simple application tracking",
+            "end": 654,
+            "segment_type": "observation",
+            "start": 627
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 56,
+            "segment_type": "code",
+            "start": 46
+          },
+          {
+            "content": "Data security",
+            "end": 689,
+            "segment_type": "observation",
+            "start": 676
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 102,
+            "segment_type": "code",
+            "start": 92
+          },
+          {
+            "content": "Resume/CV storage",
+            "end": 470,
+            "segment_type": "observation",
+            "start": 453
+          },
+          {
+            "content": "User adoption",
+            "end": 747,
+            "segment_type": "observation",
+            "start": 734
+          },
+          {
+            "content": "structured plan",
+            "end": 89,
+            "segment_type": "plan",
+            "start": 74
+          },
+          {
+            "content": "Vision & Value Proposition",
+            "end": 167,
+            "segment_type": "observation",
+            "start": 141
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.25,
+        "segment_count": 24,
+        "segments": [
+          {
+            "content": "Risks & Mitigations",
+            "end": 675,
+            "segment_type": "reasoning",
+            "start": 656
+          },
+          {
+            "content": "Next Immediate Steps",
+            "end": 819,
+            "segment_type": "plan",
+            "start": 799
+          },
+          {
+            "content": "Phased Execution Plan",
+            "end": 508,
+            "segment_type": "plan",
+            "start": 487
+          },
+          {
+            "content": "Data security",
+            "end": 689,
+            "segment_type": "reasoning",
+            "start": 676
+          },
+          {
+            "content": "User adoption",
+            "end": 747,
+            "segment_type": "reasoning",
+            "start": 734
+          },
+          {
+            "content": "Phase 1",
+            "end": 516,
+            "segment_type": "plan",
+            "start": 509
+          },
+          {
+            "content": "Epics",
+            "end": 370,
+            "segment_type": "plan",
+            "start": 365
+          },
+          {
+            "content": "Simple application tracking",
+            "end": 654,
+            "segment_type": "observation",
+            "start": 627
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 56,
+            "segment_type": "code",
+            "start": 46
+          },
+          {
+            "content": "Data security",
+            "end": 689,
+            "segment_type": "observation",
+            "start": 676
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 102,
+            "segment_type": "code",
+            "start": 92
+          },
+          {
+            "content": "Resume/CV storage",
+            "end": 470,
+            "segment_type": "observation",
+            "start": 453
+          },
+          {
+            "content": "User adoption",
+            "end": 747,
+            "segment_type": "observation",
+            "start": 734
+          },
+          {
+            "content": "structured plan",
+            "end": 89,
+            "segment_type": "plan",
+            "start": 74
+          },
+          {
+            "content": "Vision & Value Proposition",
+            "end": 167,
+            "segment_type": "observation",
+            "start": 141
+          },
+          {
+            "content": "Foundation",
+            "end": 528,
+            "segment_type": "plan",
+            "start": 518
+          },
+          {
+            "content": "Comprehensive professional profile builder",
+            "end": 450,
+            "segment_type": "observation",
+            "start": 408
+          },
+          {
+            "content": "centralized platform",
+            "end": 190,
+            "segment_type": "observation",
+            "start": 170
+          },
+          {
+            "content": "Wireframe",
+            "end": 876,
+            "segment_type": "observation",
+            "start": 867
+          },
+          {
+            "content": "clear value proposition",
+            "end": 781,
+            "segment_type": "observation",
+            "start": 758
+          },
+          {
+            "content": "ease of use",
+            "end": 797,
+            "segment_type": "observation",
+            "start": 786
+          },
+          {
+            "content": "Core platform architecture design",
+            "end": 619,
+            "segment_type": "plan",
+            "start": 586
+          },
+          {
+            "content": "versioning",
+            "end": 485,
+            "segment_type": "observation",
+            "start": 475
+          },
+          {
+            "content": "journey maps",
+            "end": 866,
+            "segment_type": "plan",
+            "start": 854
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.2,
+        "segment_count": 28,
+        "segments": [
+          {
+            "content": "Risks & Mitigations",
+            "end": 675,
+            "segment_type": "reasoning",
+            "start": 656
+          },
+          {
+            "content": "Next Immediate Steps",
+            "end": 819,
+            "segment_type": "plan",
+            "start": 799
+          },
+          {
+            "content": "Phased Execution Plan",
+            "end": 508,
+            "segment_type": "plan",
+            "start": 487
+          },
+          {
+            "content": "Data security",
+            "end": 689,
+            "segment_type": "reasoning",
+            "start": 676
+          },
+          {
+            "content": "User adoption",
+            "end": 747,
+            "segment_type": "reasoning",
+            "start": 734
+          },
+          {
+            "content": "Phase 1",
+            "end": 516,
+            "segment_type": "plan",
+            "start": 509
+          },
+          {
+            "content": "Epics",
+            "end": 370,
+            "segment_type": "plan",
+            "start": 365
+          },
+          {
+            "content": "Simple application tracking",
+            "end": 654,
+            "segment_type": "observation",
+            "start": 627
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 56,
+            "segment_type": "code",
+            "start": 46
+          },
+          {
+            "content": "Data security",
+            "end": 689,
+            "segment_type": "observation",
+            "start": 676
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 102,
+            "segment_type": "code",
+            "start": 92
+          },
+          {
+            "content": "Resume/CV storage",
+            "end": 470,
+            "segment_type": "observation",
+            "start": 453
+          },
+          {
+            "content": "User adoption",
+            "end": 747,
+            "segment_type": "observation",
+            "start": 734
+          },
+          {
+            "content": "structured plan",
+            "end": 89,
+            "segment_type": "plan",
+            "start": 74
+          },
+          {
+            "content": "Vision & Value Proposition",
+            "end": 167,
+            "segment_type": "observation",
+            "start": 141
+          },
+          {
+            "content": "Foundation",
+            "end": 528,
+            "segment_type": "plan",
+            "start": 518
+          },
+          {
+            "content": "Comprehensive professional profile builder",
+            "end": 450,
+            "segment_type": "observation",
+            "start": 408
+          },
+          {
+            "content": "centralized platform",
+            "end": 190,
+            "segment_type": "observation",
+            "start": 170
+          },
+          {
+            "content": "Wireframe",
+            "end": 876,
+            "segment_type": "observation",
+            "start": 867
+          },
+          {
+            "content": "clear value proposition",
+            "end": 781,
+            "segment_type": "observation",
+            "start": 758
+          },
+          {
+            "content": "ease of use",
+            "end": 797,
+            "segment_type": "observation",
+            "start": 786
+          },
+          {
+            "content": "Core platform architecture design",
+            "end": 619,
+            "segment_type": "plan",
+            "start": 586
+          },
+          {
+            "content": "versioning",
+            "end": 485,
+            "segment_type": "observation",
+            "start": 475
+          },
+          {
+            "content": "journey maps",
+            "end": 866,
+            "segment_type": "plan",
+            "start": 854
+          },
+          {
+            "content": "key user flows",
+            "end": 891,
+            "segment_type": "observation",
+            "start": 877
+          },
+          {
+            "content": "User Profile & Data Management",
+            "end": 405,
+            "segment_type": "observation",
+            "start": 375
+          },
+          {
+            "content": "MVP",
+            "end": 625,
+            "segment_type": "observation",
+            "start": 622
+          },
+          {
+            "content": "compliance",
+            "end": 733,
+            "segment_type": "observation",
+            "start": 723
+          }
+        ]
+      }
+    ]
+  }
+}

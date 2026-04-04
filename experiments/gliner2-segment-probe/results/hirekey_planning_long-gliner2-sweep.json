@@ -1,0 +1,1520 @@
+{
+  "baseline": {
+    "label_descriptions": null,
+    "label_min_confidence": null,
+    "runs": [
+      {
+        "min_confidence": 0.5,
+        "segment_count": 2,
+        "segments": [
+          {
+            "content": "HireKey.ai",
+            "end": 56,
+            "segment_type": "plan",
+            "start": 46
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 102,
+            "segment_type": "plan",
+            "start": 92
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.4,
+        "segment_count": 2,
+        "segments": [
+          {
+            "content": "HireKey.ai",
+            "end": 56,
+            "segment_type": "plan",
+            "start": 46
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 102,
+            "segment_type": "plan",
+            "start": 92
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.35,
+        "segment_count": 2,
+        "segments": [
+          {
+            "content": "HireKey.ai",
+            "end": 56,
+            "segment_type": "plan",
+            "start": 46
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 102,
+            "segment_type": "plan",
+            "start": 92
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.25,
+        "segment_count": 4,
+        "segments": [
+          {
+            "content": "HireKey.ai",
+            "end": 56,
+            "segment_type": "plan",
+            "start": 46
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 102,
+            "segment_type": "plan",
+            "start": 92
+          },
+          {
+            "content": "Phased Execution Plan",
+            "end": 1562,
+            "segment_type": "plan",
+            "start": 1541
+          },
+          {
+            "content": "structured plan",
+            "end": 89,
+            "segment_type": "plan",
+            "start": 74
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.2,
+        "segment_count": 4,
+        "segments": [
+          {
+            "content": "HireKey.ai",
+            "end": 56,
+            "segment_type": "plan",
+            "start": 46
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 102,
+            "segment_type": "plan",
+            "start": 92
+          },
+          {
+            "content": "Phased Execution Plan",
+            "end": 1562,
+            "segment_type": "plan",
+            "start": 1541
+          },
+          {
+            "content": "structured plan",
+            "end": 89,
+            "segment_type": "plan",
+            "start": 74
+          }
+        ]
+      }
+    ]
+  },
+  "fixture": "experiments/gliner2-segment-probe/fixtures/hirekey_planning_long.txt",
+  "generated_at": "2026-04-04T22:41:48Z",
+  "host": "local (gliner2-segment-probe --sweep-json-out)",
+  "labels": [
+    "observation",
+    "reasoning",
+    "code",
+    "plan",
+    "answer"
+  ],
+  "model_dir": "/home/krs/.cache/huggingface/hub/models--lmo3--gliner2-large-v1-onnx/snapshots/6adb78ae8098685d239dda324cc124d948962c21",
+  "notes": [
+    "Offsets in each run's segments are byte indices into the UTF-8 input.",
+    "baseline uses no label_descriptions; with_descriptions is null when no --description/--descriptions-file.",
+    "Reproduce: GLINER2_MODEL_DIR=... cargo run -p gliner2-segment-probe --release -- --file <fixture> --sweep-json-out <path> [--descriptions-file <toml>]"
+  ],
+  "sweep_thresholds": [
+    0.5,
+    0.4,
+    0.35,
+    0.25,
+    0.2
+  ],
+  "tool": "gliner2-segment-probe sweep (segment_extract_gliner2)",
+  "with_descriptions": {
+    "label_descriptions": {
+      "answer": "Direct reply, closing question, or user-facing conclusion.",
+      "code": "Code snippets, commands, file paths, or technical identifiers.",
+      "observation": "Facts, context, requirements, or stated constraints in the document.",
+      "plan": "Roadmap, phases, milestones, epics, execution outline, or next steps.",
+      "reasoning": "Analysis, trade-offs, risks, mitigations, or justification."
+    },
+    "label_min_confidence": null,
+    "runs": [
+      {
+        "min_confidence": 0.5,
+        "segment_count": 18,
+        "segments": [
+          {
+            "content": "Phased Execution Plan",
+            "end": 1562,
+            "segment_type": "plan",
+            "start": 1541
+          },
+          {
+            "content": "Personalized career path recommendations",
+            "end": 1368,
+            "segment_type": "observation",
+            "start": 1328
+          },
+          {
+            "content": "Permission-based data sharing",
+            "end": 1516,
+            "segment_type": "observation",
+            "start": 1487
+          },
+          {
+            "content": "GDPR/CCPA compliance",
+            "end": 1453,
+            "segment_type": "observation",
+            "start": 1433
+          },
+          {
+            "content": "Context-aware content adaptation",
+            "end": 1072,
+            "segment_type": "observation",
+            "start": 1040
+          },
+          {
+            "content": "Skills gap identification",
+            "end": 1231,
+            "segment_type": "observation",
+            "start": 1206
+          },
+          {
+            "content": "End-to-end encryption",
+            "end": 1413,
+            "segment_type": "observation",
+            "start": 1392
+          },
+          {
+            "content": "Work history",
+            "end": 566,
+            "segment_type": "observation",
+            "start": 554
+          },
+          {
+            "content": "Secure document storage",
+            "end": 1540,
+            "segment_type": "observation",
+            "start": 1517
+          },
+          {
+            "content": "Cross-application data reuse",
+            "end": 1039,
+            "segment_type": "observation",
+            "start": 1011
+          },
+          {
+            "content": "Salary negotiation guidance",
+            "end": 920,
+            "segment_type": "observation",
+            "start": 893
+          },
+          {
+            "content": "Phase 1",
+            "end": 1570,
+            "segment_type": "plan",
+            "start": 1563
+          },
+          {
+            "content": "Data export/delete functionality",
+            "end": 1486,
+            "segment_type": "observation",
+            "start": 1454
+          },
+          {
+            "content": "Application form autofill capabilities",
+            "end": 864,
+            "segment_type": "observation",
+            "start": 826
+          },
+          {
+            "content": "Core Features",
+            "end": 1789,
+            "segment_type": "plan",
+            "start": 1776
+          },
+          {
+            "content": "Bulk application management",
+            "end": 1100,
+            "segment_type": "observation",
+            "start": 1073
+          },
+          {
+            "content": "Resume tailoring",
+            "end": 795,
+            "segment_type": "observation",
+            "start": 779
+          },
+          {
+            "content": "Skills inventory",
+            "end": 529,
+            "segment_type": "observation",
+            "start": 513
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.4,
+        "segment_count": 36,
+        "segments": [
+          {
+            "content": "Phased Execution Plan",
+            "end": 1562,
+            "segment_type": "plan",
+            "start": 1541
+          },
+          {
+            "content": "Personalized career path recommendations",
+            "end": 1368,
+            "segment_type": "observation",
+            "start": 1328
+          },
+          {
+            "content": "Permission-based data sharing",
+            "end": 1516,
+            "segment_type": "observation",
+            "start": 1487
+          },
+          {
+            "content": "GDPR/CCPA compliance",
+            "end": 1453,
+            "segment_type": "observation",
+            "start": 1433
+          },
+          {
+            "content": "Context-aware content adaptation",
+            "end": 1072,
+            "segment_type": "observation",
+            "start": 1040
+          },
+          {
+            "content": "Skills gap identification",
+            "end": 1231,
+            "segment_type": "observation",
+            "start": 1206
+          },
+          {
+            "content": "End-to-end encryption",
+            "end": 1413,
+            "segment_type": "observation",
+            "start": 1392
+          },
+          {
+            "content": "Work history",
+            "end": 566,
+            "segment_type": "observation",
+            "start": 554
+          },
+          {
+            "content": "Secure document storage",
+            "end": 1540,
+            "segment_type": "observation",
+            "start": 1517
+          },
+          {
+            "content": "Cross-application data reuse",
+            "end": 1039,
+            "segment_type": "observation",
+            "start": 1011
+          },
+          {
+            "content": "Salary negotiation guidance",
+            "end": 920,
+            "segment_type": "observation",
+            "start": 893
+          },
+          {
+            "content": "Phase 1",
+            "end": 1570,
+            "segment_type": "plan",
+            "start": 1563
+          },
+          {
+            "content": "Data export/delete functionality",
+            "end": 1486,
+            "segment_type": "observation",
+            "start": 1454
+          },
+          {
+            "content": "Application form autofill capabilities",
+            "end": 864,
+            "segment_type": "observation",
+            "start": 826
+          },
+          {
+            "content": "Core Features",
+            "end": 1789,
+            "segment_type": "plan",
+            "start": 1776
+          },
+          {
+            "content": "Bulk application management",
+            "end": 1100,
+            "segment_type": "observation",
+            "start": 1073
+          },
+          {
+            "content": "Resume tailoring",
+            "end": 795,
+            "segment_type": "observation",
+            "start": 779
+          },
+          {
+            "content": "Skills inventory",
+            "end": 529,
+            "segment_type": "observation",
+            "start": 513
+          },
+          {
+            "content": "Epics",
+            "end": 370,
+            "segment_type": "plan",
+            "start": 365
+          },
+          {
+            "content": "Interview question prediction",
+            "end": 1287,
+            "segment_type": "observation",
+            "start": 1258
+          },
+          {
+            "content": "Phase 3",
+            "end": 1972,
+            "segment_type": "plan",
+            "start": 1965
+          },
+          {
+            "content": "Core Features",
+            "end": 363,
+            "segment_type": "plan",
+            "start": 350
+          },
+          {
+            "content": "Application success probability scoring",
+            "end": 1327,
+            "segment_type": "observation",
+            "start": 1288
+          },
+          {
+            "content": "Phase 4",
+            "end": 2193,
+            "segment_type": "plan",
+            "start": 2186
+          },
+          {
+            "content": "AI Enhancement",
+            "end": 1988,
+            "segment_type": "plan",
+            "start": 1974
+          },
+          {
+            "content": "Cloud-native microservices",
+            "end": 2464,
+            "segment_type": "observation",
+            "start": 2438
+          },
+          {
+            "content": "sensitive data",
+            "end": 1432,
+            "segment_type": "observation",
+            "start": 1418
+          },
+          {
+            "content": "proficiency levels",
+            "end": 553,
+            "segment_type": "observation",
+            "start": 535
+          },
+          {
+            "content": "structured plan",
+            "end": 89,
+            "segment_type": "plan",
+            "start": 74
+          },
+          {
+            "content": "Cover letter optimization",
+            "end": 1257,
+            "segment_type": "observation",
+            "start": 1232
+          },
+          {
+            "content": "Scale & Monetization",
+            "end": 2215,
+            "segment_type": "plan",
+            "start": 2195
+          },
+          {
+            "content": "Phase 2",
+            "end": 1774,
+            "segment_type": "plan",
+            "start": 1767
+          },
+          {
+            "content": "Partnership programs with recruiters",
+            "end": 2399,
+            "segment_type": "observation",
+            "start": 2363
+          },
+          {
+            "content": "API for third-party integrations",
+            "end": 2336,
+            "segment_type": "observation",
+            "start": 2304
+          },
+          {
+            "content": "Smart templates",
+            "end": 976,
+            "segment_type": "observation",
+            "start": 961
+          },
+          {
+            "content": "References management",
+            "end": 652,
+            "segment_type": "observation",
+            "start": 631
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.35,
+        "segment_count": 41,
+        "segments": [
+          {
+            "content": "Phased Execution Plan",
+            "end": 1562,
+            "segment_type": "plan",
+            "start": 1541
+          },
+          {
+            "content": "Personalized career path recommendations",
+            "end": 1368,
+            "segment_type": "observation",
+            "start": 1328
+          },
+          {
+            "content": "Permission-based data sharing",
+            "end": 1516,
+            "segment_type": "observation",
+            "start": 1487
+          },
+          {
+            "content": "GDPR/CCPA compliance",
+            "end": 1453,
+            "segment_type": "observation",
+            "start": 1433
+          },
+          {
+            "content": "Context-aware content adaptation",
+            "end": 1072,
+            "segment_type": "observation",
+            "start": 1040
+          },
+          {
+            "content": "Skills gap identification",
+            "end": 1231,
+            "segment_type": "observation",
+            "start": 1206
+          },
+          {
+            "content": "End-to-end encryption",
+            "end": 1413,
+            "segment_type": "observation",
+            "start": 1392
+          },
+          {
+            "content": "Work history",
+            "end": 566,
+            "segment_type": "observation",
+            "start": 554
+          },
+          {
+            "content": "Secure document storage",
+            "end": 1540,
+            "segment_type": "observation",
+            "start": 1517
+          },
+          {
+            "content": "Cross-application data reuse",
+            "end": 1039,
+            "segment_type": "observation",
+            "start": 1011
+          },
+          {
+            "content": "Salary negotiation guidance",
+            "end": 920,
+            "segment_type": "observation",
+            "start": 893
+          },
+          {
+            "content": "Phase 1",
+            "end": 1570,
+            "segment_type": "plan",
+            "start": 1563
+          },
+          {
+            "content": "Data export/delete functionality",
+            "end": 1486,
+            "segment_type": "observation",
+            "start": 1454
+          },
+          {
+            "content": "Application form autofill capabilities",
+            "end": 864,
+            "segment_type": "observation",
+            "start": 826
+          },
+          {
+            "content": "Core Features",
+            "end": 1789,
+            "segment_type": "plan",
+            "start": 1776
+          },
+          {
+            "content": "Bulk application management",
+            "end": 1100,
+            "segment_type": "observation",
+            "start": 1073
+          },
+          {
+            "content": "Resume tailoring",
+            "end": 795,
+            "segment_type": "observation",
+            "start": 779
+          },
+          {
+            "content": "Skills inventory",
+            "end": 529,
+            "segment_type": "observation",
+            "start": 513
+          },
+          {
+            "content": "Epics",
+            "end": 370,
+            "segment_type": "plan",
+            "start": 365
+          },
+          {
+            "content": "Interview question prediction",
+            "end": 1287,
+            "segment_type": "observation",
+            "start": 1258
+          },
+          {
+            "content": "Phase 3",
+            "end": 1972,
+            "segment_type": "plan",
+            "start": 1965
+          },
+          {
+            "content": "Core Features",
+            "end": 363,
+            "segment_type": "plan",
+            "start": 350
+          },
+          {
+            "content": "Application success probability scoring",
+            "end": 1327,
+            "segment_type": "observation",
+            "start": 1288
+          },
+          {
+            "content": "Phase 4",
+            "end": 2193,
+            "segment_type": "plan",
+            "start": 2186
+          },
+          {
+            "content": "AI Enhancement",
+            "end": 1988,
+            "segment_type": "plan",
+            "start": 1974
+          },
+          {
+            "content": "Cloud-native microservices",
+            "end": 2464,
+            "segment_type": "observation",
+            "start": 2438
+          },
+          {
+            "content": "sensitive data",
+            "end": 1432,
+            "segment_type": "observation",
+            "start": 1418
+          },
+          {
+            "content": "proficiency levels",
+            "end": 553,
+            "segment_type": "observation",
+            "start": 535
+          },
+          {
+            "content": "structured plan",
+            "end": 89,
+            "segment_type": "plan",
+            "start": 74
+          },
+          {
+            "content": "Cover letter optimization",
+            "end": 1257,
+            "segment_type": "observation",
+            "start": 1232
+          },
+          {
+            "content": "Scale & Monetization",
+            "end": 2215,
+            "segment_type": "plan",
+            "start": 2195
+          },
+          {
+            "content": "Phase 2",
+            "end": 1774,
+            "segment_type": "plan",
+            "start": 1767
+          },
+          {
+            "content": "Partnership programs with recruiters",
+            "end": 2399,
+            "segment_type": "observation",
+            "start": 2363
+          },
+          {
+            "content": "API for third-party integrations",
+            "end": 2336,
+            "segment_type": "observation",
+            "start": 2304
+          },
+          {
+            "content": "Smart templates",
+            "end": 976,
+            "segment_type": "observation",
+            "start": 961
+          },
+          {
+            "content": "References management",
+            "end": 652,
+            "segment_type": "observation",
+            "start": 631
+          },
+          {
+            "content": "Mobile apps",
+            "end": 2348,
+            "segment_type": "observation",
+            "start": 2337
+          },
+          {
+            "content": "Security & Privacy",
+            "end": 1390,
+            "segment_type": "observation",
+            "start": 1372
+          },
+          {
+            "content": "Education and certification tracking",
+            "end": 630,
+            "segment_type": "observation",
+            "start": 594
+          },
+          {
+            "content": "Technical Architecture Considerations",
+            "end": 2437,
+            "segment_type": "reasoning",
+            "start": 2400
+          },
+          {
+            "content": "common application components",
+            "end": 1010,
+            "segment_type": "observation",
+            "start": 981
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.25,
+        "segment_count": 59,
+        "segments": [
+          {
+            "content": "Phased Execution Plan",
+            "end": 1562,
+            "segment_type": "plan",
+            "start": 1541
+          },
+          {
+            "content": "Personalized career path recommendations",
+            "end": 1368,
+            "segment_type": "observation",
+            "start": 1328
+          },
+          {
+            "content": "Permission-based data sharing",
+            "end": 1516,
+            "segment_type": "observation",
+            "start": 1487
+          },
+          {
+            "content": "GDPR/CCPA compliance",
+            "end": 1453,
+            "segment_type": "observation",
+            "start": 1433
+          },
+          {
+            "content": "Context-aware content adaptation",
+            "end": 1072,
+            "segment_type": "observation",
+            "start": 1040
+          },
+          {
+            "content": "Skills gap identification",
+            "end": 1231,
+            "segment_type": "observation",
+            "start": 1206
+          },
+          {
+            "content": "End-to-end encryption",
+            "end": 1413,
+            "segment_type": "observation",
+            "start": 1392
+          },
+          {
+            "content": "Work history",
+            "end": 566,
+            "segment_type": "observation",
+            "start": 554
+          },
+          {
+            "content": "Secure document storage",
+            "end": 1540,
+            "segment_type": "observation",
+            "start": 1517
+          },
+          {
+            "content": "Cross-application data reuse",
+            "end": 1039,
+            "segment_type": "observation",
+            "start": 1011
+          },
+          {
+            "content": "Salary negotiation guidance",
+            "end": 920,
+            "segment_type": "observation",
+            "start": 893
+          },
+          {
+            "content": "Phase 1",
+            "end": 1570,
+            "segment_type": "plan",
+            "start": 1563
+          },
+          {
+            "content": "Data export/delete functionality",
+            "end": 1486,
+            "segment_type": "observation",
+            "start": 1454
+          },
+          {
+            "content": "Application form autofill capabilities",
+            "end": 864,
+            "segment_type": "observation",
+            "start": 826
+          },
+          {
+            "content": "Core Features",
+            "end": 1789,
+            "segment_type": "plan",
+            "start": 1776
+          },
+          {
+            "content": "Bulk application management",
+            "end": 1100,
+            "segment_type": "observation",
+            "start": 1073
+          },
+          {
+            "content": "Resume tailoring",
+            "end": 795,
+            "segment_type": "observation",
+            "start": 779
+          },
+          {
+            "content": "Skills inventory",
+            "end": 529,
+            "segment_type": "observation",
+            "start": 513
+          },
+          {
+            "content": "Epics",
+            "end": 370,
+            "segment_type": "plan",
+            "start": 365
+          },
+          {
+            "content": "Interview question prediction",
+            "end": 1287,
+            "segment_type": "observation",
+            "start": 1258
+          },
+          {
+            "content": "Phase 3",
+            "end": 1972,
+            "segment_type": "plan",
+            "start": 1965
+          },
+          {
+            "content": "Core Features",
+            "end": 363,
+            "segment_type": "plan",
+            "start": 350
+          },
+          {
+            "content": "Application success probability scoring",
+            "end": 1327,
+            "segment_type": "observation",
+            "start": 1288
+          },
+          {
+            "content": "Phase 4",
+            "end": 2193,
+            "segment_type": "plan",
+            "start": 2186
+          },
+          {
+            "content": "AI Enhancement",
+            "end": 1988,
+            "segment_type": "plan",
+            "start": 1974
+          },
+          {
+            "content": "Cloud-native microservices",
+            "end": 2464,
+            "segment_type": "observation",
+            "start": 2438
+          },
+          {
+            "content": "sensitive data",
+            "end": 1432,
+            "segment_type": "observation",
+            "start": 1418
+          },
+          {
+            "content": "proficiency levels",
+            "end": 553,
+            "segment_type": "observation",
+            "start": 535
+          },
+          {
+            "content": "structured plan",
+            "end": 89,
+            "segment_type": "plan",
+            "start": 74
+          },
+          {
+            "content": "Cover letter optimization",
+            "end": 1257,
+            "segment_type": "observation",
+            "start": 1232
+          },
+          {
+            "content": "Scale & Monetization",
+            "end": 2215,
+            "segment_type": "plan",
+            "start": 2195
+          },
+          {
+            "content": "Phase 2",
+            "end": 1774,
+            "segment_type": "plan",
+            "start": 1767
+          },
+          {
+            "content": "Partnership programs with recruiters",
+            "end": 2399,
+            "segment_type": "observation",
+            "start": 2363
+          },
+          {
+            "content": "API for third-party integrations",
+            "end": 2336,
+            "segment_type": "observation",
+            "start": 2304
+          },
+          {
+            "content": "Smart templates",
+            "end": 976,
+            "segment_type": "observation",
+            "start": 961
+          },
+          {
+            "content": "References management",
+            "end": 652,
+            "segment_type": "observation",
+            "start": 631
+          },
+          {
+            "content": "Mobile apps",
+            "end": 2348,
+            "segment_type": "observation",
+            "start": 2337
+          },
+          {
+            "content": "Security & Privacy",
+            "end": 1390,
+            "segment_type": "observation",
+            "start": 1372
+          },
+          {
+            "content": "Education and certification tracking",
+            "end": 630,
+            "segment_type": "observation",
+            "start": 594
+          },
+          {
+            "content": "Technical Architecture Considerations",
+            "end": 2437,
+            "segment_type": "reasoning",
+            "start": 2400
+          },
+          {
+            "content": "common application components",
+            "end": 1010,
+            "segment_type": "observation",
+            "start": 981
+          },
+          {
+            "content": "Data Reusability",
+            "end": 940,
+            "segment_type": "observation",
+            "start": 924
+          },
+          {
+            "content": "detailed achievements",
+            "end": 593,
+            "segment_type": "observation",
+            "start": 572
+          },
+          {
+            "content": "Interview preparation tools",
+            "end": 892,
+            "segment_type": "observation",
+            "start": 865
+          },
+          {
+            "content": "tracking opportunities",
+            "end": 733,
+            "segment_type": "observation",
+            "start": 711
+          },
+          {
+            "content": "AI customization",
+            "end": 778,
+            "segment_type": "observation",
+            "start": 762
+          },
+          {
+            "content": "Portfolio/document repository",
+            "end": 512,
+            "segment_type": "observation",
+            "start": 483
+          },
+          {
+            "content": "Team/enterprise plans",
+            "end": 2303,
+            "segment_type": "observation",
+            "start": 2282
+          },
+          {
+            "content": "resume tailoring",
+            "end": 2073,
+            "segment_type": "observation",
+            "start": 2057
+          },
+          {
+            "content": "Cover letter generator",
+            "end": 756,
+            "segment_type": "observation",
+            "start": 734
+          },
+          {
+            "content": "unlimited storage",
+            "end": 2280,
+            "segment_type": "observation",
+            "start": 2263
+          },
+          {
+            "content": "Interview preparation tools",
+            "end": 2101,
+            "segment_type": "observation",
+            "start": 2074
+          },
+          {
+            "content": "Integration with job boards",
+            "end": 2161,
+            "segment_type": "observation",
+            "start": 2134
+          },
+          {
+            "content": "Foundation",
+            "end": 1582,
+            "segment_type": "plan",
+            "start": 1572
+          },
+          {
+            "content": "specific job descriptions",
+            "end": 825,
+            "segment_type": "observation",
+            "start": 800
+          },
+          {
+            "content": "Application analytics and success tracking",
+            "end": 1143,
+            "segment_type": "observation",
+            "start": 1101
+          },
+          {
+            "content": "Premium features",
+            "end": 2248,
+            "segment_type": "observation",
+            "start": 2232
+          },
+          {
+            "content": "Resume/CV storage",
+            "end": 467,
+            "segment_type": "observation",
+            "start": 450
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 56,
+            "segment_type": "code",
+            "start": 46
+          }
+        ]
+      },
+      {
+        "min_confidence": 0.2,
+        "segment_count": 68,
+        "segments": [
+          {
+            "content": "Phased Execution Plan",
+            "end": 1562,
+            "segment_type": "plan",
+            "start": 1541
+          },
+          {
+            "content": "Personalized career path recommendations",
+            "end": 1368,
+            "segment_type": "observation",
+            "start": 1328
+          },
+          {
+            "content": "Permission-based data sharing",
+            "end": 1516,
+            "segment_type": "observation",
+            "start": 1487
+          },
+          {
+            "content": "GDPR/CCPA compliance",
+            "end": 1453,
+            "segment_type": "observation",
+            "start": 1433
+          },
+          {
+            "content": "Context-aware content adaptation",
+            "end": 1072,
+            "segment_type": "observation",
+            "start": 1040
+          },
+          {
+            "content": "Skills gap identification",
+            "end": 1231,
+            "segment_type": "observation",
+            "start": 1206
+          },
+          {
+            "content": "End-to-end encryption",
+            "end": 1413,
+            "segment_type": "observation",
+            "start": 1392
+          },
+          {
+            "content": "Work history",
+            "end": 566,
+            "segment_type": "observation",
+            "start": 554
+          },
+          {
+            "content": "Secure document storage",
+            "end": 1540,
+            "segment_type": "observation",
+            "start": 1517
+          },
+          {
+            "content": "Cross-application data reuse",
+            "end": 1039,
+            "segment_type": "observation",
+            "start": 1011
+          },
+          {
+            "content": "Salary negotiation guidance",
+            "end": 920,
+            "segment_type": "observation",
+            "start": 893
+          },
+          {
+            "content": "Phase 1",
+            "end": 1570,
+            "segment_type": "plan",
+            "start": 1563
+          },
+          {
+            "content": "Data export/delete functionality",
+            "end": 1486,
+            "segment_type": "observation",
+            "start": 1454
+          },
+          {
+            "content": "Application form autofill capabilities",
+            "end": 864,
+            "segment_type": "observation",
+            "start": 826
+          },
+          {
+            "content": "Core Features",
+            "end": 1789,
+            "segment_type": "plan",
+            "start": 1776
+          },
+          {
+            "content": "Bulk application management",
+            "end": 1100,
+            "segment_type": "observation",
+            "start": 1073
+          },
+          {
+            "content": "Resume tailoring",
+            "end": 795,
+            "segment_type": "observation",
+            "start": 779
+          },
+          {
+            "content": "Skills inventory",
+            "end": 529,
+            "segment_type": "observation",
+            "start": 513
+          },
+          {
+            "content": "Epics",
+            "end": 370,
+            "segment_type": "plan",
+            "start": 365
+          },
+          {
+            "content": "Interview question prediction",
+            "end": 1287,
+            "segment_type": "observation",
+            "start": 1258
+          },
+          {
+            "content": "Phase 3",
+            "end": 1972,
+            "segment_type": "plan",
+            "start": 1965
+          },
+          {
+            "content": "Core Features",
+            "end": 363,
+            "segment_type": "plan",
+            "start": 350
+          },
+          {
+            "content": "Application success probability scoring",
+            "end": 1327,
+            "segment_type": "observation",
+            "start": 1288
+          },
+          {
+            "content": "Phase 4",
+            "end": 2193,
+            "segment_type": "plan",
+            "start": 2186
+          },
+          {
+            "content": "AI Enhancement",
+            "end": 1988,
+            "segment_type": "plan",
+            "start": 1974
+          },
+          {
+            "content": "Cloud-native microservices",
+            "end": 2464,
+            "segment_type": "observation",
+            "start": 2438
+          },
+          {
+            "content": "sensitive data",
+            "end": 1432,
+            "segment_type": "observation",
+            "start": 1418
+          },
+          {
+            "content": "proficiency levels",
+            "end": 553,
+            "segment_type": "observation",
+            "start": 535
+          },
+          {
+            "content": "structured plan",
+            "end": 89,
+            "segment_type": "plan",
+            "start": 74
+          },
+          {
+            "content": "Cover letter optimization",
+            "end": 1257,
+            "segment_type": "observation",
+            "start": 1232
+          },
+          {
+            "content": "Scale & Monetization",
+            "end": 2215,
+            "segment_type": "plan",
+            "start": 2195
+          },
+          {
+            "content": "Phase 2",
+            "end": 1774,
+            "segment_type": "plan",
+            "start": 1767
+          },
+          {
+            "content": "Partnership programs with recruiters",
+            "end": 2399,
+            "segment_type": "observation",
+            "start": 2363
+          },
+          {
+            "content": "API for third-party integrations",
+            "end": 2336,
+            "segment_type": "observation",
+            "start": 2304
+          },
+          {
+            "content": "Smart templates",
+            "end": 976,
+            "segment_type": "observation",
+            "start": 961
+          },
+          {
+            "content": "References management",
+            "end": 652,
+            "segment_type": "observation",
+            "start": 631
+          },
+          {
+            "content": "Mobile apps",
+            "end": 2348,
+            "segment_type": "observation",
+            "start": 2337
+          },
+          {
+            "content": "Security & Privacy",
+            "end": 1390,
+            "segment_type": "observation",
+            "start": 1372
+          },
+          {
+            "content": "Education and certification tracking",
+            "end": 630,
+            "segment_type": "observation",
+            "start": 594
+          },
+          {
+            "content": "Technical Architecture Considerations",
+            "end": 2437,
+            "segment_type": "reasoning",
+            "start": 2400
+          },
+          {
+            "content": "common application components",
+            "end": 1010,
+            "segment_type": "observation",
+            "start": 981
+          },
+          {
+            "content": "Data Reusability",
+            "end": 940,
+            "segment_type": "observation",
+            "start": 924
+          },
+          {
+            "content": "detailed achievements",
+            "end": 593,
+            "segment_type": "observation",
+            "start": 572
+          },
+          {
+            "content": "Interview preparation tools",
+            "end": 892,
+            "segment_type": "observation",
+            "start": 865
+          },
+          {
+            "content": "tracking opportunities",
+            "end": 733,
+            "segment_type": "observation",
+            "start": 711
+          },
+          {
+            "content": "AI customization",
+            "end": 778,
+            "segment_type": "observation",
+            "start": 762
+          },
+          {
+            "content": "Portfolio/document repository",
+            "end": 512,
+            "segment_type": "observation",
+            "start": 483
+          },
+          {
+            "content": "Team/enterprise plans",
+            "end": 2303,
+            "segment_type": "observation",
+            "start": 2282
+          },
+          {
+            "content": "resume tailoring",
+            "end": 2073,
+            "segment_type": "observation",
+            "start": 2057
+          },
+          {
+            "content": "Cover letter generator",
+            "end": 756,
+            "segment_type": "observation",
+            "start": 734
+          },
+          {
+            "content": "unlimited storage",
+            "end": 2280,
+            "segment_type": "observation",
+            "start": 2263
+          },
+          {
+            "content": "Interview preparation tools",
+            "end": 2101,
+            "segment_type": "observation",
+            "start": 2074
+          },
+          {
+            "content": "Integration with job boards",
+            "end": 2161,
+            "segment_type": "observation",
+            "start": 2134
+          },
+          {
+            "content": "Foundation",
+            "end": 1582,
+            "segment_type": "plan",
+            "start": 1572
+          },
+          {
+            "content": "specific job descriptions",
+            "end": 825,
+            "segment_type": "observation",
+            "start": 800
+          },
+          {
+            "content": "Application analytics and success tracking",
+            "end": 1143,
+            "segment_type": "observation",
+            "start": 1101
+          },
+          {
+            "content": "Premium features",
+            "end": 2248,
+            "segment_type": "observation",
+            "start": 2232
+          },
+          {
+            "content": "Resume/CV storage",
+            "end": 467,
+            "segment_type": "observation",
+            "start": 450
+          },
+          {
+            "content": "HireKey.ai",
+            "end": 56,
+            "segment_type": "code",
+            "start": 46
+          },
+          {
+            "content": "AI-Powered Features",
+            "end": 1166,
+            "segment_type": "observation",
+            "start": 1147
+          },
+          {
+            "content": "Comprehensive professional profile builder",
+            "end": 449,
+            "segment_type": "observation",
+            "start": 407
+          },
+          {
+            "content": "Job Application Preparation",
+            "end": 683,
+            "segment_type": "observation",
+            "start": 656
+          },
+          {
+            "content": "Job description analysis",
+            "end": 1192,
+            "segment_type": "observation",
+            "start": 1168
+          },
+          {
+            "content": "Technical Architecture Considerations",
+            "end": 2437,
+            "segment_type": "observation",
+            "start": 2400
+          },
+          {
+            "content": "centralized platform",
+            "end": 190,
+            "segment_type": "observation",
+            "start": 170
+          },
+          {
+            "content": "Cloud-native microservices",
+            "end": 2464,
+            "segment_type": "code",
+            "start": 2438
+          },
+          {
+            "content": "Application dashboard",
+            "end": 706,
+            "segment_type": "observation",
+            "start": 685
+          },
+          {
+            "content": "Advanced profile builder",
+            "end": 1828,
+            "segment_type": "observation",
+            "start": 1804
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+# Optional GLiNER task-segment hints (Fastino-style [DESCRIPTION] label: text after `entities`).
+# Keys must match --labels (default: observation, reasoning, code, plan, answer).
+
+observation = "Facts, context, requirements, or stated constraints in the document."
+reasoning = "Analysis, trade-offs, risks, mitigations, or justification."
+code = "Code snippets, commands, file paths, or technical identifiers."
+plan = "Roadmap, phases, milestones, epics, execution outline, or next steps."
+answer = "Direct reply, closing question, or user-facing conclusion."

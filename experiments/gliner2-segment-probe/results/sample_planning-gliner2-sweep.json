@@ -1,0 +1,80 @@
+{
+  "generated_at": "2026-04-04T22:06:55Z",
+  "host": "local dev (graphirm-repo)",
+  "fixture": "experiments/gliner2-segment-probe/fixtures/sample_planning.txt",
+  "model_dir": "/home/krs/.cache/huggingface/hub/models--lmo3--gliner2-large-v1-onnx/snapshots/6adb78ae8098685d239dda324cc124d948962c21",
+  "labels": [
+    "observation",
+    "reasoning",
+    "code",
+    "plan",
+    "answer"
+  ],
+  "tool": "gliner2-segment-probe (segment_extract_gliner2)",
+  "runs": [
+    {
+      "min_confidence": 0.5,
+      "segment_count": 0,
+      "segments": []
+    },
+    {
+      "min_confidence": 0.4,
+      "segment_count": 1,
+      "segments": [
+        {
+          "segment_type": "plan",
+          "content": "Phased Execution Plan",
+          "start": 487,
+          "end": 508
+        }
+      ]
+    },
+    {
+      "min_confidence": 0.35,
+      "segment_count": 1,
+      "segments": [
+        {
+          "segment_type": "plan",
+          "content": "Phased Execution Plan",
+          "start": 487,
+          "end": 508
+        }
+      ]
+    },
+    {
+      "min_confidence": 0.25,
+      "segment_count": 1,
+      "segments": [
+        {
+          "segment_type": "plan",
+          "content": "Phased Execution Plan",
+          "start": 487,
+          "end": 508
+        }
+      ]
+    },
+    {
+      "min_confidence": 0.2,
+      "segment_count": 2,
+      "segments": [
+        {
+          "segment_type": "plan",
+          "content": "Phased Execution Plan",
+          "start": 487,
+          "end": 508
+        },
+        {
+          "segment_type": "plan",
+          "content": "HireKey.ai",
+          "start": 92,
+          "end": 102
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "Offsets are byte indices into the UTF-8 fixture file.",
+    "At min_confidence 0.5 this short sample produced no spans; lower thresholds surface the same heading plus an extra plan span for the product name.",
+    "Reproduce: GLINER2_MODEL_DIR=<model_dir> cargo run -p gliner2-segment-probe --release -- --file <fixture> --min-confidence <f>"
+  ]
+}

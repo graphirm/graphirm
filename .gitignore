@@ -47,6 +47,9 @@ data/
 
 # Eval results output
 results/
+# Tracked sweep JSON for gliner2-segment-probe (exception to results/ above)
+!experiments/gliner2-segment-probe/results/
+!experiments/gliner2-segment-probe/results/*.json
 
 # VS Code extension build artifacts
 *.vsix
