@@ -481,6 +481,10 @@ async fn list_sessions(
 /// bounded cleanup task (5-second timeout) to await the join handle before it
 /// is dropped. This prevents the detached task from writing to the graph after
 /// the session has been removed from the map.
+///
+/// Also removes all graph nodes for this session from SQLite (agent, interactions,
+/// content, knowledge scoped to `metadata.session_id`, etc.) so the session does
+/// not reappear after restart.
 async fn delete_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -500,6 +504,14 @@ async fn delete_session(
             let _ = tokio::time::timeout(std::time::Duration::from_secs(5), jh).await;
         });
     }
+
+    let graph = state.graph.clone();
+    let sid = id.clone();
+    let _deleted = tokio::task::spawn_blocking(move || graph.delete_session_subgraph(&sid))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))??;
+
+    tracing::info!(session_id = %id, nodes_removed = _deleted, "Session graph nodes removed");
 
     Ok(StatusCode::NO_CONTENT)
 }

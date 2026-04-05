@@ -473,6 +473,12 @@ impl GraphStore {
     pub fn delete_node(&self, id: &NodeId) -> Result<(), GraphError> {
         let conn = self.pool.get()?;
 
+        let node_type: String = conn.query_row(
+            "SELECT node_type FROM nodes WHERE id = ?1",
+            params![id.0],
+            |row| row.get(0),
+        )?;
+
         conn.execute(
             "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
             params![id.0],
@@ -493,7 +499,43 @@ impl GraphStore {
             graph.remove_node(idx);
         }
 
+        if let Ok(mut cache) = self.node_cache.write() {
+            cache.remove(id);
+        }
+        if node_type == "agent"
+            && let Ok(mut ac) = self.agent_nodes_cache.write()
+        {
+            *ac = None;
+        }
+
         Ok(())
+    }
+
+    /// Delete every node belonging to a session: the agent node (`id == session_id`) and any node
+    /// with `metadata.session_id == session_id`. Removes attached edges and embeddings via
+    /// [`delete_node`]. Order is newest-first to shed leaves before older structural nodes.
+    pub fn delete_session_subgraph(&self, session_id: &str) -> Result<usize, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id FROM nodes
+             WHERE id = ?1 OR json_extract(metadata, '$.session_id') = ?1
+             ORDER BY created_at DESC",
+        )?;
+        // Both clauses use ?1 — single bind (SQLite repeats the first parameter).
+        let ids: Vec<String> = stmt
+            .query_map(params![session_id], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        drop(conn);
+
+        let mut deleted = 0usize;
+        for id_str in ids {
+            let id = NodeId::from(id_str.as_str());
+            if self.delete_node(&id).is_ok() {
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
     }
 
     pub fn add_edge(&self, edge: GraphEdge) -> Result<EdgeId, GraphError> {
@@ -1727,6 +1769,38 @@ mod tests {
 
         let graph = store.graph.read().unwrap();
         assert_eq!(graph.node_count(), 0);
+    }
+
+    #[test]
+    fn delete_session_subgraph_removes_agent_and_scoped_nodes() {
+        use crate::nodes::AgentData;
+
+        let store = GraphStore::open_memory().unwrap();
+        let sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+        let mut agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "t".to_string(),
+            model: "m".to_string(),
+            system_prompt: None,
+            status: "idle".to_string(),
+        }));
+        agent.id = NodeId::from(sid);
+        agent.metadata["session_id"] = serde_json::json!(sid);
+        store.add_node(agent).unwrap();
+
+        let mut i1 = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "hi".to_string(),
+            token_count: None,
+        }));
+        i1.metadata["session_id"] = serde_json::json!(sid);
+        store.add_node(i1).unwrap();
+
+        let removed = store.delete_session_subgraph(sid).unwrap();
+        assert!(removed >= 2);
+
+        assert!(store.get_node(&NodeId::from(sid)).is_err());
+        assert!(store.get_session_interactions(sid).unwrap().is_empty());
     }
 
     #[test]
