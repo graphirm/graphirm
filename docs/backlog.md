@@ -1177,6 +1177,62 @@ clean commit history, GitHub topics/description. Required before any public visi
 
 ---
 
+## Planning ↔ code, editable segments, director (2026-04-05)
+
+Derived from dogfood on `app.graphirm.ai`: planning Knowledge nodes and file `Content` nodes
+are not linked automatically; long plans read as a single markdown blob; high token use when
+creating many planning nodes one tool call at a time.
+
+### `graph_query` / project: link artifacts to planning — P1 · M
+
+**Partial (2026-04-05):** `project` action **`link_content`** — adds **`relates_to`** from planning
+**Knowledge** → **Content** (same `session_id` as agent), metadata `artifact_link`: `implements` |
+`documents` (default `implements`). Idempotent. BFS from story with `edge_types: ["relates_to"]`
+reaches the file. *Code:* `crates/tools/src/graph_query.rs`.
+
+**Still open:** narrow `edge_create` for other pairs; auto-link from `write` tool; web-app surfacing.
+
+### Optional: Content metadata for planning linkage — P2 · S
+
+If full edges are too heavy first: `implements_story_id` / `epic_id` on Content metadata + list/filter
+in API. *Acceptance: PATCH + query by id.*
+
+### Segment types: `question` + `instruction` (and friends) — P2 · M
+
+Extend allowed segment types + system prompt so long assistant replies split into **questions**,
+**instructions**, and narrative **body** blocks. *Acceptance: parser validates; unknown types rejected
+or coerced.*
+
+### Persist stable segment ids + PATCH single segment — P2 · M
+
+Stable id per segment in graph/metadata so the UI can **save one block** without rewriting the whole
+message. *Acceptance: PATCH updates one segment; SSE/UI reflect change.*
+
+### Web UI: block-level editor for segments — P2 · M
+
+Render assistant turns as **cards per segment**; inline edit + save per block (depends on segment
+ids + PATCH). *Acceptance: edit question vs body independently.*
+
+### Director metadata (MVP) — P3 · S
+
+Stamp `director_class` or `beat` on user/assistant turns (or segments) for routing UI / prompts later.
+*Acceptance: visible in API + optional filter in context builder.*
+
+### Director rules (later) — P3 · M
+
+Rule table: if class = X → constrain tools / system nudge / UI mode. *Acceptance: one e2e path
+(e.g. “planning” → planning tools only).*
+
+### Batch or single-call planning graph writes — P2 · M
+
+Reduce one-node-per-turn `graph_query` churn for large plans. *Acceptance: one tool call can create N
+nodes or import a tree from JSON.*
+
+**Suggested priority order:** link artifact ↔ planning → segment types + ids + block UI → batch writes
+→ director MVP → director rules.
+
+---
+
 ## Completed (summary — details in `docs/completion-log.md`)
 
 | Phase | What |

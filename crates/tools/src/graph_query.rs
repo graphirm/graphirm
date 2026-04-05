@@ -50,6 +50,7 @@ impl Tool for GraphQueryTool {
   - create: Create a new planning node (epic, story, criterion, or decision)
   - list: List planning nodes with optional filtering
   - link_session: Link the current session to a planning node
+  - link_content: Link a Content node (e.g. file from write) to a planning Knowledge node via relates_to (outgoing from planning → content; use BFS/neighbors with relates_to for traceability)
   - update: Update a planning node's status
 
 • stats — Report overall graph statistics: total nodes, total edges, and breakdown by node type.
@@ -126,7 +127,7 @@ The tool is read-only for bfs/list_type/search/semantic/neighbors/stats modes; p
                 },
                 "action": {
                     "type": "string",
-                    "enum": ["create", "list", "link_session", "update"],
+                    "enum": ["create", "list", "link_session", "link_content", "update"],
                     "description": "Action to perform in project mode"
                 },
                 "entity": {
@@ -143,7 +144,16 @@ The tool is read-only for bfs/list_type/search/semantic/neighbors/stats modes; p
                 },
                 "planning_node_id": {
                     "type": "string",
-                    "description": "Planning node ID for link_session action"
+                    "description": "Planning node ID for link_session and link_content actions"
+                },
+                "content_id": {
+                    "type": "string",
+                    "description": "Content node ID (e.g. file node from write) for link_content action"
+                },
+                "relationship": {
+                    "type": "string",
+                    "enum": ["implements", "documents"],
+                    "description": "Semantic label stored on edge metadata (link_content only; default: implements)"
                 },
                 "status": {
                     "type": "string",
@@ -777,6 +787,103 @@ async fn execute_project(
             )))
         }
 
+        "link_content" => {
+            let content_id_str = args["content_id"].as_str().ok_or_else(|| {
+                ToolError::InvalidArguments("'content_id' is required for link_content".into())
+            })?;
+            let planning_id_str = args["planning_node_id"].as_str().ok_or_else(|| {
+                ToolError::InvalidArguments(
+                    "'planning_node_id' is required for link_content".into(),
+                )
+            })?;
+            let relationship = args["relationship"].as_str().unwrap_or("implements");
+            match relationship {
+                "implements" | "documents" => {}
+                other => {
+                    return Err(ToolError::InvalidArguments(format!(
+                        "unknown relationship '{other}'; must be one of: implements, documents"
+                    )));
+                }
+            }
+
+            let content_id = NodeId(content_id_str.to_string());
+            let planning_id = NodeId(planning_id_str.to_string());
+            let agent_id = ctx.agent_id.clone();
+            let graph = ctx.graph.clone();
+            let rel_owned = relationship.to_string();
+
+            let inserted = tokio::task::spawn_blocking(move || {
+                let content_node = graph
+                    .get_node(&content_id)
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                if !matches!(content_node.node_type, NodeType::Content(_)) {
+                    return Err(ToolError::InvalidArguments(
+                        "link_content: content_id must refer to a Content node".into(),
+                    ));
+                }
+                let sid = content_node
+                    .metadata
+                    .get("session_id")
+                    .and_then(|v| v.as_str());
+                if sid != Some(agent_id.0.as_str()) {
+                    return Err(ToolError::InvalidArguments(
+                        "link_content: Content node session_id must match this session's agent id"
+                            .into(),
+                    ));
+                }
+
+                let plan_node = graph
+                    .get_node(&planning_id)
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                if plan_node.metadata.get("planning").and_then(|v| v.as_bool()) != Some(true) {
+                    return Err(ToolError::InvalidArguments(
+                        "link_content: planning_node_id must be a planning Knowledge node".into(),
+                    ));
+                }
+                if !matches!(plan_node.node_type, NodeType::Knowledge(_)) {
+                    return Err(ToolError::InvalidArguments(
+                        "link_content: planning_node_id must be a Knowledge node".into(),
+                    ));
+                }
+
+                let edges = graph
+                    .edges_for_node(&planning_id)
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                if edges.iter().any(|e| {
+                    e.edge_type == EdgeType::RelatesTo
+                        && e.source == planning_id
+                        && e.target == content_id
+                }) {
+                    return Ok(false);
+                }
+
+                let meta = json!({ "artifact_link": rel_owned });
+                graph
+                    .add_edge(
+                        GraphEdge::new(
+                            EdgeType::RelatesTo,
+                            planning_id.clone(),
+                            content_id.clone(),
+                        )
+                        .with_metadata(meta),
+                    )
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                Ok(true)
+            })
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))??;
+
+            if inserted {
+                Ok(ToolOutput::success(format!(
+                    "Linked Content {content_id_str} to planning node {planning_id_str} (relates_to, {relationship})"
+                )))
+            } else {
+                Ok(ToolOutput::success(format!(
+                    "Already linked: Content {content_id_str} → planning {planning_id_str} (relates_to)"
+                )))
+            }
+        }
+
         "update" => {
             let node_id_str = args["node_id"]
                 .as_str()
@@ -829,7 +936,7 @@ async fn execute_project(
         }
 
         other => Err(ToolError::InvalidArguments(format!(
-            "unknown action '{other}'; must be one of: create, list, link_session, update"
+            "unknown action '{other}'; must be one of: create, list, link_session, link_content, update"
         ))),
     }
 }
@@ -904,7 +1011,7 @@ mod tests {
     use crate::retriever::{KnowledgeResult, KnowledgeRetriever};
     use crate::tests::make_test_context;
     use graphirm_graph::nodes::{
-        GraphNode, InteractionData, KnowledgeData, NodeType, TaskData, TaskStatus,
+        ContentData, GraphNode, InteractionData, KnowledgeData, NodeType, TaskData, TaskStatus,
     };
     use serde_json::json;
     use std::sync::Arc;
@@ -1573,6 +1680,91 @@ mod tests {
             derived_from_exists,
             "DerivedFrom edge should exist from agent to planning node"
         );
+    }
+
+    #[tokio::test]
+    async fn test_project_link_content_bfs_reaches_file() {
+        let ctx = make_test_context();
+        let tool = GraphQueryTool::new();
+        let aid = ctx.agent_id.clone();
+
+        let story = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "create",
+                    "entity": "Story A",
+                    "summary": "vertical slice",
+                    "entity_type": "story"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!story.is_error);
+        let story_id = story
+            .content
+            .split("node: ")
+            .nth(1)
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let mut file = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".to_string(),
+            path: Some("/tmp/ws/x.rs".to_string()),
+            body: "fn main() {}".to_string(),
+            language: Some("rust".to_string()),
+        }));
+        file.metadata["session_id"] = json!(aid.0);
+        let file_id = ctx.graph.add_node(file).unwrap();
+
+        let link = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "link_content",
+                    "content_id": file_id.0,
+                    "planning_node_id": story_id
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!link.is_error);
+        assert!(link.content.contains("Linked Content"));
+
+        let bfs = tool
+            .execute(
+                json!({
+                    "mode": "bfs",
+                    "node_id": story_id,
+                    "depth": 3,
+                    "edge_types": ["relates_to"]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(
+            bfs.content.contains(&file_id.0),
+            "BFS from story along relates_to should reach file Content: {}",
+            bfs.content
+        );
+
+        let link2 = tool
+            .execute(
+                json!({
+                    "mode": "project",
+                    "action": "link_content",
+                    "content_id": file_id.0,
+                    "planning_node_id": story_id
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(link2.content.contains("Already linked"));
     }
 
     #[tokio::test]
