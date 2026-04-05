@@ -1,7 +1,8 @@
 import type { GraphData, GraphNode, Message, Session } from '../types/graph';
+import { getApiKey } from './apiKey';
 
 function authHeaders(): Record<string, string> {
-  const key = import.meta.env.VITE_API_KEY as string | undefined;
+  const key = getApiKey();
   return key ? { Authorization: `Bearer ${key}` } : {};
 }
 

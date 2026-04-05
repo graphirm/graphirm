@@ -86,7 +86,7 @@ async fn build_workspace_context(path: &std::path::Path) -> String {
 /// Middleware applied on the merged router (outermost → innermost):
 /// - [`TraceLayer`], request logging, [`CorsLayer`]
 ///
-/// `/api/health` has no API key check and no rate limit. All other routes (including unknown
+/// `/api/health` and `/api/client-config` have no API key check and no rate limit. All other routes (including unknown
 /// `/api/*` → 404) require `Authorization: Bearer` when an API key is configured, and are
 /// rate-limited per IP. SSE routes are rate-limited but hold long connections (each request
 /// still counts once at connect time).
@@ -107,7 +107,9 @@ pub fn create_router(state: AppState) -> Router {
         .expect("governor config")
     });
 
-    let health_router = Router::new().route("/api/health", get(health));
+    let health_router = Router::new()
+        .route("/api/health", get(health))
+        .route("/api/client-config", get(client_config));
 
     let main_router = Router::new()
         // Session management
@@ -250,6 +252,13 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
         version: env!("CARGO_PKG_VERSION").to_string(),
         session_count,
     })
+}
+
+/// Same-origin bootstrap for the SPA: exposes the configured API key so the browser can send
+/// `Authorization: Bearer` without baking `VITE_API_KEY` at build time (Docker/Coolify).
+/// Security is identical to embedding the key in static JS. No auth on this route.
+async fn client_config(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "api_key": state.api_key.as_str() }))
 }
 
 /// `POST /api/sessions` — create a new session.
@@ -852,13 +861,13 @@ async fn patch_graph_node(
                     }
                 }
             }
-        if let Some(serde_json::Value::Object(patch_map)) = req.metadata
-            && let serde_json::Value::Object(ref mut meta) = node.metadata
-        {
-            for (k, v) in patch_map {
-                meta.insert(k.clone(), v.clone());
+            if let Some(serde_json::Value::Object(patch_map)) = req.metadata
+                && let serde_json::Value::Object(ref mut meta) = node.metadata
+            {
+                for (k, v) in patch_map {
+                    meta.insert(k.clone(), v.clone());
+                }
             }
-        }
             if let serde_json::Value::Object(ref mut meta) = node.metadata {
                 meta.insert("user_edited".to_string(), serde_json::json!(true));
             }

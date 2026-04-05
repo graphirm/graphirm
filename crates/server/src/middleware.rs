@@ -59,7 +59,8 @@ pub async fn api_key_auth(State(state): State<AppState>, request: Request, next:
         return next.run(request).await;
     }
 
-    if request.uri().path() == "/api/health" {
+    let path = request.uri().path();
+    if path == "/api/health" || path == "/api/client-config" {
         return next.run(request).await;
     }
 

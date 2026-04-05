@@ -1,3 +1,5 @@
+import { getApiKey } from './apiKey';
+
 const SSE_EVENT_TYPES = [
   'agent_start',
   'agent_end',
@@ -32,7 +34,7 @@ export class SseClient {
 
   subscribe(sessionId: string): void {
     this.unsubscribe();
-    const key = (import.meta.env.VITE_API_KEY as string | undefined) ?? '';
+    const key = getApiKey();
     const tokenParam = key ? `?token=${encodeURIComponent(key)}` : '';
     const url = `/api/events/${encodeURIComponent(sessionId)}${tokenParam}`;
     this._source = new EventSource(url);

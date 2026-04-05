@@ -108,6 +108,31 @@ async fn test_api_routes_take_precedence_over_static_files() {
 }
 
 #[tokio::test]
+async fn test_client_config_returns_api_key_without_bearer() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("index.html"), "<html></html>").unwrap();
+
+    let mut state = test_app_state_with_web_dir(dir.path().to_path_buf());
+    state.api_key = "bootstrap-secret".to_string();
+    let app = create_router(state);
+
+    let resp = app
+        .oneshot(
+            Request::get("/api/client-config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["api_key"], "bootstrap-secret");
+}
+
+#[tokio::test]
 async fn test_no_web_dir_returns_404_for_root() {
     let graph = Arc::new(GraphStore::open_memory().unwrap());
     let (event_tx, _) = broadcast::channel::<SseEvent>(256);
