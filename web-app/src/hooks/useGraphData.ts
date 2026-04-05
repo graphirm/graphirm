@@ -255,18 +255,15 @@ function isKnowledgeDismissed(gn: GraphNode): boolean {
   return gn.node_type.type === 'Knowledge' && gn.metadata?.dismissed === true;
 }
 
-function graphEdgeToFlowEdge(ge: {
-  id: string;
-  source: string;
-  target: string;
-  edge_type: string;
-}): Edge {
+function graphEdgeToFlowEdge(ge: GraphEdge): Edge {
+  const artifactLink =
+    typeof ge.metadata?.artifact_link === 'string' ? ge.metadata.artifact_link : undefined;
   return {
     id: ge.id,
     source: ge.source,
     target: ge.target,
     type: 'labelled',
-    data: { edge_type: ge.edge_type },
+    data: { edge_type: ge.edge_type, artifact_link: artifactLink },
     markerEnd: { type: 'arrowclosed' as const, color: '#666' },
   };
 }
@@ -451,14 +448,7 @@ export function useGraphData(
 
   const rawEdges = useMemo(() => {
     if (!graphData) return [];
-    return graphData.edges.map(e =>
-      graphEdgeToFlowEdge({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        edge_type: e.edge_type,
-      }),
-    );
+    return graphData.edges.map(e => graphEdgeToFlowEdge(e));
   }, [graphData]);
 
   const applyLayout = useCallback(

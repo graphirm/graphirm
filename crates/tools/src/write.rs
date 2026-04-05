@@ -87,6 +87,8 @@ impl Tool for WriteTool {
         }));
         let content_node = ctx.record_content_node(node, EdgeType::Modifies).await?;
 
+        crate::planning_link::try_auto_link_written_file_content(ctx, &content_node).await;
+
         Ok(ToolOutput::success_with_node(
             format!("File {} '{}'", action, full_path.display()),
             content_node,

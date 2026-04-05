@@ -230,6 +230,10 @@ pub struct AgentConfig {
     /// A short notice is appended to the system prompt when a session starts.
     #[serde(default)]
     pub disable_bash: bool,
+    /// When true, `write`/`edit` that create `file` Content nodes add a `relates_to` edge
+    /// from the session-linked planning Knowledge node (requires `link_session`).
+    #[serde(default = "default_auto_link_write_to_planning")]
+    pub auto_link_write_to_planning: bool,
     /// Maximum total LLM tokens (input + output summed from completion usage)
     /// allowed per session. `None` disables the cap. When exceeded, the current
     /// turn's assistant message is still recorded, then the agent loop stops with
@@ -430,6 +434,7 @@ impl Default for AgentConfig {
             budget_warning_thresholds: default_budget_warning_thresholds(),
             enforce_work_loop: default_enforce_work_loop(),
             disable_bash: false,
+            auto_link_write_to_planning: true,
             max_session_tokens: None,
             outline: None,
         }
@@ -513,6 +518,8 @@ struct AgentConfigSection {
     enforce_work_loop: bool,
     #[serde(default)]
     disable_bash: bool,
+    #[serde(default = "default_auto_link_write_to_planning")]
+    auto_link_write_to_planning: bool,
     #[serde(default)]
     max_session_tokens: Option<u64>,
     #[serde(default)]
@@ -525,6 +532,10 @@ fn default_system_prompt() -> String {
 
 fn default_max_turns() -> u32 {
     50
+}
+
+fn default_auto_link_write_to_planning() -> bool {
+    true
 }
 
 impl AgentConfig {
@@ -569,6 +580,7 @@ impl AgentConfig {
             budget_warning_thresholds: file.agent.budget_warning_thresholds,
             enforce_work_loop: file.agent.enforce_work_loop,
             disable_bash: file.agent.disable_bash,
+            auto_link_write_to_planning: file.agent.auto_link_write_to_planning,
             max_session_tokens: file.agent.max_session_tokens,
             outline: file.agent.outline,
         })
@@ -713,6 +725,24 @@ mod tests {
         "#;
         let config = AgentConfig::from_toml(toml_str).unwrap();
         assert!(config.disable_bash);
+    }
+
+    #[test]
+    fn test_auto_link_write_to_planning_default_true() {
+        assert!(AgentConfig::default().auto_link_write_to_planning);
+    }
+
+    #[test]
+    fn test_auto_link_write_to_planning_toml_false() {
+        let toml_str = r#"
+            [agent]
+            name = "test"
+            model = "gpt-4"
+            system_prompt = "test"
+            auto_link_write_to_planning = false
+        "#;
+        let config = AgentConfig::from_toml(toml_str).unwrap();
+        assert!(!config.auto_link_write_to_planning);
     }
 
     #[test]

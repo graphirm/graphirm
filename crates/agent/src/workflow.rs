@@ -877,6 +877,7 @@ async fn execute_tools_parallel(
         knowledge_retriever,
         impact_provider: impact_provider.clone(),
         disable_bash: session.agent_config.disable_bash,
+        auto_link_write_to_planning: session.agent_config.auto_link_write_to_planning,
     };
 
     // Partition tool calls: destructive ones go through sequential HITL approval,

@@ -134,6 +134,8 @@ impl Tool for EditTool {
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))??
         };
 
+        crate::planning_link::try_auto_link_written_file_content(ctx, &content_node).await;
+
         Ok(ToolOutput::success_with_node(
             format!("Edited '{}': replaced 1 occurrence", full_path.display()),
             content_node,

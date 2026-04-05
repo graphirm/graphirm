@@ -2,7 +2,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
 use graphirm_graph::GraphStore;
-use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, NodeType};
+use graphirm_graph::edges::{EdgeType, GraphEdge};
+use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, KnowledgeData, NodeType};
 use graphirm_tools::{
     ToolCall, ToolContext,
     bash::BashTool,
@@ -52,6 +53,7 @@ fn setup() -> (TempDir, ToolRegistry, ToolContext) {
         knowledge_retriever: None,
         impact_provider: None,
         disable_bash: false,
+        auto_link_write_to_planning: true,
     };
 
     let mut registry = ToolRegistry::new();
@@ -257,4 +259,42 @@ async fn graph_trail_after_workflow() {
     assert!(matches!(read_node.node_type, NodeType::Content(_)));
 
     let _ = initial_count;
+}
+
+#[tokio::test]
+async fn write_auto_links_file_to_session_planning_node() {
+    let (_dir, registry, ctx) = setup();
+
+    let mut story = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+        entity: "Story A".into(),
+        entity_type: "story".into(),
+        summary: "vertical slice".into(),
+        confidence: 1.0,
+    }));
+    story.metadata["planning"] = json!(true);
+    let story_id = ctx.graph.add_node(story).unwrap();
+    ctx.graph
+        .add_edge(GraphEdge::new(
+            EdgeType::DerivedFrom,
+            ctx.agent_id.clone(),
+            story_id.clone(),
+        ))
+        .unwrap();
+
+    let write_call = ToolCall {
+        id: "w".into(),
+        name: "write".into(),
+        arguments: json!({"path": "linked.rs", "content": "fn main() {}"}),
+    };
+    let write_out = execute_single(&registry, &write_call, &ctx).await.unwrap();
+    assert!(!write_out.is_error);
+    let file_id = write_out.node_id.expect("write node id");
+
+    let edges = ctx.graph.edges_for_node(&story_id).unwrap();
+    assert!(
+        edges.iter().any(|e| {
+            e.edge_type == EdgeType::RelatesTo && e.source == story_id && e.target == file_id
+        }),
+        "expected relates_to from planning story to file content"
+    );
 }

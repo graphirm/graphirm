@@ -1179,9 +1179,11 @@ clean commit history, GitHub topics/description. Required before any public visi
 
 ## Planning ↔ code, editable segments, director (2026-04-05)
 
-Derived from dogfood on `app.graphirm.ai`: planning Knowledge nodes and file `Content` nodes
-are not linked automatically; long plans read as a single markdown blob; high token use when
-creating many planning nodes one tool call at a time.
+**Plan:** `docs/plans/2026-04-06-planning-code-linkage.md` (auto-link + UI shipped 2026-04-06).
+
+Derived from dogfood on `app.graphirm.ai`: planning Knowledge vs file `Content` traceability,
+long plans as a single markdown blob, and high token use when creating many planning nodes one
+tool call at a time.
 
 ### `graph_query` / project: link artifacts to planning — P1 · M
 
@@ -1190,7 +1192,9 @@ creating many planning nodes one tool call at a time.
 `documents` (default `implements`). Idempotent. BFS from story with `edge_types: ["relates_to"]`
 reaches the file. *Code:* `crates/tools/src/graph_query.rs`.
 
-**Still open:** narrow `edge_create` for other pairs; auto-link from `write` tool; web-app surfacing.
+**Done (2026-04-06):** Auto-link from **`write`** / **`edit`** when the session has **`link_session`** (`crates/tools/src/planning_link.rs`, `AgentConfig.auto_link_write_to_planning`). Web-app: **`relates_to`** edges with **`artifact_link`** show a dashed stroke and **`relates to · implements`** (or **`documents`**) label (`LabelledEdge.tsx`, `useGraphData.ts`). Plan: `docs/plans/2026-04-06-planning-code-linkage.md`.
+
+**Still open:** narrow `edge_create` for other pairs; richer web-app filters.
 
 ### Optional: Content metadata for planning linkage — P2 · S
 

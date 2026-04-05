@@ -44,8 +44,13 @@ export function LabelledEdge({
   data,
   label,
   markerEnd,
-}: EdgeProps & { data?: { edge_type?: EdgeType } }) {
+}: EdgeProps & { data?: { edge_type?: EdgeType; artifact_link?: string } }) {
   const edgeType = (data?.edge_type ?? label ?? '') as EdgeType;
+  const artifactLink =
+    typeof data?.artifact_link === 'string' ? data.artifact_link : undefined;
+  const planningArtifact =
+    edgeType === 'relates_to' &&
+    (artifactLink === 'implements' || artifactLink === 'documents');
   const color = getEdgeColor(edgeType);
   const strokeWidth = STROKE_WIDTH[edgeType] ?? 1.5;
   const useSmooth = SMOOTH_STEP_TYPES.includes(edgeType);
@@ -99,7 +104,9 @@ export function LabelledEdge({
             }}
             className="nodrag nopan"
           >
-            {toDisplayLabel(edgeType)}
+            {planningArtifact && artifactLink
+              ? `${toDisplayLabel(edgeType)} · ${artifactLink}`
+              : toDisplayLabel(edgeType)}
           </div>
         </EdgeLabelRenderer>
       )}

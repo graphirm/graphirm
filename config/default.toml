@@ -30,6 +30,9 @@ timeout_seconds = 300
 # Public / shared servers: set `disable_bash = true` so the bash tool is refused
 # and the model is told not to use shell (see `AgentConfig::disable_bash`).
 # disable_bash = true
+# When a session is linked to planning (`graph_query` link_session), file writes/edits
+# auto-add relates_to (planning → file) unless disabled:
+# auto_link_write_to_planning = false
 # Optional ceiling on total LLM tokens (input + output from each completion) per session.
 # When exceeded, the in-flight assistant message is still saved, then the agent loop stops.
 # max_session_tokens = 500000

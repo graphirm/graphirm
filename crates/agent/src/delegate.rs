@@ -237,6 +237,7 @@ mod tests {
             knowledge_retriever: None,
             impact_provider: None,
             disable_bash: false,
+            auto_link_write_to_planning: true,
         }
     }
 

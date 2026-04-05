@@ -4,6 +4,7 @@ use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{GraphNode, KnowledgeData, NodeId, NodeType};
 use serde_json::json;
 
+use crate::planning_link::{PlanningContentLink, link_planning_content_edge};
 use crate::{Tool, ToolContext, ToolError, ToolOutput};
 
 pub struct GraphQueryTool;
@@ -812,75 +813,29 @@ async fn execute_project(
             let graph = ctx.graph.clone();
             let rel_owned = relationship.to_string();
 
-            let inserted = tokio::task::spawn_blocking(move || {
-                let content_node = graph
-                    .get_node(&content_id)
-                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-                if !matches!(content_node.node_type, NodeType::Content(_)) {
-                    return Err(ToolError::InvalidArguments(
-                        "link_content: content_id must refer to a Content node".into(),
-                    ));
-                }
-                let sid = content_node
-                    .metadata
-                    .get("session_id")
-                    .and_then(|v| v.as_str());
-                if sid != Some(agent_id.0.as_str()) {
-                    return Err(ToolError::InvalidArguments(
-                        "link_content: Content node session_id must match this session's agent id"
-                            .into(),
-                    ));
-                }
-
-                let plan_node = graph
-                    .get_node(&planning_id)
-                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-                if plan_node.metadata.get("planning").and_then(|v| v.as_bool()) != Some(true) {
-                    return Err(ToolError::InvalidArguments(
-                        "link_content: planning_node_id must be a planning Knowledge node".into(),
-                    ));
-                }
-                if !matches!(plan_node.node_type, NodeType::Knowledge(_)) {
-                    return Err(ToolError::InvalidArguments(
-                        "link_content: planning_node_id must be a Knowledge node".into(),
-                    ));
-                }
-
-                let edges = graph
-                    .edges_for_node(&planning_id)
-                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-                if edges.iter().any(|e| {
-                    e.edge_type == EdgeType::RelatesTo
-                        && e.source == planning_id
-                        && e.target == content_id
-                }) {
-                    return Ok(false);
-                }
-
-                let meta = json!({ "artifact_link": rel_owned });
-                graph
-                    .add_edge(
-                        GraphEdge::new(
-                            EdgeType::RelatesTo,
-                            planning_id.clone(),
-                            content_id.clone(),
-                        )
-                        .with_metadata(meta),
-                    )
-                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-                Ok(true)
+            let outcome = tokio::task::spawn_blocking(move || {
+                link_planning_content_edge(
+                    &graph,
+                    &agent_id,
+                    &planning_id,
+                    &content_id,
+                    rel_owned.as_str(),
+                )
             })
             .await
-            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))??;
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
 
-            if inserted {
-                Ok(ToolOutput::success(format!(
+            match outcome {
+                PlanningContentLink::Inserted => Ok(ToolOutput::success(format!(
                     "Linked Content {content_id_str} to planning node {planning_id_str} (relates_to, {relationship})"
-                )))
-            } else {
-                Ok(ToolOutput::success(format!(
+                ))),
+                PlanningContentLink::AlreadyLinked => Ok(ToolOutput::success(format!(
                     "Already linked: Content {content_id_str} → planning {planning_id_str} (relates_to)"
-                )))
+                ))),
+                PlanningContentLink::NotApplicable(msg) => {
+                    Err(ToolError::InvalidArguments(msg.to_string()))
+                }
             }
         }
 

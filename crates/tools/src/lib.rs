@@ -13,6 +13,7 @@ pub mod grep;
 pub mod impact;
 pub mod ls;
 pub mod permissions;
+pub mod planning_link;
 pub mod read;
 pub mod read_many;
 pub mod registry;
@@ -57,6 +58,9 @@ pub struct ToolContext {
     pub impact_provider: Option<Arc<dyn crate::impact::ImpactProvider>>,
     /// When true, `bash` refuses execution (matches session `AgentConfig::disable_bash`).
     pub disable_bash: bool,
+    /// When true, `write`/`edit` file Content nodes get a `relates_to` edge from the session’s
+    /// linked planning Knowledge node (see `planning_link`).
+    pub auto_link_write_to_planning: bool,
 }
 
 impl ToolContext {
@@ -209,6 +213,7 @@ pub(crate) mod tests {
             knowledge_retriever: None,
             impact_provider: None,
             disable_bash: false,
+            auto_link_write_to_planning: true,
         }
     }
 
