@@ -20,6 +20,7 @@ use tower_http::trace::TraceLayer;
 
 use graphirm_agent::workspace::sanitize_workspace_name;
 use graphirm_agent::{AgentConfig, EventBus, HitlDecision, HitlGate, Session, run_agent_loop};
+use graphirm_graph::nodes::ContentData;
 use graphirm_graph::{Direction, EdgeType, GraphEdge, GraphNode, NodeId, NodeType, TaskStatus};
 
 use crate::error::ServerError;
@@ -28,10 +29,11 @@ use crate::sse::{sse_handler, sse_session_handler};
 use crate::state::{AppState, SessionHandle};
 use crate::types::{
     AnnotationRequest, AutoApproveRequest, ContextReportRow, CreateKnowledgeRequest,
-    CreateSessionRequest, EditInteractionRequest, ExportQuery, GraphResponse, HealthResponse,
-    NodeAction, NodeActionRequest, PatchKnowledgeRequest, PatchTaskStatusRequest,
-    PinnedKnowledgeQuery, PromptRequest, RateTurnRequest, RenameSessionRequest, SessionId,
-    SessionResponse, SessionStatus, SseEvent, SseEventType, StrategyReport, SubgraphQuery,
+    CreateOutlineItemRequest, CreateSessionRequest, EditInteractionRequest, ExportQuery,
+    GraphResponse, HealthResponse, NodeAction, NodeActionRequest, OutlineQuery,
+    PatchGraphNodeRequest, PatchKnowledgeRequest, PatchTaskStatusRequest, PinnedKnowledgeQuery,
+    PromptRequest, RateTurnRequest, RenameSessionRequest, SessionId, SessionResponse,
+    SessionStatus, SseEvent, SseEventType, StrategyReport, SubgraphQuery,
 };
 
 /// Build a brief workspace context block to inject into the system prompt.
@@ -125,11 +127,15 @@ pub fn create_router(state: AppState) -> Router {
             get(context_report_handler),
         )
         .route("/api/sessions/{id}/children", get(get_children))
+        .route(
+            "/api/sessions/{id}/outline",
+            get(get_session_outline).post(post_session_outline),
+        )
         // Graph queries
         .route("/api/graph/{session_id}", get(get_session_graph))
         .route(
             "/api/graph/{session_id}/node/{node_id}",
-            get(get_graph_node),
+            get(get_graph_node).patch(patch_graph_node),
         )
         .route(
             "/api/graph/{session_id}/subgraph/{node_id}",
@@ -269,6 +275,12 @@ async fn create_session(
         });
     }
     config.segment_filter = body.segment_filter;
+    if body.enable_outline == Some(true) {
+        config.outline = Some(graphirm_agent::config::OutlineConfig {
+            enabled: true,
+            ..graphirm_agent::config::OutlineConfig::default()
+        });
+    }
 
     // Resolve per-session workspace directory
     if let Some(ref root) = config.workspaces_root {
@@ -523,8 +535,21 @@ async fn prompt_session(
     // Record the user message outside the lock so we don't hold a write guard
     // across the async spawn_blocking call inside add_user_message.
     let responds_to = body.context_root.as_ref().map(|s| NodeId::from(s.as_str()));
+    let mut user_message = body.content.clone();
+    if let Some(ref sc) = body.steer_context
+        && (sc.outline_node_id.is_some() || sc.interaction_id.is_some())
+    {
+        user_message.push_str("\n\n---\n*Scope:*");
+        if let Some(ref iid) = sc.interaction_id {
+            user_message.push_str(&format!(" interaction `{iid}`"));
+        }
+        if let Some(ref oid) = sc.outline_node_id {
+            user_message.push_str(&format!(" outline `{oid}`"));
+        }
+        user_message.push('.');
+    }
     session
-        .add_user_message_with_context(&body.content, responds_to)
+        .add_user_message_with_context(&user_message, responds_to)
         .await
         .map_err(ServerError::Agent)?;
 
@@ -783,6 +808,205 @@ async fn get_graph_node(
         .map_err(|e| ServerError::Internal(e.to_string()))?
         .map_err(|_| ServerError::NotFound(format!("Node not found: {node_id}")))?;
 
+    Ok(Json(node))
+}
+
+/// `PATCH /api/graph/{session_id}/node/{node_id}` — update a graph node (outline items, metadata).
+async fn patch_graph_node(
+    State(state): State<AppState>,
+    Path((session_id, node_id)): Path<(String, String)>,
+    Json(req): Json<PatchGraphNodeRequest>,
+) -> Result<Json<GraphNode>, ServerError> {
+    if req.body.is_none() && req.metadata.is_none() {
+        return Err(ServerError::BadRequest(
+            "at least one of body or metadata is required".to_string(),
+        ));
+    }
+    let key = SessionId::from(session_id.as_str());
+    let session_node_id = {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&key)
+            .ok_or_else(|| ServerError::NotFound(format!("Session not found: {session_id}")))?;
+        handle.session.id.clone()
+    };
+    let target = NodeId::from(node_id.as_str());
+    let graph = state.graph.clone();
+    let node_id_owned = node_id.clone();
+    let updated =
+        tokio::task::spawn_blocking(move || -> Result<GraphNode, graphirm_graph::GraphError> {
+            let (nodes, _) = graph.subgraph(&session_node_id, 15)?;
+            if !nodes.iter().any(|n| n.id == target) {
+                return Err(graphirm_graph::GraphError::NodeNotFound(node_id_owned));
+            }
+            let mut node = graph.get_node(&target)?;
+            if let Some(b) = req.body {
+                match &mut node.node_type {
+                    NodeType::Content(c) => {
+                        c.body = b;
+                    }
+                    _ => {
+                        return Err(graphirm_graph::GraphError::NodeNotFound(
+                            "node is not Content".to_string(),
+                        ));
+                    }
+                }
+            }
+        if let Some(serde_json::Value::Object(patch_map)) = req.metadata
+            && let serde_json::Value::Object(ref mut meta) = node.metadata
+        {
+            for (k, v) in patch_map {
+                meta.insert(k.clone(), v.clone());
+            }
+        }
+            if let serde_json::Value::Object(ref mut meta) = node.metadata {
+                meta.insert("user_edited".to_string(), serde_json::json!(true));
+            }
+            graph.update_node(&target, node)?;
+            graph.get_node(&target)
+        })
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(|e| match e {
+            graphirm_graph::GraphError::NodeNotFound(m) => ServerError::NotFound(m),
+            other => ServerError::Graph(other),
+        })?;
+
+    Ok(Json(updated))
+}
+
+/// `GET /api/sessions/:id/outline?interaction_id=...` — list outline_item children of an assistant turn.
+async fn get_session_outline(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<OutlineQuery>,
+) -> Result<Json<Vec<GraphNode>>, ServerError> {
+    let key = SessionId::from(id.as_str());
+    {
+        let sessions = state.sessions.read().await;
+        sessions
+            .get(&key)
+            .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
+    }
+    let interaction_id = NodeId::from(q.interaction_id.as_str());
+    let graph = state.graph.clone();
+    let outline_type = graphirm_agent::knowledge::outline::OUTLINE_CONTENT_TYPE;
+    let out = tokio::task::spawn_blocking(move || {
+        let children = graph.neighbors(
+            &interaction_id,
+            Some(EdgeType::Contains),
+            Direction::Outgoing,
+        )?;
+        let mut outline: Vec<GraphNode> = children
+            .into_iter()
+            .filter(|n| {
+                matches!(
+                    &n.node_type,
+                    NodeType::Content(ContentData { content_type, .. }) if content_type == outline_type
+                )
+            })
+            .collect();
+        outline.sort_by_key(|n| {
+            n.metadata
+                .get("outline_order")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+        });
+        Ok::<_, graphirm_graph::GraphError>(outline)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))?
+    .map_err(ServerError::Graph)?;
+    Ok(Json(out))
+}
+
+/// `POST /api/sessions/:id/outline` — add a user-authored outline_item under an assistant interaction.
+async fn post_session_outline(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<CreateOutlineItemRequest>,
+) -> Result<Json<GraphNode>, ServerError> {
+    let key = SessionId::from(id.as_str());
+    let session_node_id = {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&key)
+            .ok_or_else(|| ServerError::NotFound(format!("Session not found: {id}")))?;
+        handle.session.id.clone()
+    };
+    let parent_id = NodeId::from(body.parent_interaction_id.as_str());
+    let outline_type = graphirm_agent::knowledge::outline::OUTLINE_CONTENT_TYPE.to_string();
+    let title = body.title;
+    let body_text = body.body;
+    let kind = body.kind;
+    let graph = state.graph.clone();
+    let node = tokio::task::spawn_blocking(move || {
+        let (nodes, _) = graph.subgraph(&session_node_id, 20)?;
+        if !nodes.iter().any(|n| n.id == parent_id) {
+            return Err(graphirm_graph::GraphError::NodeNotFound(
+                "parent interaction not in this session graph".to_string(),
+            ));
+        }
+        graph.get_node(&parent_id)?;
+        let children = graph.neighbors(
+            &parent_id,
+            Some(EdgeType::Contains),
+            Direction::Outgoing,
+        )?;
+        let next_order = children
+            .iter()
+            .filter(|n| {
+                matches!(
+                    &n.node_type,
+                    NodeType::Content(ContentData { content_type, .. }) if content_type == outline_type.as_str()
+                )
+            })
+            .filter_map(|n| n.metadata.get("outline_order").and_then(|v| v.as_u64()))
+            .max()
+            .unwrap_or(0)
+            + 1;
+
+        let body_display = if body_text.is_empty() {
+            title.clone()
+        } else {
+            format!("{}\n\n{}", title, body_text)
+        };
+        let outline_item_id = NodeId::new();
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "outline_kind".to_string(),
+            serde_json::Value::String(kind),
+        );
+        meta.insert(
+            "outline_title".to_string(),
+            serde_json::Value::String(title),
+        );
+        meta.insert(
+            "outline_item_id".to_string(),
+            serde_json::json!(outline_item_id.0),
+        );
+        meta.insert("outline_source".to_string(), serde_json::json!("user"));
+        meta.insert("outline_order".to_string(), serde_json::json!(next_order));
+        meta.insert("user_edited".to_string(), serde_json::json!(false));
+        meta.insert("user_authored".to_string(), serde_json::json!(true));
+        meta.insert("hidden".to_string(), serde_json::json!(false));
+
+        let mut node = GraphNode::new(NodeType::Content(ContentData {
+            content_type: outline_type,
+            path: None,
+            body: body_display,
+            language: None,
+        }));
+        node.metadata = serde_json::Value::Object(meta);
+        let nid = graph.add_node(node)?;
+        let edge = GraphEdge::new(EdgeType::Contains, parent_id, nid.clone())
+            .with_metadata(serde_json::json!({ "order": next_order, "outline": true }));
+        graph.add_edge(edge)?;
+        graph.get_node(&nid)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))?
+    .map_err(ServerError::Graph)?;
     Ok(Json(node))
 }
 

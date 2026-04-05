@@ -101,6 +101,17 @@ impl Default for SegmentConfig {
     }
 }
 
+/// Post-hoc outline extraction (`##` / `###` → `outline_item` Content nodes).
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct OutlineConfig {
+    /// When true, parse markdown headings after each assistant text-only turn.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Allowed kinds for validation (empty = use built-in level→kind mapping only).
+    #[serde(default)]
+    pub kinds: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
     pub name: String,
@@ -225,6 +236,9 @@ pub struct AgentConfig {
     /// [`crate::error::AgentError::SessionTokenCapExceeded`].
     #[serde(default)]
     pub max_session_tokens: Option<u64>,
+    /// Optional post-hoc outline extraction (markdown headings → graph nodes).
+    #[serde(default)]
+    pub outline: Option<OutlineConfig>,
 }
 
 /// Objective weights for composite score optimisation.
@@ -417,6 +431,7 @@ impl Default for AgentConfig {
             enforce_work_loop: default_enforce_work_loop(),
             disable_bash: false,
             max_session_tokens: None,
+            outline: None,
         }
     }
 }
@@ -500,6 +515,8 @@ struct AgentConfigSection {
     disable_bash: bool,
     #[serde(default)]
     max_session_tokens: Option<u64>,
+    #[serde(default)]
+    outline: Option<OutlineConfig>,
 }
 
 fn default_system_prompt() -> String {
@@ -553,6 +570,7 @@ impl AgentConfig {
             enforce_work_loop: file.agent.enforce_work_loop,
             disable_bash: file.agent.disable_bash,
             max_session_tokens: file.agent.max_session_tokens,
+            outline: file.agent.outline,
         })
     }
 

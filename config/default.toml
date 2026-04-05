@@ -283,3 +283,10 @@ min_confidence = 0.5
 # plan = "Roadmap or phased execution outline"
 # [agent.segments.label_min_confidence]
 # plan = 0.35
+
+# Post-hoc markdown outline → `outline_item` Content nodes (plans, epics, phases).
+# Skips when the assistant emitted structured segment JSON or segment children were persisted.
+# See docs/plans/2026-04-06-structured-outline-extraction-and-interactive-reading.md
+# [agent.outline]
+# enabled = true
+# kinds = ["vision", "epic", "phase", "misc"]

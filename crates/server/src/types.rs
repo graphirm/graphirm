@@ -171,6 +171,20 @@ pub struct CreateSessionRequest {
     /// The server creates `<workspaces_root>/<workspace>/` if it does not exist.
     #[serde(default)]
     pub workspace: Option<String>,
+    /// When true, enables post-hoc markdown outline extraction (`outline_item` nodes).
+    #[serde(default)]
+    pub enable_outline: Option<bool>,
+}
+
+/// Optional scoped context for prompts (e.g. elaborate one outline section).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SteerContext {
+    /// Graph node id of an `outline_item` Content node.
+    #[serde(default)]
+    pub outline_node_id: Option<String>,
+    /// Assistant `Interaction` node id that owns the outline.
+    #[serde(default)]
+    pub interaction_id: Option<String>,
 }
 
 /// Request body for `POST /api/sessions/:id/prompt`.
@@ -181,6 +195,46 @@ pub struct PromptRequest {
     /// Optional graph node id: new user message `RespondsTo` this node (steer / fork from here).
     #[serde(default)]
     pub context_root: Option<String>,
+    /// Optional outline / section scope (appended to the message for the model).
+    #[serde(default)]
+    pub steer_context: Option<SteerContext>,
+}
+
+/// Query for `GET /api/sessions/:id/outline`.
+#[derive(Debug, Deserialize)]
+pub struct OutlineQuery {
+    /// Assistant interaction node id whose outline children to list.
+    pub interaction_id: String,
+}
+
+/// Request body for `PATCH /api/graph/:session_id/node/:node_id`.
+#[derive(Debug, Deserialize)]
+pub struct PatchGraphNodeRequest {
+    /// For Content nodes: replace body text.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Shallow-merge into existing node metadata (outline_title, hidden, etc.).
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Request body for `POST /api/sessions/:id/outline`.
+#[derive(Debug, Deserialize)]
+pub struct CreateOutlineItemRequest {
+    /// Parent assistant interaction node id.
+    pub parent_interaction_id: String,
+    /// Display title (stored in metadata.outline_title).
+    pub title: String,
+    /// Body text under the title.
+    #[serde(default)]
+    pub body: String,
+    /// Outline kind (e.g. epic, phase, misc).
+    #[serde(default = "default_outline_kind_misc")]
+    pub kind: String,
+}
+
+fn default_outline_kind_misc() -> String {
+    "misc".to_string()
 }
 
 /// Query parameters for `GET /api/sessions/:id/export`.
@@ -514,6 +568,26 @@ mod tests {
         let json2 = r#"{"content": "Hi", "context_root": "node-abc"}"#;
         let req2: PromptRequest = serde_json::from_str(json2).unwrap();
         assert_eq!(req2.context_root, Some("node-abc".to_string()));
+        assert!(req2.steer_context.is_none());
+
+        let json3 = r#"{"content": "Go", "steer_context": {"outline_node_id": "n1", "interaction_id": "i1"}}"#;
+        let req3: PromptRequest = serde_json::from_str(json3).unwrap();
+        assert_eq!(
+            req3.steer_context
+                .as_ref()
+                .unwrap()
+                .outline_node_id
+                .as_deref(),
+            Some("n1")
+        );
+        assert_eq!(
+            req3.steer_context
+                .as_ref()
+                .unwrap()
+                .interaction_id
+                .as_deref(),
+            Some("i1")
+        );
     }
 
     #[test]

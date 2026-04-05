@@ -1,7 +1,8 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { Message, PendingApproval } from '../types/graph';
 import { MarkdownBody } from './nodes/MarkdownBody';
 import { HitlOverlay } from './HitlOverlay';
+import { OutlinePanel } from './OutlinePanel';
 import styles from '../styles/chat.module.css';
 
 interface SteerContext {
@@ -25,6 +26,10 @@ interface ChatPaneProps {
   onClearSteer: () => void;
   chatCollapsed?: boolean;
   onToggleCollapse?: () => void;
+  /** Scoped steer targeting an outline row (server adds steer_context to prompt). */
+  outlineSteer?: { outlineNodeId: string; interactionId: string } | null;
+  onClearOutlineSteer?: () => void;
+  onOutlineSteer?: (outlineNodeId: string, interactionId: string) => void;
 }
 
 export function ChatPane({
@@ -32,6 +37,7 @@ export function ChatPane({
   streamingMessage = null,
   isThinking,
   pendingApproval,
+  sessionId,
   steerContext,
   inputRef,
   onSend,
@@ -42,9 +48,16 @@ export function ChatPane({
   onClearSteer,
   chatCollapsed,
   onToggleCollapse,
+  outlineSteer = null,
+  onClearOutlineSteer,
+  onOutlineSteer,
 }: ChatPaneProps) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastAssistantId = useMemo(
+    () => [...messages].reverse().find(m => m.role === 'assistant')?.id ?? null,
+    [messages],
+  );
 
   const handleSend = useCallback(() => {
     const trimmed = input.trim();
@@ -103,6 +116,14 @@ export function ChatPane({
         <div ref={messagesEndRef} />
       </div>
 
+      {sessionId && lastAssistantId && onOutlineSteer && (
+        <OutlinePanel
+          sessionId={sessionId}
+          interactionId={lastAssistantId}
+          onOutlineSteer={onOutlineSteer}
+        />
+      )}
+
       {isThinking && (
         <div className={styles.thinkingBar}>
           <span className={styles.thinkingDot} />
@@ -131,10 +152,37 @@ export function ChatPane({
             </button>
           </div>
         )}
+        {outlineSteer && onClearOutlineSteer && (
+          <div style={{
+            fontSize: 11,
+            color: 'var(--accent)',
+            background: 'var(--surface-2)',
+            borderRadius: 3,
+            padding: '3px 8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}>
+            <span>Outline steer: <code>{outlineSteer.outlineNodeId.slice(0, 8)}</code></span>
+            <button
+              type="button"
+              onClick={onClearOutlineSteer}
+              style={{ background: 'none', border: 'none', color: 'inherit', fontSize: 12, cursor: 'pointer', padding: '0 4px' }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <textarea
           ref={inputRef}
           rows={2}
-          placeholder={steerContext ? 'Send message from this context node…' : 'Type your message… (Enter to send, Shift+Enter for newline)'}
+          placeholder={
+            steerContext
+              ? 'Send message from this context node…'
+              : outlineSteer
+                ? 'Message with outline scope…'
+                : 'Type your message… (Enter to send, Shift+Enter for newline)'
+          }
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}

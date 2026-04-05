@@ -31,6 +31,7 @@ export function App() {
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [steerContext, setSteerContext] = useState<{ nodeId: string } | null>(null);
+  const [outlineSteer, setOutlineSteer] = useState<{ outlineNodeId: string; interactionId: string } | null>(null);
   const [chatCollapsed, setChatCollapsed] = useState(false);
 
   // Ref callbacks let GraphCanvasInner register its handlers after mount.
@@ -43,8 +44,15 @@ export function App() {
   }, []);
 
   const handleSteerFromNode = useCallback((nodeId: string) => {
+    setOutlineSteer(null);
     setSteerContext({ nodeId });
     // Focus chat input so user can type their steer message immediately.
+    setTimeout(() => chatInputRef.current?.focus(), 50);
+  }, []);
+
+  const handleOutlineSteer = useCallback((outlineNodeId: string, interactionId: string) => {
+    setSteerContext(null);
+    setOutlineSteer({ outlineNodeId, interactionId });
     setTimeout(() => chatInputRef.current?.focus(), 50);
   }, []);
 
@@ -53,11 +61,17 @@ export function App() {
       if (steerContext) {
         sendPrompt(content, steerContext.nodeId);
         setSteerContext(null);
+      } else if (outlineSteer) {
+        sendPrompt(content, undefined, {
+          outline_node_id: outlineSteer.outlineNodeId,
+          interaction_id: outlineSteer.interactionId,
+        });
+        setOutlineSteer(null);
       } else {
         sendPrompt(content);
       }
     },
-    [steerContext, sendPrompt],
+    [steerContext, outlineSteer, sendPrompt],
   );
 
   useKeyboardShortcuts({
@@ -98,6 +112,9 @@ export function App() {
           onClearSteer={() => setSteerContext(null)}
           chatCollapsed={chatCollapsed}
           onToggleCollapse={() => setChatCollapsed(c => !c)}
+          outlineSteer={outlineSteer}
+          onClearOutlineSteer={() => setOutlineSteer(null)}
+          onOutlineSteer={handleOutlineSteer}
         />
         <GraphCanvas
           graphData={graphData}

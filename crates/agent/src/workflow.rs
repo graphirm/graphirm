@@ -598,17 +598,18 @@ pub async fn stream_and_record(
         });
     }
 
+    let raw_text = response.text_content();
+
     // Structured response segmentation — opt-in, non-fatal.
     // Only runs on final text turns (no tool calls).
     // Primary path: parse JSON envelope emitted by LLM when structured_output is true.
     // Fallback path: GLiNER2 ONNX span detection (requires local-extraction feature +
     //   ExtractionConfig with a Local or Hybrid backend pointing at a downloaded model).
+    let mut segment_path_persisted = false;
     if let Some(ref seg_config) = session.agent_config.segments
         && seg_config.enabled
         && !response.has_tool_calls()
     {
-        let raw_text = response.text_content();
-
         // Try structured JSON first, fall back to GLiNER2 if that fails or is empty.
         let structured = crate::knowledge::segments::parse_structured_segments(&raw_text);
         let segments_opt: Option<(Vec<crate::knowledge::segments::Segment>, &str)> =
@@ -714,6 +715,7 @@ pub async fn stream_and_record(
             .await
             {
                 Ok(seg_ids) => {
+                    segment_path_persisted = true;
                     tracing::info!(
                         count = seg_ids.len(),
                         source = source,
@@ -743,6 +745,82 @@ pub async fn stream_and_record(
                 Err(e) => {
                     tracing::warn!(error = %e, "Failed to persist response segments (non-fatal)");
                 }
+            }
+        }
+    }
+
+    // Post-hoc outline (markdown headings → outline_item nodes). Skips when structured segment
+    // JSON was emitted, when GLiNER/segment children were persisted, or when already extracted.
+    let structured_json_envelope = crate::knowledge::segments::parse_structured_segments(&raw_text)
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    if let Some(ref oc) = session.agent_config.outline
+        && oc.enabled
+        && !response.has_tool_calls()
+        && !segment_path_persisted
+        && !structured_json_envelope
+    {
+        let graph = session.graph.clone();
+        let parent_id = node_id.clone();
+        let parent_id_for_items = parent_id.clone();
+        let oc = oc.clone();
+        let text_owned = raw_text.clone();
+        match tokio::task::spawn_blocking(move || -> Result<bool, crate::error::AgentError> {
+            let n = graph.get_node(&parent_id)?;
+            if n.metadata
+                .get("outline_extracted")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                return Ok(false);
+            }
+            Ok(true)
+        })
+        .await
+        {
+            Ok(Ok(false)) => {}
+            Ok(Ok(true)) => {
+                let items = crate::knowledge::outline::parse_markdown_outline(&text_owned);
+                if !items.is_empty() {
+                    let oc_ref = oc.clone();
+                    let pid = parent_id_for_items.clone();
+                    match crate::knowledge::outline::persist_outline_items(
+                        &session.graph,
+                        &pid,
+                        &items,
+                        &oc_ref,
+                    )
+                    .await
+                    {
+                        Ok(ids) => {
+                            tracing::info!(
+                                count = ids.len(),
+                                "Persisted outline items from markdown headings"
+                            );
+                            let graph_clone = session.graph.clone();
+                            let stamp_id = node_id.clone();
+                            if let Err(e) = tokio::task::spawn_blocking(move || {
+                                let mut node = graph_clone.get_node(&stamp_id)?;
+                                node.metadata["outline_extracted"] = serde_json::json!(true);
+                                node.metadata["outline_version"] = serde_json::json!(1);
+                                graph_clone.update_node(&stamp_id, node)
+                            })
+                            .await
+                            {
+                                tracing::warn!(error = %e, "Failed to stamp outline metadata (non-fatal)");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Failed to persist outline items (non-fatal)");
+                        }
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "Outline pre-check failed (non-fatal)");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Outline pre-check join failed (non-fatal)");
             }
         }
     }

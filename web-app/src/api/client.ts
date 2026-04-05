@@ -62,10 +62,17 @@ export const api = {
       });
   },
 
-  sendPrompt: (id: string, content: string): Promise<void> =>
+  sendPrompt: (
+    id: string,
+    content: string,
+    options?: {
+      context_root?: string;
+      steer_context?: { outline_node_id?: string; interaction_id?: string };
+    },
+  ): Promise<void> =>
     apiFetch(`/api/sessions/${id}/prompt`, {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, ...options }),
     }),
 
   patchKnowledge: (
@@ -84,9 +91,36 @@ export const api = {
     }),
 
   steerFromNode: (id: string, content: string, contextRoot: string): Promise<void> =>
-    apiFetch(`/api/sessions/${id}/prompt`, {
+    api.sendPrompt(id, content, { context_root: contextRoot }),
+
+  /** Outline rows for an assistant interaction (`outline_item` Content nodes). */
+  getOutline: (sessionId: string, interactionId: string): Promise<GraphNode[]> => {
+    const q = new URLSearchParams({ interaction_id: interactionId });
+    return apiFetch(`/api/sessions/${sessionId}/outline?${q.toString()}`);
+  },
+
+  patchGraphNode: (
+    sessionId: string,
+    nodeId: string,
+    patch: { body?: string; metadata?: Record<string, unknown> },
+  ): Promise<GraphNode> =>
+    apiFetch(`/api/graph/${sessionId}/node/${nodeId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+
+  createOutlineItem: (
+    sessionId: string,
+    body: {
+      parent_interaction_id: string;
+      title: string;
+      body?: string;
+      kind?: string;
+    },
+  ): Promise<GraphNode> =>
+    apiFetch(`/api/sessions/${sessionId}/outline`, {
       method: 'POST',
-      body: JSON.stringify({ content, context_root: contextRoot }),
+      body: JSON.stringify(body),
     }),
 
   abortSession: (id: string): Promise<void> =>

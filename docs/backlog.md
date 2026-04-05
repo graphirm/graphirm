@@ -402,6 +402,108 @@ over ~1s with natural inter-token gaps (was 2ms dump). 8 new tests.
 
 **Plan:** TBD — add `docs/plans/YYYY-MM-DD-cinematic-structured-response-ux.md` when this epic is kicked off.
 
+**Related:** `docs/plans/2026-04-06-structured-outline-extraction-and-interactive-reading.md` covers
+post-hoc outline nodes, user edit of extracted items, and interactive reading affordances; the
+cinematic epic remains the broader track (live beats, motion, mid-stream hints).
+
+#### Post-hoc outline segmentation + stable graph nodes — P2 · M
+
+**Problem:** GLiNER spans and one-shot segment JSON vary run-to-run; long plans need **sections**
+(vision, epics, phases, risks, decisions) for UI and **architecture-shaped** Content nodes, not
+only rhetorical segment types.
+
+**Backlog:**
+
+- **Post-pass on completed text** — After streaming finishes, run a **second step** (strict JSON
+  schema or markdown heading parse) to produce an **outline**: `section_id`, `kind`, `title`,
+  `body` (or offsets into raw text). Persist as Content nodes + `Contains`; identity uses
+  **canonical keys** (`kind` + normalized title / path), not raw wording.
+- **Hybrid hints** — Keep GLiNER (or span models) as **candidate spans**; merge/classify into
+  outline slots via rules + optional small LLM pass (see hybrid knowledge extraction pattern).
+- **Web-app** — Outline-driven cards, filters by `kind`, optional epic/timeline views once nodes
+  carry stable metadata; **user add/edit/remove** on extracted items (see **User-editable extracted
+  elements** below).
+
+**Key files (today):** `crates/agent/src/workflow.rs` (post-turn segment hook),
+`crates/agent/src/knowledge/segments.rs` (`parse_structured_segments`, `persist_segments`),
+`crates/agent/src/config.rs` (`SegmentConfig`).
+
+**Plan:** `docs/plans/2026-04-06-structured-outline-extraction-and-interactive-reading.md`.
+
+#### Abstraction catalog (taxonomy) + optional codegen — P2 · S–M
+
+**Idea:** A **library of useful abstractions** is a **catalog** of allowed concepts (segment kinds,
+section kinds, planning roles: `decision`, `constraint`, `epic`, `risk`, …) — not something you
+fully “discover” from the LLM each time.
+
+**Auto-generation:** **Partially yes.** You can **auto-generate mechanical layers** from a single
+source of truth:
+
+- **JSON Schema** or a small TOML/YAML registry → **Rust enums**, **TypeScript unions**, OpenAPI
+  fragments, and (optionally) **GLiNER `label_descriptions`** strings — same labels everywhere.
+- **Semantic** labels still need **human curation** (or a fixed enum per product vertical); codegen
+  only propagates them safely.
+
+**LLM maps to catalog first (recommended):** **Yes, and it is the right order** for stability: on
+the **full** assistant message, the model **classifies and slots** text into **predefined** IDs
+(low temperature, strict schema). That is **constrained routing**, not free-form segmentation —
+variance drops because the **output space is finite**. Free text fills `body` under each slot;
+optional second pass trims or merges duplicates.
+
+**Backlog:**
+
+- Define **catalog format** (repo-level or session-level pack) and wire into segment/outline
+  prompts + validation.
+- Optional **codegen script** in CI or `xtask`: schema → Rust + `web-app` types + default
+  `label_descriptions` for GLiNER.
+
+**Plan:** `docs/plans/2026-04-06-structured-outline-extraction-and-interactive-reading.md` (Phase A — catalog).
+
+#### Interactive reading + anchored affordances — P2 · M
+
+**Problem:** Long assistant replies (plans, epics, phases) are hard to act on if the UI is only a
+markdown blob. Users need **“where in this text can I do what?”** — stable **addresses** (sections,
+outline items) and **verbs** per region (steer scoped to an epic, elaborate this section, turn next
+steps into tasks).
+
+**Backlog:**
+
+- **Outline / TOC** — Sidebar or chips synced to post-hoc outline nodes; click scrolls or focuses
+  matching graph/card.
+- **Scoped follow-ups** — Replace generic closing questions with **buttons** or chips (“Elaborate
+  Epic 2”, “MVP scope”, “Risks”) that pre-fill `prompt` + context root (`section_id` / node id).
+- **Graph + chat linkage** — Focus/dim already exists; extend so **each outline item** can be
+  selected and drive **steer-from-here** without copying prose.
+
+**Key files (future):** `web-app` `ChatPane`, outline component; `useSession` prompt payloads;
+server unchanged unless new fields on `POST /api/sessions/:id/prompt`.
+
+**Plan:** `docs/plans/2026-04-06-structured-outline-extraction-and-interactive-reading.md` (Phases E–F).
+
+#### User-editable extracted elements (add / edit / remove) — P2 · M
+
+**Problem:** Extracted segments and outline items are **proposals**. Users must **correct** bad
+splits, **delete** noise, **add** missing bullets, and **edit** titles/bodies without losing the
+link to the parent assistant turn.
+
+**Backlog:**
+
+- **Graph as source of truth** — Child `Content` nodes (or outline rows) support **user mutations**:
+  update `data`/metadata, soft-delete or `hidden: true`, insert new sibling nodes with
+  `user_authored: true` (or equivalent).
+- **API** — `PATCH`/`DELETE`/`POST` under session or per-node routes for outline/segment children;
+  validate session ownership + parent `Interaction` id; optional optimistic concurrency (`etag` or
+  `updated_at`).
+- **Sync semantics** — If raw assistant text is immutable, store **offsets** or **derived body**;
+  user edits override display; flag `metadata.user_edited` so re-extraction does not blindly clobber
+  (policy: merge, freeze, or “re-run extraction” as explicit action).
+- **Web-app** — Inline edit, delete, “+ Add item”, reorder (drag handle); mirror in canvas cards.
+
+**Key files (today):** `crates/graph` node update paths; `crates/server` routes; `web-app` node
+popovers / `ContentNode` (extend beyond read-only where needed).
+
+**Plan:** `docs/plans/2026-04-06-structured-outline-extraction-and-interactive-reading.md` (Phases C–D, F).
+
 #### Text-aware edge avoidance — P3 · M (partial, 2026-03-30)
 
 **Done this pass:** Edge labels nudged ~11px perpendicular to the chord (source→target) so

@@ -20,7 +20,11 @@ interface UseSessionReturn {
   pendingApproval: PendingApproval | null;
   selectSession: (id: string) => Promise<void>;
   createSession: (name?: string, workspace?: string) => Promise<Session | void>;
-  sendPrompt: (content: string, contextRoot?: string) => Promise<void>;
+  sendPrompt: (
+    content: string,
+    contextRoot?: string,
+    steerOutline?: { outline_node_id: string; interaction_id: string },
+  ) => Promise<void>;
   abortSession: () => Promise<void>;
   approveAction: (nodeId: string) => Promise<void>;
   rejectAction: (nodeId: string, reason?: string) => Promise<void>;
@@ -183,26 +187,36 @@ export function useSession(): UseSessionReturn {
     return session;
   }, [subscribeSse]);
 
-  const sendPrompt = useCallback(async (content: string, contextRoot?: string) => {
-    let session = currentSessionRef.current;
-    if (!session) {
-      const newSession = await createSession();
-      session = newSession;
-    }
-    if (!session?.id) return;
-    setIsThinking(true);
-    try {
-      if (contextRoot) {
-        await api.steerFromNode(session.id, content, contextRoot);
-      } else {
-        await api.sendPrompt(session.id, content);
+  const sendPrompt = useCallback(
+    async (
+      content: string,
+      contextRoot?: string,
+      steerOutline?: { outline_node_id: string; interaction_id: string },
+    ): Promise<void> => {
+      let session = currentSessionRef.current;
+      if (!session) {
+        const newSession = await createSession();
+        session = newSession;
       }
-      api.getMessages(session.id).then(setMessages).catch(console.error);
-    } catch (err) {
-      console.error('Failed to send prompt:', err);
-      setIsThinking(false);
-    }
-  }, [createSession]);
+      if (!session?.id) return;
+      setIsThinking(true);
+      try {
+        const opts =
+          contextRoot || steerOutline
+            ? {
+                ...(contextRoot ? { context_root: contextRoot } : {}),
+                ...(steerOutline ? { steer_context: steerOutline } : {}),
+              }
+            : undefined;
+        await api.sendPrompt(session.id, content, opts);
+        api.getMessages(session.id).then(setMessages).catch(console.error);
+      } catch (err) {
+        console.error('Failed to send prompt:', err);
+        setIsThinking(false);
+      }
+    },
+    [createSession],
+  );
 
   const abortSession = useCallback(async () => {
     const session = currentSessionRef.current;
