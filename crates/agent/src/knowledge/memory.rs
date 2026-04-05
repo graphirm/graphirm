@@ -90,7 +90,7 @@ impl MemoryRetriever {
 
         {
             let mut idx = self.vector_index.write().await;
-            idx.insert(node_id.clone(), embedding);
+            idx.upsert(node_id.clone(), embedding);
         }
 
         tracing::debug!(node_id = %node_id, "Embedded knowledge node");

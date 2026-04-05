@@ -66,6 +66,23 @@ impl VectorIndex {
         self.map = None;
     }
 
+    /// Replace any prior embedding for `id`, append if new, and rebuild the HNSW map.
+    ///
+    /// [`insert`](Self::insert) alone clears `map` until [`rebuild`](Self::rebuild); this is the
+    /// right choice after runtime embedding so [`search`](Self::search) stays usable.
+    pub fn upsert(&mut self, id: NodeId, embedding: Vec<f32>) {
+        debug_assert_eq!(
+            embedding.len(),
+            self.dimension,
+            "embedding dimension mismatch: expected {}, got {}",
+            self.dimension,
+            embedding.len()
+        );
+        self.pending.retain(|(existing, _)| existing != &id);
+        self.pending.push((id, embedding));
+        self.rebuild();
+    }
+
     /// Load all embeddings from the graph store and build an HNSW index.
     /// Called on application startup to warm the index from SQLite.
     pub fn rebuild_from_store(store: &GraphStore, dimension: usize) -> Result<Self, GraphError> {
@@ -194,6 +211,28 @@ mod tests {
         assert_eq!(index.dimension(), 128);
         assert_eq!(index.len(), 0);
         assert!(index.is_empty());
+    }
+
+    #[test]
+    fn test_vector_index_upsert_makes_searchable_without_extra_rebuild() {
+        let mut index = VectorIndex::new(3);
+        let id1 = NodeId("node-1".to_string());
+        index.upsert(id1.clone(), vec![1.0, 0.0, 0.0]);
+        let results = index.search(&[1.0, 0.0, 0.0], 1);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id1);
+    }
+
+    #[test]
+    fn test_vector_index_upsert_replaces_same_id() {
+        let mut index = VectorIndex::new(2);
+        let id = NodeId("a".to_string());
+        index.upsert(id.clone(), vec![1.0, 0.0]);
+        index.upsert(id.clone(), vec![0.0, 1.0]);
+        assert_eq!(index.len(), 1);
+        let results = index.search(&[0.0, 1.0], 1);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id);
     }
 
     #[test]
