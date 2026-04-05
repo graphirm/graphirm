@@ -1,10 +1,14 @@
 # Stage 1: Build the React web-app
+# VITE_API_KEY must match server GRAPHIRM_API_KEY or the browser gets 401 on /api/*.
+# Pass at build time, e.g. docker build --build-arg VITE_API_KEY="$GRAPHIRM_API_KEY" .
 FROM node:22-bookworm-slim AS web-builder
 
 WORKDIR /app/web-app
 COPY web-app/package.json web-app/package-lock.json ./
 RUN npm ci
 COPY web-app/ ./
+ARG VITE_API_KEY=
+ENV VITE_API_KEY=$VITE_API_KEY
 RUN npm run build
 
 # Stage 2: Install cargo-chef into a base Rust image (reused by stages 3 and 4)
