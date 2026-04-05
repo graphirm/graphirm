@@ -18,6 +18,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY src/ src/
 COPY graphirm-eval/ graphirm-eval/
+COPY experiments/gliner2-segment-probe/ experiments/gliner2-segment-probe/
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 4: Cook (cache) dependencies, then compile the binary
@@ -29,6 +30,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY src/ src/
 COPY graphirm-eval/ graphirm-eval/
+COPY experiments/gliner2-segment-probe/ experiments/gliner2-segment-probe/
 RUN cargo build --release -p graphirm
 
 # Stage 5: Slim runtime image
