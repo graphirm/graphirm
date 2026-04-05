@@ -1233,6 +1233,37 @@ nodes or import a tree from JSON.*
 
 ---
 
+## Embeddings & `graph_query` semantic (2026-04-05)
+
+Dogfood: agent called **`graph_query` `semantic`** on a server with **`memory_retriever: None`** —
+correct failure, but **tool copy** cited **`DEEPSEEK_API_KEY`** while **`graphirm serve`** only builds
+a retriever from **`EMBEDDING_BACKEND`** + **`MISTRAL_API_KEY`** (Mistral embed) or **`fastembed`**
+(`local-embed` build). Chat keys alone do not enable semantic mode.
+
+### Align semantic error + tool docs with real init path — P2 · S
+
+Update `graph_query` description and `ExecutionFailed` text to name **`EMBEDDING_BACKEND`**,
+**`MISTRAL_API_KEY`**, and **`fastembed`/local-embed** — remove or qualify misleading **`DEEPSEEK_API_KEY`**
+hints. Cross-link **`src/commands/serve.rs`** `setup_memory_retriever` from `README` / `AGENTS.md`.
+
+### Deploy guide: optional semantic memory on spoke — P2 · S
+
+Document Coolify/env example: `EMBEDDING_BACKEND=mistral/codestral-embed` (or `mistral/mistral-embed`),
+`MISTRAL_API_KEY`, and **embedding dim** consistency with existing DB vectors when changing models.
+
+### Optional: degrade semantic in tool surface when retriever absent — P3 · M
+
+If `memory_retriever` is `None`, either **omit `semantic` from the JSON schema enum** passed to the LLM,
+or add a **one-line system notice** (“semantic graph_query unavailable; use search/bfs”). Reduces
+spurious tool errors without hiding the mode in code docs.
+
+### Optional: unified embedding via OpenRouter (or chat provider) — P2 · L
+
+If product goal is **one API key** for chat + vectors, add an **`openrouter/...` embedding** path in
+`graphirm_llm::factory::create_embedding_provider` (spec + pricing + dim). Larger design item.
+
+---
+
 ## Completed (summary — details in `docs/completion-log.md`)
 
 | Phase | What |

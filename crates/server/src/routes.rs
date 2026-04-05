@@ -18,6 +18,7 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
+use graphirm_agent::knowledge::memory::MemoryRetriever;
 use graphirm_agent::workspace::sanitize_workspace_name;
 use graphirm_agent::{AgentConfig, EventBus, HitlDecision, HitlGate, Session, run_agent_loop};
 use graphirm_graph::nodes::ContentData;
@@ -35,6 +36,25 @@ use crate::types::{
     PromptRequest, RateTurnRequest, RenameSessionRequest, SessionId, SessionResponse,
     SessionStatus, SseEvent, SseEventType, StrategyReport, SubgraphQuery,
 };
+
+/// When [`AppState::memory_retriever`] is configured, embed the Knowledge node so semantic
+/// `graph_query` and cross-session memory can retrieve it. Failures are logged only.
+async fn try_embed_knowledge_for_semantic_search(
+    memory_retriever: &Option<Arc<MemoryRetriever>>,
+    node_id: &NodeId,
+) {
+    let Some(retriever) = memory_retriever else {
+        return;
+    };
+    match retriever.embed_knowledge_node(node_id).await {
+        Ok(()) => tracing::info!(node_id = %node_id, "Indexed knowledge for semantic search"),
+        Err(e) => tracing::warn!(
+            node_id = %node_id,
+            error = %e,
+            "Knowledge saved but embedding failed; semantic graph_query may omit this node until re-embedded"
+        ),
+    }
+}
 
 /// Build a brief workspace context block to inject into the system prompt.
 /// Lists up to 20 entries (non-recursive) so the agent knows where it's working.
@@ -1245,10 +1265,12 @@ async fn patch_knowledge(
         ));
     }
     let id = NodeId::from(node_id.as_str());
+    let id_for_embed = id.clone();
     let graph = state.graph.clone();
     let dismissed = req.dismissed;
     let summary = req.summary;
     let pinned = req.pinned;
+    let reembed_for_semantic = summary.is_some();
     tokio::task::spawn_blocking(move || graph.patch_knowledge(&id, dismissed, summary, pinned))
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?
@@ -1256,6 +1278,9 @@ async fn patch_knowledge(
             graphirm_graph::GraphError::NotKnowledgeNode(m) => ServerError::BadRequest(m),
             other => ServerError::Graph(other),
         })?;
+    if reembed_for_semantic {
+        try_embed_knowledge_for_semantic_search(&state.memory_retriever, &id_for_embed).await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1345,11 +1370,14 @@ async fn create_annotation(
     }
 
     // Return the created node.
+    let annotation_id_for_embed = annotation_id.clone();
     let graph = state.graph.clone();
     let node = tokio::task::spawn_blocking(move || graph.get_node(&annotation_id))
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?
         .map_err(|_| ServerError::Internal("Node vanished after insert".to_string()))?;
+
+    try_embed_knowledge_for_semantic_search(&state.memory_retriever, &annotation_id_for_embed).await;
 
     Ok(Json(node))
 }
@@ -1357,7 +1385,8 @@ async fn create_annotation(
 /// `POST /api/knowledge` — create a global Knowledge node directly via the API.
 ///
 /// Unlike `create_annotation`, this endpoint is NOT session-scoped. It creates
-/// knowledge nodes that exist independently of any session.
+/// knowledge nodes that exist independently of any session. When the server has an embedding
+/// backend configured, the node is indexed for semantic `graph_query` immediately.
 async fn create_knowledge(
     State(state): State<AppState>,
     Json(body): Json<CreateKnowledgeRequest>,
@@ -1391,11 +1420,14 @@ async fn create_knowledge(
         .map_err(ServerError::Graph)?;
 
     // Return the created node by fetching it back.
+    let knowledge_id_for_embed = knowledge_id.clone();
     let graph = state.graph.clone();
     let node = tokio::task::spawn_blocking(move || graph.get_node(&knowledge_id))
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?
         .map_err(|_| ServerError::Internal("Node vanished after insert".to_string()))?;
+
+    try_embed_knowledge_for_semantic_search(&state.memory_retriever, &knowledge_id_for_embed).await;
 
     Ok(Json(node))
 }
