@@ -175,7 +175,10 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/graph/{session_id}/annotate", post(create_annotation))
         .route("/api/knowledge", post(create_knowledge))
-        .route("/api/knowledge/{id}", patch(patch_knowledge))
+        .route(
+            "/api/knowledge/{id}",
+            patch(patch_knowledge).delete(delete_knowledge),
+        )
         .route("/api/knowledge/pinned", get(list_pinned_knowledge))
         .route("/api/interactions/{id}/edit", patch(patch_interaction_edit))
         .route(
@@ -1284,6 +1287,47 @@ async fn patch_knowledge(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `DELETE /api/knowledge/{id}` — permanently delete a Knowledge node and its embedding.
+async fn delete_knowledge(
+    State(state): State<AppState>,
+    Path(node_id): Path<String>,
+) -> Result<StatusCode, ServerError> {
+    let id = NodeId::from(node_id.as_str());
+    let graph = state.graph.clone();
+    let id_chk = id.clone();
+    tokio::task::spawn_blocking(move || {
+        let node = graph.get_node(&id_chk).map_err(|e| match e {
+            graphirm_graph::GraphError::NodeNotFound(msg) => ServerError::NotFound(msg),
+            other => ServerError::Graph(other),
+        })?;
+        if !matches!(node.node_type, NodeType::Knowledge(_)) {
+            return Err(ServerError::BadRequest(format!(
+                "node {} is not a Knowledge node",
+                id_chk.0
+            )));
+        }
+        Ok::<_, ServerError>(())
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))??;
+
+    let graph = state.graph.clone();
+    let id_del = id.clone();
+    tokio::task::spawn_blocking(move || graph.delete_node(&id_del))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(|e| match e {
+            graphirm_graph::GraphError::NodeNotFound(msg) => ServerError::NotFound(msg),
+            other => ServerError::Graph(other),
+        })?;
+
+    if let Some(ref retriever) = state.memory_retriever {
+        retriever.remove_knowledge_from_index(&id).await;
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// `PATCH /api/interactions/{id}/edit` — mark a user interaction as edited (audit trail).
 async fn patch_interaction_edit(
     State(state): State<AppState>,
@@ -1377,7 +1421,8 @@ async fn create_annotation(
         .map_err(|e| ServerError::Internal(e.to_string()))?
         .map_err(|_| ServerError::Internal("Node vanished after insert".to_string()))?;
 
-    try_embed_knowledge_for_semantic_search(&state.memory_retriever, &annotation_id_for_embed).await;
+    try_embed_knowledge_for_semantic_search(&state.memory_retriever, &annotation_id_for_embed)
+        .await;
 
     Ok(Json(node))
 }
@@ -3125,6 +3170,58 @@ mod tests {
             .unwrap();
         let knowledge: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
         assert!(knowledge.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_knowledge() {
+        let app = create_router(test_app_state());
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/knowledge")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"entity":"dedupe","entity_type":"test","summary":"one"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create_resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let node: GraphNode = serde_json::from_slice(&body).unwrap();
+        assert!(matches!(node.node_type, NodeType::Knowledge(_)));
+        let kid = node.id.0.clone();
+
+        let del = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/knowledge/{kid}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(del.status(), StatusCode::NO_CONTENT);
+
+        let again = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/knowledge/{kid}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(again.status(), StatusCode::NOT_FOUND);
     }
 
     // ── agent_event_to_sse ────────────────────────────────────────────────────

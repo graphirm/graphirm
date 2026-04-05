@@ -97,6 +97,12 @@ impl MemoryRetriever {
         Ok(())
     }
 
+    /// Remove a knowledge node from the in-memory HNSW index (e.g. after the graph node is deleted).
+    pub async fn remove_knowledge_from_index(&self, node_id: &NodeId) {
+        let mut idx = self.vector_index.write().await;
+        idx.remove(node_id);
+    }
+
     /// Load all embeddings persisted in the graph store into the in-memory HNSW index.
     ///
     /// Call this once at server startup after building the retriever to restore

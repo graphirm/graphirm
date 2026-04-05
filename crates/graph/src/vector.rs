@@ -83,6 +83,20 @@ impl VectorIndex {
         self.rebuild();
     }
 
+    /// Drop a node from the index (no-op if `id` was not present).
+    pub fn remove(&mut self, id: &NodeId) {
+        let before = self.pending.len();
+        self.pending.retain(|(existing, _)| existing != id);
+        if self.pending.len() == before {
+            return;
+        }
+        if self.pending.is_empty() {
+            self.map = None;
+        } else {
+            self.rebuild();
+        }
+    }
+
     /// Load all embeddings from the graph store and build an HNSW index.
     /// Called on application startup to warm the index from SQLite.
     pub fn rebuild_from_store(store: &GraphStore, dimension: usize) -> Result<Self, GraphError> {
@@ -233,6 +247,24 @@ mod tests {
         let results = index.search(&[0.0, 1.0], 1);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, id);
+    }
+
+    #[test]
+    fn test_vector_index_remove_clears_search() {
+        let mut index = VectorIndex::new(2);
+        let id = NodeId("x".to_string());
+        index.upsert(id.clone(), vec![1.0, 0.0]);
+        index.remove(&id);
+        assert!(index.is_empty());
+        assert!(index.search(&[1.0, 0.0], 1).is_empty());
+    }
+
+    #[test]
+    fn test_vector_index_remove_unknown_is_noop() {
+        let mut index = VectorIndex::new(2);
+        index.upsert(NodeId("a".into()), vec![1.0, 0.0]);
+        index.remove(&NodeId("missing".into()));
+        assert_eq!(index.len(), 1);
     }
 
     #[test]
