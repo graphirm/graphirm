@@ -50,9 +50,11 @@ pub fn tasks() -> Vec<EvalTask> {
             id: "bash-line-count".to_string(),
             name: "Count lines in workflow.rs using bash".to_string(),
             tags: vec!["tool-use".to_string()], // removed "basic" tag
-            prompts: vec!["How many lines are in `crates/agent/src/workflow.rs`? \
+            prompts: vec![
+                "How many lines are in `crates/agent/src/workflow.rs`? \
                  Use bash to count them precisely."
-                .to_string()],
+                    .to_string(),
+            ],
             verifier: Verifier::ResponseContainsCommandOutput {
                 command: "sh".to_string(),
                 args: vec![

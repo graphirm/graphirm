@@ -116,9 +116,11 @@ pub fn tasks() -> Vec<EvalTask> {
             name: "graph_query with an unknown mode returns an error the agent handles gracefully"
                 .to_string(),
             tags: vec!["graph".to_string(), "graph_query".to_string()],
-            prompts: vec!["Call the graph_query tool with mode='does_not_exist'. \
+            prompts: vec![
+                "Call the graph_query tool with mode='does_not_exist'. \
                  Tell me whether it returned an error or succeeded."
-                .to_string()],
+                    .to_string(),
+            ],
             // The tool returns InvalidArguments; the agent should report an error occurred.
             verifier: Verifier::ResponseContainsAny {
                 substrings: vec![

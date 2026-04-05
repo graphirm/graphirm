@@ -31,9 +31,11 @@ pub fn tasks() -> Vec<EvalTask> {
             id: "segment-filter-context".to_string(),
             name: "Filtered context only sees selected segment types".to_string(),
             tags: vec!["segments".to_string()],
-            prompts: vec!["Write a short Python function that adds two numbers. \
+            prompts: vec![
+                "Write a short Python function that adds two numbers. \
                  Think step by step before writing the code."
-                .to_string()],
+                    .to_string(),
+            ],
             verifier: Verifier::ResponseContains {
                 substring: "def ".to_string(),
             },
