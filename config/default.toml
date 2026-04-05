@@ -273,7 +273,7 @@ host = "0.0.0.0"
 port = 3000
 
 [agent.segments]
-enabled = false
+enabled = true
 labels = ["observation", "reasoning", "code", "plan", "answer"]
 structured_output = true
 gliner2_fallback = true
@@ -287,6 +287,6 @@ min_confidence = 0.5
 # Post-hoc markdown outline → `outline_item` Content nodes (plans, epics, phases).
 # Skips when the assistant emitted structured segment JSON or segment children were persisted.
 # See docs/plans/2026-04-06-structured-outline-extraction-and-interactive-reading.md
-# [agent.outline]
-# enabled = true
-# kinds = ["vision", "epic", "phase", "misc"]
+[agent.outline]
+enabled = true
+kinds = ["vision", "epic", "phase", "misc"]
