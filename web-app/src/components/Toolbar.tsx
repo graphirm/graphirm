@@ -42,7 +42,8 @@ export function Toolbar({
   searchInputRef,
 }: ToolbarProps) {
   const { theme, toggle: toggleTheme } = useTheme();
-  const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
+  const isFiltering =
+    filter.query.trim() !== '' || filter.types.size > 0 || filter.planGraphOnly;
 
   function toggleType(t: string) {
     const next = new Set(filter.types);
@@ -75,6 +76,14 @@ export function Toolbar({
             {t[0]}
           </button>
         ))}
+        <button
+          type="button"
+          className={[styles.typeBtn, filter.planGraphOnly ? styles.typeActive : ''].join(' ')}
+          onClick={() => onFilterChange({ ...filter, planGraphOnly: !filter.planGraphOnly })}
+          title="Planning graph: planning Knowledge nodes + files linked via artifact edges"
+        >
+          ⌖
+        </button>
       </div>
 
       {isFiltering && (
@@ -86,7 +95,7 @@ export function Toolbar({
       {isFiltering && (
         <button
           className={styles.clearBtn}
-          onClick={() => onFilterChange({ query: '', types: new Set() })}
+          onClick={() => onFilterChange({ query: '', types: new Set(), planGraphOnly: false })}
           title="Clear filter"
         >
           ✕

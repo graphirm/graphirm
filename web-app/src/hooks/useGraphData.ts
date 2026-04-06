@@ -16,9 +16,15 @@ export type LayoutMode = 'dagre' | 'timeline' | 'masonry' | 'free';
 export interface NodeFilter {
   query: string;
   types: Set<string>;
+  /**
+   * When true, only Knowledge nodes tagged as planning (`metadata.planning`) and
+   * Content nodes linked from them via `relates_to` edges carrying `artifact_link`
+   * (implements / documents) are eligible; type pills and search still apply.
+   */
+  planGraphOnly: boolean;
 }
 
-export const EMPTY_FILTER: NodeFilter = { query: '', types: new Set() };
+export const EMPTY_FILTER: NodeFilter = { query: '', types: new Set(), planGraphOnly: false };
 
 // Layout stability: persist positions per session to avoid jumps
 const STORAGE_PREFIX = 'graphirm:positions:';
@@ -255,6 +261,49 @@ function isKnowledgeDismissed(gn: GraphNode): boolean {
   return gn.node_type.type === 'Knowledge' && gn.metadata?.dismissed === true;
 }
 
+function isPlanningKnowledgeNode(gn: GraphNode): boolean {
+  if (gn.node_type.type !== 'Knowledge') return false;
+  const p = gn.metadata?.planning;
+  return p === true || p === 1;
+}
+
+/**
+ * Planning Knowledge nodes plus Content targets of planning→content `relates_to` with `artifact_link`.
+ */
+function computePlanGraphAllowedIds(graphNodes: GraphNode[], edges: GraphEdge[]): Set<string> {
+  const planningIds = new Set<string>();
+  for (const gn of graphNodes) {
+    if (isPlanningKnowledgeNode(gn)) planningIds.add(gn.id);
+  }
+  const allowed = new Set(planningIds);
+  for (const e of edges) {
+    if (e.edge_type !== 'relates_to') continue;
+    if (!planningIds.has(e.source)) continue;
+    const al = e.metadata?.artifact_link;
+    if (typeof al !== 'string' || al.trim() === '') continue;
+    allowed.add(e.target);
+  }
+  return allowed;
+}
+
+function nodeMatchesTypeAndQuery(gn: GraphNode, filter: NodeFilter): boolean {
+  const { query, types } = filter;
+  if (types.size > 0 && !types.has(gn.node_type.type)) return false;
+  if (query.trim() === '') return true;
+  return extractNodeText(gn).toLowerCase().includes(query.toLowerCase());
+}
+
+/** `planAllowed` is from `computePlanGraphAllowedIds` when `filter.planGraphOnly`; else `null`. */
+function graphNodeMatchesFilter(
+  gn: GraphNode,
+  filter: NodeFilter,
+  planAllowed: Set<string> | null,
+): boolean {
+  if (isKnowledgeDismissed(gn)) return false;
+  if (planAllowed !== null && !planAllowed.has(gn.id)) return false;
+  return nodeMatchesTypeAndQuery(gn, filter);
+}
+
 function graphEdgeToFlowEdge(ge: GraphEdge): Edge {
   const artifactLink =
     typeof ge.metadata?.artifact_link === 'string' ? ge.metadata.artifact_link : undefined;
@@ -352,13 +401,6 @@ function extractNodeText(gn: GraphNode): string {
   }
 }
 
-function nodeMatchesFilter(gn: GraphNode, filter: NodeFilter): boolean {
-  const { query, types } = filter;
-  if (types.size > 0 && !types.has(gn.node_type.type)) return false;
-  if (query.trim() === '') return true;
-  return extractNodeText(gn).toLowerCase().includes(query.toLowerCase());
-}
-
 /**
  * Apply filter visibility to a flat array of React Flow nodes.
  * Group nodes are hidden only when all their children are hidden.
@@ -368,8 +410,10 @@ function applyFilterToNodes(
   nodes: Node[],
   graphNodes: GraphNode[],
   filter: NodeFilter,
+  graphEdges: GraphEdge[],
 ): { nodes: Node[]; matchCount: number } {
-  const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
+  const isFiltering =
+    filter.query.trim() !== '' || filter.types.size > 0 || filter.planGraphOnly;
   const visibleNodeCount = graphNodes.filter(gn => !isKnowledgeDismissed(gn)).length;
 
   if (!isFiltering) {
@@ -388,9 +432,12 @@ function applyFilterToNodes(
     });
     return { nodes: withGroups, matchCount: visibleNodeCount };
   }
+  const planAllowed = filter.planGraphOnly
+    ? computePlanGraphAllowedIds(graphNodes, graphEdges)
+    : null;
   const visibleIds = new Set(
     graphNodes
-      .filter(gn => !isKnowledgeDismissed(gn) && nodeMatchesFilter(gn, filter))
+      .filter(gn => graphNodeMatchesFilter(gn, filter, planAllowed))
       .map(gn => gn.id),
   );
   const mapped = nodes.map(n => {
@@ -537,6 +584,7 @@ export function useGraphData(
           combined,
           graphData.nodes,
           filter,
+          graphData.edges,
         );
         setNodes(prev => mergeLocalPromptNodes(withHidden, prev));
         setEdges(flowEdges);
@@ -621,6 +669,7 @@ export function useGraphData(
       finalNodes,
       graphData.nodes,
       filter,
+      graphData.edges,
     );
     setMatchCount(count);
     setNodes(prev => mergeLocalPromptNodes(withHidden, prev));
@@ -666,17 +715,21 @@ export function useGraphData(
 
   useEffect(() => {
     if (!graphData) return;
-    const isFiltering = filter.query.trim() !== '' || filter.types.size > 0;
+    const isFiltering =
+      filter.query.trim() !== '' || filter.types.size > 0 || filter.planGraphOnly;
 
     const dismissed = new Set(
       graphData.nodes.filter(isKnowledgeDismissed).map(g => g.id),
     );
 
     // Compute visibleIds and matchCount outside the state updater — updaters must be pure.
+    const planAllowed = filter.planGraphOnly
+      ? computePlanGraphAllowedIds(graphData.nodes, graphData.edges)
+      : null;
     const visibleIds = isFiltering
       ? new Set(
           graphData.nodes
-            .filter(gn => !isKnowledgeDismissed(gn) && nodeMatchesFilter(gn, filter))
+            .filter(gn => graphNodeMatchesFilter(gn, filter, planAllowed))
             .map(gn => gn.id),
         )
       : null;
@@ -778,7 +831,12 @@ export function useGraphData(
         mode,
       );
 
-      const { nodes: withHidden } = applyFilterToNodes(finalNodes, graphData.nodes, filter);
+      const { nodes: withHidden } = applyFilterToNodes(
+        finalNodes,
+        graphData.nodes,
+        filter,
+        graphData.edges,
+      );
       setNodes(prev => mergeLocalPromptNodes(withHidden, prev));
     },
     [applyLayout, edges, graphData, sessionId, filter],
