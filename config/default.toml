@@ -33,6 +33,9 @@ timeout_seconds = 300
 # When a session is linked to planning (`graph_query` link_session), file writes/edits
 # auto-add relates_to (planning → file) unless disabled:
 # auto_link_write_to_planning = false
+# Short non-technical user messages omit tool definitions so the model cannot tool-call
+# on greetings/small talk. Assistant turns record `tools_gated` in metadata when applied.
+# tool_gate_enabled = false
 # Optional ceiling on total LLM tokens (input + output from each completion) per session.
 # When exceeded, the in-flight assistant message is still saved, then the agent loop stops.
 # max_session_tokens = 500000

@@ -843,33 +843,13 @@ Done 2026-03-27. `TaskPhase` enum (`Planning`/`Implementation`/`Verification`) a
 ### ✅ Token/time budget awareness — P2 · S
 Done 2026-03-27. In `stream_and_record`, after `build_context_with_stats` returns, computes `usage_ratio = window.total_tokens / max_tok`. Finds the highest crossed threshold from `budget_warning_thresholds` and appends a one-line warning to `context[0]` (the system message) via `ContentPart::text`. Two tiers: <90% → "wrap up", ≥90% → "complete current step only". `budget_warning_thresholds: Vec<f64>` config field (default [0.7, 0.9]; empty list disables). 2 new tests; 269 agent tests pass, clippy clean.
 
-### Tool-gate on trivial / conversational messages — P1 · M
-
-**Problem:** Models like qwen3-coder-next reflexively call tools (`ls`, `bash pwd`, `graph_query stats`)
-in response to simple greetings or questions that need no filesystem access. This wastes tokens, adds
-latency, creates graph noise, and hits HITL approval gates for harmless commands. Better models
-(Claude, GPT-4) don't need this guard, but Graphirm should work well with any model.
-
-**Approach:** Before sending tool definitions to the LLM, classify whether the user message is
-"conversational" (short, no file paths, no code references, no action verbs). When classified
-trivial, **omit all tools from the request** — the model is structurally forced to reply with
-text only. This is deterministic and model-agnostic.
-
-**Implementation sketch:**
-- `is_tool_eligible(user_message: &str, turn_signals: &TurnSignals) -> bool` in
-  `crates/agent/src/workflow.rs` (or a new `classify.rs`)
-- Heuristic v1: message length < N tokens **and** no intersection with action-keyword set
-  (`fix`, `build`, `read`, `write`, `run`, `test`, `show`, `create`, `edit`, `deploy`, etc.)
-  **and** no file-path-like tokens (`/`, `.rs`, `.py`, `.ts`, etc.)
-- When `false`, `stream_and_record` passes an empty tool list to `llm.stream()` / `llm.complete()`
-- `tool_gate_enabled: bool` in `AgentConfig` (default `true`), so it can be disabled
-- Metadata on the Interaction node: `tools_gated: true` when tools were stripped
-- Future: replace heuristic with a cheap LLM classifier or learned model from session traces
-
-**Key files:**
-- `crates/agent/src/workflow.rs` — gate tools before LLM call
-- `crates/agent/src/config.rs` — `tool_gate_enabled` field
-- `config/default.toml` — commented example
+### ✅ Tool-gate on trivial / conversational messages — P1 · M
+Done 2026-04-07. `crates/agent/src/tool_gate.rs`: `should_omit_tools_for_user_message` (short message +
+path/code signals + word-token work list; avoids substring false positives like "latest"/"test").
+`stream_and_record` clears tool defs when `tool_gate_enabled` (default true) and
+`AgentMode::Primary`; subagents unchanged. Assistant metadata `tools_gated: true` when applied.
+`AgentConfig::tool_gate_enabled` + TOML; commented toggle in `config/default.toml`. Config tests;
+clippy fixes for `field_reassign_with_default` in adjacent tests.
 
 ### Evaluate and set better default cheap-tier model — P1 · S
 

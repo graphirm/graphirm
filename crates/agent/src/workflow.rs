@@ -240,11 +240,25 @@ pub async fn stream_and_record(
     }
 
     let raw_defs = tools.definitions();
-    let tool_defs: Vec<graphirm_llm::ToolDefinition> = raw_defs
+    let mut tool_defs: Vec<graphirm_llm::ToolDefinition> = raw_defs
         .into_iter()
         .filter(|t| !(session.agent_config.disable_bash && t.name == "bash"))
         .map(|t| graphirm_llm::ToolDefinition::new(t.name, t.description, t.parameters))
         .collect();
+
+    let mut tools_gated = false;
+    if session.agent_config.tool_gate_enabled
+        && matches!(session.agent_config.mode, crate::config::AgentMode::Primary)
+        && let Some(ref text) = crate::tool_gate::last_human_message_text(&context)
+        && crate::tool_gate::should_omit_tools_for_user_message(text)
+    {
+        tool_defs.clear();
+        tools_gated = true;
+        tracing::info!(
+            preview = %text.chars().take(80).collect::<String>(),
+            "tool_gate: omitting tool definitions for conversational user message"
+        );
+    }
 
     // Model routing: select cheap or smart model based on session signals.
     // Prefer adaptive strategy when configured; fall back to legacy static router.
@@ -566,6 +580,10 @@ pub async fn stream_and_record(
             "session_token_cap_exceeded".to_string(),
             serde_json::json!(true),
         );
+    }
+
+    if tools_gated {
+        metadata.insert("tools_gated".to_string(), serde_json::json!(true));
     }
 
     let mut interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
@@ -2074,9 +2092,11 @@ mod tests {
     #[tokio::test]
     async fn test_stream_and_record_session_token_cap_exceeded_on_second_turn() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let mut config = AgentConfig::default();
-        config.max_session_tokens = Some(200);
-        config.pre_completion_verify = false;
+        let config = AgentConfig {
+            max_session_tokens: Some(200),
+            pre_completion_verify: false,
+            ..Default::default()
+        };
         let session = Session::new(graph.clone(), config).unwrap();
         session.add_user_message("q1").await.unwrap();
 
@@ -2114,8 +2134,10 @@ mod tests {
     #[tokio::test]
     async fn test_stream_and_record_session_token_cap_blocks_before_llm_when_already_at_cap() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
-        let mut config = AgentConfig::default();
-        config.max_session_tokens = Some(50);
+        let config = AgentConfig {
+            max_session_tokens: Some(50),
+            ..Default::default()
+        };
         let session = Session::new(graph.clone(), config).unwrap();
         session.test_set_llm_tokens_used(50);
         session.add_user_message("q").await.unwrap();

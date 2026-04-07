@@ -243,6 +243,10 @@ pub struct AgentConfig {
     /// Optional post-hoc outline extraction (markdown headings → graph nodes).
     #[serde(default)]
     pub outline: Option<OutlineConfig>,
+    /// When true, short non-technical user messages omit tool definitions on the LLM call
+    /// so the model cannot emit tool calls on greetings and small talk. Primary agents only.
+    #[serde(default = "default_tool_gate_enabled")]
+    pub tool_gate_enabled: bool,
 }
 
 /// Objective weights for composite score optimisation.
@@ -367,6 +371,10 @@ fn default_enforce_work_loop() -> bool {
     true
 }
 
+fn default_tool_gate_enabled() -> bool {
+    true
+}
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
@@ -437,6 +445,7 @@ impl Default for AgentConfig {
             auto_link_write_to_planning: true,
             max_session_tokens: None,
             outline: None,
+            tool_gate_enabled: default_tool_gate_enabled(),
         }
     }
 }
@@ -524,6 +533,8 @@ struct AgentConfigSection {
     max_session_tokens: Option<u64>,
     #[serde(default)]
     outline: Option<OutlineConfig>,
+    #[serde(default = "default_tool_gate_enabled")]
+    tool_gate_enabled: bool,
 }
 
 fn default_system_prompt() -> String {
@@ -583,6 +594,7 @@ impl AgentConfig {
             auto_link_write_to_planning: file.agent.auto_link_write_to_planning,
             max_session_tokens: file.agent.max_session_tokens,
             outline: file.agent.outline,
+            tool_gate_enabled: file.agent.tool_gate_enabled,
         })
     }
 
@@ -629,6 +641,25 @@ mod tests {
         assert_eq!(config.max_turns, 50);
         assert!(config.tools.is_empty());
         assert_eq!(config.max_context_messages, None);
+    }
+
+    #[test]
+    fn test_tool_gate_enabled_default_true() {
+        let config = AgentConfig::default();
+        assert!(config.tool_gate_enabled);
+    }
+
+    #[test]
+    fn test_tool_gate_enabled_toml_parse() {
+        let toml_str = r#"
+            [agent]
+            name = "test"
+            model = "gpt-4"
+            system_prompt = "test"
+            tool_gate_enabled = false
+        "#;
+        let config = AgentConfig::from_toml(toml_str).unwrap();
+        assert!(!config.tool_gate_enabled);
     }
 
     #[test]
@@ -747,8 +778,10 @@ mod tests {
 
     #[test]
     fn test_apply_disable_bash_system_notice_idempotent() {
-        let mut config = AgentConfig::default();
-        config.disable_bash = true;
+        let mut config = AgentConfig {
+            disable_bash: true,
+            ..Default::default()
+        };
         config.apply_disable_bash_system_notice();
         let once = config.system_prompt.clone();
         config.apply_disable_bash_system_notice();
