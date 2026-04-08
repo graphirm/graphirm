@@ -18,6 +18,7 @@ pub mod session;
 pub mod strategy;
 mod tool_gate;
 pub mod trace_analysis;
+pub mod trace_analysis_tool;
 pub mod workflow;
 pub mod workspace;
 
@@ -48,6 +49,7 @@ pub use strategy::{
     ObjectiveWeights, RoutingDecision, RoutingStrategy, SessionScore, TurnOutcome,
     compute_session_score,
 };
+pub use trace_analysis_tool::TraceAnalysisTool;
 pub use workflow::run_agent_loop;
 
 // Glibc < 2.38 compatibility shim for ort's prebuilt binary.

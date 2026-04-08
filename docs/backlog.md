@@ -877,7 +877,7 @@ chains extracting token usage, tool calls, errors, model tiers, gating, and fall
 `detect_tool_errors_without_recovery`, `detect_premature_completion`). `build_trace_report`
 aggregates across sessions with hardcoded suggestion mappings. CLI: `graphirm trace-analysis
 [--max-sessions N] [--format json|markdown]`. HTTP: `GET /api/trace-analysis[?max_sessions=N]`.
-23 new tests; clippy clean.
+Built-in `trace_analysis` tool (`TraceAnalysisTool`) registered in `build_tool_registry` — same report as CLI/API, read-only. 23+ tests; clippy clean.
 
 ### ✅ Structured work loop enforcement — P3 · S
 Done 2026-03-27. `enforce_work_loop: bool` config field (default true). When enabled, `create_session` in `crates/server/src/routes.rs` appends a "## Problem-Solving Framework" section to the system prompt: 4-step Plan→Build→Verify→Fix with explicit instruction to transition from Plan to Build after at most 2 messages. 2 new config tests; all agent + server tests pass, clippy clean.

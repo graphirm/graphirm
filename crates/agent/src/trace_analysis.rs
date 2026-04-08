@@ -368,7 +368,9 @@ pub fn build_trace_report(graph: &GraphStore, max_sessions: usize) -> TraceRepor
                 "over_tooling" => "Excessive tool calls relative to turn count",
                 "doom_loops" => "Consecutive tool errors without recovery",
                 "token_waste" => "High token output in non-completed sessions",
-                "tool_errors_without_recovery" => "Tools errored and were never retried successfully",
+                "tool_errors_without_recovery" => {
+                    "Tools errored and were never retried successfully"
+                }
                 "premature_completion" => "Session completed with minimal or no work",
                 _ => "Unknown pattern",
             };
@@ -401,15 +403,11 @@ fn generate_suggestions(patterns: &[AggregatePattern]) -> Vec<String> {
                 "Consider enabling `tool_gate_enabled = true` or lowering `doom_loop_threshold`"
             }
             "doom_loops" => "Consider reducing `doom_loop_threshold` from current value",
-            "token_waste" => {
-                "Consider lowering `max_output_tokens` or enabling budget warnings"
-            }
+            "token_waste" => "Consider lowering `max_output_tokens` or enabling budget warnings",
             "tool_errors_without_recovery" => {
                 "Consider adding `error_recovery` routing rule if not present"
             }
-            "premature_completion" => {
-                "Check system prompt — agent may lack context to act"
-            }
+            "premature_completion" => "Check system prompt — agent may lack context to act",
             _ => continue,
         };
         suggestions.push(s.into());
@@ -758,7 +756,13 @@ mod tests {
         assert_eq!(report.sessions_analyzed, 0);
     }
 
-    fn insert_session(graph: &GraphStore, session_id: &str, name: &str, status: &str, turns: &[(u64, u64, u32)]) {
+    fn insert_session(
+        graph: &GraphStore,
+        session_id: &str,
+        name: &str,
+        status: &str,
+        turns: &[(u64, u64, u32)],
+    ) {
         let mut agent = GraphNode::new(NodeType::Agent(AgentData {
             name: name.into(),
             model: "test-model".into(),
@@ -802,7 +806,13 @@ mod tests {
         // Session with high tool ratio: 20 calls / 1 turn = 20.0 > 3.0 threshold
         insert_session(&graph, "s-heavy", "heavy-bot", "failed", &[(100, 50, 20)]);
         // Normal session: 2 calls / 1 turn = 2.0
-        insert_session(&graph, "s-normal", "normal-bot", "completed", &[(100, 50, 2)]);
+        insert_session(
+            &graph,
+            "s-normal",
+            "normal-bot",
+            "completed",
+            &[(100, 50, 2)],
+        );
 
         let report = build_trace_report(&graph, 50);
         assert_eq!(report.sessions_analyzed, 2);
@@ -823,8 +833,12 @@ mod tests {
 
         let report = build_trace_report(&graph, 50);
         assert!(
-            report.suggestions.iter().any(|s| s.contains("tool_gate_enabled")),
-            "should generate over_tooling suggestion, got: {:?}", report.suggestions
+            report
+                .suggestions
+                .iter()
+                .any(|s| s.contains("tool_gate_enabled")),
+            "should generate over_tooling suggestion, got: {:?}",
+            report.suggestions
         );
     }
 
@@ -833,7 +847,13 @@ mod tests {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
 
         for i in 0..5 {
-            insert_session(&graph, &format!("s-{i}"), &format!("bot-{i}"), "completed", &[(100, 50, 1)]);
+            insert_session(
+                &graph,
+                &format!("s-{i}"),
+                &format!("bot-{i}"),
+                "completed",
+                &[(100, 50, 1)],
+            );
         }
 
         let report = build_trace_report(&graph, 2);

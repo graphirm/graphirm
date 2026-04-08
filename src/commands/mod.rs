@@ -78,6 +78,7 @@ pub fn build_tool_registry() -> ToolRegistry {
     registry.register(Arc::new(
         graphirm_tools::context_report::ContextReportTool::new(),
     ));
+    registry.register(Arc::new(graphirm_agent::TraceAnalysisTool::new()));
 
     let plugins_dir = std::env::var("GRAPHIRM_PLUGINS_DIR")
         .map(std::path::PathBuf::from)
