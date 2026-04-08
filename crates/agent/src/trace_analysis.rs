@@ -264,6 +264,159 @@ pub fn detect_tool_errors_without_recovery(chain: &[GraphNode]) -> Option<Patter
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceReport {
+    pub sessions_analyzed: u32,
+    pub patterns: Vec<AggregatePattern>,
+    pub per_session: Vec<SessionSummary>,
+    pub suggestions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AggregatePattern {
+    pub pattern: String,
+    pub occurrences: u32,
+    pub severity: Severity,
+    pub affected_sessions: Vec<String>,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub agent_name: String,
+    pub status: String,
+    pub turn_count: u32,
+    pub token_total: u64,
+    pub findings: Vec<PatternMatch>,
+}
+
+/// Analyze up to `max_sessions` most recent completed sessions.
+pub fn build_trace_report(graph: &GraphStore, max_sessions: usize) -> TraceReport {
+    let agents = match graph.get_agent_nodes() {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!("Failed to get agent nodes for trace report: {e}");
+            return TraceReport {
+                sessions_analyzed: 0,
+                patterns: Vec::new(),
+                per_session: Vec::new(),
+                suggestions: Vec::new(),
+            };
+        }
+    };
+
+    let mut agents_sorted = agents;
+    agents_sorted.sort_by(|(a, _), (b, _)| b.created_at.cmp(&a.created_at));
+    agents_sorted.truncate(max_sessions);
+
+    let mut per_session: Vec<SessionSummary> = Vec::new();
+    // pattern_name → (severity, Vec<session_id>)
+    let mut aggregate: HashMap<String, (Severity, Vec<String>)> = HashMap::new();
+
+    for (node, _agent_data) in &agents_sorted {
+        let session_id = match node.metadata.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => continue,
+        };
+
+        let digest = match build_session_digest(graph, &session_id) {
+            Some(d) => d,
+            None => continue,
+        };
+
+        let chain = graph.get_session_chain(&session_id).unwrap_or_default();
+
+        let mut findings = Vec::new();
+        if let Some(m) = detect_over_tooling(&digest, 3.0) {
+            findings.push(m);
+        }
+        if let Some(m) = detect_doom_loops(&chain) {
+            findings.push(m);
+        }
+        if let Some(m) = detect_token_waste(&digest, 2000.0) {
+            findings.push(m);
+        }
+        if let Some(m) = detect_tool_errors_without_recovery(&chain) {
+            findings.push(m);
+        }
+        if let Some(m) = detect_premature_completion(&digest) {
+            findings.push(m);
+        }
+
+        for f in &findings {
+            let entry = aggregate
+                .entry(f.pattern.clone())
+                .or_insert_with(|| (f.severity, Vec::new()));
+            entry.1.push(session_id.clone());
+        }
+
+        per_session.push(SessionSummary {
+            session_id,
+            agent_name: digest.agent_name,
+            status: digest.status,
+            turn_count: digest.turn_count,
+            token_total: digest.total_input_tokens + digest.total_output_tokens,
+            findings,
+        });
+    }
+
+    let mut patterns: Vec<AggregatePattern> = aggregate
+        .into_iter()
+        .map(|(pattern, (severity, affected))| {
+            let description = match pattern.as_str() {
+                "over_tooling" => "Excessive tool calls relative to turn count",
+                "doom_loops" => "Consecutive tool errors without recovery",
+                "token_waste" => "High token output in non-completed sessions",
+                "tool_errors_without_recovery" => "Tools errored and were never retried successfully",
+                "premature_completion" => "Session completed with minimal or no work",
+                _ => "Unknown pattern",
+            };
+            AggregatePattern {
+                occurrences: affected.len() as u32,
+                severity,
+                affected_sessions: affected,
+                description: description.into(),
+                pattern,
+            }
+        })
+        .collect();
+    patterns.sort_by(|a, b| b.occurrences.cmp(&a.occurrences));
+
+    let suggestions = generate_suggestions(&patterns);
+
+    TraceReport {
+        sessions_analyzed: per_session.len() as u32,
+        patterns,
+        per_session,
+        suggestions,
+    }
+}
+
+fn generate_suggestions(patterns: &[AggregatePattern]) -> Vec<String> {
+    let mut suggestions = Vec::new();
+    for p in patterns {
+        let s = match p.pattern.as_str() {
+            "over_tooling" => {
+                "Consider enabling `tool_gate_enabled = true` or lowering `doom_loop_threshold`"
+            }
+            "doom_loops" => "Consider reducing `doom_loop_threshold` from current value",
+            "token_waste" => {
+                "Consider lowering `max_output_tokens` or enabling budget warnings"
+            }
+            "tool_errors_without_recovery" => {
+                "Consider adding `error_recovery` routing rule if not present"
+            }
+            "premature_completion" => {
+                "Check system prompt — agent may lack context to act"
+            }
+            _ => continue,
+        };
+        suggestions.push(s.into());
+    }
+    suggestions
+}
+
 pub fn detect_premature_completion(digest: &SessionDigest) -> Option<PatternMatch> {
     if digest.status == "completed" && digest.turn_count <= 2 && digest.tool_call_count == 0 {
         Some(PatternMatch {
@@ -593,6 +746,99 @@ mod tests {
             ..default_digest()
         };
         assert!(detect_premature_completion(&digest).is_none());
+    }
+
+    // --- build_trace_report ---
+
+    #[test]
+    fn build_report_from_empty_graph_returns_empty_patterns() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let report = build_trace_report(&graph, 50);
+        assert!(report.patterns.is_empty());
+        assert_eq!(report.sessions_analyzed, 0);
+    }
+
+    fn insert_session(graph: &GraphStore, session_id: &str, name: &str, status: &str, turns: &[(u64, u64, u32)]) {
+        let mut agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: name.into(),
+            model: "test-model".into(),
+            system_prompt: None,
+            status: status.into(),
+        }));
+        agent.metadata = serde_json::json!({ "session_id": session_id });
+        graph.add_node(agent).unwrap();
+
+        let mut user_msg = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".into(),
+            content: "do something".into(),
+            token_count: None,
+        }));
+        user_msg.metadata = serde_json::json!({ "session_id": session_id });
+        graph.add_node(user_msg).unwrap();
+
+        for (input_tok, output_tok, tool_calls) in turns {
+            let mut asst = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".into(),
+                content: "working on it".into(),
+                token_count: None,
+            }));
+            let calls: Vec<serde_json::Value> = (0..*tool_calls)
+                .map(|i| serde_json::json!({ "name": format!("tool_{i}") }))
+                .collect();
+            asst.metadata = serde_json::json!({
+                "session_id": session_id,
+                "usage_input": input_tok,
+                "usage_output": output_tok,
+                "tool_calls": calls,
+            });
+            graph.add_node(asst).unwrap();
+        }
+    }
+
+    #[test]
+    fn build_report_detects_over_tooling_in_one_session() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+
+        // Session with high tool ratio: 20 calls / 1 turn = 20.0 > 3.0 threshold
+        insert_session(&graph, "s-heavy", "heavy-bot", "failed", &[(100, 50, 20)]);
+        // Normal session: 2 calls / 1 turn = 2.0
+        insert_session(&graph, "s-normal", "normal-bot", "completed", &[(100, 50, 2)]);
+
+        let report = build_trace_report(&graph, 50);
+        assert_eq!(report.sessions_analyzed, 2);
+
+        let over = report.patterns.iter().find(|p| p.pattern == "over_tooling");
+        assert!(over.is_some(), "should detect over_tooling pattern");
+        let over = over.unwrap();
+        assert_eq!(over.occurrences, 1);
+        assert_eq!(over.affected_sessions, vec!["s-heavy"]);
+    }
+
+    #[test]
+    fn build_report_generates_suggestions_for_patterns() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+
+        // Session that triggers over_tooling (20 calls / 1 turn)
+        insert_session(&graph, "s-over", "bot", "completed", &[(100, 50, 20)]);
+
+        let report = build_trace_report(&graph, 50);
+        assert!(
+            report.suggestions.iter().any(|s| s.contains("tool_gate_enabled")),
+            "should generate over_tooling suggestion, got: {:?}", report.suggestions
+        );
+    }
+
+    #[test]
+    fn build_report_respects_max_sessions_cap() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+
+        for i in 0..5 {
+            insert_session(&graph, &format!("s-{i}"), &format!("bot-{i}"), "completed", &[(100, 50, 1)]);
+        }
+
+        let report = build_trace_report(&graph, 2);
+        assert_eq!(report.sessions_analyzed, 2);
+        assert_eq!(report.per_session.len(), 2);
     }
 
     #[test]
