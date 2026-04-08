@@ -115,7 +115,7 @@ graphirm/
 ├── crates/
 │   ├── graph/          # GraphStore — SQLite + petgraph, node/edge CRUD, PageRank, BFS, HNSW
 │   ├── llm/            # LLM provider trait — Anthropic, OpenAI, DeepSeek, Ollama, 17+ via rig-core
-│   ├── tools/          # Built-in tools — bash, read, write, edit, grep, find, ls, graph_query
+│   ├── tools/          # Built-in tools — bash, read, write, edit, grep, find, ls, fetch_url, graph_query
 │   ├── agent/          # Agent loop, context engine, multi-agent, knowledge extraction, HITL
 │   ├── tui/            # Terminal UI — ratatui chat panel + graph explorer
 │   └── server/         # HTTP API — axum REST + SSE streaming

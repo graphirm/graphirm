@@ -6,6 +6,7 @@ pub mod diff;
 pub mod edit;
 pub mod error;
 pub mod executor;
+pub mod fetch_url;
 pub mod find;
 pub mod graph_diff;
 pub mod graph_query;

@@ -19,6 +19,7 @@ description, JSON schema for parameters, and an async `execute` method. Tools ar
 | `edit.rs` | Exact string replacement in files (**destructive**) |
 | `grep.rs` | Regex search across files |
 | `find.rs` | File name pattern search |
+| `fetch_url.rs` | HTTP(S) GET for public URLs — read-only, no graph writes |
 | `ls.rs` | Directory listing |
 | `graph_diff.rs` | `GraphDiffTool` — non-destructive blast radius: git/paths → dependent files (rg), cross-session stale Knowledge, risk scoring |
 | `graph_query.rs` | Graph query — BFS traversal, node-type enumeration, keyword search, **semantic HNSW search** |

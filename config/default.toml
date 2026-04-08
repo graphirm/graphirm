@@ -59,6 +59,8 @@ range you need. Never read an entire large file.
 - grep        — search file contents by regex
 - find        — find files by name pattern
 - ls          — list directory contents
+- fetch_url   — HTTP GET a public https URL; returns status, content-type, and body text (truncated). \
+Read-only.
 - graph_query — query your own session graph: list nodes by type, BFS traversal from a node, \
 or keyword search over Knowledge nodes. Use list_type first to discover node IDs for bfs.
 - cargo_check — run cargo check and get structured error/warning output. Prefer this over \

@@ -1332,6 +1332,7 @@ fn infer_task_phase(chain: &[graphirm_graph::nodes::GraphNode]) -> crate::router
         "grep",
         "find",
         "ls",
+        "fetch_url",
         "graph_query",
         "repo_briefing",
         "session_trace",

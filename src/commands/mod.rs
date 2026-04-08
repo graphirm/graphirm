@@ -60,6 +60,7 @@ pub fn build_tool_registry() -> ToolRegistry {
     registry.register(Arc::new(graphirm_tools::read::ReadTool));
     registry.register(Arc::new(graphirm_tools::write::WriteTool));
     registry.register(Arc::new(graphirm_tools::edit::EditTool));
+    registry.register(Arc::new(graphirm_tools::fetch_url::FetchUrlTool::new()));
     registry.register(Arc::new(graphirm_tools::grep::GrepTool));
     registry.register(Arc::new(graphirm_tools::find::FindTool));
     registry.register(Arc::new(graphirm_tools::ls::LsTool));

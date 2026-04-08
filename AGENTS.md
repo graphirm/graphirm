@@ -16,7 +16,7 @@ Cargo workspace with six crates plus an eval harness. Dependency order (bottom t
 rusqlite / petgraph / instant-distance  (external)
     └── graphirm-graph      # graph store, node/edge CRUD, PageRank, BFS, HNSW
          ├── graphirm-llm   # LLM provider trait, streaming, embeddings
-         ├── graphirm-tools # built-in tools (bash, read, write, edit, grep, find, ls, graph_query, diff, read_many)
+         ├── graphirm-tools # built-in tools (bash, read, write, edit, grep, find, ls, fetch_url, graph_query, diff, read_many)
          └── graphirm-agent # agent loop, context engine, multi-agent, knowledge, HITL
               ├── graphirm-tui    # ratatui TUI (chat + graph explorer)
               └── graphirm-server # axum HTTP API + SSE
@@ -41,7 +41,7 @@ graphirm-vscode/            # VS Code / Cursor extension (TypeScript)
 | `src/main.rs` | CLI: `chat`, `graph`, `serve`, `export-corpus`, `label-explore`, `schema-suggest`, `predict-spans`, `validate-agreement` |
 | `crates/graph/` | `GraphStore`, node/edge types, PageRank, BFS, HNSW vector index |
 | `crates/llm/` | `LlmProvider` trait, Anthropic/OpenAI/DeepSeek/Ollama/OpenRouter impls, `MockProvider` |
-| `crates/tools/` | `Tool` trait, `ToolRegistry`, parallel executor, bash/read/write/edit/grep/find/ls/graph_query/diff/read_many/cargo_check |
+| `crates/tools/` | `Tool` trait, `ToolRegistry`, parallel executor, bash/read/write/edit/grep/find/ls/fetch_url/graph_query/diff/read_many/cargo_check |
 | `crates/agent/` | `run_agent_loop`, `build_context`, `Coordinator`, `HitlGate`, knowledge extraction |
 | `crates/tui/` | `App`, chat panel, graph explorer, input handling |
 | `crates/server/` | axum routes, SSE streaming, `AppState`, `SessionHandle`, SDK, static file serving |
@@ -180,6 +180,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 | 52 | Conversational tool gate — `tool_gate.rs`: heuristic `should_omit_tools_for_user_message` omits tool defs on short non-technical messages; `tool_gate_enabled` config (default true); `tools_gated: true` metadata on gated turns | ✅ done |
 | 53 | Automated trace analysis — `trace_analysis.rs`: `SessionDigest` extractor, 5 pattern detectors (over_tooling, doom_loops, token_waste, tool_errors_without_recovery, premature_completion), `build_trace_report` aggregation + suggestions; `graphirm trace-analysis` CLI; `GET /api/trace-analysis` endpoint; non-destructive `trace_analysis` built-in tool (`TraceAnalysisTool` in `trace_analysis_tool.rs`); 23+ tests | ✅ done |
 | 54 | Planning ↔ Task artifacts — `planning_link::link_planning_task_edge` + `task_in_scope_for_agent` (`DelegatesTo` / `SpawnedBy`); `graph_query` `project` **`link_task`**; auto-link delegated Task when `auto_link_write_to_planning` + `link_session`; web plan-filter copy; plan `docs/plans/2026-04-08-graph-query-artifacts-planning.md` | ✅ done |
+| 55 | **`fetch_url` tool** — non-destructive HTTP(S) GET (`reqwest`, rustls); timeout, redirect cap, UTF-8 body with byte cap; cancellation via `ToolContext.signal`; `infer_task_phase` read-only list | ✅ done |
 
 **Real SSE streaming (Phase 51):**
 - `crates/llm/src/openrouter.rs` — `OpenRouterProvider` now holds `http: reqwest::Client` + `api_key: String` alongside rig `CompletionsClient`; `complete()` unchanged (still uses rig)

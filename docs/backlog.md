@@ -822,6 +822,12 @@ Plan: `docs/plans/2026-03-19-agent-capability-subagent-ws-multifile.md`
 Done 2026-03-19. Added `semantic` mode to `graph_query` tool. `KnowledgeRetriever` trait defined in `graphirm-tools` (no circular deps); `MemoryRetriever` implements it via `retrieve_with_scores` (correct L2→cosine conversion: `1 - d²/2`); wired via `ToolContext.knowledge_retriever`. Returns HNSW-ranked Knowledge nodes with cosine similarity scores. Graceful `ExecutionFailed` when no embedding provider is configured.
 Plan: `docs/plans/2026-03-19-semantic-graph-query.md`
 
+### ✅ `fetch_url` HTTP GET tool — P2 · S
+Done 2026-04-08. Non-destructive `fetch_url` in `crates/tools/src/fetch_url.rs`: `http`/`https` only, timeout, limited redirects, UTF-8 body (lossy), configurable max bytes; honours session cancellation. Registered in `build_tool_registry()`. Uses `reqwest` with `rustls-tls`. Default system prompt in `config/default.toml` lists the tool.
+
+### Firecrawl (or search API) wrapper tool — P3 · M
+Optional follow-up: a dedicated tool that calls the Firecrawl API (scrape / search / map) with `FIRECRAWL_API_KEY`, or another web-search provider. Complements `fetch_url` for structured crawl/search results. *Acceptance: one tool, env-gated when key missing, non-destructive default.*
+
 ---
 
 ## Harness Engineering
