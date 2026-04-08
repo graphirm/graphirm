@@ -80,7 +80,7 @@ export function Toolbar({
           type="button"
           className={[styles.typeBtn, filter.planGraphOnly ? styles.typeActive : ''].join(' ')}
           onClick={() => onFilterChange({ ...filter, planGraphOnly: !filter.planGraphOnly })}
-          title="Planning graph: planning Knowledge nodes + files linked via artifact edges"
+          title="Planning graph: planning Knowledge nodes + artifacts (files, tasks, …) linked via relates_to + artifact_link"
         >
           ⌖
         </button>

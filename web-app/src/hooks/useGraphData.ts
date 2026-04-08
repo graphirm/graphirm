@@ -268,7 +268,8 @@ function isPlanningKnowledgeNode(gn: GraphNode): boolean {
 }
 
 /**
- * Planning Knowledge nodes plus Content targets of planning→content `relates_to` with `artifact_link`.
+ * Planning Knowledge nodes plus artifact targets (Content or Task) of planning→target
+ * `relates_to` edges that carry `artifact_link` metadata.
  */
 function computePlanGraphAllowedIds(graphNodes: GraphNode[], edges: GraphEdge[]): Set<string> {
   const planningIds = new Set<string>();

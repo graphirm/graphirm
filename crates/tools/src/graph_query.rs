@@ -4,7 +4,9 @@ use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{GraphNode, KnowledgeData, NodeId, NodeType};
 use serde_json::json;
 
-use crate::planning_link::{PlanningContentLink, link_planning_content_edge};
+use crate::planning_link::{
+    PlanningArtifactLink, link_planning_content_edge, link_planning_task_edge,
+};
 use crate::{Tool, ToolContext, ToolError, ToolOutput};
 
 pub struct GraphQueryTool;
@@ -52,6 +54,7 @@ impl Tool for GraphQueryTool {
   - list: List planning nodes with optional filtering
   - link_session: Link the current session to a planning node
   - link_content: Link a Content node (e.g. file from write) to a planning Knowledge node via relates_to (outgoing from planning → content; use BFS/neighbors with relates_to for traceability)
+  - link_task: Link a Task node (delegation / subagent) to a planning Knowledge node via relates_to (same artifact_link metadata as link_content; Task must be DelegatesTo from parent agent or SpawnedBy to subagent agent)
   - update: Update a planning node's status
 
 • stats — Report overall graph statistics: total nodes, total edges, and breakdown by node type.
@@ -128,7 +131,7 @@ The tool is read-only for bfs/list_type/search/semantic/neighbors/stats modes; p
                 },
                 "action": {
                     "type": "string",
-                    "enum": ["create", "list", "link_session", "link_content", "update"],
+                    "enum": ["create", "list", "link_session", "link_content", "link_task", "update"],
                     "description": "Action to perform in project mode"
                 },
                 "entity": {
@@ -145,16 +148,20 @@ The tool is read-only for bfs/list_type/search/semantic/neighbors/stats modes; p
                 },
                 "planning_node_id": {
                     "type": "string",
-                    "description": "Planning node ID for link_session and link_content actions"
+                    "description": "Planning node ID for link_session, link_content, and link_task actions"
                 },
                 "content_id": {
                     "type": "string",
                     "description": "Content node ID (e.g. file node from write) for link_content action"
                 },
+                "task_id": {
+                    "type": "string",
+                    "description": "Task node ID for link_task action (delegation task; must be in scope for this session)"
+                },
                 "relationship": {
                     "type": "string",
                     "enum": ["implements", "documents"],
-                    "description": "Semantic label stored on edge metadata (link_content only; default: implements)"
+                    "description": "Semantic label stored on edge metadata (link_content and link_task; default: implements)"
                 },
                 "status": {
                     "type": "string",
@@ -827,13 +834,62 @@ async fn execute_project(
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
 
             match outcome {
-                PlanningContentLink::Inserted => Ok(ToolOutput::success(format!(
+                PlanningArtifactLink::Inserted => Ok(ToolOutput::success(format!(
                     "Linked Content {content_id_str} to planning node {planning_id_str} (relates_to, {relationship})"
                 ))),
-                PlanningContentLink::AlreadyLinked => Ok(ToolOutput::success(format!(
+                PlanningArtifactLink::AlreadyLinked => Ok(ToolOutput::success(format!(
                     "Already linked: Content {content_id_str} → planning {planning_id_str} (relates_to)"
                 ))),
-                PlanningContentLink::NotApplicable(msg) => {
+                PlanningArtifactLink::NotApplicable(msg) => {
+                    Err(ToolError::InvalidArguments(msg.to_string()))
+                }
+            }
+        }
+
+        "link_task" => {
+            let task_id_str = args["task_id"].as_str().ok_or_else(|| {
+                ToolError::InvalidArguments("'task_id' is required for link_task".into())
+            })?;
+            let planning_id_str = args["planning_node_id"].as_str().ok_or_else(|| {
+                ToolError::InvalidArguments("'planning_node_id' is required for link_task".into())
+            })?;
+            let relationship = args["relationship"].as_str().unwrap_or("implements");
+            match relationship {
+                "implements" | "documents" => {}
+                other => {
+                    return Err(ToolError::InvalidArguments(format!(
+                        "unknown relationship '{other}'; must be one of: implements, documents"
+                    )));
+                }
+            }
+
+            let task_id = NodeId(task_id_str.to_string());
+            let planning_id = NodeId(planning_id_str.to_string());
+            let agent_id = ctx.agent_id.clone();
+            let graph = ctx.graph.clone();
+            let rel_owned = relationship.to_string();
+
+            let outcome = tokio::task::spawn_blocking(move || {
+                link_planning_task_edge(
+                    &graph,
+                    &agent_id,
+                    &planning_id,
+                    &task_id,
+                    rel_owned.as_str(),
+                )
+            })
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+
+            match outcome {
+                PlanningArtifactLink::Inserted => Ok(ToolOutput::success(format!(
+                    "Linked Task {task_id_str} to planning node {planning_id_str} (relates_to, {relationship})"
+                ))),
+                PlanningArtifactLink::AlreadyLinked => Ok(ToolOutput::success(format!(
+                    "Already linked: Task {task_id_str} → planning {planning_id_str} (relates_to)"
+                ))),
+                PlanningArtifactLink::NotApplicable(msg) => {
                     Err(ToolError::InvalidArguments(msg.to_string()))
                 }
             }
@@ -891,7 +947,7 @@ async fn execute_project(
         }
 
         other => Err(ToolError::InvalidArguments(format!(
-            "unknown action '{other}'; must be one of: create, list, link_session, link_content, update"
+            "unknown action '{other}'; must be one of: create, list, link_session, link_content, link_task, update"
         ))),
     }
 }

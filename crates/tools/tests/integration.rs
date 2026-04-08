@@ -3,7 +3,9 @@ use std::sync::atomic::AtomicU32;
 
 use graphirm_graph::GraphStore;
 use graphirm_graph::edges::{EdgeType, GraphEdge};
-use graphirm_graph::nodes::{AgentData, GraphNode, InteractionData, KnowledgeData, NodeType};
+use graphirm_graph::nodes::{
+    AgentData, GraphNode, InteractionData, KnowledgeData, NodeType, TaskData, TaskStatus,
+};
 use graphirm_tools::{
     ToolCall, ToolContext,
     bash::BashTool,
@@ -297,4 +299,66 @@ async fn write_auto_links_file_to_session_planning_node() {
         }),
         "expected relates_to from planning story to file content"
     );
+}
+
+#[tokio::test]
+async fn graph_query_link_task_connects_planning_to_task() {
+    let (_dir, registry, ctx) = setup();
+
+    let mut story = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+        entity: "Epic".into(),
+        entity_type: "epic".into(),
+        summary: "feature".into(),
+        confidence: 1.0,
+    }));
+    story.metadata["planning"] = json!(true);
+    let story_id = ctx.graph.add_node(story).unwrap();
+
+    let task = ctx
+        .graph
+        .add_node(GraphNode::new(NodeType::Task(TaskData {
+            title: "delegated".into(),
+            description: "work".into(),
+            status: TaskStatus::Pending,
+            priority: None,
+        })))
+        .unwrap();
+
+    ctx.graph
+        .add_edge(GraphEdge::new(
+            EdgeType::DelegatesTo,
+            ctx.agent_id.clone(),
+            task.clone(),
+        ))
+        .unwrap();
+
+    let gq = ToolCall {
+        id: "gq".into(),
+        name: "graph_query".into(),
+        arguments: json!({
+            "mode": "project",
+            "action": "link_task",
+            "planning_node_id": story_id,
+            "task_id": task,
+            "relationship": "implements"
+        }),
+    };
+    let out = execute_single(&registry, &gq, &ctx).await.unwrap();
+    assert!(!out.is_error, "{}", out.content);
+
+    let edges = ctx.graph.edges_for_node(&story_id).unwrap();
+    assert!(
+        edges.iter().any(|e| {
+            e.edge_type == EdgeType::RelatesTo && e.source == story_id && e.target == task
+        }),
+        "expected relates_to from planning to task"
+    );
+    let al = edges
+        .iter()
+        .find(|e| e.edge_type == EdgeType::RelatesTo && e.source == story_id && e.target == task)
+        .expect("relates_to edge")
+        .metadata
+        .get("artifact_link")
+        .and_then(|v| v.as_str());
+    assert_eq!(al, Some("implements"));
 }

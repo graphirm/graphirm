@@ -1,18 +1,42 @@
-//! Planning Knowledge ↔ file Content linkage (shared by `graph_query` and `write`/`edit`).
+//! Planning Knowledge ↔ artifact linkage (shared by `graph_query`, `write`/`edit`, and delegate).
+//!
+//! # Content artifacts (`link_content`, auto-link on file write)
+//!
+//! File [`Content`](graphirm_graph::nodes::NodeType::Content) nodes use **`RelatesTo`** from
+//! planning Knowledge → content with edge metadata **`artifact_link`**: `implements` | `documents`.
+//! Session ownership is enforced via **`metadata.session_id`** on the Content node matching the
+//! session **Agent** id (see [`link_planning_content_edge`]).
+//!
+//! # Task artifacts (`link_task`, optional auto-link on delegate)
+//!
+//! Delegated work uses [`NodeType::Task`](graphirm_graph::nodes::NodeType::Task). The same edge
+//! shape applies: **`RelatesTo`** planning → task with **`artifact_link`**. Task nodes do not
+//! require `session_id` metadata; instead we validate **delegation structure**:
+//!
+//! - **Primary (parent) session:** `EdgeType::DelegatesTo` from the parent **Agent** → **Task**
+//!   (`spawn_subagent` in `graphirm-agent` creates this before the subagent Agent exists).
+//! - **Subagent session:** `EdgeType::SpawnedBy` from **Task** → child **Agent** (the subagent’s
+//!   session id is the child agent node id).
+//!
+//! Either relationship is sufficient to prove the Task belongs to the caller’s session when
+//! invoking [`link_planning_task_edge`].
 
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{NodeId, NodeType};
 use graphirm_graph::{GraphError, GraphStore};
 use serde_json::json;
 
-/// Outcome of attempting a planning → content `relates_to` edge (see `link_planning_content_edge`).
+/// Outcome of attempting a planning → artifact `relates_to` edge (content or task).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PlanningContentLink {
+pub enum PlanningArtifactLink {
     Inserted,
     AlreadyLinked,
     /// Wrong node types, session mismatch, unknown relationship, etc. (message for `graph_query` errors).
     NotApplicable(&'static str),
 }
+
+/// Back-compat alias (older name).
+pub type PlanningContentLink = PlanningArtifactLink;
 
 /// Resolve the planning Knowledge node for this session from **`link_session`** edges:
 /// outgoing **`DerivedFrom`** from **`agent_id`** to a Knowledge node with **`metadata.planning == true`**.
@@ -58,10 +82,29 @@ pub fn resolve_session_planning_node(
     }
 }
 
+/// Returns true if **`task_id`** is the delegation node for **`agent_id`** (parent or subagent).
+pub fn task_in_scope_for_agent(
+    graph: &GraphStore,
+    agent_id: &NodeId,
+    task_id: &NodeId,
+) -> Result<bool, GraphError> {
+    for e in graph.edges_for_node(agent_id)? {
+        if e.edge_type == EdgeType::DelegatesTo && e.source == *agent_id && e.target == *task_id {
+            return Ok(true);
+        }
+    }
+    for e in graph.edges_for_node(task_id)? {
+        if e.edge_type == EdgeType::SpawnedBy && e.source == *task_id && e.target == *agent_id {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Add **`RelatesTo`** from planning Knowledge → Content with **`artifact_link`** metadata,
 /// matching `graph_query` `project` **`link_content`** rules.
 ///
-/// Returns [`PlanningContentLink::NotApplicable`] when validation fails (caller maps to tool error
+/// Returns [`PlanningArtifactLink::NotApplicable`] when validation fails (caller maps to tool error
 /// or silent skip). Graph errors propagate for I/O failures.
 pub fn link_planning_content_edge(
     graph: &GraphStore,
@@ -69,16 +112,16 @@ pub fn link_planning_content_edge(
     planning_id: &NodeId,
     content_id: &NodeId,
     relationship: &str,
-) -> Result<PlanningContentLink, GraphError> {
+) -> Result<PlanningArtifactLink, GraphError> {
     if relationship != "implements" && relationship != "documents" {
-        return Ok(PlanningContentLink::NotApplicable(
+        return Ok(PlanningArtifactLink::NotApplicable(
             "unknown relationship; must be one of: implements, documents",
         ));
     }
 
     let content_node = graph.get_node(content_id)?;
     if !matches!(content_node.node_type, NodeType::Content(_)) {
-        return Ok(PlanningContentLink::NotApplicable(
+        return Ok(PlanningArtifactLink::NotApplicable(
             "link_content: content_id must refer to a Content node",
         ));
     }
@@ -87,19 +130,19 @@ pub fn link_planning_content_edge(
         .get("session_id")
         .and_then(|v| v.as_str());
     if sid != Some(agent_id.0.as_str()) {
-        return Ok(PlanningContentLink::NotApplicable(
+        return Ok(PlanningArtifactLink::NotApplicable(
             "link_content: Content node session_id must match this session's agent id",
         ));
     }
 
     let plan_node = graph.get_node(planning_id)?;
     if plan_node.metadata.get("planning").and_then(|v| v.as_bool()) != Some(true) {
-        return Ok(PlanningContentLink::NotApplicable(
+        return Ok(PlanningArtifactLink::NotApplicable(
             "link_content: planning_node_id must be a planning Knowledge node",
         ));
     }
     if !matches!(plan_node.node_type, NodeType::Knowledge(_)) {
-        return Ok(PlanningContentLink::NotApplicable(
+        return Ok(PlanningArtifactLink::NotApplicable(
             "link_content: planning_node_id must be a Knowledge node",
         ));
     }
@@ -108,7 +151,7 @@ pub fn link_planning_content_edge(
     if edges.iter().any(|e| {
         e.edge_type == EdgeType::RelatesTo && e.source == *planning_id && e.target == *content_id
     }) {
-        return Ok(PlanningContentLink::AlreadyLinked);
+        return Ok(PlanningArtifactLink::AlreadyLinked);
     }
 
     let meta = json!({ "artifact_link": relationship });
@@ -116,7 +159,65 @@ pub fn link_planning_content_edge(
         GraphEdge::new(EdgeType::RelatesTo, planning_id.clone(), content_id.clone())
             .with_metadata(meta),
     )?;
-    Ok(PlanningContentLink::Inserted)
+    Ok(PlanningArtifactLink::Inserted)
+}
+
+/// Add **`RelatesTo`** from planning Knowledge → Task with **`artifact_link`** metadata
+/// (`graph_query` `project` **`link_task`**).
+///
+/// The Task must be in scope for **`agent_id`** (`DelegatesTo` from parent agent, or
+/// `SpawnedBy` from task to subagent agent). See module docs.
+pub fn link_planning_task_edge(
+    graph: &GraphStore,
+    agent_id: &NodeId,
+    planning_id: &NodeId,
+    task_id: &NodeId,
+    relationship: &str,
+) -> Result<PlanningArtifactLink, GraphError> {
+    if relationship != "implements" && relationship != "documents" {
+        return Ok(PlanningArtifactLink::NotApplicable(
+            "unknown relationship; must be one of: implements, documents",
+        ));
+    }
+
+    let task_node = graph.get_node(task_id)?;
+    if !matches!(task_node.node_type, NodeType::Task(_)) {
+        return Ok(PlanningArtifactLink::NotApplicable(
+            "link_task: task_id must refer to a Task node",
+        ));
+    }
+
+    if !task_in_scope_for_agent(graph, agent_id, task_id)? {
+        return Ok(PlanningArtifactLink::NotApplicable(
+            "link_task: Task is not delegated to or spawned by this session's agent",
+        ));
+    }
+
+    let plan_node = graph.get_node(planning_id)?;
+    if plan_node.metadata.get("planning").and_then(|v| v.as_bool()) != Some(true) {
+        return Ok(PlanningArtifactLink::NotApplicable(
+            "link_task: planning_node_id must be a planning Knowledge node",
+        ));
+    }
+    if !matches!(plan_node.node_type, NodeType::Knowledge(_)) {
+        return Ok(PlanningArtifactLink::NotApplicable(
+            "link_task: planning_node_id must be a Knowledge node",
+        ));
+    }
+
+    let edges = graph.edges_for_node(planning_id)?;
+    if edges.iter().any(|e| {
+        e.edge_type == EdgeType::RelatesTo && e.source == *planning_id && e.target == *task_id
+    }) {
+        return Ok(PlanningArtifactLink::AlreadyLinked);
+    }
+
+    let meta = json!({ "artifact_link": relationship });
+    graph.add_edge(
+        GraphEdge::new(EdgeType::RelatesTo, planning_id.clone(), task_id.clone())
+            .with_metadata(meta),
+    )?;
+    Ok(PlanningArtifactLink::Inserted)
 }
 
 /// After persisting a **`file`** Content node, link it to the session’s planning node when
@@ -140,16 +241,16 @@ pub async fn try_auto_link_written_file_content(ctx: &crate::ToolContext, conten
             return Ok(());
         };
         match link_planning_content_edge(&graph, &agent, &pid, &cid, "implements")? {
-            PlanningContentLink::Inserted => tracing::debug!(
+            PlanningArtifactLink::Inserted => tracing::debug!(
                 content_id = %cid,
                 planning_id = %pid,
                 "auto-linked file content to planning node"
             ),
-            PlanningContentLink::AlreadyLinked => tracing::debug!(
+            PlanningArtifactLink::AlreadyLinked => tracing::debug!(
                 content_id = %cid,
                 "file content already linked to planning node"
             ),
-            PlanningContentLink::NotApplicable(_) => tracing::debug!(
+            PlanningArtifactLink::NotApplicable(_) => tracing::debug!(
                 content_id = %cid,
                 "auto-link skipped (planning↔content validation)"
             ),
@@ -167,7 +268,8 @@ pub async fn try_auto_link_written_file_content(ctx: &crate::ToolContext, conten
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphirm_graph::nodes::{AgentData, ContentData, GraphNode, KnowledgeData};
+    use graphirm_graph::nodes::TaskStatus;
+    use graphirm_graph::nodes::{AgentData, ContentData, GraphNode, KnowledgeData, TaskData};
 
     fn planning_knowledge(entity: &str, summary: &str) -> GraphNode {
         let mut n = GraphNode::new(NodeType::Knowledge(KnowledgeData {
@@ -269,11 +371,118 @@ mod tests {
 
         assert_eq!(
             link_planning_content_edge(&g, &agent, &plan, &file_id, "implements").unwrap(),
-            PlanningContentLink::Inserted
+            PlanningArtifactLink::Inserted
         );
         assert_eq!(
             link_planning_content_edge(&g, &agent, &plan, &file_id, "implements").unwrap(),
-            PlanningContentLink::AlreadyLinked
+            PlanningArtifactLink::AlreadyLinked
         );
+    }
+
+    #[test]
+    fn link_task_via_delegates_to_parent() {
+        let g = GraphStore::open_memory().unwrap();
+        let parent = g
+            .add_node(GraphNode::new(NodeType::Agent(AgentData {
+                name: "p".into(),
+                model: "m".into(),
+                system_prompt: None,
+                status: "active".into(),
+            })))
+            .unwrap();
+        let plan = g.add_node(planning_knowledge("S", "s")).unwrap();
+        let task = g
+            .add_node(GraphNode::new(NodeType::Task(TaskData {
+                title: "t".into(),
+                description: "".into(),
+                status: TaskStatus::Pending,
+                priority: None,
+            })))
+            .unwrap();
+        g.add_edge(GraphEdge::new(
+            EdgeType::DelegatesTo,
+            parent.clone(),
+            task.clone(),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            link_planning_task_edge(&g, &parent, &plan, &task, "implements").unwrap(),
+            PlanningArtifactLink::Inserted
+        );
+        assert_eq!(
+            link_planning_task_edge(&g, &parent, &plan, &task, "implements").unwrap(),
+            PlanningArtifactLink::AlreadyLinked
+        );
+    }
+
+    #[test]
+    fn link_task_via_spawned_by_subagent() {
+        let g = GraphStore::open_memory().unwrap();
+        let parent = g
+            .add_node(GraphNode::new(NodeType::Agent(AgentData {
+                name: "p".into(),
+                model: "m".into(),
+                system_prompt: None,
+                status: "active".into(),
+            })))
+            .unwrap();
+        let child = g
+            .add_node(GraphNode::new(NodeType::Agent(AgentData {
+                name: "c".into(),
+                model: "m".into(),
+                system_prompt: None,
+                status: "active".into(),
+            })))
+            .unwrap();
+        let plan = g.add_node(planning_knowledge("S", "s")).unwrap();
+        let task = g
+            .add_node(GraphNode::new(NodeType::Task(TaskData {
+                title: "t".into(),
+                description: "".into(),
+                status: TaskStatus::Pending,
+                priority: None,
+            })))
+            .unwrap();
+        g.add_edge(GraphEdge::new(EdgeType::DelegatesTo, parent, task.clone()))
+            .unwrap();
+        g.add_edge(GraphEdge::new(
+            EdgeType::SpawnedBy,
+            task.clone(),
+            child.clone(),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            link_planning_task_edge(&g, &child, &plan, &task, "documents").unwrap(),
+            PlanningArtifactLink::Inserted
+        );
+    }
+
+    #[test]
+    fn link_task_rejects_unrelated_agent() {
+        let g = GraphStore::open_memory().unwrap();
+        let stranger = g
+            .add_node(GraphNode::new(NodeType::Agent(AgentData {
+                name: "x".into(),
+                model: "m".into(),
+                system_prompt: None,
+                status: "active".into(),
+            })))
+            .unwrap();
+        let plan = g.add_node(planning_knowledge("S", "s")).unwrap();
+        let task = g
+            .add_node(GraphNode::new(NodeType::Task(TaskData {
+                title: "t".into(),
+                description: "".into(),
+                status: TaskStatus::Pending,
+                priority: None,
+            })))
+            .unwrap();
+
+        assert!(matches!(
+            link_planning_task_edge(&g, &stranger, &plan, &task, "implements").unwrap(),
+            PlanningArtifactLink::NotApplicable(_)
+        ));
     }
 }

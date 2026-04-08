@@ -1206,16 +1206,13 @@ Derived from dogfood on `app.graphirm.ai`: planning Knowledge vs file `Content` 
 long plans as a single markdown blob, and high token use when creating many planning nodes one
 tool call at a time.
 
-### `graph_query` / project: link artifacts to planning — P1 · M
+### ✅ `graph_query` / project: link artifacts to planning — P1 · M
 
-**Partial (2026-04-05):** `project` action **`link_content`** — adds **`relates_to`** from planning
-**Knowledge** → **Content** (same `session_id` as agent), metadata `artifact_link`: `implements` |
-`documents` (default `implements`). Idempotent. BFS from story with `edge_types: ["relates_to"]`
-reaches the file. *Code:* `crates/tools/src/graph_query.rs`.
+**Done (2026-04-05..06):** **`link_content`**, auto-link **`file`** writes, web **`artifact_link`** edges. Plan: `docs/plans/2026-04-06-planning-code-linkage.md`.
 
-**Done (2026-04-06):** Auto-link from **`write`** / **`edit`** when the session has **`link_session`** (`crates/tools/src/planning_link.rs`, `AgentConfig.auto_link_write_to_planning`). Web-app: **`relates_to`** edges with **`artifact_link`** show a dashed stroke and **`relates to · implements`** (or **`documents`**) label (`LabelledEdge.tsx`, `useGraphData.ts`). Plan: `docs/plans/2026-04-06-planning-code-linkage.md`.
+**Done (2026-04-08):** **`link_task`** — **`relates_to`** planning → **Task** with **`artifact_link`**; validation via **`DelegatesTo`** (parent) / **`SpawnedBy`** (subagent); auto-link delegated Task when **`auto_link_write_to_planning`** + **`link_session`**. Plan: `docs/plans/2026-04-08-graph-query-artifacts-planning.md`.
 
-**Still open:** narrow `edge_create` for other pairs; richer web-app filters.
+**Optional later:** richer plan-graph filters; metadata-only linkage P2 item below.
 
 ### Optional: Content metadata for planning linkage — P2 · S
 

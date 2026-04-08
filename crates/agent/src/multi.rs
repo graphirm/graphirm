@@ -206,9 +206,52 @@ pub async fn spawn_subagent(
         graph_for_setup.add_node(task_node)?;
         graph_for_setup.add_edge(GraphEdge::new(
             EdgeType::DelegatesTo,
-            parent_agent_id_clone,
+            parent_agent_id_clone.clone(),
             task_id_clone.clone(),
         ))?;
+        if agent_config_clone.auto_link_write_to_planning {
+            match graphirm_tools::planning_link::resolve_session_planning_node(
+                &graph_for_setup,
+                &parent_agent_id_clone,
+            ) {
+                Ok(Some(pid)) => {
+                    match graphirm_tools::planning_link::link_planning_task_edge(
+                        &graph_for_setup,
+                        &parent_agent_id_clone,
+                        &pid,
+                        &task_id_clone,
+                        "implements",
+                    ) {
+                        Ok(graphirm_tools::planning_link::PlanningArtifactLink::Inserted) => {
+                            tracing::debug!(
+                                task_id = %task_id_clone,
+                                planning_id = %pid,
+                                "auto-linked delegated task to planning node"
+                            );
+                        }
+                        Ok(graphirm_tools::planning_link::PlanningArtifactLink::AlreadyLinked) => {
+                            tracing::debug!(
+                                task_id = %task_id_clone,
+                                "delegated task already linked to planning node"
+                            );
+                        }
+                        Ok(graphirm_tools::planning_link::PlanningArtifactLink::NotApplicable(
+                            _,
+                        )) => {
+                            tracing::debug!(
+                                task_id = %task_id_clone,
+                                "auto-link task skipped (planning↔task validation)"
+                            );
+                        }
+                        Err(e) => tracing::warn!(error = %e, "auto-link planning↔task graph error"),
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "resolve_session_planning_node for auto-link task")
+                }
+            }
+        }
         let session = Session::new(graph_for_setup.clone(), agent_config_clone)?;
         let agent_id = session.id.clone();
         graph_for_setup.add_edge(GraphEdge::new(
