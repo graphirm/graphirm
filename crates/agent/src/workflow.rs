@@ -723,45 +723,74 @@ pub async fn stream_and_record(
             };
 
         if let Some((segments, source)) = segments_opt {
-            let nesting = crate::knowledge::segments::detect_nesting(&segments);
-            match crate::knowledge::segments::persist_segments(
-                &session.graph,
-                &node_id,
-                &segments,
-                &nesting,
-            )
-            .await
-            {
-                Ok(seg_ids) => {
-                    segment_path_persisted = true;
-                    tracing::info!(
-                        count = seg_ids.len(),
-                        source = source,
-                        nesting_pairs = nesting.len(),
-                        "Persisted response segments"
-                    );
-                    // Stamp the parent Interaction node so the context engine can detect
-                    // that segment children exist and apply the segment_filter correctly.
-                    let graph_clone = session.graph.clone();
-                    let stamp_id = node_id.clone();
-                    match tokio::task::spawn_blocking(move || {
-                        let mut node = graph_clone.get_node(&stamp_id)?;
-                        node.metadata["segmented"] = serde_json::json!(true);
-                        graph_clone.update_node(&stamp_id, node)
-                    })
-                    .await
-                    {
-                        Ok(Ok(())) => {}
-                        Ok(Err(e)) => {
-                            tracing::warn!(error = %e, "Failed to stamp segmented metadata on interaction node (non-fatal)");
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "spawn_blocking panicked while stamping segmented metadata (non-fatal)");
-                        }
+            if crate::knowledge::segments::has_tool_call_leak(&segments) {
+                tracing::warn!(
+                    "Detected tool_call leak in structured segments — skipping segment persistence"
+                );
+                let graph_clone = session.graph.clone();
+                let stamp_id = node_id.clone();
+                match tokio::task::spawn_blocking(move || {
+                    let mut node = graph_clone.get_node(&stamp_id)?;
+                    node.metadata["tool_call_leak"] = serde_json::json!(true);
+                    graph_clone.update_node(&stamp_id, node)
+                })
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to stamp tool_call_leak on assistant node (non-fatal)"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "spawn_blocking panicked while stamping tool_call_leak (non-fatal)"
+                        );
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to persist response segments (non-fatal)");
+            } else {
+                let nesting = crate::knowledge::segments::detect_nesting(&segments);
+                match crate::knowledge::segments::persist_segments(
+                    &session.graph,
+                    &node_id,
+                    &segments,
+                    &nesting,
+                )
+                .await
+                {
+                    Ok(seg_ids) => {
+                        segment_path_persisted = true;
+                        tracing::info!(
+                            count = seg_ids.len(),
+                            source = source,
+                            nesting_pairs = nesting.len(),
+                            "Persisted response segments"
+                        );
+                        // Stamp the parent Interaction node so the context engine can detect
+                        // that segment children exist and apply the segment_filter correctly.
+                        let graph_clone = session.graph.clone();
+                        let stamp_id = node_id.clone();
+                        match tokio::task::spawn_blocking(move || {
+                            let mut node = graph_clone.get_node(&stamp_id)?;
+                            node.metadata["segmented"] = serde_json::json!(true);
+                            graph_clone.update_node(&stamp_id, node)
+                        })
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                tracing::warn!(error = %e, "Failed to stamp segmented metadata on interaction node (non-fatal)");
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "spawn_blocking panicked while stamping segmented metadata (non-fatal)");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to persist response segments (non-fatal)");
+                    }
                 }
             }
         }
@@ -1441,6 +1470,8 @@ pub async fn run_agent_loop(
     // Per-file read counts for read-loop detection (catches verification doom loops).
     let mut file_read_counts: std::collections::HashMap<std::path::PathBuf, u32> =
         std::collections::HashMap::new();
+    // Retries after segment JSON contained fake `tool_call` types instead of native tools.
+    let mut tool_call_leak_retries: u32 = 0;
 
     events.emit(AgentEvent::AgentStart {
         agent_id: session.id.clone(),
@@ -1549,6 +1580,53 @@ pub async fn run_agent_loop(
         all_node_ids.push(response_id.clone());
 
         if !response.has_tool_calls() {
+            // Model put tool invocations inside segment JSON instead of using native tool calls.
+            let leak_graph = session.graph.clone();
+            let leak_rid = response_id.clone();
+            let is_tool_call_leak = tokio::task::spawn_blocking(move || {
+                leak_graph
+                    .get_node(&leak_rid)
+                    .ok()
+                    .and_then(|n| n.metadata.get("tool_call_leak").and_then(|v| v.as_bool()))
+                    .unwrap_or(false)
+            })
+            .await
+            .unwrap_or(false);
+
+            if is_tool_call_leak {
+                if tool_call_leak_retries < 2 {
+                    tool_call_leak_retries += 1;
+                    tracing::warn!(
+                        turn,
+                        retry = tool_call_leak_retries,
+                        "Tool-call segment leak detected; injecting retry nudge for native tools API"
+                    );
+                    events.emit(AgentEvent::TurnEnd {
+                        response_id: response_id.clone(),
+                        tool_result_ids: vec![],
+                    });
+                    emit_graph_update(session, &response_id, vec![], events).await;
+                    let nudge = GraphNode::new(NodeType::Interaction(InteractionData {
+                        role: "user".to_string(),
+                        content: "You put tool invocations inside your JSON segments instead of \
+                                  using the tools API. Please retry — call tools using the \
+                                  native tool-calling interface (e.g. `read`, `write`)."
+                            .to_string(),
+                        token_count: None,
+                    }));
+                    if let Err(e) = session.record_interaction(nudge).await {
+                        tracing::warn!(error = %e, "Failed to inject tool-call leak retry (non-fatal)");
+                    } else {
+                        continue;
+                    }
+                } else {
+                    tracing::warn!(
+                        turn,
+                        "tool_call_leak persisted after max retries; continuing with text-only exit"
+                    );
+                }
+            }
+
             // Post-turn knowledge extraction — only on final text responses (no tool calls)
             // to avoid redundant extraction calls on intermediate planning turns.
             // A hard 20s timeout prevents slow API calls from blocking session completion.
@@ -2860,6 +2938,52 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, AgentEvent::AgentEnd { .. })),
             "AgentEnd event should be emitted on cancel"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_segment_leak_triggers_retry() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            pre_completion_verify: false,
+            segments: Some(crate::config::SegmentConfig {
+                enabled: true,
+                structured_output: true,
+                ..crate::config::SegmentConfig::default()
+            }),
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session.add_user_message("Read the file").await.unwrap();
+
+        let leak_json = r#"{"segments":[{"type":"observation","content":"checking"},{"type":"tool_call","content":"read foo.rs"}]}"#;
+        let clean_json =
+            r#"{"segments":[{"type":"answer","content":"The file contains the implementation."}]}"#;
+
+        let provider = Arc::new(MockProvider::new(vec![
+            text_response(leak_json),
+            text_response(clean_json),
+        ]));
+        let tools = ToolRegistry::new();
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        run_agent_loop(&session, provider.clone(), &tools, &bus, &token)
+            .await
+            .unwrap();
+
+        assert_eq!(provider.call_count(), 2);
+
+        let sid = session.id.to_string();
+        let interactions = graph
+            .list_nodes_by_type("interaction", Some(&sid), None, 50)
+            .unwrap();
+        assert!(
+            interactions.iter().any(|n| {
+                matches!(&n.node_type, NodeType::Interaction(d) if d.role == "user" && d.content.contains("native tool-calling"))
+            }),
+            "expected retry nudge user message"
         );
     }
 

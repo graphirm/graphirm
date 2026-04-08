@@ -193,8 +193,19 @@ Rules:
 - Use the most specific type that fits.
 - Segments are sequential and non-overlapping.
 - Output ONLY the JSON object — no text outside it.
+- Do NOT encode tool invocations as segments. When you need to call a tool (read, write, edit, bash, etc.), use the native tool-calling API — never put tool calls inside a segment.
+- Only use these exact segment types: {labels_str}. Do not invent new types.
 "#
     )
+}
+
+/// True when any parsed segment looks like a tool invocation encoded as text instead of
+/// using the provider's native tool calls (models sometimes emit `tool_call`-style types).
+pub fn has_tool_call_leak(segments: &[Segment]) -> bool {
+    const TOOL_LEAK_TYPES: &[&str] = &["tool_call", "tool_use", "function_call", "tool"];
+    segments
+        .iter()
+        .any(|s| TOOL_LEAK_TYPES.contains(&s.segment_type.to_lowercase().as_str()))
 }
 
 /// Run GLiNER2 over the raw response text with segment labels and return
@@ -463,6 +474,64 @@ mod tests {
         assert!(prompt.contains("segments"));
         assert!(prompt.contains("type"));
         assert!(prompt.contains("content"));
+    }
+
+    #[test]
+    fn test_segment_prompt_forbids_tool_calls() {
+        let labels = vec![
+            "observation".into(),
+            "reasoning".into(),
+            "code".into(),
+            "plan".into(),
+            "answer".into(),
+        ];
+        let prompt = build_segment_prompt(&labels);
+        assert!(
+            prompt.contains("Do NOT"),
+            "prompt should contain explicit prohibition"
+        );
+        assert!(
+            prompt.to_lowercase().contains("tool"),
+            "prompt should mention tool calls"
+        );
+    }
+
+    #[test]
+    fn test_has_tool_call_leak_detects_tool_call_segment() {
+        let segments = vec![
+            Segment {
+                segment_type: "observation".into(),
+                content: "thinking".into(),
+                start: 0,
+                end: 8,
+            },
+            Segment {
+                segment_type: "tool_call".into(),
+                content: "read foo.rs".into(),
+                start: 8,
+                end: 19,
+            },
+        ];
+        assert!(has_tool_call_leak(&segments));
+    }
+
+    #[test]
+    fn test_has_tool_call_leak_clean_segments() {
+        let segments = vec![
+            Segment {
+                segment_type: "reasoning".into(),
+                content: "thinking".into(),
+                start: 0,
+                end: 8,
+            },
+            Segment {
+                segment_type: "answer".into(),
+                content: "here you go".into(),
+                start: 8,
+                end: 19,
+            },
+        ];
+        assert!(!has_tool_call_leak(&segments));
     }
 
     /// Verify `segment_extract_gliner2` exists and the module compiles with the feature enabled.
