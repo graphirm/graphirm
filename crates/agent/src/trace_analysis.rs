@@ -291,7 +291,7 @@ pub struct SessionSummary {
     pub findings: Vec<PatternMatch>,
 }
 
-/// Analyze up to `max_sessions` most recent completed sessions.
+/// Analyze up to `max_sessions` most recent sessions.
 pub fn build_trace_report(graph: &GraphStore, max_sessions: usize) -> TraceReport {
     let agents = match graph.get_agent_nodes() {
         Ok(a) => a,
