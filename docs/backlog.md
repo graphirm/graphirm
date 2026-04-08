@@ -870,20 +870,14 @@ Update `[agent.routing]` `cheap` in `config/default.toml` to the winner.
 - `config/default.toml` — `[agent.routing]` cheap/smart model strings
 - `graphirm-eval/` — optional eval suite additions for tool-call precision
 
-### Automated trace analysis loop — P3 · L
-Build an agent (or tool) that analyzes failure patterns across sessions and suggests
-harness improvements. The graph already stores everything — tool calls, outcomes, errors,
-context stats (Phase 37). Missing piece is the analysis loop that mines this data for
-systematic failure modes (e.g. "agent skips tests in 60% of sessions", "doom loops on
-Rust lifetime errors").
-
-**Implementation:** New `trace_analyzer` tool or standalone command that queries completed
-sessions, clusters failure patterns (repeated errors, long tool chains, abandoned approaches),
-and outputs a structured report with suggested harness parameter changes.
-
-**Key files:**
-- `crates/tools/src/trace_analyzer.rs` — new tool
-- `crates/agent/src/workflow.rs` — `TurnOutcome` metadata (Phase 36) is the data source
+### ✅ Automated trace analysis loop — P3 · L
+Done 2026-04-08. `crates/agent/src/trace_analysis.rs`: `SessionDigest` extractor walks session
+chains extracting token usage, tool calls, errors, model tiers, gating, and fallback metadata.
+5 heuristic pattern detectors (`detect_over_tooling`, `detect_doom_loops`, `detect_token_waste`,
+`detect_tool_errors_without_recovery`, `detect_premature_completion`). `build_trace_report`
+aggregates across sessions with hardcoded suggestion mappings. CLI: `graphirm trace-analysis
+[--max-sessions N] [--format json|markdown]`. HTTP: `GET /api/trace-analysis[?max_sessions=N]`.
+23 new tests; clippy clean.
 
 ### ✅ Structured work loop enforcement — P3 · S
 Done 2026-03-27. `enforce_work_loop: bool` config field (default true). When enabled, `create_session` in `crates/server/src/routes.rs` appends a "## Problem-Solving Framework" section to the system prompt: 4-step Plan→Build→Verify→Fix with explicit instruction to transition from Plan to Build after at most 2 messages. 2 new config tests; all agent + server tests pass, clippy clean.

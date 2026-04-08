@@ -14,11 +14,11 @@
 - **CLI + HTTP first, tool second**: the primary consumer is a human reviewing session quality. The agent tool is optional (Task 6).
 
 **Success criteria:**
-- [ ] `graphirm trace-analysis` prints a JSON/markdown report from graph data
-- [ ] `GET /api/trace-analysis` returns the same report as JSON
-- [ ] Report includes: per-session scores, top failure patterns, suggested parameter changes
-- [ ] At least 5 pattern detectors implemented and tested
-- [ ] All existing tests pass, clippy clean
+- [x] `graphirm trace-analysis` prints a JSON/markdown report from graph data
+- [x] `GET /api/trace-analysis` returns the same report as JSON
+- [x] Report includes: per-session scores, top failure patterns, suggested parameter changes
+- [x] At least 5 pattern detectors implemented and tested
+- [x] All existing tests pass, clippy clean
 
 **Risks:**
 - Empty/sparse graph data on dev machine — use `app.graphirm.ai` DB or write synthetic test fixtures
