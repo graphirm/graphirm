@@ -770,11 +770,17 @@ pub async fn stream_and_record(
                         );
                         // Stamp the parent Interaction node so the context engine can detect
                         // that segment children exist and apply the segment_filter correctly.
+                        // Replace raw JSON envelope with readable concatenated segment text.
+                        let clean_text =
+                            crate::knowledge::segments::segment_display_text(&segments);
                         let graph_clone = session.graph.clone();
                         let stamp_id = node_id.clone();
                         match tokio::task::spawn_blocking(move || {
                             let mut node = graph_clone.get_node(&stamp_id)?;
                             node.metadata["segmented"] = serde_json::json!(true);
+                            if let NodeType::Interaction(ref mut data) = node.node_type {
+                                data.content = clean_text;
+                            }
                             graph_clone.update_node(&stamp_id, node)
                         })
                         .await

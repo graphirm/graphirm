@@ -59,6 +59,7 @@ export const api = {
           role: nt.role,
           content: nt.content ?? '',
           created_at: n.created_at,
+          segmented: Boolean(n.metadata?.segmented),
         };
       });
   },

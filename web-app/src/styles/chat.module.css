@@ -266,3 +266,67 @@
   box-sizing: border-box;
   resize: vertical;
 }
+
+/* Structured assistant segments (ChatPane) */
+.segmentStack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.segmentCard {
+  padding: 6px 8px;
+  border-radius: 4px;
+  border-left: 2px solid var(--border);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.segBadge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-bottom: 4px;
+  background: var(--surface-2);
+  color: var(--fg-muted);
+}
+
+.segmentPre {
+  margin: 0;
+  padding: 6px 8px;
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 11px;
+  line-height: 1.45;
+  background: var(--surface-0);
+  border-radius: 3px;
+}
+
+.seg_code {
+  background: var(--surface-0);
+  border-left-color: var(--node-content);
+  font-family: var(--font-mono);
+}
+
+.seg_reasoning {
+  background: color-mix(in srgb, var(--fg-muted) 5%, var(--surface-0));
+  border-left-color: var(--fg-muted);
+  opacity: 0.92;
+}
+
+.seg_answer {
+  border-left-color: var(--accent);
+}
+
+.seg_plan {
+  border-left-color: var(--node-knowledge);
+}
+
+.seg_observation {
+  border-left-color: var(--info);
+}

@@ -69,11 +69,21 @@ export interface Session {
   max_session_tokens?: number | null;
 }
 
+export interface SegmentPart {
+  type: ContentType;
+  content: string;
+  language?: string;
+}
+
 export interface Message {
   id: string;
   role: NodeRole;
   content: string;
   created_at: string;
+  /** True when structured segments were persisted (`metadata.segmented`). */
+  segmented?: boolean;
+  /** Populated from graph Contains children when `segmented` (see `segmentPartsForInteraction`). */
+  segments?: SegmentPart[];
 }
 
 export interface PendingApproval {

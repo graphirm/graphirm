@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { SseClient } from '../api/sse';
 import type {
@@ -9,6 +9,7 @@ import type {
   PendingApproval,
   Session,
 } from '../types/graph';
+import { segmentPartsForInteraction } from '../utils/chatSegments';
 
 interface UseSessionReturn {
   sessions: Session[];
@@ -274,10 +275,21 @@ export function useSession(): UseSessionReturn {
     setCurrentSession(prev => prev?.id === id ? { ...prev, name: updated.name } : prev);
   }, []);
 
+  const messagesWithSegments = useMemo(
+    () =>
+      messages.map((m) => {
+        if (m.role !== 'assistant' || !m.segmented) return m;
+        const segments = segmentPartsForInteraction(m.id, graphData);
+        if (!segments?.length) return m;
+        return { ...m, segments };
+      }),
+    [messages, graphData],
+  );
+
   return {
     sessions,
     currentSession,
-    messages,
+    messages: messagesWithSegments,
     graphData,
     streamingMessage,
     isThinking,

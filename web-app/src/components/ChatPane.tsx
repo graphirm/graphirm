@@ -1,6 +1,8 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { Message, PendingApproval } from '../types/graph';
 import { MarkdownBody } from './nodes/MarkdownBody';
+import { SegmentCard } from './SegmentCard';
+import { cleanLegacyAssistantContent } from '../utils/chatSegments';
 import { HitlOverlay } from './HitlOverlay';
 import { OutlinePanel } from './OutlinePanel';
 import styles from '../styles/chat.module.css';
@@ -91,8 +93,14 @@ export function ChatPane({
             <div className={styles.roleLabel}>{msg.role}</div>
             {msg.role === 'user' ? (
               <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.content}</div>
+            ) : msg.segments && msg.segments.length > 0 ? (
+              <div className={styles.segmentStack}>
+                {msg.segments.map((seg, i) => (
+                  <SegmentCard key={`${msg.id}-seg-${i}`} segment={seg} />
+                ))}
+              </div>
             ) : (
-              <MarkdownBody content={msg.content} maxHeight={250} />
+              <MarkdownBody content={cleanLegacyAssistantContent(msg.content)} maxHeight={250} />
             )}
           </div>
         ))}
@@ -102,7 +110,10 @@ export function ChatPane({
             className={[styles.message, styles.assistant ?? ''].filter(Boolean).join(' ')}
           >
             <div className={styles.roleLabel}>assistant</div>
-            <MarkdownBody content={streamingMessage.content || '…'} maxHeight={250} />
+            <MarkdownBody
+              content={cleanLegacyAssistantContent(streamingMessage.content || '…')}
+              maxHeight={250}
+            />
           </div>
         )}
         {pendingApproval && (

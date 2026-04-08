@@ -78,6 +78,16 @@ pub fn parse_structured_segments(text: &str) -> Result<Vec<Segment>, AgentError>
     Ok(segments)
 }
 
+/// Concatenate segment bodies for the Interaction node's `content` field after structured
+/// JSON is stripped (API, TUI, chat export).
+pub fn segment_display_text(segments: &[Segment]) -> String {
+    segments
+        .iter()
+        .map(|s| s.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// Find parent-child nesting pairs among segments based on character span containment.
 ///
 /// Returns `(parent_index, child_index)` pairs where the child's span falls entirely
@@ -295,6 +305,16 @@ pub async fn try_gliner2_fallback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_segment_display_text_joins_segments() {
+        let json = r#"{"segments": [
+            {"type": "reasoning", "content": "a"},
+            {"type": "code", "content": "b"}
+        ]}"#;
+        let segments = parse_structured_segments(json).unwrap();
+        assert_eq!(segment_display_text(&segments), "a\n\nb");
+    }
 
     #[test]
     fn test_parse_structured_output_valid() {
