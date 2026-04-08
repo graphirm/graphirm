@@ -17,6 +17,7 @@ pub mod router;
 pub mod session;
 pub mod strategy;
 mod tool_gate;
+pub mod trace_analysis;
 pub mod workflow;
 pub mod workspace;
 
