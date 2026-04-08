@@ -7,6 +7,7 @@ pub mod import;
 pub mod knowledge;
 pub mod model;
 pub mod serve;
+pub mod trace_analysis;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

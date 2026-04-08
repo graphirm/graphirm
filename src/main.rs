@@ -83,6 +83,16 @@ enum Commands {
         all_roles: bool,
     },
 
+    /// Analyze recent sessions for failure patterns and suggest improvements
+    TraceAnalysis {
+        /// Maximum sessions to analyze (most recent first)
+        #[arg(long, default_value = "50")]
+        max_sessions: usize,
+        /// Output format: "markdown" or "json"
+        #[arg(long, default_value = "markdown")]
+        format: String,
+    },
+
     /// Import Cursor agent transcript file(s) into the graph.
     ///
     /// Accepts a single .txt transcript file or a directory of .txt files.
@@ -258,6 +268,16 @@ async fn main() -> Result<(), GraphirmError> {
                 .with_env_filter("warn")
                 .init();
             commands::export::run(&db_path, out, limit, all_roles)?;
+        }
+        Commands::TraceAnalysis {
+            max_sessions,
+            format,
+        } => {
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter("warn")
+                .init();
+            commands::trace_analysis::run(&db_path, max_sessions, &format)?;
         }
         Commands::ImportCursor { path, dry_run } => {
             tracing_subscriber::fmt()
