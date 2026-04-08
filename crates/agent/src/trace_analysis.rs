@@ -189,17 +189,17 @@ pub fn detect_doom_loops(chain: &[GraphNode]) -> Option<PatternMatch> {
     None
 }
 
-pub fn detect_token_waste(digest: &SessionDigest, threshold: u64) -> Option<PatternMatch> {
+pub fn detect_token_waste(digest: &SessionDigest, threshold: f64) -> Option<PatternMatch> {
     if digest.turn_count == 0 {
         return None;
     }
-    let per_turn = digest.total_output_tokens / digest.turn_count as u64;
+    let per_turn = digest.total_output_tokens as f64 / digest.turn_count as f64;
     if per_turn > threshold && digest.status != "completed" {
         Some(PatternMatch {
             pattern: "token_waste".into(),
             severity: Severity::Warning,
             description: format!(
-                "Output tokens per turn ({per_turn}) exceeds threshold ({threshold}) \
+                "Output tokens per turn ({per_turn:.0}) exceeds threshold ({threshold:.0}) \
                  with status '{}'",
                 digest.status
             ),
@@ -526,7 +526,7 @@ mod tests {
             status: "failed".into(),
             ..default_digest()
         };
-        let m = detect_token_waste(&digest, 2000).unwrap();
+        let m = detect_token_waste(&digest, 2000.0).unwrap();
         assert_eq!(m.pattern, "token_waste");
         assert_eq!(m.severity, Severity::Warning);
     }
@@ -539,7 +539,7 @@ mod tests {
             status: "completed".into(),
             ..default_digest()
         };
-        assert!(detect_token_waste(&digest, 2000).is_none());
+        assert!(detect_token_waste(&digest, 2000.0).is_none());
     }
 
     #[test]
@@ -550,7 +550,7 @@ mod tests {
             status: "failed".into(),
             ..default_digest()
         };
-        assert!(detect_token_waste(&digest, 2000).is_none());
+        assert!(detect_token_waste(&digest, 2000.0).is_none());
     }
 
     // --- Tool errors without recovery ---
