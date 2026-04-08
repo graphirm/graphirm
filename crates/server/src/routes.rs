@@ -34,7 +34,7 @@ use crate::types::{
     GraphResponse, HealthResponse, NodeAction, NodeActionRequest, OutlineQuery,
     PatchGraphNodeRequest, PatchKnowledgeRequest, PatchTaskStatusRequest, PinnedKnowledgeQuery,
     PromptRequest, RateTurnRequest, RenameSessionRequest, SessionId, SessionResponse,
-    SessionStatus, SseEvent, SseEventType, StrategyReport, SubgraphQuery,
+    SessionStatus, SseEvent, SseEventType, StrategyReport, SubgraphQuery, TraceAnalysisQuery,
 };
 
 /// When [`AppState::memory_retriever`] is configured, embed the Knowledge node so semantic
@@ -186,6 +186,7 @@ pub fn create_router(state: AppState) -> Router {
             patch(rate_turn),
         )
         .route("/api/routing/report", get(routing_report))
+        .route("/api/trace-analysis", get(trace_analysis_report))
         // HITL pause / resume / auto-approve
         .route("/api/sessions/{id}/pause", post(pause_session))
         .route("/api/sessions/{id}/resume", post(resume_session))
@@ -1584,6 +1585,20 @@ async fn routing_report(State(state): State<AppState>) -> Json<Vec<StrategyRepor
         .await
         .unwrap_or_default();
     Json(reports)
+}
+
+async fn trace_analysis_report(
+    State(state): State<AppState>,
+    Query(params): Query<TraceAnalysisQuery>,
+) -> Result<Json<graphirm_agent::trace_analysis::TraceReport>, ServerError> {
+    let graph = state.graph.clone();
+    let max = params.max_sessions;
+    let report = tokio::task::spawn_blocking(move || {
+        graphirm_agent::trace_analysis::build_trace_report(&graph, max)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))?;
+    Ok(Json(report))
 }
 
 /// Query all Interaction nodes, group by `routing_strategy` metadata, and aggregate stats.
@@ -3281,6 +3296,32 @@ mod tests {
         assert_eq!(sse.data["node_id"], "n1");
         assert_eq!(sse.data["is_pause"], false);
         assert_eq!(sse.data["arguments"]["path"], "/tmp/x.rs");
+    }
+
+    // ── trace-analysis ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_trace_analysis_returns_ok() {
+        let app = create_router(test_app_state());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/trace-analysis")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let report: graphirm_agent::trace_analysis::TraceReport =
+            serde_json::from_slice(&body).unwrap();
+        assert_eq!(report.sessions_analyzed, 0);
     }
 }
 

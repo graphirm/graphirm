@@ -443,6 +443,18 @@ pub struct StrategyReport {
     pub avg_user_rating: Option<f64>,
 }
 
+/// Query parameters for `GET /api/trace-analysis`.
+#[derive(Debug, Deserialize)]
+pub struct TraceAnalysisQuery {
+    /// Maximum sessions to analyze (default: 50).
+    #[serde(default = "default_trace_analysis_max_sessions")]
+    pub max_sessions: usize,
+}
+
+fn default_trace_analysis_max_sessions() -> usize {
+    50
+}
+
 /// Graph context utilisation report returned by `GET /api/sessions/{id}/context-report`.
 #[derive(Debug, Serialize)]
 pub struct ContextReportRow {
@@ -701,6 +713,17 @@ mod tests {
         let json = r#"{"rating": 4}"#;
         let req: RateTurnRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.rating, 4);
+    }
+
+    #[test]
+    fn trace_analysis_query_deserialize() {
+        let json = r#"{"max_sessions": 10}"#;
+        let q: TraceAnalysisQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(q.max_sessions, 10);
+
+        let json = r#"{}"#;
+        let q: TraceAnalysisQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(q.max_sessions, 50);
     }
 
     #[test]
