@@ -2994,6 +2994,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_tool_invocation_in_code_segment_triggers_retry() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            pre_completion_verify: false,
+            segments: Some(crate::config::SegmentConfig {
+                enabled: true,
+                structured_output: true,
+                ..crate::config::SegmentConfig::default()
+            }),
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session
+            .add_user_message("Show file contents")
+            .await
+            .unwrap();
+
+        let leak_json = r#"{"segments":[{"type":"observation","content":"need file"},{"type":"code","content":"read notes.md"}]}"#;
+        let clean_json = r#"{"segments":[{"type":"answer","content":"Done."}]}"#;
+
+        let provider = Arc::new(MockProvider::new(vec![
+            text_response(leak_json),
+            text_response(clean_json),
+        ]));
+        let tools = ToolRegistry::new();
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        run_agent_loop(&session, provider.clone(), &tools, &bus, &token)
+            .await
+            .unwrap();
+
+        assert_eq!(provider.call_count(), 2);
+    }
+
+    #[tokio::test]
     async fn test_pre_edit_impact_injects_brief_on_destructive_tool() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let graph = Arc::new(GraphStore::open_memory().unwrap());

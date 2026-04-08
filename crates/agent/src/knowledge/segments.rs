@@ -209,13 +209,60 @@ Rules:
     )
 }
 
+/// First line of `content` looks like a built-in tool name plus a path-like argument
+/// (models often put `read foo.rs` in a `code` or `plan` segment when tools are gated or omitted).
+fn segment_content_mimics_tool_invocation(content: &str) -> bool {
+    let line = content.trim().lines().next().unwrap_or("").trim();
+    if line.is_empty() || line.len() > 240 {
+        return false;
+    }
+    let mut parts = line.split_whitespace();
+    let Some(cmd) = parts.next() else {
+        return false;
+    };
+    let cmd_l = cmd.to_lowercase();
+    if !matches!(cmd_l.as_str(), "read" | "write" | "edit") {
+        return false;
+    }
+    let Some(arg) = parts.next() else {
+        return false;
+    };
+    // Require a path- or filename-like token to avoid matching "read the docs".
+    looks_like_tool_path_token(arg)
+}
+
+fn looks_like_tool_path_token(s: &str) -> bool {
+    if s.len() < 2 {
+        return false;
+    }
+    if s.contains('/') || s.contains('\\') {
+        return true;
+    }
+    s.contains('.') && !s.starts_with('.')
+}
+
 /// True when any parsed segment looks like a tool invocation encoded as text instead of
 /// using the provider's native tool calls (models sometimes emit `tool_call`-style types).
 pub fn has_tool_call_leak(segments: &[Segment]) -> bool {
-    const TOOL_LEAK_TYPES: &[&str] = &["tool_call", "tool_use", "function_call", "tool"];
-    segments
-        .iter()
-        .any(|s| TOOL_LEAK_TYPES.contains(&s.segment_type.to_lowercase().as_str()))
+    const TOOL_LEAK_TYPES: &[&str] = &[
+        "tool_call",
+        "tool_calls",
+        "tool_use",
+        "function_call",
+        "tool",
+    ];
+    segments.iter().any(|s| {
+        let st = s.segment_type.to_lowercase();
+        if TOOL_LEAK_TYPES.contains(&st.as_str()) {
+            return true;
+        }
+        if matches!(st.as_str(), "code" | "plan" | "answer")
+            && segment_content_mimics_tool_invocation(&s.content)
+        {
+            return true;
+        }
+        false
+    })
 }
 
 /// Run GLiNER2 over the raw response text with segment labels and return
@@ -551,6 +598,28 @@ mod tests {
                 end: 19,
             },
         ];
+        assert!(!has_tool_call_leak(&segments));
+    }
+
+    #[test]
+    fn test_has_tool_call_leak_detects_read_in_code_segment() {
+        let segments = vec![Segment {
+            segment_type: "code".into(),
+            content: "read architecture_decisions.md".into(),
+            start: 0,
+            end: 30,
+        }];
+        assert!(has_tool_call_leak(&segments));
+    }
+
+    #[test]
+    fn test_has_tool_call_leak_ignores_normal_code_segment() {
+        let segments = vec![Segment {
+            segment_type: "code".into(),
+            content: "fn main() {\n  println!(\"hi\");\n}".into(),
+            start: 0,
+            end: 40,
+        }];
         assert!(!has_tool_call_leak(&segments));
     }
 
