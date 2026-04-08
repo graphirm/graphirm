@@ -191,8 +191,11 @@ read_loop_threshold = 3                # inject advisory after N reads of same f
 # budget_warning_thresholds = [0.7, 0.9]  # warn at these fractions of max_tokens (defaults shown)
 enforce_work_loop = true               # inject Plan→Build→Verify→Fix framework into system prompt
 
-# Two-tier model routing — used by [agent.adaptive_routing] strategy = "rules".
-# Both models must use the same provider backend (e.g. both via openrouter).
+# Two-tier model routing — used when [agent.adaptive_routing] strategy = "rules".
+# Both tiers use the same model for now (cost-neutral); rules still record model_tier
+# on turns for analysis. Use the same top-level provider (openrouter/...) for both.
+# Rule order: first match wins; see crates/agent/src/router.rs. To split tiers later,
+# set smart to e.g. openrouter/anthropic/claude-sonnet-4.6 (same openrouter/ prefix).
 [agent.routing]
 cheap = ["openrouter/deepseek/deepseek-v3.2"]
 smart = ["openrouter/deepseek/deepseek-v3.2"]
