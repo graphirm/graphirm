@@ -457,6 +457,9 @@ pub async fn stream_and_record(
                         if i > 0 {
                             selected_model = model.clone();
                         }
+                        // Some models (e.g. DeepSeek via OpenRouter) emit DSML/XML tool blocks in
+                        // assistant text instead of SSE `delta.tool_calls`; normalize so tools run.
+                        let resp = graphirm_llm::augment_embedded_tool_calls(resp);
                         response = Some(resp);
                         break;
                     }

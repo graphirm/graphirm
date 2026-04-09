@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod deepseek;
+pub mod embedded_tool_adapter;
 pub mod error;
 pub mod factory;
 pub mod mistral_embed;
@@ -16,6 +17,7 @@ pub mod fastembed_provider;
 #[cfg(feature = "local-embed")]
 pub use fastembed_provider::FastEmbedProvider;
 
+pub use embedded_tool_adapter::augment_embedded_tool_calls;
 pub use error::LlmError;
 pub use mistral_embed::{MistralEmbedModel, MistralEmbeddingProvider};
 pub use mock::{MockProvider, MockResponse};
