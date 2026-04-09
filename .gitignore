@@ -15,6 +15,9 @@
 # Nodestradamus analysis cache (large binary artifacts)
 .nodestradamus/
 
+# Local mempalace workspace (not part of upstream repo)
+mempalace/
+
 # OS
 .DS_Store
 Thumbs.db
