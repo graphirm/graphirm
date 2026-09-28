@@ -66,3 +66,38 @@ The parser in `crates/agent/src/pi_delegate/events.rs` follows the recording:
 - `agent_end.messages` repeats the whole conversation; the parser does not
   read it (the Task result comes from the last assistant `message_end`).
 - `session` carries `version`, `id`, `timestamp`, `cwd`.
+- `message_start` for assistant messages is a full message skeleton with
+  `"content":[]`, all-zero `usage`, and `"stopReason":"pending"` — a fourth
+  stopReason value alongside `toolUse` / `stop`. Treated as a lifecycle event.
+- `turn_end` carries a `message` object repeating the completed assistant
+  message (same shape as `message_end.message`). Not read.
+- `message_update` sub-events carry more than deltas: `toolcall_start` has
+  `id` / `toolName`, `toolcall_end` embeds the full `toolCall`
+  (`{type,id,name,arguments}`), and `thinking_end` embeds the full thinking
+  `content`. All ignored in v1; `text_delta` carries `contentIndex`, which the
+  parser exposes so parts can be paired later.
+- Assistant `message.usage` includes a `reasoning` token count and a nested
+  `cost` object; `message` also has `api`, `provider`, `model`, `responseId`,
+  `rawStopReason`. `usage` is kept whole as JSON.
+- `tool_execution_update.partialResult.content` was an empty array in every
+  occurrence of this recording.
+
+Shapes **not in this recording** but verified against the Pi 0.85.1 source
+and handled by the parser:
+
+- Pi auto-retries transient provider errors (enabled by default, 3 attempts):
+  `agent_end{"willRetry":true}` → `auto_retry_start{attempt,maxAttempts,delayMs,errorMessage}`
+  → `agent_start` → … → `auto_retry_end{success,attempt}`. A run is finished
+  only on `agent_end` without `willRetry: true` (`PiEvent::AgentEnd { will_retry: false }`).
+  `auto_retry_*` are lifecycle events.
+- Provider failures surface as an assistant `message_end` with
+  `"stopReason":"error"` or `"aborted"`, `"errorMessage":"..."`, and
+  `"content":[]` (`PiEvent::AssistantMessage { error_message: Some(..), .. }`).
+
+## Golden-file policy
+
+`hello-run.jsonl` is a golden file. **Do not re-record or edit it** — tests
+assert on its specific ids, texts and error result. When a new shape needs
+coverage (a retry, a provider error, a different tool), record a **new**
+`<name>.jsonl` next to it, scrub it with the rules above, and document it in
+this README with its own histogram section.

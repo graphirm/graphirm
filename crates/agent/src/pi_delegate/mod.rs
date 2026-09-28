@@ -11,4 +11,4 @@
 
 pub mod events;
 
-pub use events::{PiEvent, flatten_content, flatten_result, parse_line};
+pub use events::{MAX_ERROR_CHARS, PiEvent, flatten_content, flatten_result, parse_line};
