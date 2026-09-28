@@ -137,6 +137,12 @@ response segments with GLiNER2 fallback, cross-session memory (HNSW),
 planning/tasks, trace analysis, `fetch_url`. Full per-phase table with dates:
 `docs/completion-log.md` (bottom). Open work: `docs/backlog.md`.
 
+**Governance docs — update in the same commit as the work, not afterwards:**
+- Start a backlog item → create `docs/plans/YYYY-MM-DD-<topic>.md`, link it from the item
+- Ship it → `### ✅` one-liner in `docs/backlog.md` + dated entry at the top of `docs/completion-log.md`
+- Make a non-obvious decision (architecture, dependency, convention, rejected alternative) → dated entry in `docs/journal.md`
+- Discover work you don't start → add it to `docs/backlog.md` with size + priority
+
 Where judgement is made in the agent loop, and which of those seats a typed
 decision model (Jev) fits — scored 2026-09-27/28:
 `~/codeporate-connect/docs/evaluations/2026-09-27-jev-where-in-graphirm.md`.
