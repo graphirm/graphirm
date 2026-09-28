@@ -315,6 +315,11 @@ pub struct JevRouterConfig {
     pub api_key_env: Option<String>,
     /// Model string sent in the request. `None` → the pinned `typesafe/jev-1.13`.
     pub model: Option<String>,
+    /// Shadow mode: the rule router decides every turn; Jev's verdict, probability
+    /// and `agree=` flag ride along in `routing_reason` so agreement can be
+    /// measured offline before Jev is given the decision. Default `false`.
+    #[serde(default)]
+    pub shadow: bool,
 }
 
 impl Default for JevRouterConfig {
@@ -324,6 +329,7 @@ impl Default for JevRouterConfig {
             endpoint: None,
             api_key_env: None,
             model: None,
+            shadow: false,
         }
     }
 }
@@ -1333,6 +1339,26 @@ segment_filter = ["reasoning", "code"]
         assert!(jev.endpoint.is_none());
         assert!(jev.api_key_env.is_none());
         assert!(jev.model.is_none());
+        assert!(!jev.shadow, "shadow defaults off");
+    }
+
+    #[test]
+    fn adaptive_routing_jev_config_parses_shadow() {
+        let toml = r#"
+            [agent]
+            name = "test"
+            model = "fallback"
+            system_prompt = "test"
+            max_turns = 5
+
+            [agent.adaptive_routing]
+            strategy = "jev"
+
+            [agent.adaptive_routing.jev]
+            shadow = true
+        "#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        assert!(config.adaptive_routing.unwrap().jev.unwrap().shadow);
     }
 
     #[test]
@@ -1361,5 +1387,23 @@ segment_filter = ["reasoning", "code"]
         );
         assert_eq!(jev.api_key_env.as_deref(), Some("LAYA_API_KEY"));
         assert_eq!(jev.model.as_deref(), Some("laya/systemone-1"));
+    }
+}
+
+#[cfg(test)]
+mod default_toml_tests {
+    use super::AgentConfig;
+
+    /// The shipped `config/default.toml` must parse, and its routing block must
+    /// be the Jev shadow arm (DEC-0928i(a)) — a typo here would silently fall
+    /// back to plain rules and the week of agreement data would never exist.
+    #[test]
+    fn shipped_default_toml_parses_with_jev_shadow() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
+        let toml = std::fs::read_to_string(path).expect("read config/default.toml");
+        let config = AgentConfig::from_toml(&toml).expect("default.toml parses");
+        let ar = config.adaptive_routing.expect("adaptive_routing present");
+        assert_eq!(ar.strategy, "jev");
+        assert!(ar.jev.expect("jev section").shadow, "shadow must be on");
     }
 }

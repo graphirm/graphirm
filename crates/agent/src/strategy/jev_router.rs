@@ -62,6 +62,9 @@ and plan); last_tool_errored is true (the agent must recover from a failed tool 
 user_message_tokens is 200 or more (long or complex user request); \
 turn_number is 15 or more (the agent has run many turns and may be stuck).";
 
+/// `RoutingDecision::strategy_name` in shadow mode.
+pub const SHADOW_STRATEGY_NAME: &str = "jev_shadow";
+
 /// Maximum characters of an error message kept in the fallback reason.
 const REASON_ERROR_CHARS: usize = 120;
 
@@ -89,6 +92,8 @@ pub struct JevRouter {
     client: Arc<DecisionsClient>,
     fallback: RuleRouter,
     timeout: Duration,
+    /// Shadow mode: rules decide, Jev is recorded. See [`JevRouter::with_shadow`].
+    shadow: bool,
 }
 
 impl JevRouter {
@@ -97,7 +102,56 @@ impl JevRouter {
             client,
             fallback,
             timeout,
+            shadow: false,
         }
+    }
+
+    /// In shadow mode the rule router's decision is returned unchanged except
+    /// for `reason`, which gains ` | jev:<tier> p=.. conf=.. agree=<bool> v<N>`
+    /// (or ` | jev_err(..)`), and `strategy_name`, which becomes `jev_shadow`.
+    /// This is how agreement is measured before Jev is allowed to decide.
+    pub fn with_shadow(mut self, shadow: bool) -> Self {
+        self.shadow = shadow;
+        self
+    }
+
+    pub fn is_shadow(&self) -> bool {
+        self.shadow
+    }
+
+    async fn select_shadow(
+        &self,
+        signals: &TurnSignals,
+        candidates: &[ModelCandidate],
+        objective: &ObjectiveWeights,
+    ) -> RoutingDecision {
+        let (rule, jev) = tokio::join!(
+            self.fallback.select(signals, candidates, objective),
+            self.classify(signals)
+        );
+        let mut d = rule;
+        match jev {
+            Ok(c) => {
+                d.reason = format!(
+                    "{} | jev:{} p={:.2} conf={:.2} agree={} v{}",
+                    d.reason,
+                    tier_option(c.tier),
+                    c.probability,
+                    c.confidence,
+                    c.tier == d.tier,
+                    JEV_QUESTION_SET_VERSION
+                );
+            }
+            Err(e) => {
+                d.reason = format!(
+                    "{} | jev_err({})",
+                    d.reason,
+                    truncate_chars(&e.to_string(), REASON_ERROR_CHARS)
+                );
+            }
+        }
+        d.strategy_name = SHADOW_STRATEGY_NAME.to_string();
+        d
     }
 
     /// The `state` object: `TurnSignals` fields as named JSON keys.
@@ -213,6 +267,9 @@ impl RoutingStrategy for JevRouter {
         candidates: &[ModelCandidate],
         objective: &ObjectiveWeights,
     ) -> RoutingDecision {
+        if self.shadow {
+            return self.select_shadow(signals, candidates, objective).await;
+        }
         let classified = match self.classify(signals).await {
             Ok(c) => c,
             Err(e) => {
@@ -472,6 +529,79 @@ mod tests {
         assert!((c.confidence - 0.6).abs() < 1e-9);
     }
 
+    // ---- shadow mode: rules decide, Jev is recorded ----
+
+    #[tokio::test]
+    async fn shadow_returns_rule_decision_and_records_disagreement() {
+        // Rules: turn 2 → default cheap. Jev says smart with p=0.87.
+        let transport = ReplyTransport::new(tier_reply("smart", 0.13, 0.87, 0.74));
+        let router = router_with(transport.clone()).with_shadow(true);
+        assert!(router.is_shadow());
+        let d = router
+            .select(&signals(), &candidates(), &ObjectiveWeights::default())
+            .await;
+        assert_eq!(d.tier, ModelTier::Cheap, "rules decide in shadow mode");
+        assert_eq!(d.model, "cheap-model");
+        assert!(
+            (d.confidence - 1.0).abs() < 1e-9,
+            "rule confidence, not Jev's"
+        );
+        assert_eq!(d.strategy_name, "jev_shadow");
+        assert!(d.reason.starts_with("rule:"), "reason = {}", d.reason);
+        assert!(
+            d.reason
+                .contains("| jev:smart p=0.87 conf=0.74 agree=false v1"),
+            "reason = {}",
+            d.reason
+        );
+        assert!(
+            transport.seen.lock().expect("lock").is_some(),
+            "Jev was still asked"
+        );
+    }
+
+    #[tokio::test]
+    async fn shadow_records_agreement_when_tiers_match() {
+        let router = router_with(ReplyTransport::new(tier_reply("smart", 0.01, 0.99, 0.99)))
+            .with_shadow(true);
+        let first_turn = TurnSignals {
+            turn_number: 1,
+            ..signals()
+        };
+        let d = router
+            .select(&first_turn, &candidates(), &ObjectiveWeights::default())
+            .await;
+        assert_eq!(d.tier, ModelTier::Smart);
+        assert!(
+            d.reason.contains("rule:first_turn"),
+            "reason = {}",
+            d.reason
+        );
+        assert!(d.reason.contains("agree=true"), "reason = {}", d.reason);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shadow_on_jev_error_still_returns_rule_decision() {
+        let router = router_with(Arc::new(HangingTransport)).with_shadow(true);
+        let d = router
+            .select(&signals(), &candidates(), &ObjectiveWeights::default())
+            .await;
+        assert_eq!(d.tier, ModelTier::Cheap);
+        assert_eq!(d.strategy_name, "jev_shadow");
+        assert!(d.reason.contains("| jev_err("), "reason = {}", d.reason);
+        assert!(!d.reason.contains("jev_fallback"), "reason = {}", d.reason);
+    }
+
+    #[tokio::test]
+    async fn shadow_off_by_default() {
+        let router = router_with(ReplyTransport::new(tier_reply("smart", 0.13, 0.87, 0.74)));
+        assert!(!router.is_shadow());
+        let d = router
+            .select(&signals(), &candidates(), &ObjectiveWeights::default())
+            .await;
+        assert_eq!(d.tier, ModelTier::Smart, "non-shadow: Jev decides");
+    }
+
     // ---- fail-soft: fallback to RuleRouter ----
 
     #[tokio::test(start_paused = true)]
@@ -604,6 +734,8 @@ mod tests {
                 },
             ),
         ];
+        let shadow = JevRouter::new(router.client.clone(), fallback(), Duration::from_secs(5))
+            .with_shadow(true);
         for (label, signals) in cases {
             let c = router.classify(&signals).await.expect("live classify");
             println!(
@@ -614,6 +746,13 @@ mod tests {
                 c.confidence,
                 c.latency.as_millis(),
                 c.cost_usd
+            );
+            let d = shadow
+                .select(&signals, &candidates(), &ObjectiveWeights::default())
+                .await;
+            println!(
+                "SHADOW {label}: tier={:?} {} [{}]",
+                d.tier, d.reason, d.strategy_name
             );
         }
     }

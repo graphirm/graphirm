@@ -142,11 +142,14 @@ fn build_jev_router(
     client: Option<DecisionsClient>,
 ) -> Arc<dyn RoutingStrategy> {
     match client {
-        Some(client) => Arc::new(JevRouter::new(
-            Arc::new(client),
-            RuleRouter::new(default_routing_config(routing_config)),
-            jev_timeout(config),
-        )),
+        Some(client) => Arc::new(
+            JevRouter::new(
+                Arc::new(client),
+                RuleRouter::new(default_routing_config(routing_config)),
+                jev_timeout(config),
+            )
+            .with_shadow(config.jev.as_ref().is_some_and(|j| j.shadow)),
+        ),
         None => build_rule_router(routing_config),
     }
 }
@@ -317,6 +320,32 @@ mod tests {
         let client = DecisionsClient::with_transport(Arc::new(NullTransport));
         let strategy = build_jev_router(&jev_config(Some(700)), None, Some(client));
         assert_eq!(strategy.strategy_name(), "jev_router");
+    }
+
+    #[tokio::test]
+    async fn jev_shadow_flag_builds_shadow_router() {
+        let client = DecisionsClient::with_transport(Arc::new(NullTransport));
+        let mut config = jev_config(Some(700));
+        config.jev.as_mut().expect("jev section").shadow = true;
+        let strategy = build_jev_router(&config, None, Some(client));
+        let d = strategy
+            .select(
+                &crate::router::TurnSignals {
+                    turn_number: 2,
+                    last_tool_errored: false,
+                    last_response_tool_only: false,
+                    user_message_tokens: 10,
+                    task_phase: crate::router::TaskPhase::Implementation,
+                },
+                &[],
+                &crate::strategy::ObjectiveWeights::default(),
+            )
+            .await;
+        assert_eq!(
+            d.strategy_name, "jev_shadow",
+            "shadow flag reaches the router"
+        );
+        assert!(d.reason.starts_with("rule:"), "rules decide: {}", d.reason);
     }
 
     #[test]

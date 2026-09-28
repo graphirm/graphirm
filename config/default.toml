@@ -234,7 +234,12 @@ tier = "smart"
 #            or a local System One server such as Laya /v1/systemone); falls back to
 #            rules per turn on error/timeout (see crates/agent/src/strategy/jev_router.rs)
 [agent.adaptive_routing]
-strategy = "rules"
+strategy = "jev"   # shadow mode below: rules still decide; Jev's verdict is recorded per turn
+
+[agent.adaptive_routing.jev]
+shadow = true      # DEC-0928i(a), 2026-09-28: measure agreement for a week before Jev decides.
+                   # routing_reason = "rule:<name> | jev:<tier> p=.. conf=.. agree=<bool> v1";
+                   # strategy_name = "jev_shadow". Needs OPENROUTER_API_KEY; without it → rules.
 
 [agent.adaptive_routing.objective]
 preset = "balanced"   # cost_focused | quality_first | speed | balanced
@@ -250,9 +255,10 @@ preset = "balanced"   # cost_focused | quality_first | speed | balanced
 # classifier_model = "openrouter/qwen/qwen3-coder:free"
 # timeout_seconds = 3
 
-# For the Jev typed classifier (strategy = "jev"; section optional).
-# Defaults: OpenRouter endpoint, OPENROUTER_API_KEY, model typesafe/jev-1.13.
+# Jev typed classifier options (strategy = "jev"; section optional).
+# Defaults: OpenRouter endpoint, OPENROUTER_API_KEY, model typesafe/jev-1.13, shadow = false.
 # [agent.adaptive_routing.jev]
+# shadow = false                                    # true → rules decide, Jev recorded in routing_reason
 # timeout_ms = 1500
 # endpoint = "http://localhost:8787/v1/systemone"   # local Laya; no key sent unless api_key_env is set
 # api_key_env = "LAYA_API_KEY"                      # name of the env var holding the bearer token
