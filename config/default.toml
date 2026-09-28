@@ -270,7 +270,7 @@ threshold = 0.8
 # (code that runs inside the Pi process) regardless of `trust_project`, which governs
 # project-level `.pi/` only.
 [agent.pi]
-enabled = false
+enabled = true
 binary = "pi"                    # executable name or path; leading `~` expands to $HOME at spawn time, otherwise resolved via PATH when not absolute
 provider = "openrouter"
 model = "deepseek/deepseek-v4-flash"

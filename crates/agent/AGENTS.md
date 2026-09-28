@@ -19,6 +19,8 @@ and session management. Everything in graphirm that involves deciding what to do
 | `workspace.rs` | `sanitize_workspace_name` — shared with server for session/subagent directory names |
 | `escalation.rs` | Soft escalation — detects repeated identical tool calls, prompts synthesis |
 | `hitl.rs` | `HitlGate`, `HitlDecision` — blocks on destructive tools for human approval |
+| `event_sink.rs` | `EventBusSink` — `ToolEventSink` adapter; coalesced `GraphUpdate` for long-running tools |
+| `pi_delegate/` | `delegate_pi` — spawn Pi (`--mode json`), parse JSONL, write Task/Pi-Agent/tool nodes, observe-only judge |
 | `config.rs` | `AgentConfig`, `AgentMode`, `Permission` — loaded from `config/default.toml`; `segment_filter`, `disable_bash` (public servers), `apply_disable_bash_system_notice()` |
 | `event.rs` | `AgentEvent`, `EventBus` — SSE streaming from agent loop to server/TUI |
 | `error.rs` | `AgentError` enum |

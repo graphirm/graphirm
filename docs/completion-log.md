@@ -1,5 +1,16 @@
 # Graphirm Development Progress Log
 
+## 2026-09-28: Track A — Pi as delegate executor enabled after A4 live check — COMPLETE ✅
+
+- Live check (temp config on `:3111`, worktree stayed disabled until this flip): happy path
+  session `0e59a770` created `hello.py` in 7.4 s; Pi `write`/`bash` nodes carry
+  `hitl_judge.action=observed`; abort killed pid in 1 s (`failure=cancelled`); missing binary
+  is a tool error with no Task and the turn continues. Findings in the design doc.
+- `[agent.pi] enabled = true` in `config/default.toml`. AGENTS.md / crate AGENTS.md note
+  `delegate_pi`, `pi_delegate/`, `ToolEventSink`.
+- Key files: `config/default.toml`, `AGENTS.md`, `crates/agent/AGENTS.md`,
+  `crates/tools/AGENTS.md`, `docs/plans/2026-09-28-pi-delegate-executor-design.md` (A4 findings)
+
 ## 2026-09-28: Phase A3 — hitl_judge observe-only on Pi bash/write/edit — COMPLETE ✅
 
 - `hitl_judge` observe-only on Pi's `bash`/`write`/`edit`; `action = "observed"`; the metadata
