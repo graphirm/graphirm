@@ -1335,6 +1335,16 @@ feedback seats (server), plan card.
 - `graphirm chat` (TUI) never loads `config/default.toml` — it runs on `AgentConfig::default()`
   plus the CLI model; only `[agent.pi]` is lifted from the file (A2.7). Load the whole file like
   `serve` does, once the prompt/judge/routing differences are reviewed (S·P2).
+- Re-run the `graphirm-eval` baseline: since A2.4 the HITL gate is always attached to headless
+  sessions (auto-approve path), so `ApprovedBy` edges, impact briefs and sequential destructive
+  calls now occur in eval runs; compare against the pre-A2 numbers before tuning anything (S·P2).
+- `PiRun::finish` write failure marks the Task `Failed{finish_failed}` even when the outcome was
+  `Completed` and the director already got the `Ok` summary; store `intended_status` alongside
+  so read-outs that count `Failed` tasks stay honest (S·P3).
+- `crates/agent` uses `tokio::io::AsyncBufReadExt` but relies on feature unification for
+  `io-util`; declare the feature explicitly in `crates/agent/Cargo.toml` (S·P3).
+- Web-app: `POST /api/sessions/{id}/auto-approve` updates the toggle but not the cached
+  sessions list, so re-selecting the session shows the pre-toggle value until refresh (S·P3).
 
 ---
 
