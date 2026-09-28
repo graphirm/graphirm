@@ -933,7 +933,7 @@ verify the file exists yourself." Observe:
 Record session ids, timings, screenshots (paths), and any deviation in the design
 doc's "A4 findings" section. Revert the temporary `enabled = true`.
 
-- [ ] A4.1 done (findings recorded)
+- [x] A4.1 done (findings recorded)
 
 ### Task A4.2: Enable
 
@@ -946,7 +946,7 @@ Also update `AGENTS.md` Key Conventions with one line: `delegate_pi` — Pi as
 external executor, `[agent.pi]`, observe-only; and `crates/agent/AGENTS.md` Key
 Components table (`pi_delegate/`, `event_sink.rs`); `crates/tools/AGENTS.md` (`ToolEventSink`).
 
-- [ ] A4.2 done
+- [x] A4.2 done
 
 ---
 

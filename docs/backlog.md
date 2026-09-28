@@ -1300,13 +1300,14 @@ in the graph. Then `web-app/` is redesigned chat-first / phone-first so the cont
 visible and correctable. Two tracks, A before B. Locked decisions and full brief in the Track A
 design doc.
 
-### Track A — Pi as delegate executor — L · P1
+### ✅ Track A — Pi as delegate executor — L · P1
 
 **Design:** `docs/plans/2026-09-28-pi-delegate-executor-design.md` (A0, approved 2026-09-28). **Plan:** `docs/plans/2026-09-28-pi-delegate-executor.md`.
 Phases: A1 `ToolEventSink` on `ToolContext` · ✅ A2 `delegate_pi` tool (subprocess, JSONL parser,
-graph writes, cancel, fake-`pi` offline tests) — done 2026-09-28, still `enabled = false` ·
+graph writes, cancel, fake-`pi` offline tests) — done 2026-09-28 ·
 ✅ A3 `hitl_judge` observe-only on Pi's `bash`/`write`/`edit` (metadata contract + fail-soft
-tests) — done 2026-09-28 · A4 live check in whiteboard + TUI, then `enabled = true`.
+tests) — done 2026-09-28 · ✅ A4 live check + `enabled = true` — done 2026-09-28
+(`docs/plans/2026-09-28-pi-delegate-executor-design.md` A4 findings).
 
 **Key files:** `crates/tools/src/lib.rs`, `crates/agent/src/pi_delegate/`, `crates/agent/src/event_sink.rs`,
 `crates/agent/src/config.rs`, `config/default.toml`, `src/commands/{serve,chat}.rs`.
@@ -1345,6 +1346,9 @@ feedback seats (server), plan card.
   `io-util`; declare the feature explicitly in `crates/agent/Cargo.toml` (S·P3).
 - Web-app: `POST /api/sessions/{id}/auto-approve` updates the toggle but not the cached
   sessions list, so re-selecting the session shows the pre-toggle value until refresh (S·P3).
+- `GET /api/graph/{session_id}/tasks` walks `Agent --Produces--> Task`, so a Pi (and
+  in-process) delegated Task linked only by `DelegatesTo` / `Interaction --Produces--> Task`
+  is missing from the whiteboard task list (S·P2). Surfaced by the A4 live check.
 
 ---
 

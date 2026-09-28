@@ -494,5 +494,72 @@ means for this design.
 
 ## A4 findings
 
-_(to be filled after the live check: session id, whiteboard/TUI observations,
-abort timing, judge verdicts, anything that forces a change to the Decisions table)_
+Live check 2026-09-28 on this machine. Temp enable lived only in `/tmp/pi-live-cfg/config/default.toml`
+(`workspaces_root = /tmp/pi-live-ws`); the worktree `config/default.toml` stayed `enabled = false`
+until A4.2. Server: `graphirm serve --db /tmp/pi-live-graph.db --port 3111`,
+`GRAPHIRM_API_KEY=dev`, Pi 0.85.1 on PATH, OpenRouter `deepseek/deepseek-v4-flash`.
+`delegate_pi` registered at boot (`version=0.85.1`, `judge=true`).
+
+### Happy path (auto-approve ON)
+
+- Session `0e59a770-45f4-4b58-8dd6-2ca5df4e7bf9` (workspace `/tmp/pi-live-ws/pi-live`).
+- Prompt at 18:40:42Z; `delegate_pi` judged `p_irreversible=0.07 action=approved`; Pi spawned
+  immediately; exited 0 in **7.4 s**, 2 tool calls (`write`, `bash`).
+- Task `db6fc08f-00cf-47eb-ac75-2221baf88232` Completed; Pi Agent
+  `dd383cbc-368e-444d-9215-9830979f0e76` Completed. File `/tmp/pi-live-ws/pi-live/hello.py`
+  is `print("hi")`; `python3` prints `hi`.
+- Director verified with `ls`, then reported success. Tool result summary:
+  `Pi completed (exit 0, 7.4s) / Tool calls: 2 (0 errors) / Judge: 0 calls ≥ 0.8 (observed, not gated)`.
+- `hitl_judge` on Pi nodes: write `{action:observed, p:0.09, threshold:0.8, version:v1, latency_ms:471}`;
+  bash `{action:observed, p:0.04, latency_ms:292}`. Neither over threshold — matches the summary line.
+- Edges present: `delegates_to`, `spawned_by`, `produces`, `responds_to`, `approved_by`.
+- `GET /api/sessions` listed only the director session (the Pi Agent was **not** listed as a
+  session in this run).
+- Whiteboard at `http://localhost:3111/`: chat shows the Pi summary and verification; Auto-approve
+  ON. Graph canvas is sparse (nodes sit far apart / minimap-only until Fit View). Screenshots:
+  `/tmp/cursor/screenshots/page-2026-09-28T19-06-58-640Z.png`.
+- Tokens: 20 152.
+
+### Confirm card (auto-approve OFF)
+
+- Session `f10efe29-3c32-4f33-b8c3-f2588efefcf2`. Loop paused after the assistant `delegate_pi`
+  call; no INFO “awaiting” line. Gate key is the **LLM `tool_call_id`**, not a graph node id
+  (`workflow.rs` `gate_key = NodeId::from(call_id)` — pre-existing HITL).
+- `POST /api/graph/{sid}/node/call_wGlclDH4jdrge4zF28t1vuKW/action {"action":"approve"}` → 204;
+  Pi then wrote `confirm-card.txt` (`ok`); Task `f3117cc2-…` Completed; session completed in ~24 s.
+
+### Abort
+
+- Session `a39bca89-71f7-4581-87f6-e549dfea147b`. Pi pid `2558355` (own pgid) spawned at ~6 s;
+  abort 204; pid **gone at 1 s**. Log: `pi run cancelled; killing process group`.
+  Task `82218702-…` Failed, `failure = "cancelled"`. No leftover `pi` process.
+- First abort attempt (`7998e150`) fired before spawn (director still routing) — session Cancelled,
+  no Task. `pgrep -f 'pi --mode json'` is unsafe from a shell whose command line contains that
+  string (matches the wrapper). Use the logged pid.
+
+### Negative binary
+
+- Isolated server `:3112`, `binary = "/nonexistent"`. Boot warn:
+  `pi binary not found; delegate_pi registered but will fail at call time`.
+- Session `8ad573c0-…`: tool error `Execution failed: pi is not available: pi not found at '/nonexistent'`;
+  **0 Task nodes**; director fell back to `write` and created `a.txt`; session **completed**.
+  Turn continues as designed.
+
+### TUI
+
+- Not driven interactively (no usable TTY in this run). `src/commands/chat.rs` registers
+  `delegate_pi` the same way as `serve` (lifts `[agent.pi]`). Whiteboard + HTTP cover the
+  graph/chat surface.
+
+### Deviations — do **not** force a Decisions-table change
+
+1. **`GET /api/graph/{id}/tasks` is empty** for a Pi delegation. Handler walks
+   `Agent --Produces--> Task`; Pi’s Task is `Agent --DelegatesTo--> Task` and
+   `Interaction --Produces--> Task`. Whiteboard task list / T-filter therefore miss the
+   delegated Task. Backlog (S·P2).
+2. Confirm card is SSE-driven (gate id = tool call id). REST clients must read
+   `metadata.tool_calls[].id` on the assistant node. Pre-existing, not Pi-specific.
+3. Knowledge extraction warned `Local extraction backend requires the local-extraction feature`
+   (non-fatal, pre-existing).
+
+No locked decision reversed. A4.2 can flip `enabled = true`.
