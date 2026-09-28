@@ -1,0 +1,110 @@
+import { useCallback, useRef, useState, type ComponentProps } from 'react';
+import styles from '../App.module.css';
+import type { LayoutMode } from '../layout/layoutMode';
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
+import { ChatPane } from './ChatPane';
+import { GraphCanvas } from './GraphCanvas';
+import { SessionBar } from './SessionBar';
+import { TabBar, type ChatTab } from './TabBar';
+
+export interface DecisionShellProps {
+  layoutMode: LayoutMode;
+  onLayoutMode: (mode: LayoutMode) => void;
+  session: ComponentProps<typeof SessionBar>;
+  chat: ComponentProps<typeof ChatPane>;
+  graph: ComponentProps<typeof GraphCanvas>;
+}
+
+export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }: DecisionShellProps) {
+  const [tab, setTab] = useState<ChatTab>('chat');
+  const [graphMounted, setGraphMounted] = useState(false);
+  const fitViewCb = useRef<(() => void) | null>(null);
+  const cycleLayoutCb = useRef<(() => void) | null>(null);
+  const graphRef = useRef(graph);
+  graphRef.current = graph;
+
+  const graphHotkeys = layoutMode === 'legacy' || tab === 'graph';
+
+  const handleFitViewRef = useCallback((cb: () => void) => {
+    fitViewCb.current = cb;
+    graphRef.current.onFitViewRef?.(cb);
+  }, []);
+
+  const handleCycleLayoutRef = useCallback((cb: () => void) => {
+    cycleLayoutCb.current = cb;
+    graphRef.current.onCycleLayoutRef?.(cb);
+  }, []);
+
+  useKeyboardShortcuts({
+    onFitView: () => {
+      if (!graphHotkeys) return;
+      fitViewCb.current?.();
+    },
+    onToggleLayout: () => {
+      if (!graphHotkeys) return;
+      cycleLayoutCb.current?.();
+    },
+    onNewSession: () => {
+      void session.onCreateSession();
+    },
+    onFocusChat: () => {
+      chat.inputRef?.current?.focus();
+    },
+    onToggleChatCollapsed: () => {
+      chat.onToggleCollapse?.();
+    },
+  });
+
+  const selectTab = (next: ChatTab) => {
+    if (next === 'graph') setGraphMounted(true);
+    setTab(next);
+  };
+
+  const chatPane = <ChatPane {...chat} />;
+  const graphCanvas = (
+    <GraphCanvas
+      {...graph}
+      onFitViewRef={handleFitViewRef}
+      onCycleLayoutRef={handleCycleLayoutRef}
+    />
+  );
+
+  return (
+    <div className={styles.app}>
+      <SessionBar {...session} />
+      <button
+        type="button"
+        className={styles.layoutSwitch}
+        onClick={() => onLayoutMode(layoutMode === 'chat' ? 'legacy' : 'chat')}
+      >
+        Layout: chat | legacy
+      </button>
+      {layoutMode === 'legacy' ? (
+        <div className={styles.main}>
+          {chatPane}
+          {graphCanvas}
+        </div>
+      ) : (
+        <div className={styles.columnSlot}>
+          <div className={styles.column}>
+            <div className={styles.columnBody}>
+              {tab === 'chat' && chatPane}
+              {tab === 'review' && <p>Review</p>}
+              {tab === 'rules' && <p>Rules</p>}
+              {graphMounted && (
+                <div
+                  className={styles.graphKeepAlive}
+                  hidden={tab !== 'graph'}
+                  inert={tab !== 'graph'}
+                >
+                  {graphCanvas}
+                </div>
+              )}
+            </div>
+            <TabBar active={tab} onChange={selectTab} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

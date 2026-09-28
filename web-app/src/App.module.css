@@ -18,3 +18,83 @@
 .main > .GraphCanvas {
   flex: 1 1 auto;
 }
+
+.layoutSwitch {
+  align-self: flex-end;
+  background: transparent;
+  color: var(--fg-muted);
+  border: none;
+  border-radius: 0;
+  font-size: 12px;
+  padding: 2px 12px 6px;
+}
+
+.layoutSwitch:hover {
+  color: var(--fg);
+}
+
+.columnSlot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.column {
+  width: 100%;
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.columnBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.columnBody > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.tabBar {
+  display: flex;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.tab,
+.tabActive {
+  flex: 1;
+  background: transparent;
+  color: var(--fg-muted);
+  border: none;
+  border-radius: 0;
+  padding: 12px 4px;
+  font-size: 12px;
+}
+
+.tabActive {
+  color: var(--fg);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Keep the canvas in the tree after the first Graph visit; hide it on other tabs. */
+.graphKeepAlive {
+  display: flex;
+  flex-direction: column;
+}
+
+.graphKeepAlive[hidden] {
+  display: none !important;
+}

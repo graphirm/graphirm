@@ -57,7 +57,7 @@ Expected: FAIL (module missing).
 
 **Step 5: Commit** `feat(web): chat-first column with legacy layout switch`
 
-- [ ] B1 done
+- [x] B1 done
 
 ---
 

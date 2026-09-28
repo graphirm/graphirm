@@ -1,10 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
-import styles from './App.module.css';
-import { SessionBar } from './components/SessionBar';
-import { ChatPane } from './components/ChatPane';
-import { GraphCanvas } from './components/GraphCanvas';
+import { DecisionShell } from './components/DecisionShell';
 import { useSession } from './hooks/useSession';
-import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { readLayoutMode, writeLayoutMode, type LayoutMode } from './layout/layoutMode';
 
 export function App() {
   const {
@@ -33,10 +30,8 @@ export function App() {
   const [steerContext, setSteerContext] = useState<{ nodeId: string } | null>(null);
   const [outlineSteer, setOutlineSteer] = useState<{ outlineNodeId: string; interactionId: string } | null>(null);
   const [chatCollapsed, setChatCollapsed] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(() => readLayoutMode(localStorage));
 
-  // Ref callbacks let GraphCanvasInner register its handlers after mount.
-  const fitViewCb = useRef<(() => void) | null>(null);
-  const cycleLayoutCb = useRef<(() => void) | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
   const handleNodeSelect = useCallback((nodeId: string | null) => {
@@ -46,7 +41,6 @@ export function App() {
   const handleSteerFromNode = useCallback((nodeId: string) => {
     setOutlineSteer(null);
     setSteerContext({ nodeId });
-    // Focus chat input so user can type their steer message immediately.
     setTimeout(() => chatInputRef.current?.focus(), 50);
   }, []);
 
@@ -74,72 +68,67 @@ export function App() {
     [steerContext, outlineSteer, sendPrompt],
   );
 
-  useKeyboardShortcuts({
-    onFitView: () => fitViewCb.current?.(),
-    onToggleLayout: () => cycleLayoutCb.current?.(),
-    onNewSession: createSession,
-    onFocusChat: () => chatInputRef.current?.focus(),
-    onToggleChatCollapsed: () => setChatCollapsed(c => !c),
-  });
+  const handleLayoutMode = useCallback((mode: LayoutMode) => {
+    writeLayoutMode(localStorage, mode);
+    setLayoutMode(mode);
+  }, []);
 
   return (
-    <div className={styles.app}>
-      <SessionBar
-        sessions={sessions}
-        currentSession={currentSession}
-        onSelectSession={selectSession}
-        onCreateSession={createSession}
-        onPause={pauseSession}
-        onResume={resumeSession}
-        autoApprove={autoApprove}
-        onToggleAutoApprove={toggleAutoApprove}
-        onRenameSession={renameSession}
-      />
-      <div className={styles.main}>
-        <ChatPane
-          messages={messages}
-          streamingMessage={streamingMessage}
-          isThinking={isThinking}
-          pendingApproval={pendingApproval}
-          sessionId={currentSession?.id ?? null}
-          steerContext={steerContext}
-          inputRef={chatInputRef}
-          onSend={handleSendWithSteer}
-          onAbort={abortSession}
-          onApprove={approveAction}
-          onReject={rejectAction}
-          onModify={modifyAction}
-          onClearSteer={() => setSteerContext(null)}
-          chatCollapsed={chatCollapsed}
-          onToggleCollapse={() => setChatCollapsed(c => !c)}
-          outlineSteer={outlineSteer}
-          onClearOutlineSteer={() => setOutlineSteer(null)}
-          onOutlineSteer={handleOutlineSteer}
-        />
-        <GraphCanvas
-          graphData={graphData}
-          sessionId={currentSession?.id ?? null}
-          selectedNodeId={selectedNodeId}
-          onNodeSelect={handleNodeSelect}
-          onSteerFromNode={handleSteerFromNode}
-          onFitViewRef={cb => { fitViewCb.current = cb; }}
-          onCycleLayoutRef={cb => { cycleLayoutCb.current = cb; }}
-          chatCollapsed={chatCollapsed}
-          onSend={(content, contextRoot) => {
-            if (contextRoot !== undefined && contextRoot !== '') {
-              sendPrompt(content, contextRoot);
-            } else {
-              handleSendWithSteer(content);
-            }
-          }}
-          isThinking={isThinking}
-          streamingMessage={streamingMessage}
-          pendingApproval={pendingApproval}
-          onApprove={approveAction}
-          onReject={rejectAction}
-          onModify={modifyAction}
-        />
-      </div>
-    </div>
+    <DecisionShell
+      layoutMode={layoutMode}
+      onLayoutMode={handleLayoutMode}
+      session={{
+        sessions,
+        currentSession,
+        onSelectSession: selectSession,
+        onCreateSession: createSession,
+        onPause: pauseSession,
+        onResume: resumeSession,
+        autoApprove,
+        onToggleAutoApprove: toggleAutoApprove,
+        onRenameSession: renameSession,
+      }}
+      chat={{
+        messages,
+        streamingMessage,
+        isThinking,
+        pendingApproval,
+        sessionId: currentSession?.id ?? null,
+        steerContext,
+        inputRef: chatInputRef,
+        onSend: handleSendWithSteer,
+        onAbort: abortSession,
+        onApprove: approveAction,
+        onReject: rejectAction,
+        onModify: modifyAction,
+        onClearSteer: () => setSteerContext(null),
+        chatCollapsed,
+        onToggleCollapse: () => setChatCollapsed(c => !c),
+        outlineSteer,
+        onClearOutlineSteer: () => setOutlineSteer(null),
+        onOutlineSteer: handleOutlineSteer,
+      }}
+      graph={{
+        graphData,
+        sessionId: currentSession?.id ?? null,
+        selectedNodeId,
+        onNodeSelect: handleNodeSelect,
+        onSteerFromNode: handleSteerFromNode,
+        chatCollapsed,
+        onSend: (content, contextRoot) => {
+          if (contextRoot !== undefined && contextRoot !== '') {
+            sendPrompt(content, contextRoot);
+          } else {
+            handleSendWithSteer(content);
+          }
+        },
+        isThinking,
+        streamingMessage,
+        pendingApproval,
+        onApprove: approveAction,
+        onReject: rejectAction,
+        onModify: modifyAction,
+      }}
+    />
   );
 }
