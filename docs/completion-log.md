@@ -1,5 +1,17 @@
 # Graphirm Development Progress Log
 
+## 2026-09-28: bash cancel leak fixed (Task A1.4) — COMPLETE ✅
+
+- `BashTool` held the child in a `tokio::spawn` and cancelled via `task.abort()`, which dropped the
+  future but left the shell (and anything it forked) running
+- Now holds the `Child` directly: `kill_on_drop(true)`, `process_group(0)` (unix), `select!` over a
+  borrowing `wait_with_output` vs timeout vs `signal.cancelled()`; on either, `kill_child` sends
+  `kill -9 -- -<pgid>` via `kill(1)` (no `libc` dep), `start_kill()`, then reaps with `wait()`
+- Output/exit-code/error semantics unchanged; existing tests untouched
+- Tests: `cancel_kills_the_child_process`, `timeout_kills_the_child_process`,
+  `cancel_kills_the_shells_descendants` (proves the orphaned `sleep` dies too)
+- Key file: `crates/tools/src/bash.rs`
+
 ## 2026-04-05: Per-session LLM token cap (`max_session_tokens`) — COMPLETE ✅
 
 - `AgentConfig.max_session_tokens`, `Session.llm_tokens_used` + `add_llm_completion_tokens`;

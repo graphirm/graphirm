@@ -1322,7 +1322,8 @@ feedback seats (server), plan card.
 - `delegate` (in-process `SubagentTool`) is only registered by `Coordinator::run_primary` (tests);
   `routes.rs:628` and `chat.rs:37` pass the base registry to `run_agent_loop`, so the web-app and
   TUI cannot delegate today.
-- `bash.rs` cancels via `task.abort()` without `kill_on_drop` — the shell child survives an abort.
+- ✅ `bash.rs` cancels via `task.abort()` without `kill_on_drop` — the shell child survives an abort.
+  Done 2026-09-28 (Task A1.4, `docs/plans/2026-09-28-pi-delegate-executor.md`).
 
 ---
 

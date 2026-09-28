@@ -290,7 +290,7 @@ Keep output semantics identical (stdout + "stderr:\n…").
 Add a `## 2026-09-xx: bash cancel leak fixed` line to `docs/completion-log.md` and
 tick the item under "Pre-existing gaps" in `docs/backlog.md` in the same commit.
 
-- [ ] A1.4 done
+- [x] A1.4 done
 
 **Phase A1 checkpoint:** `cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo test --workspace` green. Report progress.
 
