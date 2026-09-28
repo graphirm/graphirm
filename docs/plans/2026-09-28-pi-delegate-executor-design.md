@@ -166,7 +166,7 @@ Malformed JSON → skipped, warned, counted. `\r` stripped.
 
 ```json
 {
-  "node_type": { "Interaction": { "role": "tool", "content": "<result text, ≤ max_result_chars>" } },
+  "node_type": { "Interaction": { "role": "tool", "content": "<result text, ≤ 16 000 chars (MAX_TOOL_CONTENT_CHARS)>" } },
   "metadata": {
     "session_id": "<pi agent node id>",
     "parent_session_id": "<ctx.agent_id>",
@@ -328,7 +328,7 @@ model = "deepseek/deepseek-v4-flash"  # passed as --model (Pi's own model string
 timeout_seconds = 900                 # total wall-clock per delegation; per-call override is capped here
 trust_project = false                 # false → --no-approve (ignore workspace .pi/ resources); true → --approve
 extra_args = ["--no-extensions", "--no-skills", "--no-prompt-templates"]  # appended verbatim; remove to load your Pi customisations
-max_result_chars = 16000              # truncation for tool-result content and Task result
+max_result_chars = 16000              # truncation for Pi's final message (Task.metadata.result); tool-node content is a fixed 16 000
 ```
 
 `[agent] default_auto_approve = true` is added in the same phase (Decision 17): used when
