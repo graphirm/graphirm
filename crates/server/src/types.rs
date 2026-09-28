@@ -155,7 +155,9 @@ pub struct CreateSessionRequest {
     /// Optional model override (e.g. `"claude-opus-4-5"`).
     pub model: Option<String>,
     /// When true, skip the HITL approval gate so bash/write/edit run without
-    /// human confirmation. Intended for programmatic clients and eval harnesses.
+    /// human confirmation. When omitted, falls back to `[agent] default_auto_approve`
+    /// from the server config (`true` by default); pass `false` explicitly to
+    /// require human approval for destructive tools.
     pub auto_approve: Option<bool>,
     /// When true, enables structured response segmentation for this session.
     /// The agent will request segment-formatted JSON output from the LLM and
@@ -303,6 +305,11 @@ pub struct SessionResponse {
     /// Configured per-session LLM token cap, if any (`None` = unlimited).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_session_tokens: Option<u64>,
+    /// Whether destructive tools run without human confirmation in this session.
+    /// Initial value comes from the request `auto_approve` or, when omitted,
+    /// `[agent] default_auto_approve`; toggled via `POST /api/sessions/:id/auto-approve`.
+    #[serde(default)]
+    pub auto_approve: bool,
 }
 
 /// Request body for `PATCH /api/sessions/:id`.
@@ -501,10 +508,12 @@ mod tests {
             workspace_path: None,
             tokens_used: 0,
             max_session_tokens: None,
+            auto_approve: true,
         };
         let json = serde_json::to_string(&session).unwrap();
         let back: SessionResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, "abc-123");
+        assert!(back.auto_approve);
         assert_eq!(back.agent, "graphirm");
         assert_eq!(back.model, "claude-sonnet-4-20250514");
         assert_eq!(back.status, SessionStatus::Idle);

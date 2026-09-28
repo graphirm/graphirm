@@ -566,7 +566,7 @@ pub struct PiConfig {
 
 **Commit** — `feat(server): sessions default to auto-approve per [agent] default_auto_approve`
 
-- [ ] A2.4 done
+- [x] A2.4 done
 
 ### Task A2.5: Process wrapper — spawn, drain, kill, timeout
 

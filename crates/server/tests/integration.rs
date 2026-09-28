@@ -335,6 +335,109 @@ async fn test_workspace_creation() {
     );
 }
 
+/// POST /api/sessions with the given JSON body; returns the parsed response.
+async fn create_session_with_body(app: axum::Router, body: &str) -> SessionResponse {
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/sessions")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+/// Case 1: `[agent] default_auto_approve = true` and no `auto_approve` in the
+/// body → the session starts with auto-approve ON (both in the create response
+/// and on the stored `SessionHandle`'s HITL gate).
+#[tokio::test]
+async fn test_create_session_defaults_auto_approve_on() {
+    let mut state = test_app_state();
+    state.default_config.default_auto_approve = true;
+    let app = create_router(state.clone());
+
+    let session = create_session_with_body(app.clone(), r#"{"agent": "default-on"}"#).await;
+    assert!(
+        session.auto_approve,
+        "create response must report auto_approve=true"
+    );
+
+    let sessions = state.sessions.read().await;
+    let handle = sessions
+        .get(&graphirm_server::SessionId::from(session.id.as_str()))
+        .expect("session handle stored");
+    assert!(handle.hitl.is_auto_approve());
+    drop(sessions);
+
+    // GET /api/sessions/{id} reports the same flag.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/sessions/{}", session.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let fetched: SessionResponse = serde_json::from_slice(&bytes).unwrap();
+    assert!(fetched.auto_approve);
+}
+
+/// Case 2: `[agent] default_auto_approve = false` and no `auto_approve` in the
+/// body → the session starts with auto-approve OFF.
+#[tokio::test]
+async fn test_create_session_defaults_auto_approve_off_when_config_false() {
+    let mut state = test_app_state();
+    state.default_config.default_auto_approve = false;
+    let app = create_router(state.clone());
+
+    let session = create_session_with_body(app, r#"{"agent": "default-off"}"#).await;
+    assert!(
+        !session.auto_approve,
+        "create response must report auto_approve=false"
+    );
+
+    let sessions = state.sessions.read().await;
+    let handle = sessions
+        .get(&graphirm_server::SessionId::from(session.id.as_str()))
+        .expect("session handle stored");
+    assert!(!handle.hitl.is_auto_approve());
+}
+
+/// Case 3: explicit `"auto_approve": false` in the body wins over
+/// `default_auto_approve = true`.
+#[tokio::test]
+async fn test_create_session_explicit_auto_approve_false_overrides_config_default() {
+    let mut state = test_app_state();
+    state.default_config.default_auto_approve = true;
+    let app = create_router(state.clone());
+
+    let session =
+        create_session_with_body(app, r#"{"agent": "explicit-off", "auto_approve": false}"#).await;
+    assert!(
+        !session.auto_approve,
+        "explicit auto_approve=false must override the config default"
+    );
+
+    let sessions = state.sessions.read().await;
+    let handle = sessions
+        .get(&graphirm_server::SessionId::from(session.id.as_str()))
+        .expect("session handle stored");
+    assert!(!handle.hitl.is_auto_approve());
+}
+
 #[tokio::test]
 async fn test_session_rename() {
     let state = test_app_state();

@@ -384,19 +384,26 @@ async fn create_session(
             .map_err(|e| ServerError::Internal(e.to_string()))?
             .map_err(ServerError::Agent)?;
 
-    // Only wire up the HITL gate when the caller hasn't opted into auto-approve.
-    // Programmatic clients (eval harnesses, tests) pass `auto_approve: true` to
-    // bypass human confirmation for destructive tools (bash, write, edit).
+    // Only wire up the HITL gate when the session isn't in auto-approve mode.
+    // The request's `auto_approve` wins; when omitted, `[agent] default_auto_approve`
+    // (true by default) decides, so destructive tools (bash, write, edit,
+    // delegate_pi) don't block on a confirm card unless a client asks for it.
     // With a judge configured, such headless sessions still get the gate in
     // auto-approve + headless mode so every destructive call is scored and the
     // verdict recorded on the tool node — never paused (nobody could answer).
-    let headless = body.auto_approve.unwrap_or(false);
+    let headless = body
+        .auto_approve
+        .unwrap_or(state.default_config.default_auto_approve);
     if !headless {
         session = session.with_hitl(hitl.clone());
-    } else if hitl.has_judge() {
+    } else {
+        // Always record the flag on the handle's gate so `SessionResponse.auto_approve`
+        // reflects the session's mode even when no gate is attached (no judge).
         hitl.set_auto_approve(true);
-        hitl.set_headless(true);
-        session = session.with_hitl(hitl.clone());
+        if hitl.has_judge() {
+            hitl.set_headless(true);
+            session = session.with_hitl(hitl.clone());
+        }
     }
 
     if let Some(ref retriever) = state.memory_retriever {
@@ -416,6 +423,7 @@ async fn create_session(
         workspace_path: session_workspace_path(&session.agent_config),
         tokens_used: session.llm_tokens_used(),
         max_session_tokens: session.agent_config.max_session_tokens,
+        auto_approve: hitl.is_auto_approve(),
     };
 
     let handle = SessionHandle {
@@ -1767,6 +1775,7 @@ fn session_handle_to_response(id: &str, handle: &SessionHandle) -> SessionRespon
         workspace_path: session_workspace_path(&handle.session.agent_config),
         tokens_used: handle.session.llm_tokens_used(),
         max_session_tokens: handle.session.agent_config.max_session_tokens,
+        auto_approve: handle.hitl.is_auto_approve(),
     }
 }
 
