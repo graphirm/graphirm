@@ -97,6 +97,14 @@ export interface Message {
   toolCallId?: string;
   /** `metadata.tool_calls` on an assistant Interaction. */
   toolCalls?: ToolCall[];
+  /** `metadata.model_tier` on an assistant Interaction. */
+  modelTier?: string;
+  /** `metadata.routing_strategy` on an assistant Interaction. */
+  routingStrategy?: string;
+  /** `metadata.routing_confidence` on an assistant Interaction. */
+  routingConfidence?: number;
+  /** `metadata.routing_reason` on an assistant Interaction. */
+  routingReason?: string;
   /** True when structured segments were persisted (`metadata.segmented`). */
   segmented?: boolean;
   /** Populated from graph Contains children when `segmented` (see `segmentPartsForInteraction`). */

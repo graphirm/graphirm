@@ -175,7 +175,7 @@ export function formatJevChip(meta: {
 
 **Step 5: Commit** `feat(web): Jev chip and routing sheet (feedback disabled)`
 
-- [ ] B4 done
+- [x] B4 done
 
 ---
 

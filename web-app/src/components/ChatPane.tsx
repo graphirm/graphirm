@@ -1,10 +1,12 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { StepInput, StepRow } from '../chat/steps';
 import { buildSteps } from '../chat/steps';
+import { formatJevChip } from '../chat/jevChip';
 import { parseSegmentPrefix } from '../chat/segmentStream';
 import type { Message, PendingApproval } from '../types/graph';
 import { MarkdownBody } from './nodes/MarkdownBody';
 import { BlockView } from './BlockView';
+import { JevChip, JevSheet } from './JevChip';
 import { StepsRow } from './StepsRow';
 import { cleanLegacyAssistantContent } from '../utils/chatSegments';
 import { HitlOverlay } from './HitlOverlay';
@@ -136,6 +138,15 @@ function chatEntries(messages: Message[]): ChatEntry[] {
   });
 }
 
+function jevLabel(message: Message): string | null {
+  if (message.role !== 'assistant') return null;
+  return formatJevChip({
+    model_tier: message.modelTier,
+    routing_strategy: message.routingStrategy,
+    routing_confidence: message.routingConfidence,
+  });
+}
+
 function MessageBody({ message }: { message: Message }) {
   if (message.role === 'user') {
     return <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{message.content}</div>;
@@ -207,7 +218,15 @@ export function ChatPane({
   onOutlineSteer,
 }: ChatPaneProps) {
   const [input, setInput] = useState('');
+  const [jevSheetId, setJevSheetId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const closeJevSheet = useCallback(() => setJevSheetId(null), []);
+  const jevSheetMessage = useMemo(() => {
+    if (!jevSheetId) return null;
+    const message = messages.find((m) => m.id === jevSheetId && m.role === 'assistant');
+    if (!message || !jevLabel(message)) return null;
+    return message;
+  }, [jevSheetId, messages]);
   const lastAssistantId = useMemo(
     () => [...messages].reverse().find(m => m.role === 'assistant')?.id ?? null,
     [messages],
@@ -241,17 +260,29 @@ export function ChatPane({
         </button>
       )}
       <div className={styles.messages}>
-        {entries.map(entry => entry.kind === 'steps' ? (
-          <StepsRow key={`steps-${entry.id}`} steps={entry.steps} />
-        ) : (
-          <div
-            key={entry.message.id}
-            className={[styles.message, styles[entry.message.role as keyof typeof styles] ?? ''].join(' ')}
-          >
-            <div className={styles.roleLabel}>{entry.message.role}</div>
-            <MessageBody message={entry.message} />
-          </div>
-        ))}
+        {entries.map(entry => {
+          if (entry.kind === 'steps') {
+            return <StepsRow key={`steps-${entry.id}`} steps={entry.steps} />;
+          }
+          const label = jevLabel(entry.message);
+          return (
+            <div
+              key={entry.message.id}
+              className={[styles.message, styles[entry.message.role as keyof typeof styles] ?? ''].join(' ')}
+            >
+              <div className={styles.roleLabel}>{entry.message.role}</div>
+              <MessageBody message={entry.message} />
+              {label && (
+                <JevChip
+                  label={label}
+                  onOpen={() =>
+                    setJevSheetId((current) => (current === entry.message.id ? null : entry.message.id))
+                  }
+                />
+              )}
+            </div>
+          );
+        })}
         {streamingMessage && (
           <div
             key={streamingMessage.id}
@@ -352,6 +383,9 @@ export function ChatPane({
           )}
         </div>
       </div>
+      {jevSheetMessage && (
+        <JevSheet reason={jevSheetMessage.routingReason} onClose={closeJevSheet} />
+      )}
     </div>
   );
 }

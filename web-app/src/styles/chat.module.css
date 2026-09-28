@@ -1,4 +1,5 @@
 .chatPane {
+  position: relative;
   width: 420px;
   min-width: 280px;
   max-width: 520px;
@@ -18,7 +19,8 @@
 .chatPane.collapsed .messages,
 .chatPane.collapsed .thinkingBar,
 .chatPane.collapsed .inputBar,
-.chatPane.collapsed .outlinePanel {
+.chatPane.collapsed .outlinePanel,
+.chatPane.collapsed .jevSheetLayer {
   display: none !important;
 }
 
@@ -420,4 +422,76 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--fg-muted);
+}
+
+.jevChip {
+  display: inline-flex;
+  margin-top: var(--space-2);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.jevChip:hover {
+  color: var(--fg);
+  border-color: var(--border-hover);
+  opacity: 1;
+}
+
+.jevSheetLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.jevSheetBackdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+
+.jevSheet {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: 70%;
+  margin: 0;
+  overflow: auto;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius) var(--card-radius) 0 0;
+  background: var(--surface-1);
+  color: var(--fg);
+  padding: var(--space-3);
+  z-index: 1;
+}
+
+.jevSheetReason {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.jevSheetActions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.jevSheetActions button:disabled {
+  background: var(--surface-3);
+  color: var(--fg-muted);
+  opacity: 0.7;
+  cursor: not-allowed;
 }

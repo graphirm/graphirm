@@ -26,6 +26,26 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   return res.json() as Promise<T>;
 }
 
+function assistantMetaString(
+  role: string,
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  if (role !== 'assistant') return undefined;
+  const raw = metadata?.[key];
+  return typeof raw === 'string' && raw.length > 0 ? raw : undefined;
+}
+
+function assistantMetaNumber(
+  role: string,
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): number | undefined {
+  if (role !== 'assistant') return undefined;
+  const raw = metadata?.[key];
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
+
 function parseToolCalls(raw: unknown): ToolCall[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const calls: ToolCall[] = [];
@@ -75,6 +95,10 @@ export const api = {
         const toolCallIdRaw = n.metadata?.tool_call_id;
         const toolCallId = typeof toolCallIdRaw === 'string' ? toolCallIdRaw : undefined;
         const toolCalls = nt.role === 'assistant' ? parseToolCalls(n.metadata?.tool_calls) : undefined;
+        const modelTier = assistantMetaString(nt.role, n.metadata, 'model_tier');
+        const routingStrategy = assistantMetaString(nt.role, n.metadata, 'routing_strategy');
+        const routingReason = assistantMetaString(nt.role, n.metadata, 'routing_reason');
+        const routingConfidence = assistantMetaNumber(nt.role, n.metadata, 'routing_confidence');
         return {
           id: n.id,
           role: nt.role,
@@ -84,6 +108,10 @@ export const api = {
           ...(toolName ? { toolName } : {}),
           ...(toolCallId ? { toolCallId } : {}),
           ...(toolCalls ? { toolCalls } : {}),
+          ...(modelTier ? { modelTier } : {}),
+          ...(routingStrategy ? { routingStrategy } : {}),
+          ...(routingReason ? { routingReason } : {}),
+          ...(routingConfidence !== undefined ? { routingConfidence } : {}),
         };
       });
   },
