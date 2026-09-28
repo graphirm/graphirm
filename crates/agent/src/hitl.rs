@@ -14,7 +14,9 @@ pub struct JudgeOutcome {
     pub verdict: JudgeVerdict,
     /// `true` when the call must go through the human gate despite auto-approve.
     pub pause: bool,
-    /// `"paused"` | `"recorded"` (over threshold but headless) | `"approved"`.
+    /// `"paused"` | `"recorded"` (over threshold but headless) | `"approved"`;
+    /// `"observed"` (`JUDGE_ACTION_OBSERVED`) for a delegated executor's calls,
+    /// which are scored but never gated.
     pub action: &'static str,
 }
 

@@ -38,6 +38,12 @@ source files inside the workspace.";
 /// Version tag recorded with every verdict so read-outs can group by prompt.
 pub const JUDGE_VERSION: &str = "v1";
 
+/// `hitl_judge.action` for calls the judge scored but nobody could gate: a
+/// delegated executor's (Pi's) own `bash` / `write` / `edit`. Distinct from
+/// `"paused"` / `"recorded"` / `"approved"` so read-outs can separate
+/// "scored, not gated" from the in-process auto-approve outcomes.
+pub const JUDGE_ACTION_OBSERVED: &str = "observed";
+
 /// Upper bound on the serialised arguments sent as state.
 /// Tool-argument JSON cap shared with `pi_delegate::graph` so the judge's
 /// input and the stored `metadata.arguments` never disagree.
@@ -74,6 +80,11 @@ impl DestructiveJudge {
 
     pub fn threshold(&self) -> f64 {
         self.threshold
+    }
+
+    /// Per-call deadline passed to the Decisions client.
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 
     /// State sent to Jev: the tool name and its arguments (as compact JSON,

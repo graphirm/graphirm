@@ -87,6 +87,7 @@ pub struct Session {
 impl Session {
     pub fn new(graph: Arc<GraphStore>, mut config: AgentConfig) -> Result<Self, AgentError> {
         config.apply_disable_bash_system_notice();
+        config.apply_pi_delegate_system_notice();
         let now = Utc::now();
         let mut agent_node = GraphNode::new(NodeType::Agent(AgentData {
             name: config.name.clone(),
@@ -127,6 +128,7 @@ impl Session {
         created_at: DateTime<Utc>,
     ) -> Self {
         config.apply_disable_bash_system_notice();
+        config.apply_pi_delegate_system_notice();
         Self {
             id: node_id,
             agent_config: config,

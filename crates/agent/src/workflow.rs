@@ -243,7 +243,11 @@ pub async fn stream_and_record(
     let raw_defs = tools.definitions();
     let mut tool_defs: Vec<graphirm_llm::ToolDefinition> = raw_defs
         .into_iter()
-        .filter(|t| !(session.agent_config.disable_bash && t.name == "bash"))
+        // `delegate_pi` runs shell through Pi, so it is locked down with `bash`.
+        .filter(|t| {
+            !(session.agent_config.disable_bash
+                && (t.name == "bash" || t.name == crate::pi_delegate::PI_DELEGATE_TOOL_NAME))
+        })
         .map(|t| graphirm_llm::ToolDefinition::new(t.name, t.description, t.parameters))
         .collect();
 
@@ -2065,6 +2069,8 @@ mod test_helpers {
     pub struct MockProvider {
         pub responses: Vec<LlmResponse>,
         pub call_index: AtomicUsize,
+        /// Tool names offered on each call, in call order.
+        pub seen_tool_names: std::sync::Mutex<Vec<Vec<String>>>,
     }
 
     impl MockProvider {
@@ -2072,11 +2078,29 @@ mod test_helpers {
             Self {
                 responses,
                 call_index: AtomicUsize::new(0),
+                seen_tool_names: std::sync::Mutex::new(Vec::new()),
             }
         }
 
         pub fn call_count(&self) -> usize {
             self.call_index.load(Ordering::SeqCst)
+        }
+
+        /// Tool names offered on the most recent call.
+        pub fn last_tool_names(&self) -> Vec<String> {
+            self.seen_tool_names
+                .lock()
+                .expect("lock")
+                .last()
+                .cloned()
+                .unwrap_or_default()
+        }
+
+        fn record_tools(&self, tools: &[ToolDefinition]) {
+            self.seen_tool_names
+                .lock()
+                .expect("lock")
+                .push(tools.iter().map(|t| t.name.clone()).collect());
         }
     }
 
@@ -2085,9 +2109,10 @@ mod test_helpers {
         async fn complete(
             &self,
             _messages: Vec<LlmMessage>,
-            _tools: &[ToolDefinition],
+            tools: &[ToolDefinition],
             _config: &CompletionConfig,
         ) -> Result<LlmResponse, LlmError> {
+            self.record_tools(tools);
             let idx = self.call_index.fetch_add(1, Ordering::SeqCst);
             if idx < self.responses.len() {
                 Ok(self.responses[idx].clone())
@@ -2099,10 +2124,11 @@ mod test_helpers {
         async fn stream(
             &self,
             _messages: Vec<LlmMessage>,
-            _tools: &[ToolDefinition],
+            tools: &[ToolDefinition],
             _config: &CompletionConfig,
         ) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = StreamEvent> + Send>>, LlmError>
         {
+            self.record_tools(tools);
             let idx = self.call_index.fetch_add(1, Ordering::SeqCst);
             let response = if idx < self.responses.len() {
                 self.responses[idx].clone()
@@ -2260,6 +2286,41 @@ mod tests {
             }
             _ => panic!("expected Interaction node"),
         }
+    }
+
+    /// `disable_bash` hides `delegate_pi` from the model alongside `bash`:
+    /// Pi runs shell, so a locked-down server must not offer it.
+    #[tokio::test]
+    async fn disable_bash_hides_bash_and_delegate_pi_from_tool_definitions() {
+        fn registry() -> ToolRegistry {
+            let mut tools = ToolRegistry::new();
+            for name in ["bash", "delegate_pi", "read"] {
+                tools.register(Arc::new(MockTool {
+                    tool_name: name.to_string(),
+                    output: "ok".to_string(),
+                }));
+            }
+            tools
+        }
+        async fn offered(disable_bash: bool) -> Vec<String> {
+            let graph = Arc::new(GraphStore::open_memory().unwrap());
+            let config = AgentConfig {
+                disable_bash,
+                tool_gate_enabled: false,
+                ..Default::default()
+            };
+            let session = Session::new(graph, config).unwrap();
+            session.add_user_message("implement it").await.unwrap();
+            let provider = Arc::new(MockProvider::new(vec![text_response("done")]));
+            let bus = EventBus::new();
+            stream_and_record(&session, provider.clone(), &registry(), &bus)
+                .await
+                .unwrap();
+            provider.last_tool_names()
+        }
+
+        assert_eq!(offered(false).await, vec!["bash", "delegate_pi", "read"]);
+        assert_eq!(offered(true).await, vec!["read"]);
     }
 
     #[tokio::test]

@@ -812,6 +812,14 @@ impl AgentConfig {
             "`write`, `edit`, `grep`, `find`, `ls`, `cargo_check`, and other non-shell tools.\n",
         ));
     }
+
+    /// Appends the `delegate_pi` guidance when `[agent.pi].enabled` is true.
+    /// Idempotent (see [`crate::pi_delegate::apply_pi_delegate_system_notice`]).
+    pub fn apply_pi_delegate_system_notice(&mut self) {
+        if self.pi.as_ref().is_some_and(|p| p.enabled) {
+            crate::pi_delegate::apply_pi_delegate_system_notice(&mut self.system_prompt);
+        }
+    }
 }
 
 #[cfg(test)]

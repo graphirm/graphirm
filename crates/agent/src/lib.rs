@@ -48,6 +48,7 @@ pub use multi::{
     AgentRegistry, LlmFactory, SubagentHandle, collect_subagent_results, spawn_subagent,
     wait_for_dependencies, wait_for_subagents,
 };
+pub use pi_delegate::{PiDelegateTool, apply_pi_delegate_system_notice, register_pi_delegate};
 pub use router::{ModelRouter, ModelRoutingConfig, ModelTier, RoutingRule, TurnSignals};
 pub use session::{Session, SessionMetadata, SessionStatus};
 pub use strategy::{
