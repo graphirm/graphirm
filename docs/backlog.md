@@ -1302,7 +1302,7 @@ design doc.
 
 ### Track A — Pi as delegate executor — L · P1
 
-**Design:** `docs/plans/2026-09-28-pi-delegate-executor-design.md` (A0, awaiting approval).
+**Design:** `docs/plans/2026-09-28-pi-delegate-executor-design.md` (A0, approved 2026-09-28). **Plan:** `docs/plans/2026-09-28-pi-delegate-executor.md`.
 Phases: A1 `ToolEventSink` on `ToolContext` · A2 `delegate_pi` tool (subprocess, JSONL parser,
 graph writes, cancel, fake-`pi` offline tests) · A3 `hitl_judge` observe-only on Pi's
 `bash`/`write`/`edit` · A4 live check in whiteboard + TUI, then `enabled = true`.
