@@ -317,7 +317,7 @@ Only registered when `[agent.pi].enabled = true`; when disabled the model never 
 enabled = false                       # flip to true in its own commit after A4 passes
 binary = "pi"                         # resolved on PATH; or absolute, e.g. "~/.nvm/versions/node/v24.18.0/bin/pi" (tilde expanded)
 provider = "openrouter"               # passed as --provider
-model = "deepseek/deepseek-v3.2"      # passed as --model (Pi's own model string, not graphirm's)
+model = "deepseek/deepseek-v4-flash"  # passed as --model (Pi's own model string, not graphirm's); approved 2026-09-28
 timeout_seconds = 900                 # total wall-clock per delegation; per-call override is capped here
 extra_args = []                       # appended verbatim before the task, e.g. ["--thinking", "low", "--no-extensions"]
 max_result_chars = 16000              # truncation for tool-result content and Task result
@@ -429,8 +429,8 @@ cancel-without-kill (pre-existing, noted for the backlog).
 
 ## Open questions for the approver
 
-1. **Default Pi model** for `[agent.pi].model` — `deepseek/deepseek-v3.2` (matches
-   graphirm's default) or the `deepseek/deepseek-v4-flash` used in codeporate?
+1. ~~Default Pi model~~ **Answered 2026-09-28:** `provider = "openrouter"`,
+   `model = "deepseek/deepseek-v4-flash"`.
 2. **Decision 6** (`Interaction --Produces--> Task`): fine to add, or keep the exact
    in-process shape with Agent edge only?
 3. **Decision 13** (gate `delegate_pi` in the parent's HITL): if auto-approve is on
