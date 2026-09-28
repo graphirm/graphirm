@@ -240,6 +240,7 @@ export function useSession(): UseSessionReturn {
     if (!session) return;
     await api.abortSession(session.id);
     setIsThinking(false);
+    setPendingApproval(null);
   }, []);
 
   const approveAction = useCallback(async (nodeId: string) => {
