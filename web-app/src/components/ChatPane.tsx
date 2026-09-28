@@ -41,16 +41,57 @@ type ChatEntry =
   | { kind: 'message'; message: Message }
   | { kind: 'steps'; id: string; steps: StepRow[] };
 
-function firstLine(content: string): string {
-  return content.split('\n').map((line) => line.trim()).find((line) => line.length > 0) ?? '';
+const ARGS_SUMMARY_CAP = 120;
+
+function stringArg(obj: Record<string, unknown>, key: string): string | undefined {
+  const value = obj[key];
+  return typeof value === 'string' ? value : undefined;
 }
 
-function stepInputFor(message: Message): StepInput {
+function capSummary(text: string): string {
+  if (text.length <= ARGS_SUMMARY_CAP) return text;
+  return `${text.slice(0, ARGS_SUMMARY_CAP - 1)}…`;
+}
+
+/** One-line call arguments. Result text is never used. */
+function summarizeArguments(args: unknown): string {
+  if (args == null) return '';
+  if (typeof args !== 'object' || Array.isArray(args)) return capSummary(JSON.stringify(args));
+  const obj = args as Record<string, unknown>;
+  const command = stringArg(obj, 'command');
+  if (command !== undefined) return capSummary(command);
+  const path = stringArg(obj, 'path');
+  const file = stringArg(obj, 'file');
+  const pattern = stringArg(obj, 'pattern');
+  if (path !== undefined && pattern !== undefined) return capSummary(`${pattern} ${path}`);
+  if (path !== undefined) return capSummary(path);
+  if (file !== undefined) return capSummary(file);
+  if (pattern !== undefined) return capSummary(pattern);
+  return capSummary(JSON.stringify(obj));
+}
+
+function callsInTurn(turn: Message[]): Map<string, unknown> {
+  const calls = new Map<string, unknown>();
+  for (const message of turn) {
+    if (message.role !== 'assistant' || !message.toolCalls) continue;
+    for (const call of message.toolCalls) {
+      if (!calls.has(call.id)) calls.set(call.id, call.arguments);
+    }
+  }
+  return calls;
+}
+
+function stepInputFor(message: Message, calls: ReadonlyMap<string, unknown>): StepInput {
   const toolName = message.toolName?.trim() || 'tool';
   if (toolName === 'delegate_pi') {
     return { toolName, callId: message.id, piSummary: message.content };
   }
-  return { toolName, callId: message.id, argsSummary: firstLine(message.content) };
+  const matched = message.toolCallId ? calls.get(message.toolCallId) : undefined;
+  return {
+    toolName,
+    callId: message.id,
+    argsSummary: matched === undefined ? '' : summarizeArguments(matched),
+  };
 }
 
 /** A turn starts at each user message, matching `buildTurns`. Tool messages fold into one STEPS row before the final assistant reply. */
@@ -71,7 +112,8 @@ function chatEntries(messages: Message[]): ChatEntry[] {
 
   return turns.flatMap((turn) => {
     const tools = turn.filter((message) => message.role === 'tool');
-    const steps = buildSteps(tools.map(stepInputFor));
+    const calls = callsInTurn(turn);
+    const steps = buildSteps(tools.map((message) => stepInputFor(message, calls)));
     const bubbles = turn.filter((message) => message.role !== 'tool');
     let finalAssistant = -1;
     for (let i = bubbles.length - 1; i >= 0; i--) {

@@ -77,6 +77,13 @@ export interface SegmentPart {
   language?: string;
 }
 
+/** One entry from an assistant Interaction's `metadata.tool_calls`. */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: unknown;
+}
+
 export interface Message {
   id: string;
   role: NodeRole;
@@ -84,6 +91,10 @@ export interface Message {
   created_at: string;
   /** Tool name from Interaction `metadata.tool_name` (tool-role messages). */
   toolName?: string;
+  /** `metadata.tool_call_id` on a tool Interaction; matches `ToolCall.id`. */
+  toolCallId?: string;
+  /** `metadata.tool_calls` on an assistant Interaction. */
+  toolCalls?: ToolCall[];
   /** True when structured segments were persisted (`metadata.segmented`). */
   segmented?: boolean;
   /** Populated from graph Contains children when `segmented` (see `segmentPartsForInteraction`). */

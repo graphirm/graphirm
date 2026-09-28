@@ -1,4 +1,4 @@
-import type { GraphData, GraphNode, Message, Session } from '../types/graph';
+import type { GraphData, GraphNode, Message, Session, ToolCall } from '../types/graph';
 import { getApiKey } from './apiKey';
 
 function authHeaders(): Record<string, string> {
@@ -24,6 +24,22 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     return undefined as T;
   }
   return res.json() as Promise<T>;
+}
+
+function parseToolCalls(raw: unknown): ToolCall[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const calls: ToolCall[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.id !== 'string' || typeof rec.name !== 'string') continue;
+    calls.push({
+      id: rec.id,
+      name: rec.name,
+      arguments: rec.arguments ?? {},
+    });
+  }
+  return calls.length > 0 ? calls : undefined;
 }
 
 export const api = {
@@ -56,6 +72,9 @@ export const api = {
         const nt = n.node_type as Extract<typeof n.node_type, { type: 'Interaction' }>;
         const toolNameRaw = n.metadata?.tool_name;
         const toolName = typeof toolNameRaw === 'string' ? toolNameRaw : undefined;
+        const toolCallIdRaw = n.metadata?.tool_call_id;
+        const toolCallId = typeof toolCallIdRaw === 'string' ? toolCallIdRaw : undefined;
+        const toolCalls = nt.role === 'assistant' ? parseToolCalls(n.metadata?.tool_calls) : undefined;
         return {
           id: n.id,
           role: nt.role,
@@ -63,6 +82,8 @@ export const api = {
           created_at: n.created_at,
           segmented: Boolean(n.metadata?.segmented),
           ...(toolName ? { toolName } : {}),
+          ...(toolCallId ? { toolCallId } : {}),
+          ...(toolCalls ? { toolCalls } : {}),
         };
       });
   },

@@ -1,3 +1,5 @@
+import { MarkdownBody } from './nodes/MarkdownBody';
+import hljs from './nodes/hljs-core';
 import styles from '../styles/chat.module.css';
 
 export interface BlockViewProps {
@@ -19,7 +21,16 @@ export function BlockView({ kicker, content, state }: BlockViewProps) {
         )}
         {state === 'streaming' && <span className={styles.blockCursor} aria-hidden="true" />}
       </div>
-      <div className={styles.blockBody}>{content}</div>
+      <div className={styles.blockBody}>
+        {kicker === 'code' ? (
+          <pre className={styles.segmentPre}>
+            {/* eslint-disable-next-line react/no-danger */}
+            <code dangerouslySetInnerHTML={{ __html: hljs.highlightAuto(content).value }} />
+          </pre>
+        ) : (
+          <MarkdownBody content={content} maxHeight={200} />
+        )}
+      </div>
     </div>
   );
 }
