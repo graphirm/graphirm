@@ -789,6 +789,7 @@ the tool definitions sent to the mock provider exclude both `bash` and `delegate
    - `Err(Timeout)` → `finish(Failed{"timeout"})`, `Err(ToolError::Timeout(secs))` with partial summary in the message.
    - `Err(NotFound|Spawn)` → `finish(Failed{"spawn"})` (Task already exists at this point — acceptable; it records the attempt) → `Err(ExecutionFailed(...))`. *Alternative:* probe `binary` with `--version` before `begin` so no Task is created when Pi is absent — do this; it matches the design's "no Task node created" for not-installed.
 7. Every `graph_changed` after the final `finish` so the Task status flips live.
+8. Never move `ctx.event_sink` into a detached task that outlives `execute`; the sink is closed at turn end and the SSE relay relies on all `EventBus` senders dropping.
 
 `register_pi_delegate(registry, config)`: if `config.pi.enabled` → build
 `Option<Arc<DestructiveJudge>>` via `build_judge(config)`, probe `--version`

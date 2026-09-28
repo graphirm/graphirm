@@ -8,15 +8,23 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use std::time::Duration;
+
 use graphirm_graph::GraphStore;
 use graphirm_graph::nodes::NodeId;
 use graphirm_tools::ToolEventSink;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 use crate::event::{AgentEvent, EventBus};
 
 /// A pending `graph_changed` notification: `(anchor, touched)`.
 type GraphChange = (NodeId, Vec<NodeId>);
+
+/// Upper bound on how long [`EventBusSink::close`] waits for the worker to
+/// drain. A healthy worker finishes in milliseconds; hitting this means the
+/// graph store is wedged, and stalling the agent loop further would not help.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// `ToolEventSink` implementation that forwards to an [`EventBus`].
 ///
@@ -31,15 +39,24 @@ type GraphChange = (NodeId, Vec<NodeId>);
 /// drained by a single worker task. The worker coalesces everything queued
 /// since its last emission into one `GraphUpdate`, so emissions are strictly
 /// in order and at most one is in flight at a time.
+///
+/// Because the worker is asynchronous, a `graph_changed` queued at the very
+/// end of a tool's run could otherwise be emitted *after* the agent loop's own
+/// turn-end `GraphUpdate` and briefly regress the view. [`Self::close`] drains
+/// the worker so the agent loop can guarantee every sink-originated
+/// `GraphUpdate` precedes its own.
 pub struct EventBusSink {
     bus: Arc<EventBus>,
     changes: mpsc::UnboundedSender<GraphChange>,
+    worker: JoinHandle<()>,
 }
 
 impl EventBusSink {
     /// Create a sink bound to `bus` and `graph` and start its worker task.
     ///
-    /// The worker exits on its own once the sink (the only sender) is dropped.
+    /// The worker exits on its own once the sink (the only sender) is dropped;
+    /// call [`Self::close`] instead of dropping when the caller needs to know
+    /// that every queued `GraphUpdate` has been emitted.
     ///
     /// # Panics
     ///
@@ -48,8 +65,42 @@ impl EventBusSink {
     /// site is inside `run_agent_loop`, which is always async.
     pub fn new(bus: Arc<EventBus>, graph: Arc<GraphStore>) -> Self {
         let (tx, rx) = mpsc::unbounded_channel::<GraphChange>();
-        tokio::spawn(graph_update_worker(rx, graph, bus.clone()));
-        Self { bus, changes: tx }
+        let worker = tokio::spawn(graph_update_worker(rx, graph, bus.clone()));
+        Self {
+            bus,
+            changes: tx,
+            worker,
+        }
+    }
+
+    /// Stop accepting `graph_changed` calls and wait for the worker to emit
+    /// everything already queued.
+    ///
+    /// When this returns, every `GraphUpdate` the sink will ever emit has been
+    /// handed to the bus, and the worker's `EventBus` clone (a sender on every
+    /// subscriber channel) has been dropped. Never fails: a worker that panics
+    /// or does not drain within [`CLOSE_TIMEOUT`] is logged and, in the
+    /// timeout case, aborted so it cannot emit a stale snapshot later.
+    pub async fn close(self) {
+        let Self {
+            bus: _,
+            changes,
+            mut worker,
+        } = self;
+        drop(changes);
+        match tokio::time::timeout(CLOSE_TIMEOUT, &mut worker).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "EventBusSink: GraphUpdate worker failed during close");
+            }
+            Err(_) => {
+                worker.abort();
+                tracing::warn!(
+                    timeout_secs = CLOSE_TIMEOUT.as_secs(),
+                    "EventBusSink: GraphUpdate worker did not drain in time; aborted"
+                );
+            }
+        }
     }
 }
 
@@ -201,6 +252,33 @@ mod tests {
             }
         }
         assert!(saw_start && saw_end && saw_graph);
+    }
+
+    /// `close()` is synchronous with respect to emission: once it returns, a
+    /// `graph_changed` queued beforehand has already reached the subscriber,
+    /// and every sender the sink held (its own and the worker's) is gone.
+    #[tokio::test]
+    async fn close_drains_worker_before_returning() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let mut bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let sink = EventBusSink::new(Arc::new(bus), graph.clone());
+        let n = interaction_node(&graph);
+
+        sink.graph_changed(&n, std::slice::from_ref(&n));
+        sink.close().await;
+
+        match rx.try_recv() {
+            Ok(AgentEvent::GraphUpdate { node_id, .. }) => assert_eq!(node_id, n),
+            other => panic!("expected GraphUpdate already delivered, got {other:?}"),
+        }
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+            ),
+            "all EventBus senders must be dropped after close"
+        );
     }
 
     /// Rapid `graph_changed` bursts are serialised through one worker: the

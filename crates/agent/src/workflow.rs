@@ -923,11 +923,10 @@ async fn execute_tools_parallel(
             None
         };
 
-    // One sink per turn: every `ToolContext` clone below shares it, and it is
-    // dropped (worker exits) when this function returns. `EventBus` is `Clone`
-    // (shares subscriber channels), so no signature change is needed to get
-    // an `Arc<EventBus>`.
-    let event_sink: Arc<dyn graphirm_tools::ToolEventSink> = Arc::new(EventBusSink::new(
+    // One sink per turn, shared by every `ToolContext` clone handed to a tool.
+    // `EventBus` is `Clone` (shares subscriber channels), so no signature
+    // change is needed to get an `Arc<EventBus>`.
+    let sink = Arc::new(EventBusSink::new(
         Arc::new(events.clone()),
         session.graph.clone(),
     ));
@@ -941,12 +940,44 @@ async fn execute_tools_parallel(
         turn: session.current_turn(),
         turn_pos_counter: session.turn_position_counter(),
         knowledge_retriever,
-        impact_provider: impact_provider.clone(),
+        impact_provider,
         disable_bash: session.agent_config.disable_bash,
         auto_link_write_to_planning: session.agent_config.auto_link_write_to_planning,
-        event_sink: Some(event_sink),
+        event_sink: Some(Arc::clone(&sink) as Arc<dyn graphirm_tools::ToolEventSink>),
     };
 
+    // `ctx` is moved into `run_tool_calls` and dropped (along with every clone
+    // spawned into tool tasks) before it returns, on success and error alike.
+    let result = run_tool_calls(session, tools, response_id, tool_calls, events, cancel, ctx).await;
+
+    // Drain the sink *before* the caller emits its own turn-end GraphUpdate, so
+    // a `graph_changed` queued at the tail of a tool's run can never be emitted
+    // after it and regress the view. `try_unwrap` fails only if a tool stashed
+    // `ctx.event_sink` somewhere that outlives `execute`, or a tool task is
+    // still winding down after a join error.
+    match Arc::try_unwrap(sink) {
+        Ok(s) => s.close().await,
+        Err(_) => tracing::warn!(
+            "EventBusSink still shared at turn end (a tool stashed ctx.event_sink or is \
+             still running); GraphUpdate ordering not guaranteed for this turn"
+        ),
+    }
+
+    result
+}
+
+/// Body of [`execute_tools_parallel`]: partition, run, and record every tool
+/// call in `tool_calls` using `ctx`. Takes `ctx` by value so that all
+/// references to its `event_sink` are gone when this returns.
+async fn run_tool_calls(
+    session: &Session,
+    tools: &ToolRegistry,
+    response_id: &NodeId,
+    tool_calls: &[&graphirm_llm::ContentPart],
+    events: &EventBus,
+    cancel: &CancellationToken,
+    ctx: ToolContext,
+) -> Result<Vec<NodeId>, AgentError> {
     // Partition tool calls: destructive ones go through sequential HITL approval,
     // safe ones run in parallel without gating.
     // `.copied()` turns `&&ContentPart` (from iterating `&[&ContentPart]`) into
@@ -998,9 +1029,20 @@ async fn execute_tools_parallel(
         });
     }
 
+    // Drain every task before propagating a join error so no spawned clone of
+    // `ctx` outlives this function (the sink is closed right after we return).
     let mut exec_results = Vec::new();
+    let mut join_error: Option<AgentError> = None;
     while let Some(join_result) = set.join_next().await {
-        exec_results.push(join_result.map_err(|e| AgentError::Join(e.to_string()))?);
+        match join_result {
+            Ok(r) => exec_results.push(r),
+            Err(e) => {
+                join_error.get_or_insert_with(|| AgentError::Join(e.to_string()));
+            }
+        }
+    }
+    if let Some(e) = join_error {
+        return Err(e);
     }
 
     // Phase 2: record safe tool results to graph (best-effort — log failures
@@ -1102,7 +1144,7 @@ async fn execute_tools_parallel(
                 let exec_result = tool.execute(exec_args.clone(), &ctx).await;
 
                 // Compute impact brief (if applicable)
-                let impact_brief_text = if let Some(ref provider) = impact_provider {
+                let impact_brief_text = if let Some(ref provider) = ctx.impact_provider {
                     pre_edit_impact_brief(
                         provider.as_ref(),
                         name,
@@ -2481,10 +2523,19 @@ mod tests {
             .await
             .unwrap();
 
+        // With the caller's bus gone, the only remaining senders would belong
+        // to a leaked sink or its worker. The channel must therefore report
+        // closed (`None`) once the buffered events are drained.
+        drop(bus);
         let mut events = vec![];
         while let Ok(e) = rx.try_recv() {
             events.push(e);
         }
+        let closed = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
+        assert!(
+            matches!(closed, Ok(None)),
+            "EventBusSink or its worker leaked past the turn: {closed:?}"
+        );
 
         // The sub-step reported through the sink surfaces as a ToolStart on
         // the same bus, alongside the loop's own ToolStart for the outer tool.
@@ -2492,26 +2543,50 @@ mod tests {
             .iter()
             .filter_map(|e| match e {
                 AgentEvent::ToolStart {
-                    call_id, tool_name, ..
-                } => Some((call_id.as_str(), tool_name.as_str())),
+                    response_node_id,
+                    call_id,
+                    tool_name,
+                } => Some((call_id.as_str(), tool_name.as_str(), response_node_id)),
                 _ => None,
             })
             .collect();
         assert!(
-            tool_starts.contains(&("call_1", "outer_tool")),
+            tool_starts
+                .iter()
+                .any(|(id, name, _)| (*id, *name) == ("call_1", "outer_tool")),
             "missing loop ToolStart: {tool_starts:?}"
         );
-        assert!(
-            tool_starts.contains(&("sub:1", "sub_tool")),
-            "missing sink ToolStart: {tool_starts:?}"
-        );
-
-        // One ToolEnd from the sink (sub-step) + one from the loop (outer tool).
-        let tool_ends = events
+        let sink_node = tool_starts
             .iter()
-            .filter(|e| matches!(e, AgentEvent::ToolEnd { .. }))
-            .count();
-        assert_eq!(tool_ends, 2);
+            .find(|(id, name, _)| (*id, *name) == ("sub:1", "sub_tool"))
+            .map(|(_, _, node)| (*node).clone())
+            .unwrap_or_else(|| panic!("missing sink ToolStart: {tool_starts:?}"));
+
+        // One ToolEnd carries the sink's node (the tool's `interaction_id`);
+        // the other is the loop's own, pointing at the recorded `role: "tool"`
+        // Interaction for the outer call.
+        let tool_end_nodes: Vec<&NodeId> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ToolEnd { node_id, .. } => Some(node_id),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            tool_end_nodes.contains(&&sink_node),
+            "missing sink ToolEnd for {sink_node}: {tool_end_nodes:?}"
+        );
+        let loop_tool_end = tool_end_nodes.iter().any(|id| {
+            **id != sink_node
+                && matches!(
+                    graph.get_node(id).map(|n| n.node_type),
+                    Ok(NodeType::Interaction(d)) if d.role == "tool"
+                )
+        });
+        assert!(
+            loop_tool_end,
+            "missing loop ToolEnd on a role=tool node: {tool_end_nodes:?}"
+        );
     }
 
     #[tokio::test]
