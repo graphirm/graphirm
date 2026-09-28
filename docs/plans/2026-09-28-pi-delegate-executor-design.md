@@ -426,18 +426,56 @@ cancel-without-kill (pre-existing, noted for the backlog).
 | 13 | `delegate_pi.is_destructive() == true` | Non-destructive (Pi's calls are judged anyway) | The human should approve handing the workspace to an ungated executor; also gives B5 a natural confirm card with the brief. |
 | 14 | Registered only when `[agent.pi].enabled`; binary probed at registration but absence is non-fatal | Fail startup when misconfigured | Spoke image has no node; the model should see a clear tool error rather than the server refusing to start. |
 | 15 | Parser in its own module with no process imports | Inline in the tool | Same parser serves `--mode rpc` later (same event records on stdout). |
+| 16 | Default Pi model `openrouter` / `deepseek/deepseek-v4-flash` (approved) | `deepseek/deepseek-v3.2` (graphirm's chat default) | Matches the codeporate Pi setup that is already known to work; Pi's model string is independent of graphirm's. |
+| 17 | `[agent] default_auto_approve = true` (approved) | Keep per-request `auto_approve` defaulting to `false` | With `delegate_pi` destructive (13), a default of `false` would pause every delegation; `hitl_judge` ≥ 0.8 still pauses graphirm's own risky calls. |
+| 18 | `bash.rs` cancel fix folded into A1 (approved); `delegate` server/TUI wiring proposed as A1b pending size confirmation | Backlog both | User asked to fix now; the bash fix is S and touches the same file family. The delegate wiring is M (no registry, no subagent configs, no factory in server/TUI) and deserves its own section. |
+| 19 | **Proposed:** `--no-approve` by default (`trust_project = false`) | `--approve` (brief's A0 text, codeporate precedent) | Pi's security doc: `--approve` loads project `.pi/extensions` that run inside Pi's process. We pass the task via argv and need nothing from `.pi/`; `AGENTS.md` loads regardless. Awaiting approval (Q5). |
+| 20 | **Proposed:** `extra_args` default `["--no-extensions", "--no-skills", "--no-prompt-templates"]`; child env `PI_SKIP_VERSION_CHECK=1` | Inherit user's Pi extensions; let Pi ping pi.dev | Keeps the JSONL stream to documented built-ins in v1; no network ping per delegation. Awaiting approval (Q6). |
+
+## Pi dos and don'ts (from pi.dev and the `pi-mono` docs, read 2026-09-28)
+
+What Pi's own documentation says about running it unattended, and what each point
+means for this design.
+
+| Pi says | Consequence here |
+|---|---|
+| "Pi does not ask before every tool call. Treat model-generated commands and code as untrusted." (security.md) | Matches observe-only v1. The **session workspace is not a security boundary**; Pi runs with graphirm's OS user. On a shared or public spoke `delegate_pi` must stay disabled (it already is under `disable_bash`). Real isolation = container/VM (Pi's containerization.md); follow-up for the spoke. |
+| "Watching the transcript, using project trust, and reviewing changes do not create a security boundary." | The judge's `p_irreversible` is telemetry and UI signal, not protection. The design doc and tool description say so. |
+| Project trust gates `.pi/settings.json`, `.pi/extensions|skills|prompts|themes`, `.pi/SYSTEM.md`, project `.agents/skills`. `--approve` trusts them for the run; `--no-approve` skips them. **`AGENTS.md`/`CLAUDE.md` load regardless.** | **Proposed change to D1:** default to `--no-approve`, not `--approve`. A workspace repo can ship `.pi/extensions/*.ts` that execute inside Pi's process; the director should not grant that by default. New config `trust_project = false` (→ `--no-approve`; `true` → `--approve`). Codeporate used `--approve` because its worktrees carried `.pi/oneshot_prompt.txt`; we pass the task via argv, so we need nothing from `.pi/`. Pi still reads the repo's `AGENTS.md`, which is what we want. |
+| Non-interactive modes (`-p`, `--mode json`, `--mode rpc`) never show the trust prompt. | Confirms D7: the "asks for trust interactively" failure cannot occur. |
+| Extensions are TypeScript modules running **inside the Pi process** with its permissions; user-level ones load from `~/.pi/agent/extensions` regardless of project trust and can add events (`extension_ui_request`, custom tools). | **Proposed default** `extra_args = ["--no-extensions", "--no-skills", "--no-prompt-templates"]` so the JSONL stream and tool set are the documented built-ins. Users who want their extensions remove the flags. Keeps the parser's assumptions true in v1. |
+| `PI_SKIP_VERSION_CHECK` disables the `pi.dev` latest-version request; `PI_OFFLINE` disables all startup network activity (also model-catalog refresh). | Set `PI_SKIP_VERSION_CHECK=1` in the child env (no version ping per delegation, no "update available" noise on stderr). Do **not** set `PI_OFFLINE` — it may block provider catalog data OpenRouter models need. |
+| Pi sets `AI_AGENT=pi` and `PI_CODING_AGENT=true` in child processes; its `bash` tool gets `PI_SESSION_ID`, `PI_PROVIDER`, `PI_MODEL`. | Useful for the A4 live check (`printf '%s/%s' "$PI_PROVIDER" "$PI_MODEL"` proves which model ran). Nothing to build. |
+| Sessions auto-save under `~/.pi/agent/sessions/` by cwd; `--no-session` makes the run ephemeral. | Keep `--no-session`: graphirm's graph is the record. Without it every delegation would leave a session file on disk outside the graph. |
+| "Files, comments, instructions, command output … can steer the model through prompt injection." | Pi's final message and tool results enter the director's context as tool output. The director already treats tool results as data; the summary must not be re-injected as a system or user message. Noted in D2. |
+| "Use snapshots, backups, or version control before substantial changes." | The system-prompt paragraph for `delegate_pi` (D5) tells the director to work on a clean git state or a branch and to verify with its own tools afterwards. |
+| "Review sessions before exporting or sharing them. They can contain … credentials exposed during the conversation." | Applies to our recorded fixture (scrub) and to graph exports of sessions that used Pi. |
+| Pi's core skips sub-agents and plan mode by design; the RPC mode and the `tool_call` extension event (`{ block: true, reason }`) are the documented ways to steer or gate. | Confirms the follow-up path for gating: either `--mode rpc` (same events + stdin commands) or a small Pi extension calling graphirm's judge. D1's parser split keeps both open. |
 
 ## Open questions for the approver
 
 1. ~~Default Pi model~~ **Answered 2026-09-28:** `provider = "openrouter"`,
    `model = "deepseek/deepseek-v4-flash"`.
-2. **Decision 6** (`Interaction --Produces--> Task`): fine to add, or keep the exact
-   in-process shape with Agent edge only?
-3. **Decision 13** (gate `delegate_pi` in the parent's HITL): if auto-approve is on
-   this is moot; if off, every delegation asks once. Acceptable?
-4. Should the pre-existing gaps found here (`delegate` unreachable from server/TUI;
-   `bash.rs` leaks the child on cancel) go to the backlog now, or be fixed inside
-   A1 since the sink work touches the same lines? Default: backlog.
+2. ~~Decision 6~~ **Answered 2026-09-28: yes** — add `Interaction --Produces--> Task`.
+3. ~~Decision 13~~ **Answered 2026-09-28: yes, and auto-approve should be on by
+   default.** Today `auto_approve` is a per-request flag on `POST /api/sessions`
+   defaulting to `false`. Add `[agent] default_auto_approve = true` (used when the
+   request omits the flag; the TUI reads the same setting). The `hitl_judge` still
+   adds a pause for graphirm's own calls scoring ≥ 0.8, so the safety net stays.
+   Scheduled in A2 (config phase).
+4. ~~Pre-existing gaps~~ **Answered 2026-09-28: fix now.** Split by size:
+   - `bash.rs` cancel leaks the child — **S**, folded into A1 (`kill_on_drop(true)`
+     + explicit kill on cancel/timeout; one test asserting the pid is gone).
+   - `delegate` unreachable from server/TUI — **M, not a fix**: the server and TUI
+     have no `AgentRegistry`, no subagent TOMLs (`config/agents/` does not exist),
+     and no `LlmFactory`; `SubagentTool` also needs the per-prompt `EventBus`, so
+     the registry must be composed per prompt in `routes.rs` and `chat.rs`. Doing it
+     means deciding which subagents exist and which models they run. Proposed as
+     **A1b** (own plan section, own commits) — confirm or leave in the backlog.
+5. **New — trust default:** switch D1 from `--approve` to `--no-approve`
+   (`trust_project = false`) per the dos/don'ts table? Recommended.
+6. **New — extension defaults:** `extra_args` default
+   `["--no-extensions", "--no-skills", "--no-prompt-templates"]`? Recommended for v1.
 
 ## A4 findings
 
