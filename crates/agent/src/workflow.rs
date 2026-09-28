@@ -1049,8 +1049,14 @@ async fn execute_tools_parallel(
 
         let gate_key = NodeId::from(call_id.as_str());
 
-        // If auto-approve is enabled, skip the gate entirely.
-        let decision = if hitl.is_auto_approve() {
+        // Auto-approve skips the gate — unless the additive judge scores this
+        // call irreversible, in which case it falls through to the human gate
+        // (or, headless, is merely recorded). The judge never removes a pause.
+        let judge_outcome = hitl.judge_auto_approve(name, arguments).await;
+        let auto_approved =
+            hitl.is_auto_approve() && !judge_outcome.as_ref().is_some_and(|o| o.pause);
+
+        let decision = if auto_approved {
             HitlDecision::Approve
         } else {
             events.emit(AgentEvent::AwaitingApproval {
@@ -1142,6 +1148,9 @@ async fn execute_tools_parallel(
                 tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(call_id));
                 tool_metadata.insert("tool_name".to_string(), serde_json::json!(&name));
                 tool_metadata.insert("is_error".to_string(), serde_json::json!(is_error));
+                if let Some(ref outcome) = judge_outcome {
+                    tool_metadata.insert("hitl_judge".to_string(), outcome.to_metadata());
+                }
 
                 let mut tool_node = GraphNode::new(NodeType::Interaction(InteractionData {
                     role: "tool".to_string(),

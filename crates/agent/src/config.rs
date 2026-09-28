@@ -190,6 +190,9 @@ pub struct AgentConfig {
     /// with a strategy-based selection (rules, prompt classifier, or A/B experiment).
     #[serde(default)]
     pub adaptive_routing: Option<AdaptiveRoutingConfig>,
+    /// Additive Jev gate on destructive tool arguments in auto-approve mode.
+    #[serde(default)]
+    pub hitl_judge: Option<HitlJudgeConfig>,
     /// When true, automatically compact old interactions when context usage exceeds
     /// `compaction_threshold` (default 0.80). Disabled by default; enable in `[agent]` config.
     #[serde(default)]
@@ -338,6 +341,38 @@ fn default_jev_timeout_ms() -> u64 {
     1500
 }
 
+/// `[agent.hitl_judge]` — additive HITL gate on destructive tool *arguments*.
+///
+/// When enabled, auto-approve mode asks Jev "is this call irreversible?" and
+/// pauses (or, headless, records) calls scoring at or above `threshold`. Uses
+/// `[agent.adaptive_routing.jev]` for endpoint / key / model. Never removes a
+/// pause; absent or disabled means today's behaviour exactly.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HitlJudgeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// P(irreversible) at or above which auto-approve adds a pause. Default 0.8.
+    #[serde(default = "default_hitl_judge_threshold")]
+    pub threshold: f64,
+    /// Per-call timeout; on timeout the call is auto-approved as before.
+    #[serde(default = "default_jev_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+impl Default for HitlJudgeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold: default_hitl_judge_threshold(),
+            timeout_ms: default_jev_timeout_ms(),
+        }
+    }
+}
+
+fn default_hitl_judge_threshold() -> f64 {
+    0.8
+}
+
 /// A single model candidate with pricing metadata.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelCandidateConfig {
@@ -476,6 +511,7 @@ impl Default for AgentConfig {
             timeout_seconds: default_timeout_seconds(),
             model_routing: None,
             adaptive_routing: None,
+            hitl_judge: None,
             enable_compaction: false,
             max_continuations: default_max_continuations(),
             pre_completion_verify: true,
@@ -554,6 +590,8 @@ struct AgentConfigSection {
     #[serde(default)]
     adaptive_routing: Option<AdaptiveRoutingConfig>,
     #[serde(default)]
+    hitl_judge: Option<HitlJudgeConfig>,
+    #[serde(default)]
     enable_compaction: bool,
     #[serde(default = "default_max_continuations")]
     max_continuations: u32,
@@ -625,6 +663,7 @@ impl AgentConfig {
             timeout_seconds: file.agent.timeout_seconds,
             model_routing: file.agent.routing,
             adaptive_routing: file.agent.adaptive_routing,
+            hitl_judge: file.agent.hitl_judge,
             enable_compaction: file.agent.enable_compaction,
             max_continuations: file.agent.max_continuations,
             pre_completion_verify: file.agent.pre_completion_verify,
@@ -1362,6 +1401,57 @@ segment_filter = ["reasoning", "code"]
     }
 
     #[test]
+    fn hitl_judge_absent_is_none() {
+        let toml = r#"
+            [agent]
+            name = "test"
+            model = "fallback"
+            system_prompt = "test"
+            max_turns = 5
+        "#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        assert!(config.hitl_judge.is_none());
+    }
+
+    #[test]
+    fn hitl_judge_parses_with_defaults() {
+        let toml = r#"
+            [agent]
+            name = "test"
+            model = "fallback"
+            system_prompt = "test"
+            max_turns = 5
+
+            [agent.hitl_judge]
+            enabled = true
+        "#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        let j = config.hitl_judge.unwrap();
+        assert!(j.enabled);
+        assert!((j.threshold - 0.8).abs() < 1e-9);
+        assert_eq!(j.timeout_ms, 1500);
+    }
+
+    #[test]
+    fn hitl_judge_parses_explicit_threshold_and_timeout() {
+        let toml = r#"
+            [agent]
+            name = "test"
+            model = "fallback"
+            system_prompt = "test"
+            max_turns = 5
+
+            [agent.hitl_judge]
+            enabled = true
+            threshold = 0.6
+            timeout_ms = 900
+        "#;
+        let j = AgentConfig::from_toml(toml).unwrap().hitl_judge.unwrap();
+        assert!((j.threshold - 0.6).abs() < 1e-9);
+        assert_eq!(j.timeout_ms, 900);
+    }
+
+    #[test]
     fn adaptive_routing_jev_config_parses_local_provider() {
         let toml = r#"
             [agent]
@@ -1405,5 +1495,15 @@ mod default_toml_tests {
         let ar = config.adaptive_routing.expect("adaptive_routing present");
         assert_eq!(ar.strategy, "jev");
         assert!(ar.jev.expect("jev section").shadow, "shadow must be on");
+    }
+
+    #[test]
+    fn shipped_default_toml_enables_hitl_judge() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
+        let toml = std::fs::read_to_string(path).expect("read config/default.toml");
+        let config = AgentConfig::from_toml(&toml).expect("default.toml parses");
+        let judge = config.hitl_judge.expect("hitl_judge section");
+        assert!(judge.enabled);
+        assert!((judge.threshold - 0.8).abs() < 1e-9);
     }
 }

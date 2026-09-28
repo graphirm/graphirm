@@ -244,6 +244,16 @@ shadow = true      # DEC-0928i(a), 2026-09-28: measure agreement for a week befo
 [agent.adaptive_routing.objective]
 preset = "balanced"   # cost_focused | quality_first | speed | balanced
 
+# Additive HITL judge (DEC-0928j(b), 2026-09-28). In auto-approve mode Jev scores each
+# destructive call's *arguments* — "is this irreversible?" — and adds a pause at or
+# above `threshold`. It never removes a pause. Headless sessions (created with
+# auto_approve: true) are scored and the verdict recorded on the tool node as
+# metadata.hitl_judge, but never blocked. Shares [agent.adaptive_routing.jev] for
+# endpoint/key/model; without OPENROUTER_API_KEY auto-approve is unchanged.
+[agent.hitl_judge]
+enabled = true
+threshold = 0.8
+
 # For A/B experiment (uncomment to enable):
 # [agent.adaptive_routing.experiment]
 # strategy_a = "rules"

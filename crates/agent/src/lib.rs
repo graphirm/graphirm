@@ -9,6 +9,7 @@ pub mod error;
 pub mod escalation;
 pub mod event;
 pub mod hitl;
+pub mod hitl_judge;
 pub mod impact;
 pub mod import;
 pub mod knowledge;
@@ -34,7 +35,8 @@ pub use coordinator::Coordinator;
 pub use delegate::SubagentTool;
 pub use error::AgentError;
 pub use event::{AgentEvent, EventBus};
-pub use hitl::{HitlDecision, HitlGate, is_destructive_tool};
+pub use hitl::{HitlDecision, HitlGate, JudgeOutcome, is_destructive_tool};
+pub use hitl_judge::{DestructiveJudge, JudgeVerdict, build_judge};
 pub use import::{
     cursor::ParsedTranscript, cursor::ParsedTurn, cursor::parse_transcript,
     cursor::write_transcript,

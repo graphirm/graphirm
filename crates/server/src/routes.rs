@@ -372,7 +372,10 @@ async fn create_session(
         config.model_routing = None;
     }
 
-    let hitl = Arc::new(HitlGate::new());
+    let hitl = Arc::new(match graphirm_agent::build_judge(&config) {
+        Some(judge) => HitlGate::new().with_judge(judge),
+        None => HitlGate::new(),
+    });
     let graph_for_session = state.graph.clone();
     let config_clone = config.clone();
     let mut session =
@@ -384,7 +387,15 @@ async fn create_session(
     // Only wire up the HITL gate when the caller hasn't opted into auto-approve.
     // Programmatic clients (eval harnesses, tests) pass `auto_approve: true` to
     // bypass human confirmation for destructive tools (bash, write, edit).
-    if !body.auto_approve.unwrap_or(false) {
+    // With a judge configured, such headless sessions still get the gate in
+    // auto-approve + headless mode so every destructive call is scored and the
+    // verdict recorded on the tool node — never paused (nobody could answer).
+    let headless = body.auto_approve.unwrap_or(false);
+    if !headless {
+        session = session.with_hitl(hitl.clone());
+    } else if hitl.has_judge() {
+        hitl.set_auto_approve(true);
+        hitl.set_headless(true);
         session = session.with_hitl(hitl.clone());
     }
 
