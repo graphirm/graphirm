@@ -779,13 +779,12 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use async_trait::async_trait;
     use graphirm_graph::edges::EdgeType;
     use graphirm_graph::nodes::{
         AgentData, GraphNode, InteractionData, NodeId, NodeType, TaskData, TaskStatus,
     };
     use graphirm_graph::{Direction, GraphStore};
-    use graphirm_llm::{DecisionsClient, DecisionsTransport, LlmError};
+    use graphirm_llm::DecisionsTransport;
     use graphirm_tools::registry::ToolRegistry;
     use graphirm_tools::{Tool, ToolContext, ToolError, ToolEventSink};
     use serde_json::{Value, json};
@@ -793,7 +792,10 @@ mod tests {
 
     use super::*;
     use crate::config::{AgentConfig, PiConfig};
-    use crate::hitl_judge::{DestructiveJudge, JUDGE_ACTION_OBSERVED, JUDGE_QUESTION_ID};
+    use crate::hitl_judge::test_support::{
+        FailingTransport, HangingTransport, ReplyTransport, judge_with, noul_reply,
+    };
+    use crate::hitl_judge::{DestructiveJudge, JUDGE_ACTION_OBSERVED, JUDGE_VERSION};
     use crate::pi_delegate::PI_EXECUTOR;
 
     const FAKE_PI: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pi/fake_pi.sh");
@@ -1215,95 +1217,210 @@ mod tests {
         );
     }
 
-    // ---- judge (observe-only) ----
+    // ---- judge (observe-only; plan A3.1) ----
 
-    struct ReplyTransport(Value);
+    /// Pi tool names in [`judge_fixture`], in call order.
+    const JUDGE_FIXTURE_TOOLS: [&str; 3] = ["bash", "write", "read"];
 
-    #[async_trait]
-    impl DecisionsTransport for ReplyTransport {
-        async fn post(&self, _body: &Value) -> Result<Value, LlmError> {
-            Ok(self.0.clone())
-        }
-    }
-
-    struct FailingTransport;
-
-    #[async_trait]
-    impl DecisionsTransport for FailingTransport {
-        async fn post(&self, _body: &Value) -> Result<Value, LlmError> {
-            Err(LlmError::provider("judge down"))
-        }
-    }
-
-    fn judge_with(transport: Arc<dyn DecisionsTransport>, threshold: f64) -> Arc<DestructiveJudge> {
-        Arc::new(DestructiveJudge::new(
-            Arc::new(DecisionsClient::with_transport(transport)),
-            Duration::from_millis(500),
-            threshold,
-        ))
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn judge_verdicts_are_observed_not_gated() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let (ctx, _) = make_ctx(dir.path());
-        let reply = json!({"answers": {JUDGE_QUESTION_ID: {"type": "noul", "noul": 0.93}}});
-        let judge = judge_with(Arc::new(ReplyTransport(reply)), 0.8);
-        let tool = PiDelegateTool::new(fake_config(&[]), Some(judge));
-
-        let out = tool.execute(json!({"task": "t"}), &ctx).await.expect("ok");
-        assert!(
-            out.content
-                .contains("Judge: 4 calls ≥ 0.8 (observed, not gated)"),
-            "{}",
-            out.content
-        );
-
-        let task_id = delegated_tasks(&ctx)[0].id.clone();
-        let (_, meta) = task_data(&ctx.graph, &task_id);
-        assert_eq!(meta["judge_over_threshold"], 4);
-
-        let nodes = pi_nodes(&ctx.graph, &task_id);
-        for n in tool_nodes(&nodes) {
-            let name = n.metadata["tool_name"].as_str().expect("tool_name");
-            let judged = &n.metadata["hitl_judge"];
-            assert!(
-                matches!(name, "bash" | "write" | "edit"),
-                "fixture only has bash/write: {name}"
+    /// A Pi run with one `bash`, one `write` and one `read` call (the shipped
+    /// `hello-run.jsonl` has no non-destructive call), ending in a `stop`
+    /// message. Returns a `fake_config` that replays it.
+    fn judge_fixture(dir: &Path) -> PiConfig {
+        let mut lines = vec![r#"{"type":"session","id":"s","cwd":"/w"}"#.to_string()];
+        for (i, name) in JUDGE_FIXTURE_TOOLS.iter().enumerate() {
+            let args = match *name {
+                "bash" => json!({"command": "rm -rf build"}),
+                "write" => json!({"path": "a.txt", "content": "x"}),
+                _ => json!({"path": "a.txt"}),
+            };
+            lines.push(
+                json!({"type": "tool_execution_start", "toolCallId": format!("c{i}"),
+                       "toolName": name, "args": args})
+                .to_string(),
             );
-            assert_eq!(judged["action"], JUDGE_ACTION_OBSERVED, "{n:?}");
-            assert_eq!(judged["version"], crate::hitl_judge::JUDGE_VERSION);
-            assert!((judged["p_irreversible"].as_f64().expect("p") - 0.93).abs() < 1e-9);
-            assert!((judged["threshold"].as_f64().expect("t") - 0.8).abs() < 1e-9);
-            assert!(judged["latency_ms"].is_u64());
+            lines.push(
+                json!({"type": "tool_execution_end", "toolCallId": format!("c{i}"),
+                       "toolName": name, "isError": false,
+                       "result": {"content": [{"type": "text", "text": "ok"}]}})
+                .to_string(),
+            );
         }
+        lines.push(
+            json!({"type": "message_end", "message": {"role": "assistant",
+                   "content": [{"type": "text", "text": "done"}], "stopReason": "stop"}})
+            .to_string(),
+        );
+        lines.push(r#"{"type":"agent_end","willRetry":false}"#.to_string());
+        let path = dir.join("judge.jsonl");
+        std::fs::write(&path, lines.join("\n") + "\n").expect("fixture");
+        fake_config(&[
+            ("FAKE_PI_FIXTURE", &path.display().to_string()),
+            ("FAKE_PI_DELAY_MS", "0"),
+        ])
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn judge_failure_is_fail_soft() {
+    /// Runs [`judge_fixture`] with `judge`; returns the tool result text and
+    /// the Pi tool nodes keyed by `tool_name`.
+    async fn run_judge_fixture(
+        judge: Option<Arc<DestructiveJudge>>,
+    ) -> (String, Value, std::collections::BTreeMap<String, Value>) {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let (ctx, _) = make_ctx(dir.path());
-        let judge = judge_with(Arc::new(FailingTransport), 0.8);
-        let tool = PiDelegateTool::new(fake_config(&[]), Some(judge));
-
+        let tool = PiDelegateTool::new(judge_fixture(dir.path()), judge);
         let out = tool.execute(json!({"task": "t"}), &ctx).await.expect("ok");
-        assert!(
-            out.content
-                .contains("Judge: 0 calls ≥ 0.8 (observed, not gated)"),
-            "{}",
-            out.content
-        );
         let task_id = delegated_tasks(&ctx)[0].id.clone();
         let (task, meta) = task_data(&ctx.graph, &task_id);
         assert_eq!(task.status, TaskStatus::Completed);
-        assert!(meta.get("judge_over_threshold").is_none());
         let nodes = pi_nodes(&ctx.graph, &task_id);
-        assert_eq!(tool_nodes(&nodes).len(), 4, "every call still recorded");
-        assert!(
-            tool_nodes(&nodes)
-                .iter()
-                .all(|n| n.metadata.get("hitl_judge").is_none())
+        let by_name: std::collections::BTreeMap<String, Value> = tool_nodes(&nodes)
+            .into_iter()
+            .map(|n| {
+                let name = n.metadata["tool_name"].as_str().expect("tool_name");
+                (name.to_string(), n.metadata.clone())
+            })
+            .collect();
+        assert_eq!(
+            by_name.keys().map(String::as_str).collect::<Vec<_>>(),
+            {
+                let mut v = JUDGE_FIXTURE_TOOLS.to_vec();
+                v.sort_unstable();
+                v
+            },
+            "every fixture call recorded exactly once"
         );
+        (out.content, meta, by_name)
+    }
+
+    fn pi_judge(threshold: f64, p: f64) -> Arc<DestructiveJudge> {
+        judge_with(
+            ReplyTransport::new(noul_reply(p)),
+            Duration::from_millis(500),
+            threshold,
+        )
+    }
+
+    /// The `hitl_judge` metadata contract (design D2): same keys as the
+    /// in-process gate, `action = "observed"`, only on `bash` / `write` / `edit`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn judge_verdict_recorded_on_bash_write_edit_only() {
+        let (_, meta, nodes) = run_judge_fixture(Some(pi_judge(0.8, 0.93))).await;
+        assert_eq!(meta["judge_over_threshold"], 2);
+
+        for name in ["bash", "write"] {
+            let judged = &nodes[name]["hitl_judge"];
+            assert!(
+                judged.is_object(),
+                "{name} must carry hitl_judge: {nodes:?}"
+            );
+            assert_eq!(
+                judged
+                    .as_object()
+                    .expect("object")
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                [
+                    "action",
+                    "latency_ms",
+                    "p_irreversible",
+                    "threshold",
+                    "version"
+                ],
+                "{name}: exact key set"
+            );
+            assert_eq!(judged["version"], JUDGE_VERSION, "{name}");
+            assert_eq!(judged["action"], JUDGE_ACTION_OBSERVED, "{name}");
+            assert!(
+                (judged["p_irreversible"].as_f64().expect("p") - 0.93).abs() < 1e-9,
+                "{name}"
+            );
+            assert!(
+                (judged["threshold"].as_f64().expect("t") - 0.8).abs() < 1e-9,
+                "{name}"
+            );
+            assert!(judged["latency_ms"].is_u64(), "{name}: {judged}");
+        }
+        assert!(
+            nodes["read"].get("hitl_judge").is_none(),
+            "read is not judged: {:?}",
+            nodes["read"]
+        );
+    }
+
+    /// A judge that hangs (200 ms timeout) or errors never blocks the run:
+    /// every node is still created, none carries `hitl_judge`, the Task
+    /// completes. (The single `warn!` per run is not captured here.)
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn judge_error_is_fail_soft() {
+        let broken: [(&str, Arc<dyn DecisionsTransport>); 2] = [
+            ("hanging", Arc::new(HangingTransport)),
+            ("failing", Arc::new(FailingTransport)),
+        ];
+        for (label, transport) in broken {
+            let started = std::time::Instant::now();
+            let judge = judge_with(transport, Duration::from_millis(200), 0.8);
+            let (summary, meta, nodes) = run_judge_fixture(Some(judge)).await;
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "{label}: run must not wait on the judge: {:?}",
+                started.elapsed()
+            );
+            assert!(
+                summary.contains("Judge: 0 calls ≥ 0.8 (observed, not gated)"),
+                "{label}: {summary}"
+            );
+            assert!(
+                meta.get("judge_over_threshold").is_none(),
+                "{label}: {meta}"
+            );
+            for (name, node) in &nodes {
+                assert!(
+                    node.get("hitl_judge").is_none(),
+                    "{label}: {name} must not carry a verdict: {node}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn no_judge_means_no_key() {
+        let (summary, meta, nodes) = run_judge_fixture(None).await;
+        assert!(!summary.contains("Judge:"), "{summary}");
+        assert!(meta.get("judge_over_threshold").is_none(), "{meta}");
+        for (name, node) in &nodes {
+            assert!(node.get("hitl_judge").is_none(), "{name}: {node}");
+        }
+    }
+
+    /// The `Judge:` summary line counts verdicts at or above the configured
+    /// threshold over the judged calls only (bash + write here).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn summary_counts_over_threshold() {
+        let (high, meta, _) = run_judge_fixture(Some(pi_judge(0.8, 0.93))).await;
+        assert!(
+            high.contains("\nJudge: 2 calls ≥ 0.8 (observed, not gated)\n"),
+            "{high}"
+        );
+        assert_eq!(meta["judge_over_threshold"], 2);
+
+        let (low, meta, nodes) = run_judge_fixture(Some(pi_judge(0.8, 0.04))).await;
+        assert!(
+            low.contains("\nJudge: 0 calls ≥ 0.8 (observed, not gated)\n"),
+            "{low}"
+        );
+        assert!(meta.get("judge_over_threshold").is_none(), "{meta}");
+        // Under-threshold verdicts are still recorded, just not counted.
+        assert!(
+            (nodes["bash"]["hitl_judge"]["p_irreversible"]
+                .as_f64()
+                .expect("p")
+                - 0.04)
+                .abs()
+                < 1e-9
+        );
+
+        let (none, _, _) = run_judge_fixture(None).await;
+        assert!(!none.contains("Judge:"), "{none}");
     }
 
     // ---- registration + system-prompt notice ----

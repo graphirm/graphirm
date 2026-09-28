@@ -1305,9 +1305,8 @@ design doc.
 **Design:** `docs/plans/2026-09-28-pi-delegate-executor-design.md` (A0, approved 2026-09-28). **Plan:** `docs/plans/2026-09-28-pi-delegate-executor.md`.
 Phases: A1 `ToolEventSink` on `ToolContext` · ✅ A2 `delegate_pi` tool (subprocess, JSONL parser,
 graph writes, cancel, fake-`pi` offline tests) — done 2026-09-28, still `enabled = false` ·
-A3 `hitl_judge` observe-only on Pi's `bash`/`write`/`edit` (A2.7 already threads the judge;
-A3 = dedicated coverage + metadata contract) · A4 live check in whiteboard + TUI, then
-`enabled = true`.
+✅ A3 `hitl_judge` observe-only on Pi's `bash`/`write`/`edit` (metadata contract + fail-soft
+tests) — done 2026-09-28 · A4 live check in whiteboard + TUI, then `enabled = true`.
 
 **Key files:** `crates/tools/src/lib.rs`, `crates/agent/src/pi_delegate/`, `crates/agent/src/event_sink.rs`,
 `crates/agent/src/config.rs`, `config/default.toml`, `src/commands/{serve,chat}.rs`.

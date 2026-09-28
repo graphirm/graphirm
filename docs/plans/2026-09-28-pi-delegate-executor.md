@@ -881,7 +881,24 @@ metadata contract.
 **Commit** — `feat(agent): hitl_judge observe-only on Pi bash/write/edit (action=observed)`.
 Governance: A3 ticked in backlog, completion-log entry.
 
-- [ ] A3.1 done
+**Implementation notes (A3.1):**
+- No production change was needed: A2.7's `tool.rs` already met the contract. The four
+  tests passed on first run; a mutation check (judging every tool, not just
+  `is_destructive_tool`) made `judge_verdict_recorded_on_bash_write_edit_only` and
+  `summary_counts_over_threshold` fail, so the `read` exclusion is genuinely covered.
+- `hello-run.jsonl` has **no** `read` call (bash ×3, write ×1), so the tests build a
+  three-call fixture (`bash`, `write`, `read`) in a tempdir via `judge_fixture` and replay it
+  through `FAKE_PI_FIXTURE`; the `Judge:` count is therefore 2, not 4.
+- Transports live in `hitl_judge::test_support` (`#[cfg(test)] pub(crate)`): `ReplyTransport`
+  (+ `seen()`), `HangingTransport`, `FailingTransport`, `noul_reply`, `judge_with(transport,
+  timeout, threshold)`. A2.7's copies in `tool.rs` were deleted; its two judge tests were renamed
+  to the plan's names (`judge_verdicts_are_observed_not_gated` →
+  `judge_verdict_recorded_on_bash_write_edit_only`, `judge_failure_is_fail_soft` →
+  `judge_error_is_fail_soft`, which now covers both a hanging judge at 200 ms and an erroring one).
+- The "one `warn!` per run" is not asserted (no tracing capture helper in the crate); the tests
+  assert on the graph and summary only.
+
+- [x] A3.1 done
 
 ---
 

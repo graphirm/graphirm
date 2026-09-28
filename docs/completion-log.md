@@ -1,5 +1,18 @@
 # Graphirm Development Progress Log
 
+## 2026-09-28: Phase A3 — hitl_judge observe-only on Pi bash/write/edit — COMPLETE ✅
+
+- `hitl_judge` observe-only on Pi's `bash`/`write`/`edit`; `action = "observed"`; the metadata
+  contract (`version`, `p_irreversible`, `threshold`, `action`, `latency_ms` — exact key set, same
+  as the in-process gate) is tested; `read` is never judged; a hanging (200 ms) or erroring judge
+  is fail-soft (nodes created, no `hitl_judge` key, Task completes); `Judge: N calls ≥ T
+  (observed, not gated)` counts only over-threshold verdicts and is absent without a judge
+- No production change needed (A2.7 already met the contract; a mutation check confirmed the
+  tests catch judging `read`). Judge test transports moved to `hitl_judge::test_support`
+  (`ReplyTransport`, `HangingTransport`, `FailingTransport`, `noul_reply`, `judge_with`)
+- Key files: `crates/agent/src/hitl_judge.rs`, `crates/agent/src/pi_delegate/tool.rs`,
+  `docs/plans/2026-09-28-pi-delegate-executor.md` (A3.1 notes)
+
 ## 2026-09-28: Phase A2 — Pi delegate executor: plumbing, parser, process wrapper, graph writes, tool — COMPLETE ✅
 
 - `delegate_pi` ships end to end behind `[agent.pi] enabled = false` (flipped only after the A4
