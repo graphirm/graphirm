@@ -145,6 +145,7 @@ export function useSession(): UseSessionReturn {
   const selectSession = useCallback(async (id: string) => {
     const session = sessions.find(s => s.id === id) ?? { id } as Session;
     setCurrentSession(session);
+    if (typeof session.auto_approve === 'boolean') setAutoApprove(session.auto_approve);
     setPendingApproval(null);
     setStreamingMessage(null);
     setIsThinking(false);
@@ -159,6 +160,7 @@ export function useSession(): UseSessionReturn {
       if (list.length > 0) {
         const first = list[0];
         setCurrentSession(first);
+        if (typeof first.auto_approve === 'boolean') setAutoApprove(first.auto_approve);
         refresh(first.id).catch(console.error);
         subscribeSse(first.id);
       }
@@ -179,6 +181,7 @@ export function useSession(): UseSessionReturn {
     const session = await api.createSession(label, workspace);
     setSessions(prev => [session, ...prev]);
     setCurrentSession(session);
+    if (typeof session.auto_approve === 'boolean') setAutoApprove(session.auto_approve);
     setMessages([]);
     setGraphData(null);
     setPendingApproval(null);

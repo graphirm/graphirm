@@ -438,6 +438,82 @@ async fn test_create_session_explicit_auto_approve_false_overrides_config_defaul
     assert!(!handle.hitl.is_auto_approve());
 }
 
+/// A headless (auto-approve) session must still have a `HitlGate` attached to
+/// the agent-loop `Session`, so that toggling auto-approve OFF later via
+/// `POST /api/sessions/{id}/auto-approve` actually re-gates destructive tools
+/// (and the reported `auto_approve` field stays truthful).
+#[tokio::test]
+async fn test_toggle_auto_approve_off_regates_headless_session() {
+    let mut state = test_app_state();
+    state.default_config.default_auto_approve = true;
+    let app = create_router(state.clone());
+
+    let session = create_session_with_body(app.clone(), r#"{"agent": "toggle-off"}"#).await;
+    assert!(session.auto_approve);
+
+    {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&graphirm_server::SessionId::from(session.id.as_str()))
+            .expect("session handle stored");
+        assert!(
+            handle.session.hitl.is_some(),
+            "headless session must have a HitlGate attached to the agent loop"
+        );
+        assert!(handle.hitl.is_headless());
+        assert!(handle.hitl.is_auto_approve());
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/sessions/{}/auto-approve", session.id))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"enabled": false}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    {
+        let sessions = state.sessions.read().await;
+        let handle = sessions
+            .get(&graphirm_server::SessionId::from(session.id.as_str()))
+            .expect("session handle stored");
+        let gate = handle
+            .session
+            .hitl
+            .as_ref()
+            .expect("gate still attached after toggle");
+        assert!(
+            !gate.is_auto_approve(),
+            "the gate the agent loop consults must now require approval"
+        );
+        assert!(
+            Arc::ptr_eq(gate, &handle.hitl),
+            "handle and session share one gate"
+        );
+    }
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/sessions/{}", session.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let fetched: SessionResponse = serde_json::from_slice(&bytes).unwrap();
+    assert!(!fetched.auto_approve);
+}
+
 #[tokio::test]
 async fn test_session_rename() {
     let state = test_app_state();

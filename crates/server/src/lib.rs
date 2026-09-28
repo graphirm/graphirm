@@ -26,6 +26,58 @@ pub use types::{
     SessionResponse, SessionStatus, SseEvent, SseEventType, SubgraphQuery,
 };
 
+/// Build in-memory [`SessionHandle`]s for sessions restored from the graph.
+///
+/// Mirrors `POST /api/sessions` for HITL: every restored session gets a
+/// [`HitlGate`] attached, flagged from `[agent] default_auto_approve` and
+/// headless (nobody is watching a restored session), so the reported
+/// `auto_approve` field is truthful and `POST /api/sessions/{id}/auto-approve`
+/// re-gates the loop. Configured judges are attached as on create.
+pub fn build_restored_session_handles(
+    graph: &Arc<GraphStore>,
+    agent_config: &AgentConfig,
+    memory_retriever: Option<&Arc<MemoryRetriever>>,
+    restored: HashMap<String, SessionMetadata>,
+) -> HashMap<SessionId, SessionHandle> {
+    let mut handles: HashMap<SessionId, SessionHandle> = HashMap::new();
+    for (id_str, meta) in restored {
+        let mut config = agent_config.clone();
+        config.working_dir = meta
+            .workspace_path
+            .clone()
+            .unwrap_or_else(|| agent_config.working_dir.clone());
+        config.workspace_dir = meta.workspace_path.clone();
+        config.workspace_name = meta.workspace.clone();
+
+        let hitl = Arc::new(match graphirm_agent::build_judge(&config) {
+            Some(judge) => HitlGate::new().with_judge(judge),
+            None => HitlGate::new(),
+        });
+        hitl.set_auto_approve(agent_config.default_auto_approve);
+        hitl.set_headless(true);
+
+        let node_id = NodeId(id_str.clone());
+        let session = Session::restore(graph.clone(), node_id, config, meta.created_at)
+            .with_hitl(hitl.clone());
+        let session = if let Some(retriever) = memory_retriever {
+            session.with_memory_retriever(retriever.clone())
+        } else {
+            session
+        };
+        let handle = SessionHandle {
+            display_name: Arc::new(std::sync::RwLock::new(meta.name.clone())),
+            session: Arc::new(session),
+            signal: CancellationToken::new(),
+            join_handle: None,
+            status: crate::types::SessionStatus::Idle,
+            created_at: meta.created_at,
+            hitl,
+        };
+        handles.insert(SessionId(id_str), handle);
+    }
+    handles
+}
+
 // ── Server entry point ────────────────────────────────────────────────────────
 
 use std::collections::HashMap;
@@ -38,7 +90,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use graphirm_agent::knowledge::memory::MemoryRetriever;
-use graphirm_agent::{AgentConfig, HitlGate, Session};
+use graphirm_agent::{AgentConfig, HitlGate, Session, SessionMetadata};
 use graphirm_graph::{GraphStore, nodes::NodeId};
 use graphirm_llm::LlmProvider;
 use graphirm_tools::ToolRegistry;
@@ -111,35 +163,8 @@ pub async fn start_server(
             HashMap::new()
         });
 
-    let mut initial_sessions: HashMap<SessionId, SessionHandle> = HashMap::new();
-    for (id_str, meta) in restored {
-        let mut config = agent_config.clone();
-        config.working_dir = meta
-            .workspace_path
-            .clone()
-            .unwrap_or_else(|| agent_config.working_dir.clone());
-        config.workspace_dir = meta.workspace_path.clone();
-        config.workspace_name = meta.workspace.clone();
-
-        let node_id = NodeId(id_str.clone());
-        let session = Session::restore(graph.clone(), node_id, config, meta.created_at);
-        let session = if let Some(ref retriever) = memory_retriever {
-            session.with_memory_retriever(retriever.clone())
-        } else {
-            session
-        };
-        let hitl = Arc::new(HitlGate::new());
-        let handle = SessionHandle {
-            display_name: Arc::new(std::sync::RwLock::new(meta.name.clone())),
-            session: Arc::new(session),
-            signal: CancellationToken::new(),
-            join_handle: None,
-            status: crate::types::SessionStatus::Idle,
-            created_at: meta.created_at,
-            hitl,
-        };
-        initial_sessions.insert(SessionId(id_str), handle);
-    }
+    let initial_sessions =
+        build_restored_session_handles(&graph, &agent_config, memory_retriever.as_ref(), restored);
 
     info!(
         restored_count = initial_sessions.len(),

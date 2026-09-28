@@ -384,27 +384,29 @@ async fn create_session(
             .map_err(|e| ServerError::Internal(e.to_string()))?
             .map_err(ServerError::Agent)?;
 
-    // Only wire up the HITL gate when the session isn't in auto-approve mode.
+    // The HITL gate is always attached; auto-approve decides whether it pauses.
     // The request's `auto_approve` wins; when omitted, `[agent] default_auto_approve`
     // (true by default) decides, so destructive tools (bash, write, edit,
     // delegate_pi) don't block on a confirm card unless a client asks for it.
-    // With a judge configured, such headless sessions still get the gate in
-    // auto-approve + headless mode so every destructive call is scored and the
-    // verdict recorded on the tool node — never paused (nobody could answer).
-    let headless = body
-        .auto_approve
-        .unwrap_or(state.default_config.default_auto_approve);
-    if !headless {
-        session = session.with_hitl(hitl.clone());
-    } else {
-        // Always record the flag on the handle's gate so `SessionResponse.auto_approve`
-        // reflects the session's mode even when no gate is attached (no judge).
+    // Headless (auto-approve) sessions keep the gate attached so that
+    // `POST /api/sessions/{id}/auto-approve {enabled:false}` re-gates the loop,
+    // and, with a judge configured, every destructive call is still scored and
+    // the verdict recorded on the tool node — never paused (nobody could answer).
+    let (headless, auto_approve_source) = match body.auto_approve {
+        Some(v) => (v, "body"),
+        None => (state.default_config.default_auto_approve, "config_default"),
+    };
+    if headless {
         hitl.set_auto_approve(true);
-        if hitl.has_judge() {
-            hitl.set_headless(true);
-            session = session.with_hitl(hitl.clone());
-        }
+        hitl.set_headless(true);
     }
+    session = session.with_hitl(hitl.clone());
+    tracing::info!(
+        session_id = %session.id.0,
+        auto_approve = headless,
+        source = auto_approve_source,
+        "session created"
+    );
 
     if let Some(ref retriever) = state.memory_retriever {
         session = session.with_memory_retriever(retriever.clone());
