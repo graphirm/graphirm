@@ -65,3 +65,6 @@ web-app/dist/
 
 # Internal eval/research scripts (not user-facing)
 scripts/
+
+# Jev message tags (jev-hooks); local only
+.jev/

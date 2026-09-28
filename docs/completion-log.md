@@ -896,3 +896,330 @@ This session used the superpowers skills framework extensively:
 
 **Outcome:** High-quality implementation with zero defects delivered to production in single focused session.
 
+---
+
+# Phase table (moved out of AGENTS.md on 2026-09-28)
+
+Historical per-phase status, formerly `AGENTS.md ## Current State`. Kept verbatim.
+
+| Phase | What | Status |
+|-------|------|--------|
+| 0–9 | Scaffold → Knowledge layer (graph, LLM, tools, agent, multi-agent, context engine, TUI, HTTP, knowledge/HNSW) | ✅ done |
+| 10 | Structured LLM response segments (parse → persist → GLiNER2 fallback → context filter → eval) | ✅ done |
+| 11 | Web UI — browser graph visualization + chat | ✅ done |
+| 12 | `graph_query` tool — agent can query its own graph (bfs, list_type, keyword search) | ✅ done |
+| 13 | Interactive whiteboard graph — React + React Flow, node expansion (marked + hljs), grouping, steer-from-node, canvas annotations, keyboard shortcuts | ✅ done |
+| 14 | Per-session workspaces — `workspaces_root` config, named workspace directories, persisted in Agent node metadata, restored on restart | ✅ done |
+| 15 | Incremental SSE graph updates — `GraphUpdate` payload carries full node/edge patch; web-app applies patches without full re-fetch or canvas re-layout | ✅ done |
+| 16 | Cross-session knowledge linking — `session_id` in Knowledge metadata, HNSW-based `find_cross_session_links`, `RelatesTo` edges between sessions | ✅ done |
+| 17 | Custom tool plugins — `ScriptTool` loads TOML manifests from `~/.graphirm/plugins/`, executes shell commands, `is_destructive` flag respected by HITL gate | ✅ done |
+| 18 | Semantic `graph_query` mode — `KnowledgeRetriever` trait, HNSW cosine similarity search (`1-d²/2`), scores in output, graceful fallback | ✅ done |
+| 19 | Subagent workspace isolation + multi-file tools — `parent_working_dir` in `spawn_subagent`, subagents get `<workspace>/subagents/<name>-<id>/`; `diff` (file + git) and `read_many` (up to 20 files) tools, non-destructive | ✅ done |
+| 20 | Graph node search / filter — keyword + type filter pills in Toolbar; `applyFilterToNodes` stamps `hidden` on React Flow nodes; group nodes hidden when all children match; `matchCount` counter; Ctrl+F shortcut | ✅ done |
+| 21 | Session export — `GET /api/sessions/:id/export?format=markdown`; `render_session_markdown` in `crates/server/src/export.rs`; "↓ Export" button in SessionBar | ✅ done |
+| 22 | Graph-aware tool execution — `ImpactProvider` trait, tree-sitter bash path extraction, `GraphImpactProvider` (rg + Knowledge notes), risk scoring, pre-edit hook in workflow, per-turn cache | ✅ done |
+| 23 | `graph_diff` tool — session-aware blast radius: `git`/`paths` → dependents (rg) + stale Knowledge + risk scoring | ✅ done |
+| 24 | Repo briefing on session start — compact auto-injected summary (language breakdown, top files, recent knowledge) + on-demand `repo_briefing` tool (files/knowledge/git sections) | ✅ done |
+| 25 | Session flow traces — `session_trace` tool: `search` mode (Knowledge-anchored semantic or keyword fallback → ranked interaction traces per session) + `replay` mode (full chronological chain); `get_session_chain` in GraphStore; `compact`/`full` detail | ✅ done |
+| 25.5 | Lesson/convention briefing — `build_lessons_summary` queries `lesson`/`convention` Knowledge nodes, injects under `## Lessons from past sessions` in repo briefing | ✅ done |
+| 26 | Context auto-compaction trigger — `select_nodes_for_compaction` in `compact.rs`, `compaction_threshold` field in `ContextConfig`, hook in `stream_and_record` (sync, non-fatal); 4 new unit tests | ✅ done |
+| 27 | Web-app design system — spacing/typography/surface tokens in `theme.css`, light/dark theme via `useTheme` hook (`localStorage` + system preference), theme toggle in Toolbar, edge colors DRYed to CSS variables with theme-aware cache in `LabelledEdge.tsx` | ✅ done |
+| 26 | Read auto-truncate — files > 300 lines auto-truncated when no `offset`/`limit` provided; appends "Use offset and limit" notice; `MAX_AUTO_LINES` const in `read.rs` | ✅ done |
+| 28 | SQLite performance indices — `idx_nodes_created_at`, `idx_edges_created_at`, `idx_nodes_session_id` (json_extract), `idx_nodes_type_created` composite; all `CREATE INDEX IF NOT EXISTS`, safe on existing DBs | ✅ done |
+| 29 | Node-by-id TTL cache — `node_cache: Arc<RwLock<HashMap<NodeId, (GraphNode, Instant)>>>` in `GraphStore`; 60 s TTL; populated in `get_node`, invalidated in `update_node`; no public API changes | ✅ done |
+| 30 | Cursor transcript import — `graphirm import-cursor <path>` ingests Cursor `.txt` transcripts into the graph; state-machine parser in `crates/agent/src/import/cursor.rs`; idempotent via `source_file` metadata | ✅ done |
+| 31 | `list_nodes_by_type` SQL LIMIT fast path — no-filter calls push `LIMIT ?2` into SQL; filtered path gets `limit * 10` safety cap; eliminates full-table scans on common unfiltered queries | ✅ done |
+| 32 | `get_agent_nodes` TTL cache — 30 s `agent_nodes_cache` in `GraphStore`; invalidated on agent node write; reduces repeated SQLite scans during session restore | ✅ done |
+| 33 | Pinned Knowledge nodes — `pinned` metadata flag, `list_pinned_knowledge` in GraphStore, `build_pinned_summary` in briefing, `POST /api/knowledge` + `GET /api/knowledge/pinned` endpoints | ✅ done |
+| 34 | Model router — automatic per-turn cheap/smart model selection via `ModelRouter` with configurable rules | ✅ done |
+| 35 | `main.rs` extraction — split into `src/commands/` modules (1267→321 lines); cross-project dogfood setup (Graphirm deployed on Nodestradamus100 machine, `dogfood-ndstrms` skill) | ✅ done |
+| 36 | Adaptive model router — `RoutingStrategy` trait, `RuleRouter`, `PromptRouter`, `ExperimentRouter`, per-turn `TurnOutcome` tracking, composite `ObjectiveWeights` presets (cost_focused/quality_first/speed/balanced), A/B split config, `PATCH /api/sessions/:id/turns/:turn_id/rating`, `GET /api/routing/report` | ✅ done |
+| 37 | Graph context utilization telemetry — `ContextStats`, `build_context_with_stats`, metadata on assistant turns, `context_report` tool, `GET /api/sessions/:id/context-report` HTTP endpoint | ✅ done |
+| 38 | ModelRouter provider-prefix normalization — `model_for_tier` strips leading `provider/` segment; routing config now accepts `openrouter/vendor/model` format (consistent with `agent.model`); `same_provider` still correct; 2 tests updated | ✅ done |
+| 39 | Phase 37 telemetry validation — real-session query of `GET /api/sessions/{id}/context-report`; confirmed `turns_with_stats=1`, `briefing_included_count=1`, `avg_graph_token_pct=0` (expected for fresh session with no supplemental nodes) | ✅ done |
+| 40 | Agent continuity improvements — (a) `max_continuations` field + "Continuity rule" system-prompt section; auto-inject "Continue with the implementation." after text-only mid-task turns; default 0 (code), 2 in `default.toml`; (b) `enable_compaction` in `AgentConfig`, wired from TOML, `enable_compaction = true` in `default.toml`; (c) cross-session link params: `k 3→5`, `threshold 0.7→0.5` | ✅ done |
+| 41 | Spoke deploy — nodestradamus100 (91.98.94.217): Phase 38–40 binary scp'd, config updated (routing cheap/smart, enable_compaction, max_continuations), server restarted on :5555, 41 sessions restored | ✅ done |
+| 42 | Pre-completion verification hook — after first text-only turn following tool work, injects a 5-point verification checklist (cargo test, clippy, re-read requirements, git diff); `pre_completion_verify: bool` (default true); `verify_injected` guard fires once per session. **Bug fix:** `had_write_calls` flag prevents premature firing during read-only planning turns | ✅ done |
+| 43 | Doom loop detection — `file_edit_counts: HashMap<PathBuf, u32>` in `run_agent_loop`; incremented on `write`/`edit` tool calls; advisory user message injected when count equals `doom_loop_threshold` (default 5, 0 disables) | ✅ done |
+| 44 | Token/time budget awareness — in `stream_and_record`, after context is built, computes `usage_ratio = window.total_tokens / max_tok`; appends one-line warning to system message when highest crossed threshold found in `budget_warning_thresholds` (default [0.7, 0.9]); two tiers: <90% wrap-up nudge, ≥90% stop-new-tasks warning | ✅ done |
+| 45 | Structured work loop enforcement — `enforce_work_loop: bool` (default true); `create_session` appends "## Problem-Solving Framework" (Plan→Build→Verify→Fix) to system prompt; explicit instruction to transition from Plan to Build after ≤2 messages | ✅ done |
+| 46 | Phase-aware reasoning budget — `TaskPhase` enum (Planning/Implementation/Verification) in `TurnSignals`; `RoutingRule::PhaseMatch` for "reasoning sandwich" routing; `infer_task_phase()` from chain tool_name metadata; 5 new tests | ✅ done |
+| 47 | Model fallback chain — `cheap`/`smart` tiers accept `String \| Vec<String>` (custom serde deserializer); `models_for_tier()` returns full array; `LlmError::is_retryable()`; retry loop in `stream_and_record`; `FallbackAttempt` metadata on Interaction nodes; `same_provider()` validates all models | ✅ done |
+| 48 | Verification doom-loop fix — read-loop detection (`file_read_counts`, `read_loop_threshold`), post-verification exit guard, trimmed verify checklist, pinned convention | ✅ done |
+| 49 | Doom/read-loop advisory re-fire fix — `edited_this_turn`/`read_this_turn` vecs; advisory check only iterates paths touched in current turn, not all accumulated counts; prevents infinite apology loops | ✅ done |
+| 50 | Timeline cascade layout — `buildTurns()` partitions Interaction nodes by user-message boundaries; main row (user + final-assistant) at Y=80; intermediates cascade diagonally (60px X, 50px Y per step); compact 160×50px role-icon cards click to expand; `TimelineLayoutResult { nodes, bandPositions }` drives dynamic swimlane heights; `setLayoutMode` made mode-aware (no groups in timeline) | ✅ done |
+| 51 | Real SSE streaming — OpenRouter `stream()` replaced fake complete+chunk with direct reqwest POST (`stream: true`); SSE line parser, `process_sse_chunk`, tool call lifecycle, mpsc channel; verified on `app.graphirm.ai` with console timestamps (deltas over ~1s vs prior 2ms dump); 8 new tests | ✅ done |
+| 52 | Conversational tool gate — `tool_gate.rs`: heuristic `should_omit_tools_for_user_message` omits tool defs on short non-technical messages; `tool_gate_enabled` config (default true); `tools_gated: true` metadata on gated turns | ✅ done |
+| 53 | Automated trace analysis — `trace_analysis.rs`: `SessionDigest` extractor, 5 pattern detectors (over_tooling, doom_loops, token_waste, tool_errors_without_recovery, premature_completion), `build_trace_report` aggregation + suggestions; `graphirm trace-analysis` CLI; `GET /api/trace-analysis` endpoint; non-destructive `trace_analysis` built-in tool (`TraceAnalysisTool` in `trace_analysis_tool.rs`); 23+ tests | ✅ done |
+| 54 | Planning ↔ Task artifacts — `planning_link::link_planning_task_edge` + `task_in_scope_for_agent` (`DelegatesTo` / `SpawnedBy`); `graph_query` `project` **`link_task`**; auto-link delegated Task when `auto_link_write_to_planning` + `link_session`; web plan-filter copy; plan `docs/plans/2026-04-08-graph-query-artifacts-planning.md` | ✅ done |
+| 55 | **`fetch_url` tool** — non-destructive HTTP(S) GET (`reqwest`, rustls); timeout, redirect cap, UTF-8 body with byte cap; cancellation via `ToolContext.signal`; `infer_task_phase` read-only list | ✅ done |
+| 56 | Chat pane structured rendering — `segment_display_text` + Interaction `content` patch after segment persistence (strip JSON envelope); web-app `SegmentCard` + `segmentPartsForInteraction` from graph `Contains` edges; `cleanLegacyAssistantContent` for old rows; plan `docs/plans/2026-04-09-chat-pane-structured-rendering.md` | ✅ done |
+
+**Real SSE streaming (Phase 51):**
+- `crates/llm/src/openrouter.rs` — `OpenRouterProvider` now holds `http: reqwest::Client` + `api_key: String` alongside rig `CompletionsClient`; `complete()` unchanged (still uses rig)
+- `build_openai_body(messages, tools, config)` — converts `LlmMessage` to OpenAI JSON format (system/user/assistant/tool roles); tools to `function` format; sets `stream: true` + `stream_options.include_usage: true`
+- `stream()` — direct reqwest POST to `{base_url}/chat/completions`; spawns tokio task reading `response.chunk()`, buffering lines, parsing `data: {...}` SSE events; `SseChunk` deserialization structs; `process_sse_chunk()` emits `StreamEvent`s through `mpsc::channel(128)` → `ReceiverStream`
+- Tool call lifecycle: `ToolCallStart` on `id`+`name`, `ToolCallDelta` on argument fragments, `ToolCallEnd` on `finish_reason`; `active_tools: HashMap<usize, (String, String)>` tracks by stream index
+- Graceful: `data: [DONE]` → `Done(usage)`; stream-without-DONE → fallback `Done`; SSE comments (`: ...`) and unparseable lines silently skipped
+- Other providers (Anthropic, DeepSeek) still use fake streaming — to be updated when needed
+
+**Phases 42–46+48 — Harness Engineering (agent loop reliability):**
+- **Pre-completion verify (42):** `verify_injected: bool` in `run_agent_loop`; fires once when `pre_completion_verify && had_write_calls && !verify_injected`; injects user message with checklist (build, clippy, git diff). Config: `pre_completion_verify = true` in `default.toml`. Tests using mock providers set `pre_completion_verify: false`. `had_write_calls` (distinct from `had_tool_calls`) prevents premature firing on read-only planning turns.
+- **Doom loop detection (43, fixed 49):** `file_edit_counts: HashMap<PathBuf, u32>` incremented in the tool-call loop for `write`/`edit` by extracting the `path` argument from JSON. Advisory user message injected when `count == doom_loop_threshold`. Config: `doom_loop_threshold = 5`. Also sets `had_write_calls = true` — shares the same loop. **Fix (49):** advisory now only checks files in `edited_this_turn` vec (not all accumulated counts) — prevents re-firing on every subsequent turn when count stays at threshold.
+- **Budget awareness (44):** In `stream_and_record`, after context is assembled, computes `usage_ratio = window.total_tokens as f64 / max_tok as f64`; finds highest crossed threshold via `fold(NEG_INFINITY, f64::max)`; appends `ContentPart::text(warning)` to `context[0]` (system message). Config: `budget_warning_thresholds: Vec<f64>` (default [0.7, 0.9]; empty list disables; example commented out in `default.toml`).
+- **Structured work loop (45):** `enforce_work_loop: bool` (default true). In `create_session` (routes.rs), appends "## Problem-Solving Framework" (Plan→Build→Verify→Fix) to `config.system_prompt` after the repo briefing. Explicit instruction: transition from Plan to Build after at most 2 messages. Config: `enforce_work_loop = true` in `default.toml`.
+- **Phase-aware reasoning budget (46):** `TaskPhase` enum (Planning/Implementation/Verification) in `router.rs`; `task_phase: TaskPhase` added to `TurnSignals`; `RoutingRule::PhaseMatch { phase, tier }` enables the "reasoning sandwich" (smart→cheap→smart). `infer_task_phase(&chain)` inspects `tool_name` metadata on tool result nodes: no write/edit → Planning; write/edit exist but last 5 calls are all read-only → Verification; else Implementation. Wired into both adaptive and legacy `spawn_blocking` blocks in `stream_and_record`. Config: add `PhaseMatch` rules to `[[agent.routing.rules]]`.
+
+**Model fallback chain (Phase 47):**
+- `crates/agent/src/router.rs` — `ModelRoutingConfig.cheap`/`smart` changed from `String` to `Vec<String>` with `#[serde(deserialize_with = "deserialize_model_list")]`; custom deserializer accepts both `"model"` and `["model1", "model2"]` for backward compatibility
+- `model_for_tier(tier)` returns first model (index 0) with provider prefix stripped; `models_for_tier(tier) -> &[String]` returns full array for fallback iteration
+- `same_provider()` checks ALL models across both vecs share the same provider prefix (uses `HashSet`)
+- `FallbackAttempt { model, error, latency_ms }` — `Serialize` struct recorded per failed attempt
+- `crates/llm/src/error.rs` — `LlmError::is_retryable()`: `RateLimited`, `Provider`, `Stream`, `Request` → retryable; `InvalidModel`, `Config`, `Serde` → non-retryable
+- `crates/agent/src/workflow.rs` — `stream_and_record` retry loop: on retryable error, logs warning + pushes `FallbackAttempt`, tries next model in tier array; non-retryable errors or last model → immediate return
+- `fallback_chain` metadata persisted on Interaction node when non-empty (model, error string, latency per attempt)
+- Config: `cheap = ["model1", "model2"]` or `cheap = "model"` (backward compat) in `[agent.routing]`
+- 2 new tests for `is_retryable`; all existing router/strategy tests updated for `Vec<String>`; clippy clean
+
+**Verification doom-loop fix (Phase 48):**
+- **Read-loop detection:** `file_read_counts: HashMap<PathBuf, u32>` in `run_agent_loop`; incremented for `read` (single path) and `read_many` (all paths in array); advisory injected at `read_loop_threshold` (default 3). Write/edit resets the counter for that path (re-reading after an edit is expected). Config: `read_loop_threshold = 3` in `default.toml`.
+- **Post-verification exit:** When `verify_injected` is true and the agent produces a text-only turn (its summary), the loop breaks immediately — skipping auto-continuation which previously caused the agent to re-enter a read loop. This is the key structural fix.
+- **Trimmed verification checklist:** Removed "re-read the original task requirements" item (was item 3); added explicit "Do NOT re-read source files after a passing build" to the checklist.
+- **Pinned Knowledge convention:** `stop-after-build-passes` convention node pinned in graph — surfaced in every session's repo briefing, instructing the agent to stop immediately after a passing build.
+
+**Phase 37 — Graph Context Utilization Telemetry:**
+- **Phase 37a (foundation):** `ContextStats` struct with 6 fields (knowledge_count, cross_session_links_count, pinned_conventions_count, graph_token_percentage, repo_briefing_included, compaction_triggered); Serialize/Deserialize; 4 unit tests; registered as public module in `graphirm-agent` (commit 69faf79)
+- **Phase 37b (integration):** `build_context_with_stats` returns `(ContextWindow, ContextStats)`; `build_context` wraps and discards stats (backward compatible); `stream_and_record` persists `context_stats` JSON on assistant `Interaction` metadata; `compaction_triggered` set when auto-compaction succeeds; 8 new unit tests in `context.rs`
+- **Phase 37c (reporting):** `ContextReportTool` and `GET /api/sessions/:id/context-report` endpoint for correlation analysis
+- **Strategy:** Split into focused sub-phases to allow dogfood iteration; Phase 37a passed (graphirm autonomous execution); Phase 37b implemented in-repo; Phase 37c implemented directly (agent emitted text-only turn without writing files)
+
+**Segment-aware context filter:** `segment_filter` is now fully wired — set via `POST /api/sessions` → `AgentConfig` → `ContextConfig` per turn. Filter changes which prior assistant segments are reconstructed into the LLM context window.
+
+**Segment feature summary (Phase 10):**
+- `SegmentConfig` in `AgentConfig` — enable per-session via `POST /api/sessions` with `enable_segments: true`
+- LLM responses parsed into typed `Content` nodes (`code`, `reasoning`, `observation`, `plan`, `answer`) linked via `Contains` edges
+- Primary path: structured JSON output from LLM (system prompt injected by `build_segment_prompt`)
+- Fallback path: GLiNER2 ONNX span detection via `try_gliner2_fallback` (uses `ExtractionConfig.backend` model dir); optional `label_descriptions` / `label_min_confidence` and 512-token encoder cap — see `docs/guides/gliner2-setup.md` (Segment fallback)
+- Context engine: optional `segment_filter` in `ContextConfig` to include only specific segment types
+- Eval coverage: `cargo run -p graphirm-eval -- --filter segments` (uses `GraphContainsContentType` verifier)
+- See `docs/plans/2026-03-10-structured-llm-responses.md` and `docs/plans/2026-03-15-structured-segments-phase5-6.md`
+
+**Web UI summary (Phase 11 — vanilla JS, legacy):**
+- Standalone browser UI at `web/` — adapted from `graphirm-vscode/media/` with `acquireVsCodeApi()` replaced by direct `fetch()` + `EventSource`
+- Server serves static files via `tower-http::services::ServeDir` fallback — API routes at `/api/*` take precedence
+- Auto-discovery: `find_web_dir()` checks `web-app/dist/` first, then `web/` as fallback
+- Chat pane (markdown, HITL approval cards), graph pane (d3 force + timeline), session management
+- No build step, no framework, no auth — vanilla JS ES modules, ~1200 lines total
+
+**Interactive whiteboard UI summary (Phase 13 + subsequent):**
+- `web-app/` — React 19 + TypeScript + `@xyflow/react` v12, built with Vite 6
+- Node cards per type: InteractionNode, AgentNode, ContentNode, TaskNode, KnowledgeNode, AnnotationNode
+- Custom `LabelledEdge` — per-type colour + CSS variable cache, SmoothStep (hierarchical) / Bezier (cross-cutting)
+- Three layout modes: DAG (dagre), Timeline (X=time, Y=type band), Free (manual, localStorage)
+- **Node expansion** — click ▼ to expand; Interaction renders markdown (marked), Content shows syntax-highlighted code (hljs); NodeResizer for manual resize
+- **Visual grouping** — each Interaction + its produced nodes rendered inside a React Flow parent/group node with dashed boundary
+- **Steer-from-node** — expand any Interaction node → "↩ Steer from here" button pre-fills chat input with context root; sent via existing `POST /api/sessions/{id}/prompt`
+- **Canvas annotations** — double-click empty canvas or toolbar "+ Note" adds editable AnnotationNode; `POST /api/graph/{session_id}/annotate` persists as Knowledge node
+- **Keyboard shortcuts** — `F` fit-view, `L` cycle layout, `N` new session, `/` focus chat, `C` collapse/expand chat panel, arrow keys navigate nodes, `Enter` open popover, `R` quick-reply (Interaction nodes), `Escape` clear focus
+- MiniMap, Controls, dotted background grid — full pan/zoom/drag
+- **Auto-approve toggle** — SessionBar button enables/disables HITL gating per session; green when active
+- ChatPane with HITL approve/reject/modify cards, steer context banner; SessionBar with pause/resume/auto-approve
+- **Collapsible chat panel** — `C` key or ☰ toggle; panel collapses to 40px, graph auto-expands via flex; chat state preserved (no unmount)
+- **Floating command input** — `FloatingInput.tsx`; when chat is collapsed, `/` or `Enter` expands bottom-center input strip; sends via same `handleSend` path; `thinking` badge when agent is running
+- **Keyboard node navigation** — `useNodeNavigation` hook; arrow keys follow `produces`/`responds_to`/`contains` edges; `↑`/`↓` move between Y-sorted siblings; `FocusContext` provides focused ID to all node cards; focused node gets pulsing accent ring (CSS animation)
+- **Node popover** — `Enter` on focused node opens `NodePopover` with per-type actions (steer, rate, task status, pin, edit summary); fade-in animation, theme variables; double-click also opens
+- **Node quick-reply** — `R` on focused Interaction node opens inline `NodeReplyInput` (textarea + Send/Cancel, auto-focus); sets steer context and sends; `Escape` dismisses
+- **HITL on canvas** — `HitlOverlay` renders in canvasWrapper as bottom-center strip when approval pending; node matching `pendingApproval.node_id` gets warning pulse ring via `.pendingApproval` CSS class
+- **LOD (level-of-detail) zoom** — `ZoomContext` + 150ms debounced threshold; at low zoom all nodes collapse regardless of expand state (preferences preserved and restored on zoom-in); AnnotationNode compact at LOD
+- **Timeline swimlane backgrounds** — `swimlaneContainer` + per-type `swimlane` strips using `--node-*` CSS vars; screen-fixed overlay (doesn't pan/zoom with canvas)
+- **Timeline collision avoidance** — two-pass layout in `applyTimelineLayout()`: pass 1 maps timestamps→X; pass 2 groups by type band, sorts by X, nudges overlapping nodes right by 280px+32px gap; group nodes disabled in timeline mode (dagre only); bands spaced 140px apart; edge labels hidden below 0.6x zoom
+- **Timeline cascade layout** — `buildTurns()` partitions Interaction nodes by user-message boundaries; main row (user + final-assistant) at Y=80; intermediate tool/assistant-with-tool-calls nodes cascade diagonally (60px X-step, 50px Y-step); compact 160×50px role-icon cards, click to expand in-place; `TimelineLayoutResult { nodes, bandPositions }` drives dynamic swimlane heights; `setLayoutMode` made mode-aware (no groups in timeline)
+- **Layout stability on live SSE updates** — `positionNewNodes()` helper places incoming nodes relative to parents; `isPatchUpdate` flag skips full dagre re-run on patches, preserving existing positions
+- **Controlled node state** — `onNodesChange` uses `applyNodeChanges` from `@xyflow/react` (not a custom handler); required for React Flow v12 to finalize rendering after ResizeObserver dimension measurements
+- **Actual node dimensions in dagre** — `getNodeDimensions()` reads `node.measured.width/height`; per-type fallback estimates (Interaction 220×120, Agent 240×70, others 180×60–70)
+- **Animated layout transitions** — `.react-flow__node { transition: transform 0.3s ease }` in `theme.css`; React Flow auto-suspends during drag
+- **Focus-and-context zoom** — `selectedNodeId` + `dimmedNodeIds` (1-hop neighbors); non-neighbors at `opacity: 0.25`; `handlePaneClick` / `Escape` clears
+- **Color-coded nodes** — colored left border stripe + 12% tinted background per node type via `color-mix()` in `BaseCard`; Interaction role split: user=`--accent`, assistant=`--node-agent`
+- **Markdown rendering in chat** — `MarkdownBody` (marked + hljs) for assistant/tool messages; user messages plain text; collapsed-node preview strips markdown syntax
+- Bundle: React Flow 194 kB, highlight 21 kB (trimmed to 20 languages), dagre 43 kB, app ~313 kB — all chunks ≤ 500 kB
+- Dev: `cd web-app && npm run dev` (proxies `/api` → `localhost:3000`)
+- Build: `cd web-app && npm run build` → `web-app/dist/` (served automatically by `graphirm serve`)
+
+**Subagent workspace + multi-file tools (Phase 19):**
+- `graphirm_agent::workspace::sanitize_workspace_name` — shared from server; used for subagent dir names
+- `spawn_subagent(..., parent_working_dir: Option<PathBuf>)` — when `Some`, creates `<parent>/subagents/<agent>-<short_task_id>/`, sets `agent_config.working_dir`; `delegate` passes `ctx.working_dir`
+- `diff` tool — file mode (`file_a`/`file_b`, runs `diff -u`) and git mode (`mode: "git"`, optional `ref`/`path`/`cached`); non-destructive
+- `read_many` tool — `paths: string[]` (max 20), optional `max_lines_per_file` (default 500); concatenated output with `=== path (N lines) ===` headers; partial failures reported per file; non-destructive
+- Plan: `docs/plans/2026-03-19-agent-capability-subagent-ws-multifile.md`
+
+**Semantic graph_query (Phase 18):**
+- `KnowledgeRetriever` trait in `crates/tools/src/retriever.rs` — decouples tool from agent crate (avoids circular deps)
+- `MemoryRetriever` implements `KnowledgeRetriever` via `retrieve_with_scores`; L2→cosine: `similarity = (1 - d²/2).clamp(0,1)`
+- `ToolContext.knowledge_retriever: Option<Arc<dyn KnowledgeRetriever>>` — wired from `session.memory_retriever()` in `execute_tools_parallel`
+- `graph_query` `semantic` mode: embeds query, returns top-k Knowledge nodes with `sim=X.XXX` scores ordered by similarity
+- Returns `ExecutionFailed` with helpful message when no embedding provider is configured
+- 5 unit tests in `graph_query.rs` (happy path, no retriever, empty query, empty results, limit); 3 in `memory.rs` (scores bounded, empty index, score formula regression)
+
+**Custom tool plugins (Phase 17):**
+- `crates/tools/src/script.rs` — `PluginManifest` (TOML) + `ScriptTool` that implements `Tool`
+- Plugins live in `~/.graphirm/plugins/<name>/plugin.toml`; override dir via `GRAPHIRM_PLUGINS_DIR` env var
+- At startup, `build_tool_registry()` in `src/main.rs` scans the plugins dir, calls `ScriptTool::from_dir`, and registers each valid plugin; invalid plugins are skipped with a warning
+- Command execution: `bash -c <command>` in session `working_dir`; `${plugin_dir}` substituted in command string; args passed as `GRAPHIRM_ARGS` (JSON) and `GRAPHIRM_ARG_<KEY>` env vars
+- `Tool::is_destructive()` trait method added (default `false`); overridden to `true` in `BashTool`, `WriteTool`, `EditTool`; `ScriptTool` returns `manifest.destructive`
+- `ToolRegistry::is_destructive(name)` delegates to the registered tool's method
+- HITL gate check uses both legacy name list (`write`/`edit`/`bash`) **and** `ToolRegistry::is_destructive` — plugins with `destructive = true` are gated
+- Example plugin: `examples/plugins/hello/` — copy to `~/.graphirm/plugins/hello/` to try it
+
+**Cross-session knowledge linking (Phase 16):**
+- `persist_extracted_entities` stamps every new `Knowledge` node with `metadata["session_id"]` — enables HNSW results to be filtered by session without graph traversal
+- `session_id` threaded through `post_turn_extract → extract_knowledge_with_backend → persist_extracted_entities`
+- `MemoryRetriever.find_cross_session_links(node_id, exclude_session, k, min_similarity)` — embeds the node's text, queries HNSW with 3×k candidates, strips same-session and self matches, returns top-k `(NodeId, f64)` similarity pairs
+- `MemoryRetriever.persist_cross_session_links(source, links)` — writes `RelatesTo` edges with cosine similarity as edge weight; non-fatal (logs per-edge failures)
+- Wired in workflow after each successful `embed_knowledge_node` call; threshold `0.7`, top `3` per node
+- Three new unit tests in `knowledge::memory::tests`: cross-session discovery, empty-index guard, edge persistence
+
+**Incremental SSE graph updates (Phase 15):**
+- `AgentEvent::GraphUpdate` now carries `recent_edges` (edges touching the response + tool-result nodes) and `patch_nodes` (recent nodes + edge endpoints) in addition to `recent_nodes`
+- `agent_event_to_sse()` serialises `patch_nodes` and `recent_edges` directly into the SSE payload (`nodes`, `edges` keys) — `GraphNode` and `GraphEdge` both derive `Serialize`
+- Web-app `useSession`: `graph_update` events call `patchGraphData` (merge by ID, preserving existing positions) instead of a full `GET /api/graph` re-fetch; `tool_end` has no refresh handler (graph is updated by the following `graph_update`); `message_end` refreshes messages only via `api.getMessages`
+- `agent_end` / `error`: 500 ms debounced full reconciliation refresh (clears on unmount)
+- Build fix: `@dagrejs/dagre` pinned to `1.0.4` (uses `@dagrejs/graphlib@2.1.13`) — v1.1.8 shipped a broken graphlib tarball missing `data/priority-queue.js`
+
+**Per-session workspaces summary (Phase 14):**
+- Set `workspaces_root = "/workspaces"` in `[agent]` section of `config/default.toml` to enable
+- `POST /api/sessions` accepts optional `"workspace"` field; defaults to sanitized session name
+- Server calls `tokio::fs::create_dir_all(<root>/<workspace>/)` and sets it as the session's `working_dir`
+- Workspace name stored in Agent node metadata (`"workspace"` key) — survives SQLite restarts
+- On startup, `restore_sessions_from_graph` reconstructs `working_dir` from stored workspace name
+- `GET /api/sessions/:id` response includes `workspace` and `workspace_path` fields when active
+- Backward-compatible: when `workspaces_root` is unset, all behaviour is unchanged
+
+**Session export (Phase 21):**
+- `crates/server/src/export.rs` — `render_session_markdown(name, model, created_at, nodes)` → Markdown; user + assistant turns sorted by `created_at` (tool/system excluded); Knowledge nodes as pipe table with escaped cells; 5 unit tests
+- `GET /api/sessions/:id/export?format=markdown` — fetches subgraph (depth 10), renders, returns `text/markdown; charset=utf-8` with `Content-Disposition: attachment; filename="session-<name>.md"`; `format!=markdown` → 400; unknown session → 404
+- `ExportQuery` in `crates/server/src/types.rs` with `format` defaulting to `"markdown"`
+- "↓ Export" button in `SessionBar` — `window.open(url, '_blank')` triggers browser download
+
+**Repo briefing on session start (Phase 24):**
+- `crates/agent/src/briefing.rs` — `count_files_by_extension` (async dir walk, skips hidden/target/node_modules), `format_language_breakdown`, `collect_stems`, `find_top_files` (rg `--count --fixed-strings`, stems capped at 200), `count_mentions`, `build_knowledge_summary` (empty-string query → all nodes, `•` bullet format), `build_lessons_summary` (queries `lesson`/`convention` entity_type Knowledge nodes, merges + sorts by `created_at` DESC, formats as `- [lesson]/[convention] entity: summary`), `build_repo_briefing` (assembles all four sections including lessons, injected under `## Repo Briefing` header)
+- `crates/agent/src/config.rs` — `repo_briefing: bool` (default `true`), `#[serde(default = "default_repo_briefing")]`
+- `crates/server/src/routes.rs` — after workspace setup in `create_session`, calls `graphirm_agent::briefing::build_repo_briefing(&config.working_dir, state.graph.as_ref()).await` and appends result to `config.system_prompt` when `config.repo_briefing` is true
+- `crates/tools/src/repo_briefing.rs` — `RepoBriefingTool` with `section` param (`all`/`files`/`knowledge`/`git`); files section uses `rg --files` + top-dir breakdown; knowledge section queries 10 recent nodes; git section runs `git log --oneline -10` + `git diff --name-only HEAD`; registered in `build_tool_registry()`
+- 13 tests total: 4 formatting unit tests (empty map, sort order, truncation, stem uniqueness), 2 knowledge tests (empty store, format), 3 lessons tests (empty store, both types format, exclusion filter), 1 briefing assembly test (empty dir → None), 3 tool integration tests (name/params, knowledge empty, git section)
+- Plan: `docs/plans/2026-03-20-repo-briefing.md`
+
+**Context auto-compaction (Phase 26):**
+- `crates/agent/src/compact.rs` — `select_nodes_for_compaction(graph, agent_id, max_tokens, threshold_ratio, guaranteed_recent_turns, min_nodes_to_compact)`: walks conversation thread via `conversation_thread`, filters out already-compacted nodes via `is_compacted`, compares total token estimate to threshold, skips newest `guaranteed_recent_turns` nodes, returns oldest eligible IDs
+- `crates/agent/src/context.rs` — `compaction_threshold: f64` added to `ContextConfig` (`#[serde(default)]`, default `0.80`); `tracing::debug!` replaces prior `tracing::warn!` stub
+- `crates/agent/src/workflow.rs` — after `build_context` returns, `stream_and_record` checks `enable_compaction`, runs selection in `spawn_blocking`, then awaits `compact_context` synchronously (non-fatal: errors are `tracing::warn!` and skipped)
+- Enable via `enable_compaction = true` in `[context]` section of `config/default.toml`; tune with `compaction_threshold` (0.0–1.0)
+- 4 new unit tests: below-threshold returns empty, above-threshold returns oldest, skips compacted, respects min_nodes
+
+**`list_nodes_by_type` SQL LIMIT fast path + `get_agent_nodes` TTL cache (Phases 31–32):**
+- `list_nodes_by_type` fast path: when `session_id.is_none() && metadata_filter.is_none()`, uses `SELECT … LIMIT ?2` — SQLite returns only the needed rows, avoiding full-table scans; filtered path now has `limit * 10` safety cap
+- `agent_nodes_cache: Arc<RwLock<Option<(Vec<(GraphNode, AgentData)>, Instant)>>>` added to `GraphStore`; `AGENT_NODES_CACHE_TTL = 30s`; both `open()` and `open_memory()` initialize to `None`
+- `get_agent_nodes`: scoped read-lock check (`if let Some((cached, ts)) = &*cache && ts.elapsed() < AGENT_NODES_CACHE_TTL`); populates on miss under write-lock
+- Invalidated in `add_node` and `update_node` when `node_type.type_name() == "agent"` — uses let-chain `&&` to collapse nested if (clippy compliant)
+- 71 graph tests pass; clippy clean; zero new deps
+
+**Cursor transcript import (Phase 30):**
+- `crates/agent/src/import/mod.rs` + `crates/agent/src/import/cursor.rs` — new `import` sub-module in `graphirm-agent`
+- `ParsedTurn { role, content, thinking }` + `ParsedTranscript { source_file, turns }` — parser output types
+- `parse_transcript(source_file, text)` — line-by-line state machine; handles `user:/<user_query>`, `A:`, `[Thinking]`/`[/Thinking]`, `[Tool call]`, `[Tool result]`; tool blocks discarded; thinking preserved; trailing whitespace normalised
+- `ImportResult { agent_id, turns_written, skipped }` + `write_transcript(store, transcript)` — idempotency via `find_imported_agent` (checks `source_file` in Agent node metadata); creates synthetic `Agent` node, then per-turn `Interaction` nodes with `Produces` + `RespondsTo` edges; `session_id` set on every Interaction
+- `src/main.rs` — `Commands::ImportCursor { path, dry_run }` variant; handler accepts single `.txt` file or directory; `--dry-run` prints turn counts without writing
+- 8 unit tests; zero new crate dependencies; `cargo clippy -D warnings` clean
+- Usage: `graphirm import-cursor ~/.cursor/projects/…/agent-transcripts/` (imports all `.txt` files); re-import is a no-op
+
+**Node-by-id TTL cache (Phase 29):**
+- `crates/graph/src/store.rs` — `node_cache: Arc<RwLock<HashMap<NodeId, (GraphNode, Instant)>>>` added to `GraphStore` struct; initialized in both `open()` and `open_memory()`
+- `const NODE_CACHE_TTL: Duration = Duration::from_secs(60)` — module-level constant
+- `get_node`: checks cache first (scoped read-lock + let-chain `&&` for TTL check); on miss queries SQLite and populates cache (scoped write-lock)
+- `update_node`: after successful `UPDATE`, removes entry from cache — ensures no stale reads
+- No public API or signature changes; no new crate dependencies; all lock errors → `GraphError::LockPoisoned`
+
+**SQLite performance indices (Phase 28):**
+- `crates/graph/src/store.rs` — four indices added to `init_schema()` after the existing `idx_nodes_type`:
+  - `idx_nodes_created_at ON nodes(created_at)` — covers `ORDER BY created_at` in agent/knowledge queries
+  - `idx_edges_created_at ON edges(created_at)` — same for edge timeline queries
+  - `idx_nodes_session_id ON nodes(json_extract(metadata, '$.session_id'))` — covers `WHERE session_id = ?` filter used in conversation thread + context engine
+  - `idx_nodes_type_created ON nodes(node_type, created_at)` — composite index for the hottest pattern: `WHERE node_type = ? ORDER BY created_at` (context engine, `list_by_type`, knowledge retrieval)
+- All use `CREATE INDEX IF NOT EXISTS` — safe on existing databases, applied on next open
+- No API or public function changes; additive only
+
+**Web-app design system + light/dark theme (Phase 27):**
+- `web-app/src/styles/theme.css` — spacing scale (`--space-1` through `--space-8`), typography (`--font-sans`, `--font-mono`, `--text-xs/sm/base/lg/xl`, `--line-height`), surfaces (`--surface-0` through `--surface-3`), semantic colors (`--info`, `--warning`), additional edge color variables; `[data-theme="light"]` block overrides all color tokens for light theme; `body` font-family/size updated to use variables
+- `web-app/src/hooks/useTheme.ts` — `useTheme()` hook: reads `localStorage` key `graphirm-theme`, falls back to `prefers-color-scheme`, sets `data-theme` attribute on `<html>`, persists on change
+- `web-app/src/components/Toolbar.tsx` — theme toggle button (☀/◉) using `useTheme`; no new deps
+- `web-app/src/components/edges/LabelledEdge.tsx` — `EDGE_COLORS` constant removed; replaced with `getEdgeColor(edgeType)` that reads `--edge-<type>` CSS variable via `getComputedStyle`, caches per-theme to avoid per-render DOM queries
+
+**Graph node search / filter (Phase 20):**
+- `NodeFilter` interface (`query: string`, `types: Set<string>`) + `EMPTY_FILTER` exported from `crates/web-app/src/hooks/useGraphData.ts`
+- `applyFilterToNodes(nodes, graphNodes, filter)` helper — computes `visibleIds`, stamps `hidden: true` on non-matching React Flow nodes; group nodes hidden when all children hidden; annotation nodes never hidden
+- `useGraphData` accepts `filter: NodeFilter` (4th param, default `EMPTY_FILTER`); returns `matchCount: number`; filter reactively applied in second `useEffect` without re-running layout
+- Toolbar: search `<input>` + five type-pill buttons (`I A C T K`), `matchCount/total` counter, clear `✕` button — all controlled by filter state in `GraphCanvasInner`
+- Ctrl+F (hover over graph pane) focuses search, Escape clears + blurs; existing `/` shortcut for chat unaffected
+
+**Pinned Knowledge nodes (Phase 33):**
+- `crates/graph/src/store.rs` — `list_pinned_knowledge(limit)`: `SELECT … WHERE node_type = 'knowledge' AND json_extract(metadata, '$.pinned') = 1 ORDER BY created_at ASC LIMIT ?1`; 3 tests
+- `crates/agent/src/briefing.rs` — `build_pinned_summary(store, limit)`: formats pinned nodes as `- [pinned] entity: summary`; wired into `build_repo_briefing` between knowledge and lessons sections; 3 tests
+- `crates/server/src/routes.rs` — `POST /api/knowledge`: creates Knowledge nodes directly via API; `CreateKnowledgeRequest` in `types.rs` with `entity`, `entity_type`, `summary`, `confidence` (default 1.0), `pinned` (default false), `session_id` (optional); 1 deserialization test
+- `GET /api/knowledge/pinned`: returns all pinned Knowledge nodes as JSON array; `PinnedKnowledgeQuery` in `types.rs` with optional `limit` (default 50); handler uses `spawn_blocking` + `list_pinned_knowledge`; 1 deserialization test
+- Pinned nodes are global (not session-scoped) and always surfaced in repo briefing regardless of recency — used for coding conventions that the agent should always follow
+- Manage via API: `curl -X POST http://localhost:3000/api/knowledge -d '{"entity": "rule-name", "entity_type": "convention", "summary": "...", "pinned": true}'`
+- List pinned rules: `curl http://localhost:3000/api/knowledge/pinned` (or `?limit=10`)
+
+**Model router (Phase 34):**
+- `crates/agent/src/router.rs` — `ModelRoutingConfig`, `ModelTier`, `RoutingRule`, `TurnSignals`, `ModelRouter`
+- Five built-in rules: `first_turn`, `error_recovery`, `high_complexity`, `tool_only_turn`, `stuck_detection`
+- Rules evaluated in declaration order; first match wins; unmatched → `default_tier`
+- Routing decision stamped on Interaction node metadata: `model_tier`, `model_selected`, `routing_rule`
+- `AgentConfig.model_routing: Option<ModelRoutingConfig>` — absent = single-model (backward compatible)
+- Same-provider constraint enforced in `create_session`: mismatched providers fall back to single-model with warning
+- Config: `[agent.routing]` section in TOML with `cheap`, `smart`, `default_tier`, and `[[agent.routing.rules]]` array
+- 11 unit tests (all rule types, default fallback, empty rules, first-match priority, TOML deserialization, same_provider checks)
+
+**Adaptive model router (Phase 36):**
+- `crates/agent/src/strategy/mod.rs` — `RoutingStrategy` async_trait, `ModelCandidate`, `RoutingDecision`, `ObjectiveWeights` (presets: `balanced`/`cost_focused`/`quality_first`/`speed`), `TurnOutcome`, `SessionScore`, `compute_session_score`
+- `crates/agent/src/strategy/rule_router.rs` — `RuleRouter`: wraps existing `ModelRouter`, backward-compat
+- `crates/agent/src/strategy/prompt_router.rs` — `PromptRouter`: sends cheap-LLM classification call, 3 s timeout, falls back to `Cheap` on any error
+- `crates/agent/src/strategy/experiment.rs` — `ExperimentRouter`: random-split A/B wrapper; tags decisions `experiment:<strategy_name>` for distinguishable metadata
+- `crates/agent/src/strategy/builder.rs` — `build_strategy(config, routing_config, llm)`, `candidates_from_config` — construct from `AdaptiveRoutingConfig`
+- `crates/agent/src/config.rs` — `AdaptiveRoutingConfig`, `AdaptiveObjectiveConfig`, `ExperimentConfig`, `PromptRouterConfig`, `ModelCandidateConfig`; `adaptive_routing: Option<AdaptiveRoutingConfig>` in `AgentConfig`
+- `crates/agent/src/workflow.rs` — `stream_and_record` + `run_agent_loop` now take `Arc<dyn LlmProvider>`; adaptive path selected when `adaptive_routing` is `Some`, legacy `model_routing` path preserved
+- Routing metadata on each Interaction node: `routing_strategy`, `routing_reason`, `routing_confidence`, `routing_decision_ms`, `model_selected`, `model_tier`
+- `PATCH /api/sessions/:id/turns/:turn_id/rating` — store 1–5 user rating in Interaction node metadata
+- `GET /api/routing/report` — aggregate per-strategy stats (tokens, latency, error_rate, avg_user_rating) across all sessions
+- Config: `[agent.adaptive_routing]` section in `config/default.toml` (commented out); activate with `strategy = "rules"/"prompt"/"experiment"`
+- 10 new unit tests across strategy modules; 2 new server type tests; all 266 agent + 104 server tests pass
+
+**Risk areas:**
+
+**Graph-aware tool execution (Phase 22):**
+- `ImpactProvider` trait in `crates/tools/src/impact.rs` — `ImpactBrief`, `RiskLevel`, `extract_target_paths`
+- `crates/tools/src/bash_paths.rs` — tree-sitter-bash AST walker extracts literal file paths from shell commands
+- `GraphImpactProvider` in `crates/agent/src/impact.rs` — `rg --files-with-matches` for dependents, graph Knowledge query for prior notes
+- Pre-execution hook in `execute_tools_parallel` (HITL/destructive path only)
+- Risk scoring: LOW (0–2 deps, no notes), MEDIUM (3–9 deps OR notes), HIGH (10+ deps AND notes)
+- Per-turn `HashMap<PathBuf, ImpactBrief>` cache — avoids re-analysis within a turn
+- Threshold gate: empty briefs (0 deps, no notes) are suppressed — no noise
+- `ImpactBrief` persisted as `Content` node with `content_type: "impact_brief"`, linked via `Reads` edge
+- `pre_edit_impact: bool` in `AgentConfig` (default `true`)
+- `max_output_tokens: Option<u32>` in `AgentConfig` — limits LLM response tokens per turn (separate from `max_tokens` which controls context window budget); falls back to `max_tokens`, then 8192; default.toml sets 1500
+- All analysis is non-fatal — tool always executes regardless of impact analysis success
+- 40 unit tests + 1 integration test, all passing
+- `Arc<RwLock<StableGraph>>` — no deadlocks; acquire briefly, never across await
+- Rust version must match spoke/CI (stable, currently 1.88)
+- `OnnxExtractor` is cached process-wide via `get_or_init_onnx_extractor(model_dir)` — call this instead of `OnnxExtractor::new` directly; sessions load once per unique directory
+
+**Session flow traces (Phase 25):**
+- `crates/tools/src/session_trace.rs` — `SessionTraceTool`: `search` (groups `KnowledgeRetriever` / `search_knowledge` results by `session_id`, loads `get_session_chain`, formats turns with tool metadata) and `replay` (full chain for one session); keyword fallback + note when no embedding provider
+- `crates/graph/src/store.rs` — `get_session_chain(session_id)` — interactions with matching `metadata.session_id`, `ORDER BY created_at ASC, id ASC`
+- Registered in `build_tool_registry()` in `src/main.rs`
+
+**Graph-diff tool (Phase 23):**
+- `graph_diff` non-destructive tool in `crates/tools/src/graph_diff.rs` — two modes: `git` (resolve changed files via `git diff --name-only`) and `paths` (explicit file list)
+- For each changed file: lists up to 20 dependent files via `rg --files-with-matches --fixed-strings`, queries `GraphStore.search_knowledge()` for cross-session Knowledge notes, computes risk via `compute_risk`
+- Output: structured Markdown with `##`/`###` headers, dependents list, stale knowledge ⚠ warnings ("may be invalidated"), per-file risk level (Low/Medium/High)
+- Registered in `build_tool_registry()` alongside other non-destructive tools
+- 12 tests (validation, dependents via rg, cross-session knowledge, git integration)
