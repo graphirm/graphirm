@@ -21,7 +21,11 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
   const fitViewCb = useRef<(() => void) | null>(null);
   const cycleLayoutCb = useRef<(() => void) | null>(null);
   const graphRef = useRef(graph);
+  const layoutModeRef = useRef(layoutMode);
+  const tabRef = useRef(tab);
   graphRef.current = graph;
+  layoutModeRef.current = layoutMode;
+  tabRef.current = tab;
 
   const graphHotkeys = layoutMode === 'legacy' || tab === 'graph';
 
@@ -60,10 +64,10 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
     setTab(next);
   };
 
-  const handleSteerFromNode = (nodeId: string) => {
-    if (layoutMode === 'chat' && tab !== 'chat') setTab('chat');
+  const handleSteerFromNode = useCallback((nodeId: string) => {
+    if (layoutModeRef.current === 'chat' && tabRef.current !== 'chat') setTab('chat');
     graphRef.current.onSteerFromNode(nodeId);
-  };
+  }, []);
 
   const chatPane = <ChatPane {...chat} />;
   const graphCanvas = (
