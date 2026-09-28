@@ -81,6 +81,8 @@ interface GraphCanvasProps {
   onApprove?: (nodeId: string) => void;
   onReject?: (nodeId: string, reason?: string) => void;
   onModify?: (nodeId: string, modifiedArgs: string) => void;
+  /** Window key handlers (arrows, Enter, r, Escape). Off while a keep-alive canvas is hidden. */
+  hotkeysEnabled?: boolean;
 }
 
 const LAYOUT_CYCLE: LayoutMode[] = ['dagre', 'timeline', 'masonry', 'free'];
@@ -100,6 +102,7 @@ function GraphCanvasInner({
   onApprove,
   onReject,
   onModify,
+  hotkeysEnabled = true,
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -117,6 +120,7 @@ function GraphCanvasInner({
   // Ctrl+F (or Cmd+F) focuses the search bar when hovering the graph pane.
   // Escape clears the filter and blurs the input when it is focused.
   useEffect(() => {
+    if (!hotkeysEnabled) return;
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
         if (containerRef.current?.matches(':hover')) {
@@ -136,9 +140,7 @@ function GraphCanvasInner({
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-    // setFilter and EMPTY_FILTER are stable references (useState setter + module constant).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hotkeysEnabled, onNodeSelect]);
 
   const {
     nodes,
@@ -177,7 +179,7 @@ function GraphCanvasInner({
     mutateNodes(prev => prev.filter(n => n.type !== 'prompt'));
   }, [sessionId, mutateNodes]);
 
-  const { focusedNodeId, activateNodeId, clearActivation, replyingToNodeId, clearReply } = useNodeNavigation(nodes, edges);
+  const { focusedNodeId, activateNodeId, clearActivation, replyingToNodeId, clearReply } = useNodeNavigation(nodes, edges, hotkeysEnabled);
 
   const [popoverState, setPopoverState] = useState<{
     nodeId: string;

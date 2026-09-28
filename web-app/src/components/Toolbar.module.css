@@ -6,6 +6,9 @@
   border-bottom: 1px solid var(--border);
   font-size: 12px;
   flex-shrink: 0;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .title {

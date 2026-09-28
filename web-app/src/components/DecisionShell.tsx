@@ -60,10 +60,17 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
     setTab(next);
   };
 
+  const handleSteerFromNode = (nodeId: string) => {
+    if (layoutMode === 'chat' && tab !== 'chat') setTab('chat');
+    graphRef.current.onSteerFromNode(nodeId);
+  };
+
   const chatPane = <ChatPane {...chat} />;
   const graphCanvas = (
     <GraphCanvas
       {...graph}
+      hotkeysEnabled={graphHotkeys}
+      onSteerFromNode={handleSteerFromNode}
       onFitViewRef={handleFitViewRef}
       onCycleLayoutRef={handleCycleLayoutRef}
     />

@@ -3,7 +3,7 @@ import type { Node, Edge } from "@xyflow/react";
 
 const NAV_EDGE_TYPES = new Set(["produces", "responds_to", "contains"]);
 
-export function useNodeNavigation(nodes: Node[], edges: Edge[]) {
+export function useNodeNavigation(nodes: Node[], edges: Edge[], enabled = true) {
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [activateNodeId, setActivateNodeId] = useState<string | null>(null);
   const [replyingToNodeId, setReplyingToNodeId] = useState<string | null>(null);
@@ -25,6 +25,7 @@ export function useNodeNavigation(nodes: Node[], edges: Edge[]) {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     function handleKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
@@ -104,7 +105,7 @@ export function useNodeNavigation(nodes: Node[], edges: Edge[]) {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []); // empty dep array - uses refs
+  }, [enabled]); // nodes/edges/focus are read through refs
 
   return { focusedNodeId, activateNodeId, clearActivation, replyingToNodeId, clearReply };
 }
