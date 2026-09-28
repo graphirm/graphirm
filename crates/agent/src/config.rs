@@ -1730,13 +1730,13 @@ mod default_toml_tests {
         assert!((judge.threshold - 0.8).abs() < 1e-9);
     }
 
-    /// `[agent.pi]` ships present-but-disabled until the A4 live check; sessions
-    /// created over HTTP default to auto-approve (decision 17).
+    /// `[agent.pi]` ships enabled after the A4 live check; sessions created over
+    /// HTTP default to auto-approve (decision 17).
     #[test]
-    fn default_toml_has_pi_disabled() {
+    fn default_toml_has_pi_enabled() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
         let config = AgentConfig::from_file(std::path::Path::new(path)).expect("default.toml");
-        assert!(!config.pi.expect("pi block present").enabled);
+        assert!(config.pi.expect("pi block present").enabled);
         assert!(config.default_auto_approve);
     }
 }
