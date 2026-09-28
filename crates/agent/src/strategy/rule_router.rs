@@ -26,11 +26,14 @@ impl RoutingStrategy for RuleRouter {
         let router = ModelRouter::new(&self.config);
         let (model_str, tier, rule) = router.select(signals);
 
-        // Find the matching candidate or fall back to first with matching tier.
+        // Match on the rule's tier first: when both tiers share one model string
+        // (cost-neutral configs), a by-model lookup would return whichever tier
+        // is listed first and mislabel `model_tier` in the turn metadata.
         let matched = candidates
             .iter()
-            .find(|c| c.model == model_str)
-            .or_else(|| candidates.iter().find(|c| c.tier == tier));
+            .find(|c| c.tier == tier && c.model == model_str)
+            .or_else(|| candidates.iter().find(|c| c.tier == tier))
+            .or_else(|| candidates.iter().find(|c| c.model == model_str));
 
         let (model, final_tier) = matched
             .map(|c| (c.model.clone(), c.tier))
@@ -133,5 +136,49 @@ mod tests {
             )
             .await;
         assert_eq!(decision.model, "deepseek/deepseek-chat");
+    }
+
+    #[tokio::test]
+    async fn keeps_rule_tier_when_both_tiers_share_one_model() {
+        // Cost-neutral config: cheap and smart are the same model string.
+        let shared = "openrouter/deepseek/deepseek-v3.2";
+        let config = ModelRoutingConfig {
+            cheap: vec![shared.into()],
+            smart: vec![shared.into()],
+            default_tier: ModelTier::Cheap,
+            rules: vec![RoutingRule::FirstTurn {
+                tier: ModelTier::Smart,
+            }],
+        };
+        let router = RuleRouter::new(config);
+        let candidates = vec![
+            ModelCandidate {
+                model: shared.into(),
+                tier: ModelTier::Cheap,
+                cost_per_1k_input: 0.0,
+                cost_per_1k_output: 0.0,
+                avg_latency_ms: None,
+            },
+            ModelCandidate {
+                model: shared.into(),
+                tier: ModelTier::Smart,
+                cost_per_1k_input: 0.0,
+                cost_per_1k_output: 0.0,
+                avg_latency_ms: None,
+            },
+        ];
+        let signals = crate::router::TurnSignals {
+            turn_number: 1,
+            last_tool_errored: false,
+            last_response_tool_only: false,
+            user_message_tokens: 10,
+            task_phase: crate::router::TaskPhase::Planning,
+        };
+        let d = router
+            .select(&signals, &candidates, &ObjectiveWeights::default())
+            .await;
+        assert_eq!(d.tier, ModelTier::Smart, "first_turn rule says smart");
+        assert_eq!(d.model, shared);
+        assert_eq!(d.reason, "rule:first_turn");
     }
 }
