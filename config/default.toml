@@ -27,8 +27,9 @@ max_iterations = 50
 parallel_tool_calls = true
 max_output_tokens = 4096
 timeout_seconds = 300
-# Public / shared servers: set `disable_bash = true` so the bash tool is refused
-# and the model is told not to use shell (see `AgentConfig::disable_bash`).
+# Public / shared servers: set `disable_bash = true` so bash AND `delegate_pi` are
+# refused and hidden (see `AgentConfig::disable_bash`). Required on app.graphirm.ai
+# before this file is deployed with `[agent.pi] enabled = true`.
 # disable_bash = true
 # When a session is linked to planning (`graph_query` link_session), file writes/edits
 # auto-add relates_to (planning → file) unless disabled:
@@ -265,7 +266,10 @@ threshold = 0.8
 # `pi --mode json` in the session workspace; Pi's tool calls are recorded as graph
 # nodes and scored observe-only by the HITL judge. Pi reads its provider key from
 # its own environment (`~/.pi/agent/auth.json` or provider env vars) — graphirm
-# never reads or logs it. Kept disabled until the A4 live check.
+# never reads or logs it. Enabled after the A4 live check (2026-09-28). This file
+# is also the spoke config (`workspaces_root` below): a public deploy must set
+# `disable_bash = true` so `delegate_pi` stays hidden. The spoke image has no `pi`
+# binary today; installing one later would otherwise go live with auto-approve.
 # Removing `--no-extensions` from extra_args loads user-level `~/.pi/agent/extensions`
 # (code that runs inside the Pi process) regardless of `trust_project`, which governs
 # project-level `.pi/` only.

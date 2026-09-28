@@ -1331,8 +1331,9 @@ feedback seats (server), plan card.
   children detached (they now run in their own process groups) (S·P2).
 - `delete_session_subgraph` does not cascade through `DelegatesTo → Task → SpawnedBy → Agent`;
   subagent (in-process and Pi) nodes are orphaned when a director session is deleted (S·P2).
-- `GET /api/sessions` lists subagent Agent nodes (in-process and Pi, name `pi`) as sessions;
-  filter agents with an incoming `SpawnedBy` edge (S·P2).
+- ✅ `GET /api/sessions` after restart used to list subagent Agent nodes (in-process and Pi)
+  as sessions. `restore_sessions_from_graph` now skips Agents with an incoming `SpawnedBy`
+  edge. Done 2026-09-28.
 - `graphirm chat` (TUI) never loads `config/default.toml` — it runs on `AgentConfig::default()`
   plus the CLI model; only `[agent.pi]` is lifted from the file (A2.7). Load the whole file like
   `serve` does, once the prompt/judge/routing differences are reviewed (S·P2).
