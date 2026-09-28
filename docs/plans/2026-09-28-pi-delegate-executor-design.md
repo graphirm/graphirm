@@ -180,6 +180,8 @@ Malformed JSON → skipped, warned, counted. `\r` stripped.
 }
 ```
 
+- `content` ≤ 16 000 chars (fixed `MAX_TOOL_CONTENT_CHARS`; `max_result_chars` bounds only
+  `Task.metadata.result`).
 - `tool_name` is Pi's real name (`bash`/`read`/`write`/`edit`/…) so the existing
   UI destructive highlight and the judge's instructions apply unchanged.
   `executor: "pi"` is the discriminator.

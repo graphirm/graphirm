@@ -22,7 +22,7 @@ pub mod graph;
 pub mod process;
 
 pub use events::{MAX_ERROR_CHARS, PiEvent, flatten_content, flatten_result, parse_line};
-pub use graph::{PI_EXECUTOR, PI_TASK_TITLE, PiRun, PiRunFinish, PiToolCall};
+pub use graph::{FAILURE_ABANDONED, PI_EXECUTOR, PI_TASK_TITLE, PiRun, PiRunFinish, PiToolCall};
 pub use process::{
     MAX_INLINE_TASK_BYTES, MAX_LINE_BYTES, PiProcessError, PiRunHandle, PiRunOutcome, PiSpawnSpec,
     STDERR_TAIL_BYTES, build_argv, expand_binary, probe_version, spawn_pi,

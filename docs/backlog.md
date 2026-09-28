@@ -1327,6 +1327,10 @@ feedback seats (server), plan card.
   `graphirm_tools::process`. Done 2026-09-28 (Task A1.4, `docs/plans/2026-09-28-pi-delegate-executor.md`).
 - `serve` does not handle SIGTERM — a hard `pkill -f 'graphirm serve'` leaves live sessions'
   children detached (they now run in their own process groups) (S·P2).
+- `delete_session_subgraph` does not cascade through `DelegatesTo → Task → SpawnedBy → Agent`;
+  subagent (in-process and Pi) nodes are orphaned when a director session is deleted (S·P2).
+- `GET /api/sessions` lists subagent Agent nodes (in-process and Pi, name `pi`) as sessions;
+  filter agents with an incoming `SpawnedBy` edge (S·P2).
 
 ---
 

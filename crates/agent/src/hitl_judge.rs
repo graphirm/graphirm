@@ -39,7 +39,9 @@ source files inside the workspace.";
 pub const JUDGE_VERSION: &str = "v1";
 
 /// Upper bound on the serialised arguments sent as state.
-const MAX_ARGS_CHARS: usize = 1500;
+/// Tool-argument JSON cap shared with `pi_delegate::graph` so the judge's
+/// input and the stored `metadata.arguments` never disagree.
+pub(crate) const MAX_ARGS_CHARS: usize = 1500;
 
 /// Jev's answer for one tool call.
 #[derive(Debug, Clone, PartialEq)]

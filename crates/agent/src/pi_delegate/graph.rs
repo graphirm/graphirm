@@ -14,8 +14,20 @@
 //! Every store call runs inside `tokio::task::spawn_blocking` — the store is
 //! synchronous and must never block a runtime worker. Task and Agent metadata
 //! never carry the Pi `binary` path (the node is returned by
-//! `GET /api/sessions/{id}/graph`); only `provider`, `model`, `pi_version` and
-//! `exit_code` are stored.
+//! `GET /api/sessions/{id}/graph`); the Task stores `provider`, `model` and
+//! `exit_code`, the Pi Agent stores `pi_version`, `pi_session_id`, `pi_cwd`.
+//!
+//! **Deliberate deviation from design D2:** tool and assistant node *content*
+//! is capped by the fixed [`MAX_TOOL_CONTENT_CHARS`], not by `max_result_chars`.
+//! `[agent.pi].max_result_chars` is documented as the cap on Pi's *final
+//! message* (`Task.metadata.result`); letting it also govern every recorded
+//! tool result would let a small summary cap gut the audit trail.
+//!
+//! **Abandonment:** a [`PiRun`] that is dropped without [`PiRun::finish`]
+//! (the caller's future was cancelled, a panic unwound, the `JoinSet` was
+//! dropped) marks its Task `Failed` with `failure: "abandoned"` and its Pi
+//! Agent `"failed"` from `Drop`, so the server's session restore never lists a
+//! ghost `running` Pi agent.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -30,20 +42,26 @@ use graphirm_tools::ToolContext;
 use serde_json::{Map, Value, json};
 
 use crate::error::AgentError;
+use crate::hitl_judge::MAX_ARGS_CHARS;
 
 /// Discriminator stored as `metadata.executor` on every node this module writes.
 pub const PI_EXECUTOR: &str = "pi";
 /// Title of the delegation Task node (same pattern as `spawn_subagent`).
 pub const PI_TASK_TITLE: &str = "Delegated to pi";
-/// `metadata.arguments` on a Pi tool node keeps at most this many chars of
-/// compact JSON, then `…` is appended (same rule as the HITL judge).
-pub const MAX_ARGS_CHARS: usize = 1500;
+/// `metadata.failure` value written by `Drop` when `finish` never ran.
+pub const FAILURE_ABANDONED: &str = "abandoned";
 /// Task description cap; the full brief lives in Pi's stdin, not the graph.
 pub const MAX_TASK_DESCRIPTION_CHARS: usize = 4000;
-/// Tool result content cap on a Pi tool node.
+/// Tool / assistant node content cap (fixed; see module docs).
 pub const MAX_TOOL_CONTENT_CHARS: usize = 16_000;
 /// `metadata.failure_detail` cap.
 pub const MAX_FAILURE_DETAIL_CHARS: usize = 2000;
+/// `metadata.errors`: at most this many entries …
+pub const MAX_ERRORS: usize = 20;
+/// … each at most this many chars.
+pub const MAX_ERROR_ENTRY_CHARS: usize = 500;
+/// `metadata.stderr_tail` cap.
+pub const MAX_STDERR_TAIL_CHARS: usize = 1000;
 
 /// One Pi tool call, as reported by `tool_execution_end`.
 #[derive(Debug, Clone)]
@@ -58,13 +76,22 @@ pub struct PiToolCall<'a> {
     pub hitl_judge: Option<Value>,
 }
 
-/// How a Pi run ended.
+/// How a Pi run ended. Build with [`PiRunFinish::completed`] /
+/// [`PiRunFinish::failed`] and set the optional fields you have.
 #[derive(Debug, Clone)]
 pub enum PiRunFinish {
     /// Pi produced a final message; `summary` becomes `Task.metadata.result`.
     Completed {
         summary: String,
         exit_code: Option<i32>,
+        /// Pi `error` / `extension_error` payloads seen during the run.
+        errors: Vec<String>,
+        /// Pi tool calls the judge scored at or above its threshold.
+        judge_over_threshold: u32,
+        /// Pi's stdout/stderr pipes stayed open after the process exited.
+        pipes_lingered: bool,
+        /// Last bytes of Pi's stderr, when captured.
+        stderr_tail: Option<String>,
     },
     /// The run did not complete. `kind` is one of `"timeout"`, `"cancelled"`,
     /// `"exit"`, `"spawn"`.
@@ -72,11 +99,43 @@ pub enum PiRunFinish {
         kind: &'static str,
         detail: String,
         exit_code: Option<i32>,
+        errors: Vec<String>,
+        judge_over_threshold: u32,
+        pipes_lingered: bool,
+        stderr_tail: Option<String>,
     },
 }
 
+impl PiRunFinish {
+    /// `Completed` with the optional fields at their defaults.
+    pub fn completed(summary: impl Into<String>, exit_code: Option<i32>) -> Self {
+        Self::Completed {
+            summary: summary.into(),
+            exit_code,
+            errors: Vec::new(),
+            judge_over_threshold: 0,
+            pipes_lingered: false,
+            stderr_tail: None,
+        }
+    }
+
+    /// `Failed` with the optional fields at their defaults.
+    pub fn failed(kind: &'static str, detail: impl Into<String>, exit_code: Option<i32>) -> Self {
+        Self::Failed {
+            kind,
+            detail: detail.into(),
+            exit_code,
+            errors: Vec::new(),
+            judge_over_threshold: 0,
+            pipes_lingered: false,
+            stderr_tail: None,
+        }
+    }
+}
+
 /// Live graph handle for one Pi delegation. Create with [`PiRun::begin`], feed
-/// it Pi's events, then call [`PiRun::finish`] exactly once.
+/// it Pi's events, then call [`PiRun::finish`] exactly once (it consumes the
+/// run). Dropping an unfinished run marks it abandoned (see module docs).
 pub struct PiRun {
     graph: Arc<GraphStore>,
     director_agent: NodeId,
@@ -91,12 +150,14 @@ pub struct PiRun {
     assistant_messages: u32,
     started: Instant,
     max_result_chars: usize,
+    finished: bool,
 }
 
 impl PiRun {
     /// Creates the Task and Pi Agent nodes plus the three delegation edges.
     ///
-    /// `provider`, `model` and `pi_version` go to metadata — never the binary path.
+    /// `provider` / `model` go to the Task, `pi_version` to the Pi Agent —
+    /// never the binary path.
     pub async fn begin(
         ctx: &ToolContext,
         task_text: &str,
@@ -108,43 +169,9 @@ impl PiRun {
         let director_agent = ctx.agent_id.clone();
         let parent_interaction = ctx.interaction_id.clone();
 
-        let mut task_node = GraphNode::new(NodeType::Task(TaskData {
-            title: PI_TASK_TITLE.to_string(),
-            description: truncate_within(task_text, MAX_TASK_DESCRIPTION_CHARS),
-            status: TaskStatus::Pending,
-            priority: None,
-        }));
-        let mut task_meta = Map::new();
-        task_meta.insert("executor".into(), json!(PI_EXECUTOR));
-        task_meta.insert("provider".into(), json!(provider));
-        task_meta.insert("model".into(), json!(model));
-        if let Some(v) = pi_version {
-            task_meta.insert("pi_version".into(), json!(v));
-        }
-        task_meta.insert(
-            "parent_session_id".into(),
-            json!(director_agent.to_string()),
-        );
-        task_node.metadata = Value::Object(task_meta);
+        let task_node = build_task_node(task_text, provider, model, &director_agent);
         let task_id = task_node.id.clone();
-
-        let mut agent_node = GraphNode::new(NodeType::Agent(AgentData {
-            name: PI_EXECUTOR.to_string(),
-            model: model.to_string(),
-            system_prompt: None,
-            status: "running".to_string(),
-        }));
-        let mut agent_meta = Map::new();
-        agent_meta.insert("executor".into(), json!(PI_EXECUTOR));
-        agent_meta.insert(
-            "parent_session_id".into(),
-            json!(director_agent.to_string()),
-        );
-        agent_meta.insert("task_id".into(), json!(task_id.to_string()));
-        if let Some(v) = pi_version {
-            agent_meta.insert("pi_version".into(), json!(v));
-        }
-        agent_node.metadata = Value::Object(agent_meta);
+        let agent_node = build_pi_agent_node(model, pi_version, &director_agent, &task_id);
         let pi_agent_id = agent_node.id.clone();
 
         let graph = ctx.graph.clone();
@@ -184,7 +211,37 @@ impl PiRun {
             assistant_messages: 0,
             started: Instant::now(),
             max_result_chars,
+            finished: false,
         })
+    }
+
+    /// Stores Pi's own session id and working directory (from its `session`
+    /// event) on the Pi Agent node as `pi_session_id` / `pi_cwd`.
+    pub async fn record_session(
+        &mut self,
+        pi_session_id: Option<&str>,
+        cwd: Option<&str>,
+    ) -> Result<(), AgentError> {
+        let mut extra = Map::new();
+        if let Some(id) = pi_session_id {
+            extra.insert("pi_session_id".into(), json!(id));
+        }
+        if let Some(cwd) = cwd {
+            extra.insert("pi_cwd".into(), json!(cwd));
+        }
+        if extra.is_empty() {
+            return Ok(());
+        }
+
+        let g = self.graph.clone();
+        let pi_agent_id = self.pi_agent_id.clone();
+        run_blocking(move || {
+            let mut agent_node = g.get_node(&pi_agent_id)?;
+            merge_metadata(&mut agent_node, extra);
+            g.update_node(&pi_agent_id, agent_node)?;
+            Ok(())
+        })
+        .await
     }
 
     /// Records one Pi tool call as `Interaction{role:"tool"}` under the Pi Agent.
@@ -211,15 +268,20 @@ impl PiRun {
     }
 
     /// Records an assistant message from Pi as `Interaction{role:"assistant"}`
-    /// under the Pi Agent.
+    /// under the Pi Agent. `usage` (Pi's token accounting) is stored verbatim
+    /// in metadata when given.
     pub async fn record_assistant_message(
         &mut self,
         text: &str,
         stop_reason: Option<&str>,
+        usage: Option<&Value>,
     ) -> Result<NodeId, AgentError> {
         let mut meta = self.base_metadata();
         if let Some(reason) = stop_reason {
             meta.insert("stop_reason".into(), json!(reason));
+        }
+        if let Some(usage) = usage {
+            meta.insert("usage".into(), usage.clone());
         }
 
         let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
@@ -234,56 +296,25 @@ impl PiRun {
         Ok(id)
     }
 
-    /// Finalises the Task and Pi Agent status and metadata.
-    /// Returns `[task_id, pi_agent_id]`.
-    pub async fn finish(&mut self, outcome: PiRunFinish) -> Result<Vec<NodeId>, AgentError> {
+    /// Finalises the Task and Pi Agent status and metadata. Consumes the run;
+    /// copy `task_id` / `pi_agent_id` first if you need them, or use the
+    /// returned `[task_id, pi_agent_id]`.
+    pub async fn finish(mut self, outcome: PiRunFinish) -> Result<Vec<NodeId>, AgentError> {
+        // Flip before any await so a cancelled `finish` never double-marks from Drop.
+        self.finished = true;
         let duration_ms = self.started.elapsed().as_millis() as u64;
         let mut extra = Map::new();
         extra.insert("tool_calls".into(), json!(self.tool_calls));
         extra.insert("duration_ms".into(), json!(duration_ms));
 
-        let (task_status, agent_status) = match outcome {
-            PiRunFinish::Completed { summary, exit_code } => {
-                extra.insert(
-                    "result".into(),
-                    json!(truncate_within(&summary, self.max_result_chars)),
-                );
-                extra.insert("assistant_messages".into(), json!(self.assistant_messages));
-                extra.insert("exit_code".into(), json!(exit_code));
-                (TaskStatus::Completed, "completed")
-            }
-            PiRunFinish::Failed {
-                kind,
-                detail,
-                exit_code,
-            } => {
-                extra.insert("failure".into(), json!(kind));
-                extra.insert(
-                    "failure_detail".into(),
-                    json!(truncate_within(&detail, MAX_FAILURE_DETAIL_CHARS)),
-                );
-                extra.insert("exit_code".into(), json!(exit_code));
-                (TaskStatus::Failed, "failed")
-            }
-        };
+        let (task_status, agent_status) = self.outcome_metadata(outcome, &mut extra);
 
         let g = self.graph.clone();
         let task_id = self.task_id.clone();
         let pi_agent_id = self.pi_agent_id.clone();
         run_blocking(move || {
-            let mut task_node = g.get_node(&task_id)?;
-            if let NodeType::Task(ref mut data) = task_node.node_type {
-                data.status = task_status;
-            }
-            merge_metadata(&mut task_node, extra);
-            g.update_node(&task_id, task_node)?;
-
-            let mut agent_node = g.get_node(&pi_agent_id)?;
-            if let NodeType::Agent(ref mut data) = agent_node.node_type {
-                data.status = agent_status.to_string();
-            }
-            g.update_node(&pi_agent_id, agent_node)?;
-            Ok(())
+            set_task_status(&g, &task_id, task_status, extra)?;
+            set_agent_status(&g, &pi_agent_id, agent_status)
         })
         .await?;
 
@@ -296,6 +327,85 @@ impl PiRun {
         );
 
         Ok(vec![self.task_id.clone(), self.pi_agent_id.clone()])
+    }
+
+    /// Writes the outcome-specific keys into `extra`; returns the statuses.
+    fn outcome_metadata(
+        &self,
+        outcome: PiRunFinish,
+        extra: &mut Map<String, Value>,
+    ) -> (TaskStatus, &'static str) {
+        let (statuses, exit_code, errors, judge_over_threshold, pipes_lingered, stderr_tail) =
+            match outcome {
+                PiRunFinish::Completed {
+                    summary,
+                    exit_code,
+                    errors,
+                    judge_over_threshold,
+                    pipes_lingered,
+                    stderr_tail,
+                } => {
+                    extra.insert(
+                        "result".into(),
+                        json!(truncate_within(&summary, self.max_result_chars)),
+                    );
+                    extra.insert("assistant_messages".into(), json!(self.assistant_messages));
+                    (
+                        (TaskStatus::Completed, "completed"),
+                        exit_code,
+                        errors,
+                        judge_over_threshold,
+                        pipes_lingered,
+                        stderr_tail,
+                    )
+                }
+                PiRunFinish::Failed {
+                    kind,
+                    detail,
+                    exit_code,
+                    errors,
+                    judge_over_threshold,
+                    pipes_lingered,
+                    stderr_tail,
+                } => {
+                    extra.insert("failure".into(), json!(kind));
+                    extra.insert(
+                        "failure_detail".into(),
+                        json!(truncate_within(&detail, MAX_FAILURE_DETAIL_CHARS)),
+                    );
+                    (
+                        (TaskStatus::Failed, "failed"),
+                        exit_code,
+                        errors,
+                        judge_over_threshold,
+                        pipes_lingered,
+                        stderr_tail,
+                    )
+                }
+            };
+
+        extra.insert("exit_code".into(), json!(exit_code));
+        if !errors.is_empty() {
+            let capped: Vec<String> = errors
+                .iter()
+                .take(MAX_ERRORS)
+                .map(|e| truncate_within(e, MAX_ERROR_ENTRY_CHARS))
+                .collect();
+            extra.insert("errors".into(), json!(capped));
+        }
+        if judge_over_threshold > 0 {
+            extra.insert("judge_over_threshold".into(), json!(judge_over_threshold));
+        }
+        if pipes_lingered {
+            extra.insert("pipes_lingered".into(), json!(true));
+        }
+        if let Some(tail) = stderr_tail.filter(|t| !t.is_empty()) {
+            extra.insert(
+                "stderr_tail".into(),
+                json!(truncate_within(&tail, MAX_STDERR_TAIL_CHARS)),
+            );
+        }
+        statuses
     }
 
     /// Metadata keys common to every Interaction node written by this run.
@@ -333,6 +443,121 @@ impl PiRun {
     }
 }
 
+impl Drop for PiRun {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        let duration_ms = self.started.elapsed().as_millis() as u64;
+        tracing::warn!(
+            task_id = %self.task_id,
+            pi_agent_id = %self.pi_agent_id,
+            tool_calls = self.tool_calls,
+            "PiRun dropped without finish(); marking Task failed (abandoned)"
+        );
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            tracing::error!(
+                task_id = %self.task_id,
+                "no tokio runtime at PiRun drop; Task left pending"
+            );
+            return;
+        };
+        let g = self.graph.clone();
+        let task_id = self.task_id.clone();
+        let pi_agent_id = self.pi_agent_id.clone();
+        // Sync enqueue only — `.await` is impossible here; the blocking pool
+        // runs the write even if the dropping task is being torn down.
+        handle.spawn_blocking(move || {
+            if let Err(e) = mark_abandoned(&g, &task_id, &pi_agent_id, duration_ms) {
+                tracing::error!(task_id = %task_id, error = %e, "failed to mark PiRun abandoned");
+            }
+        });
+    }
+}
+
+/// Task node for a delegation: title, capped description, `Pending`, and
+/// `{executor, provider, model, parent_session_id}` metadata.
+fn build_task_node(task_text: &str, provider: &str, model: &str, director: &NodeId) -> GraphNode {
+    let mut node = GraphNode::new(NodeType::Task(TaskData {
+        title: PI_TASK_TITLE.to_string(),
+        description: truncate_within(task_text, MAX_TASK_DESCRIPTION_CHARS),
+        status: TaskStatus::Pending,
+        priority: None,
+    }));
+    let mut meta = Map::new();
+    meta.insert("executor".into(), json!(PI_EXECUTOR));
+    meta.insert("provider".into(), json!(provider));
+    meta.insert("model".into(), json!(model));
+    meta.insert("parent_session_id".into(), json!(director.to_string()));
+    node.metadata = Value::Object(meta);
+    node
+}
+
+/// Pi Agent node: `name = "pi"`, `status = "running"`, and
+/// `{executor, parent_session_id, task_id, pi_version?}` metadata.
+fn build_pi_agent_node(
+    model: &str,
+    pi_version: Option<&str>,
+    director: &NodeId,
+    task_id: &NodeId,
+) -> GraphNode {
+    let mut node = GraphNode::new(NodeType::Agent(AgentData {
+        name: PI_EXECUTOR.to_string(),
+        model: model.to_string(),
+        system_prompt: None,
+        status: "running".to_string(),
+    }));
+    let mut meta = Map::new();
+    meta.insert("executor".into(), json!(PI_EXECUTOR));
+    meta.insert("parent_session_id".into(), json!(director.to_string()));
+    meta.insert("task_id".into(), json!(task_id.to_string()));
+    if let Some(v) = pi_version {
+        meta.insert("pi_version".into(), json!(v));
+    }
+    node.metadata = Value::Object(meta);
+    node
+}
+
+/// Sync: sets the Task status and merges `extra` into its metadata.
+fn set_task_status(
+    g: &GraphStore,
+    task_id: &NodeId,
+    status: TaskStatus,
+    extra: Map<String, Value>,
+) -> Result<(), AgentError> {
+    let mut node = g.get_node(task_id)?;
+    if let NodeType::Task(ref mut data) = node.node_type {
+        data.status = status;
+    }
+    merge_metadata(&mut node, extra);
+    g.update_node(task_id, node)?;
+    Ok(())
+}
+
+/// Sync: sets the Pi Agent status string.
+fn set_agent_status(g: &GraphStore, agent_id: &NodeId, status: &str) -> Result<(), AgentError> {
+    let mut node = g.get_node(agent_id)?;
+    if let NodeType::Agent(ref mut data) = node.node_type {
+        data.status = status.to_string();
+    }
+    g.update_node(agent_id, node)?;
+    Ok(())
+}
+
+/// Sync: the `Drop` path — Task `Failed` + `failure: "abandoned"`, Agent `"failed"`.
+fn mark_abandoned(
+    g: &GraphStore,
+    task_id: &NodeId,
+    pi_agent_id: &NodeId,
+    duration_ms: u64,
+) -> Result<(), AgentError> {
+    let mut extra = Map::new();
+    extra.insert("failure".into(), json!(FAILURE_ABANDONED));
+    extra.insert("duration_ms".into(), json!(duration_ms));
+    set_task_status(g, task_id, TaskStatus::Failed, extra)?;
+    set_agent_status(g, pi_agent_id, "failed")
+}
+
 /// Runs a synchronous store closure off the runtime, mapping `JoinError` the
 /// same way `Session::persist_interaction` does.
 async fn run_blocking<T, F>(f: F) -> Result<T, AgentError>
@@ -355,7 +580,7 @@ fn merge_metadata(node: &mut GraphNode, extra: Map<String, Value>) {
     }
 }
 
-/// Compact JSON of the arguments, capped at [`MAX_ARGS_CHARS`] chars with `…`
+/// Compact JSON of the arguments, capped at `MAX_ARGS_CHARS` chars with `…`
 /// appended when cut (the HITL judge's rule, so the two never disagree).
 fn compact_args(args: &Value) -> String {
     let s = args.to_string();
@@ -367,11 +592,15 @@ fn compact_args(args: &Value) -> String {
 }
 
 /// Keep at most `max` chars; when cut, end with `…` (counted within `max`).
+/// `max == 0` yields an empty string.
 fn truncate_within(s: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
     if s.chars().count() <= max {
         return s.to_string();
     }
-    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    let mut out: String = s.chars().take(max - 1).collect();
     out.push('…');
     out
 }
@@ -392,6 +621,7 @@ mod tests {
     use super::*;
     use graphirm_graph::{Direction, GraphStore};
     use std::path::PathBuf;
+    use std::time::Duration;
     use tokio_util::sync::CancellationToken;
 
     fn make_ctx() -> ToolContext {
@@ -506,8 +736,11 @@ mod tests {
         assert_eq!(meta["executor"], "pi");
         assert_eq!(meta["provider"], "openrouter");
         assert_eq!(meta["model"], "deepseek/deepseek-v4-flash");
-        assert_eq!(meta["pi_version"], "0.9.1");
         assert_eq!(meta["parent_session_id"], ctx.agent_id.to_string());
+        assert!(
+            meta.get("pi_version").is_none(),
+            "pi_version lives on the Agent"
+        );
         assert!(meta.get("binary").is_none(), "binary must never be stored");
 
         let (agent, ameta) = agent_data(g, &run.pi_agent_id);
@@ -515,9 +748,14 @@ mod tests {
         assert_eq!(agent.status, "running");
         assert_eq!(agent.model, "deepseek/deepseek-v4-flash");
         assert_eq!(ameta["executor"], "pi");
+        assert_eq!(ameta["pi_version"], "0.9.1");
         assert_eq!(ameta["task_id"], run.task_id.to_string());
         assert_eq!(ameta["parent_session_id"], ctx.agent_id.to_string());
         assert!(ameta.get("binary").is_none(), "binary must never be stored");
+
+        run.finish(PiRunFinish::completed("", Some(0)))
+            .await
+            .expect("finish");
     }
 
     #[tokio::test]
@@ -527,10 +765,41 @@ mod tests {
         let run = PiRun::begin(&ctx, &long, "p", "m", None, 100)
             .await
             .expect("begin");
-        let (task, meta) = task_data(&ctx.graph, &run.task_id);
+        let (task, _) = task_data(&ctx.graph, &run.task_id);
         assert_eq!(task.description.chars().count(), MAX_TASK_DESCRIPTION_CHARS);
         assert!(task.description.ends_with('…'));
-        assert!(meta.get("pi_version").is_none());
+        let (_, ameta) = agent_data(&ctx.graph, &run.pi_agent_id);
+        assert!(ameta.get("pi_version").is_none());
+        run.finish(PiRunFinish::completed("", Some(0)))
+            .await
+            .expect("finish");
+    }
+
+    #[tokio::test]
+    async fn record_session_stores_pi_session_id_and_cwd_on_agent() {
+        let ctx = make_ctx();
+        let mut run = begin(&ctx, 4000).await;
+
+        run.record_session(Some("sess-42"), Some("/work/repo"))
+            .await
+            .expect("record_session");
+        let (agent, meta) = agent_data(&ctx.graph, &run.pi_agent_id);
+        assert_eq!(meta["pi_session_id"], "sess-42");
+        assert_eq!(meta["pi_cwd"], "/work/repo");
+        assert_eq!(agent.status, "running", "status untouched");
+        assert_eq!(meta["pi_version"], "0.9.1", "existing metadata preserved");
+
+        // Partial update keeps the other key.
+        run.record_session(None, Some("/elsewhere"))
+            .await
+            .expect("record_session");
+        let (_, meta) = agent_data(&ctx.graph, &run.pi_agent_id);
+        assert_eq!(meta["pi_session_id"], "sess-42");
+        assert_eq!(meta["pi_cwd"], "/elsewhere");
+
+        run.finish(PiRunFinish::completed("", Some(0)))
+            .await
+            .expect("finish");
     }
 
     #[tokio::test]
@@ -559,6 +828,7 @@ mod tests {
         assert_eq!(meta["hitl_judge"], judge);
         let args = meta["arguments"].as_str().expect("arguments is a string");
         assert_eq!(args.chars().count(), MAX_ARGS_CHARS + 1);
+        assert_eq!(MAX_ARGS_CHARS, 1500, "shared with hitl_judge");
         assert!(args.ends_with('…'));
         assert_eq!(meta["label"], "interaction_3_1_1");
 
@@ -596,6 +866,10 @@ mod tests {
         assert_eq!(responds.len(), 1);
         assert_eq!(responds[0].id, first);
         assert_eq!(out(g, &run.pi_agent_id, EdgeType::Produces).len(), 2);
+
+        run.finish(PiRunFinish::completed("", Some(0)))
+            .await
+            .expect("finish");
     }
 
     #[tokio::test]
@@ -624,6 +898,9 @@ mod tests {
             data.content
                 .contains("[truncated: 16000 of 16010 chars stored]")
         );
+        run.finish(PiRunFinish::completed("", Some(0)))
+            .await
+            .expect("finish");
     }
 
     #[tokio::test]
@@ -637,8 +914,9 @@ mod tests {
             .record_tool_call(bash_call("call_1", &args, None))
             .await
             .expect("tool");
+        let usage = json!({ "input": 120, "output": 45 });
         let msg = run
-            .record_assistant_message("All done.", Some("stop"))
+            .record_assistant_message("All done.", Some("stop"), Some(&usage))
             .await
             .expect("assistant");
 
@@ -648,6 +926,7 @@ mod tests {
         assert_eq!(data.token_count, None);
         assert_eq!(meta["executor"], "pi");
         assert_eq!(meta["stop_reason"], "stop");
+        assert_eq!(meta["usage"], usage);
         assert_eq!(meta["session_id"], run.pi_agent_id.to_string());
         assert_eq!(meta["label"], "interaction_3_2_1");
         let responds = out(g, &msg, EdgeType::RespondsTo);
@@ -659,45 +938,60 @@ mod tests {
                 .any(|n| n.id == msg)
         );
 
+        // Without usage / stop_reason the keys are absent.
+        let bare = run
+            .record_assistant_message("more", None, None)
+            .await
+            .expect("assistant");
+        let (_, bare_meta) = interaction_data(g, &bare);
+        assert!(bare_meta.get("usage").is_none());
+        assert!(bare_meta.get("stop_reason").is_none());
+
+        let task_id = run.task_id.clone();
+        let pi_agent_id = run.pi_agent_id.clone();
         let touched = run
-            .finish(PiRunFinish::Completed {
-                summary: "All done.".to_string(),
-                exit_code: Some(0),
-            })
+            .finish(PiRunFinish::completed("All done.", Some(0)))
             .await
             .expect("finish");
-        assert_eq!(touched, vec![run.task_id.clone(), run.pi_agent_id.clone()]);
+        assert_eq!(touched, vec![task_id.clone(), pi_agent_id.clone()]);
 
-        let (task, tmeta) = task_data(g, &run.task_id);
+        let (task, tmeta) = task_data(g, &task_id);
         assert_eq!(task.status, TaskStatus::Completed);
         assert_eq!(tmeta["result"], "All done.");
         assert_eq!(tmeta["tool_calls"], 1);
-        assert_eq!(tmeta["assistant_messages"], 1);
+        assert_eq!(tmeta["assistant_messages"], 2);
         assert!(tmeta["duration_ms"].is_u64());
         assert_eq!(tmeta["exit_code"], 0);
         assert!(tmeta.get("failure").is_none());
+        // Defaults are not stored.
+        assert!(tmeta.get("errors").is_none());
+        assert!(tmeta.get("judge_over_threshold").is_none());
+        assert!(tmeta.get("pipes_lingered").is_none());
+        assert!(tmeta.get("stderr_tail").is_none());
         // begin-time metadata survives finish
         assert_eq!(tmeta["provider"], "openrouter");
         assert_eq!(tmeta["executor"], "pi");
         assert!(tmeta.get("binary").is_none());
 
-        let (agent, _) = agent_data(g, &run.pi_agent_id);
+        let (agent, _) = agent_data(g, &pi_agent_id);
         assert_eq!(agent.status, "completed");
     }
 
     #[tokio::test]
     async fn finish_failed_records_failure_kind() {
         let ctx = make_ctx();
-        let mut run = begin(&ctx, 4000).await;
-        run.finish(PiRunFinish::Failed {
-            kind: "timeout",
-            detail: "z".repeat(MAX_FAILURE_DETAIL_CHARS + 50),
-            exit_code: None,
-        })
+        let run = begin(&ctx, 4000).await;
+        let task_id = run.task_id.clone();
+        let pi_agent_id = run.pi_agent_id.clone();
+        run.finish(PiRunFinish::failed(
+            "timeout",
+            "z".repeat(MAX_FAILURE_DETAIL_CHARS + 50),
+            None,
+        ))
         .await
         .expect("finish");
 
-        let (task, meta) = task_data(&ctx.graph, &run.task_id);
+        let (task, meta) = task_data(&ctx.graph, &task_id);
         assert_eq!(task.status, TaskStatus::Failed);
         assert_eq!(meta["failure"], "timeout");
         assert_eq!(
@@ -713,25 +1007,95 @@ mod tests {
         assert!(meta["exit_code"].is_null());
         assert!(meta.get("result").is_none());
 
-        let (agent, _) = agent_data(&ctx.graph, &run.pi_agent_id);
+        let (agent, _) = agent_data(&ctx.graph, &pi_agent_id);
         assert_eq!(agent.status, "failed");
+    }
+
+    #[tokio::test]
+    async fn finish_stores_errors_judge_pipes_and_stderr_when_non_default() {
+        let ctx = make_ctx();
+        let run = begin(&ctx, 4000).await;
+        let task_id = run.task_id.clone();
+
+        let errors: Vec<String> = (0..MAX_ERRORS + 5)
+            .map(|i| format!("e{i}-") + &"!".repeat(MAX_ERROR_ENTRY_CHARS))
+            .collect();
+        run.finish(PiRunFinish::Failed {
+            kind: "exit",
+            detail: "pi exited 1".to_string(),
+            exit_code: Some(1),
+            errors,
+            judge_over_threshold: 2,
+            pipes_lingered: true,
+            stderr_tail: Some("s".repeat(MAX_STDERR_TAIL_CHARS + 7)),
+        })
+        .await
+        .expect("finish");
+
+        let (_, meta) = task_data(&ctx.graph, &task_id);
+        let stored = meta["errors"].as_array().expect("errors array");
+        assert_eq!(stored.len(), MAX_ERRORS);
+        for e in stored {
+            let s = e.as_str().expect("error string");
+            assert_eq!(s.chars().count(), MAX_ERROR_ENTRY_CHARS);
+            assert!(s.ends_with('…'));
+        }
+        assert!(stored[0].as_str().expect("s").starts_with("e0-"));
+        assert_eq!(meta["judge_over_threshold"], 2);
+        assert_eq!(meta["pipes_lingered"], true);
+        assert_eq!(
+            meta["stderr_tail"].as_str().expect("tail").chars().count(),
+            MAX_STDERR_TAIL_CHARS
+        );
+        assert_eq!(meta["exit_code"], 1);
+        assert_eq!(meta["failure"], "exit");
+
+        // Same optional keys work on Completed.
+        let ctx2 = make_ctx();
+        let run2 = begin(&ctx2, 4000).await;
+        let task2 = run2.task_id.clone();
+        run2.finish(PiRunFinish::Completed {
+            summary: "ok".to_string(),
+            exit_code: Some(1),
+            errors: vec!["provider hiccup".to_string()],
+            judge_over_threshold: 1,
+            pipes_lingered: false,
+            stderr_tail: Some(String::new()),
+        })
+        .await
+        .expect("finish");
+        let (task, meta2) = task_data(&ctx2.graph, &task2);
+        assert_eq!(task.status, TaskStatus::Completed);
+        assert_eq!(meta2["errors"], json!(["provider hiccup"]));
+        assert_eq!(meta2["judge_over_threshold"], 1);
+        assert!(meta2.get("pipes_lingered").is_none());
+        assert!(
+            meta2.get("stderr_tail").is_none(),
+            "empty tail is not stored"
+        );
     }
 
     #[tokio::test]
     async fn result_truncated_to_max_chars() {
         let ctx = make_ctx();
-        let mut run = begin(&ctx, 100).await;
-        run.finish(PiRunFinish::Completed {
-            summary: "r".repeat(500),
-            exit_code: Some(0),
-        })
-        .await
-        .expect("finish");
+        let run = begin(&ctx, 100).await;
+        let task_id = run.task_id.clone();
+        run.finish(PiRunFinish::completed("r".repeat(500), Some(0)))
+            .await
+            .expect("finish");
 
-        let (_, meta) = task_data(&ctx.graph, &run.task_id);
+        let (_, meta) = task_data(&ctx.graph, &task_id);
         let result = meta["result"].as_str().expect("result");
         assert_eq!(result.chars().count(), 100);
         assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn truncate_within_zero_is_empty() {
+        assert_eq!(truncate_within("abc", 0), "");
+        assert_eq!(truncate_within("abc", 1), "…");
+        assert_eq!(truncate_within("abc", 3), "abc");
+        assert_eq!(truncate_within("abcd", 3), "ab…");
     }
 
     #[tokio::test]
@@ -753,5 +1117,58 @@ mod tests {
         assert_eq!(meta["label"], "interaction_3_3_1");
         assert_eq!(director_label, "interaction_3_4_1");
         assert_ne!(meta["label"], director_label);
+
+        run.finish(PiRunFinish::completed("", Some(0)))
+            .await
+            .expect("finish");
+    }
+
+    #[tokio::test]
+    async fn dropped_unfinished_run_is_marked_abandoned() {
+        let ctx = make_ctx();
+        let mut run = begin(&ctx, 4000).await;
+        let args = json!({});
+        run.record_tool_call(bash_call("c1", &args, None))
+            .await
+            .expect("record");
+        let task_id = run.task_id.clone();
+        let pi_agent_id = run.pi_agent_id.clone();
+
+        drop(run);
+
+        // The Drop path enqueues a blocking write; poll until it lands.
+        let mut marked = false;
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let (task, _) = task_data(&ctx.graph, &task_id);
+            if task.status == TaskStatus::Failed {
+                marked = true;
+                break;
+            }
+        }
+        assert!(marked, "abandoned run was not marked within 2s");
+
+        let (task, meta) = task_data(&ctx.graph, &task_id);
+        assert_eq!(task.status, TaskStatus::Failed);
+        assert_eq!(meta["failure"], FAILURE_ABANDONED);
+        assert!(meta["duration_ms"].is_u64());
+        assert_eq!(meta["provider"], "openrouter", "begin metadata preserved");
+        let (agent, _) = agent_data(&ctx.graph, &pi_agent_id);
+        assert_eq!(agent.status, "failed");
+    }
+
+    #[tokio::test]
+    async fn finished_run_is_not_remarked_on_drop() {
+        let ctx = make_ctx();
+        let run = begin(&ctx, 4000).await;
+        let task_id = run.task_id.clone();
+        run.finish(PiRunFinish::completed("done", Some(0)))
+            .await
+            .expect("finish");
+        // Give a stray Drop write time to land if it were (wrongly) enqueued.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let (task, meta) = task_data(&ctx.graph, &task_id);
+        assert_eq!(task.status, TaskStatus::Completed);
+        assert!(meta.get("failure").is_none());
     }
 }
