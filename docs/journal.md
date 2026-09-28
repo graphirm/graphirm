@@ -22,6 +22,34 @@ Entry template:
 
 ---
 
+## 2026-09-28 — Pi becomes the delegated coding executor; graphirm stays the director
+
+**Context:** Graphirm has the control plane (Jev routing in shadow, HITL judge, graph memory,
+pinned rules) but its in-process `delegate` is unreachable from the server and TUI, and the
+agent loop's own coding ability is what `graphirm-eval` measures. Codeporate already drives Pi
+(`@earendil-works/pi-coding-agent`) via `--mode json` with a Python event mapper. A director
+without a strong executor and an executor without a control plane are complementary.
+
+**Decision:** Pi is the only external executor, run as one subprocess per delegation in
+`--mode json`, observe-only (its tool calls are recorded and judged, not paused). Its work is
+graph-native: Task + Pi Agent + `Interaction{role:"tool"}` nodes in the same shape in-process
+tools produce. Live visibility comes from a new optional `ToolEventSink` on `ToolContext`.
+Design with 15 sub-decisions: `docs/plans/2026-09-28-pi-delegate-executor-design.md`.
+
+**Alternatives:** Hermes as executor — rejected: it is a second director with its own memory
+and routing, leaving Jev no seat. Gating Pi's calls in v1 via `--mode rpc` or a Pi extension —
+deferred: observe first, keep the parser process-agnostic so the switch is additive.
+`GraphUpdate`-on-insert instead of a sink — rejected: the `EventBus` is per prompt and the
+graph store has no channel, so there is nothing to emit from.
+
+**Consequences:** `ToolContext` gains a field (21 mechanical edits). A new `[agent.pi]` config
+block, disabled until the A4 live check passes. Track B (phone-first chat) is designed only
+after A4. Nothing in context selection, compaction, memory ranking, or knowledge extraction
+changes.
+
+**Refs:** design doc above; backlog "Director / Pi executor"; Jev seat scoring
+`~/codeporate-connect/docs/evaluations/2026-09-27-jev-where-in-graphirm.md`.
+
 ## 2026-09-28 — Governance docs must be updated in the same commit as the work
 
 **Context:** Audit found the scaffolding (root + 7 scoped `AGENTS.md`, 3 Cursor rules, hooks,

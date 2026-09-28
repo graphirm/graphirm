@@ -1292,6 +1292,40 @@ If product goal is **one API key** for chat + vectors, add an **`openrouter/...`
 
 ---
 
+## Director / Pi executor + phone-first decision chat (2026-09-28)
+
+Graphirm keeps the control plane (Jev routing, HITL judge, graph memory, pinned rules) and
+directs; Pi (`@earendil-works/pi-coding-agent`) does the coding as a delegated executor visible
+in the graph. Then `web-app/` is redesigned chat-first / phone-first so the control plane is
+visible and correctable. Two tracks, A before B. Locked decisions and full brief in the Track A
+design doc.
+
+### Track A — Pi as delegate executor — L · P1
+
+**Design:** `docs/plans/2026-09-28-pi-delegate-executor-design.md` (A0, awaiting approval).
+Phases: A1 `ToolEventSink` on `ToolContext` · A2 `delegate_pi` tool (subprocess, JSONL parser,
+graph writes, cancel, fake-`pi` offline tests) · A3 `hitl_judge` observe-only on Pi's
+`bash`/`write`/`edit` · A4 live check in whiteboard + TUI, then `enabled = true`.
+
+**Key files:** `crates/tools/src/lib.rs`, `crates/agent/src/pi_delegate/`, `crates/agent/src/event_sink.rs`,
+`crates/agent/src/config.rs`, `config/default.toml`, `src/commands/{serve,chat}.rs`.
+
+### Track B — phone-first decision chat (`web-app/`) — L · P1
+
+Blocked on A4. Design doc `docs/plans/2026-09-28-phone-first-decision-chat-design.md` (B0) to be
+written after A4. Phases B1–B9: layout inversion + tab bar, typed blocks + STEPS, streaming
+segment parser, Jev chip + sheet, confirm card, Rules tab, Review tab, reply-judging + routing
+feedback seats (server), plan card.
+
+### Pre-existing gaps surfaced by the A0 design read — S · P2
+
+- `delegate` (in-process `SubagentTool`) is only registered by `Coordinator::run_primary` (tests);
+  `routes.rs:628` and `chat.rs:37` pass the base registry to `run_agent_loop`, so the web-app and
+  TUI cannot delegate today.
+- `bash.rs` cancels via `task.abort()` without `kill_on_drop` — the shell child survives an abort.
+
+---
+
 ## Completed (summary — details in `docs/completion-log.md`)
 
 | Phase | What |
