@@ -21,8 +21,9 @@ in-process shape, judges Pi's `bash/write/edit` arguments fail-soft, and returns
 Pi's final message as the tool result. Registered only when `[agent.pi].enabled`.
 
 **Tech stack:** Rust 2024 / MSRV 1.88, `tokio::process`, `serde_json`, existing
-`DestructiveJudge` + `DecisionsClient` (fake transport in tests), `libc::killpg`
-behind `cfg(unix)`, a shell-script fake `pi` for offline tests.
+`DestructiveJudge` + `DecisionsClient` (fake transport in tests),
+`graphirm_tools::process::kill_group_and_reap` (shared group-kill helper from A1.4;
+`libc` lives in `graphirm-tools` only), a shell-script fake `pi` for offline tests.
 
 **Key decisions** (full table in the design doc
 `docs/plans/2026-09-28-pi-delegate-executor-design.md`):
@@ -43,8 +44,9 @@ behind `cfg(unix)`, a shell-script fake `pi` for offline tests.
 **Risks / blockers:**
 - Real Pi JSONL may differ from `docs/json.md` in small ways (e.g. `message.content`
   shape). Task A2.1 records a real run first and the parser is written against it.
-- `libc::killpg` is unix-only; the plan gates it with `cfg(unix)` and falls back
-  to `start_kill()` elsewhere. CI is Linux.
+- The group SIGKILL inside `graphirm_tools::process::kill_group_and_reap` is
+  unix-only; the helper gates it with `cfg(unix)` and falls back to `start_kill()`
+  elsewhere. CI is Linux.
 - `ToolContext` literal sweep (Task A1.1) touches 20 sites; compile errors are the
   guide — do not hand-count.
 
@@ -792,7 +794,7 @@ the tool definitions sent to the mock provider exclude both `bash` and `delegate
    - `Err(Timeout)` → `finish(Failed{"timeout"})`, `Err(ToolError::Timeout(secs))` with partial summary in the message.
    - `Err(NotFound|Spawn)` → `finish(Failed{"spawn"})` (Task already exists at this point — acceptable; it records the attempt) → `Err(ExecutionFailed(...))`. *Alternative:* probe `binary` with `--version` before `begin` so no Task is created when Pi is absent — do this; it matches the design's "no Task node created" for not-installed.
 7. Every `graph_changed` after the final `finish` so the Task status flips live.
-8. Never move `ctx.event_sink` into a detached task that outlives `execute`; the sink is closed at turn end and the SSE relay relies on all `EventBus` senders dropping.
+8. Never move `ctx.event_sink` into a detached task that outlives `execute`; the sink is closed at turn end and the SSE relay relies on all `EventBus` senders dropping — and `execute` MUST honour `ctx.signal` and enforce a timeout, otherwise the turn cannot end and the sink is never closed.
 
 `register_pi_delegate(registry, config)`: if `config.pi.enabled` → build
 `Option<Arc<DestructiveJudge>>` via `build_judge(config)`, probe `--version`

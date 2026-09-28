@@ -189,11 +189,27 @@ mod tests {
 
     #[test]
     fn refuses_dangerous_pgids() {
-        // Would be kill(0)/kill(-1): must be rejected without signalling anything.
-        // Under debug the `debug_assert!` panics first (also acceptable), so guard
-        // with catch_unwind; in release the runtime check must return `Err`.
-        if let Ok(r) = std::panic::catch_unwind(|| kill_process_group(1)) {
-            assert!(r.is_err());
+        // Would be kill(-1)/kill(0): must be rejected without signalling anything.
+        // Under debug the `debug_assert!` panics first; in release the runtime
+        // check must return `Err`. Assert the expected outcome in both builds.
+        for pgid in [0, 1] {
+            #[cfg(debug_assertions)]
+            {
+                // Silence the default hook so the expected panic does not print
+                // a backtrace, then restore it.
+                let prev = std::panic::take_hook();
+                std::panic::set_hook(Box::new(|_| {}));
+                let outcome = std::panic::catch_unwind(move || kill_process_group(pgid));
+                std::panic::set_hook(prev);
+                assert!(outcome.is_err(), "pgid {pgid} should trip debug_assert");
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                assert!(
+                    kill_process_group(pgid).is_err(),
+                    "pgid {pgid} should be refused"
+                );
+            }
         }
     }
 }

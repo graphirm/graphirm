@@ -1004,8 +1004,12 @@ async fn run_tool_calls(
         tokio::sync::Mutex<HashMap<std::path::PathBuf, graphirm_tools::impact::ImpactBrief>>,
     > = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
 
-    // Phase 1: spawn SAFE tools in parallel and collect results
-    let mut set = JoinSet::new();
+    // Phase 1: spawn SAFE tools in parallel and collect results.
+    // Resolve every tool BEFORE spawning anything: an unknown tool name must
+    // bail out with an empty JoinSet, otherwise the `?` would return while
+    // spawned tasks still hold clones of `ctx` (and its event sink), racing
+    // the `Arc::try_unwrap(sink)` in `execute_tools_parallel`.
+    let mut resolved = Vec::with_capacity(safe_calls.len());
     for part in safe_calls {
         let ContentPart::ToolCall {
             id: call_id,
@@ -1021,6 +1025,11 @@ async fn run_tool_calls(
             name: name.clone(),
             arguments: arguments.clone(),
         };
+        resolved.push((tool, call));
+    }
+
+    let mut set = JoinSet::new();
+    for (tool, call) in resolved {
         let ctx_clone = ctx.clone();
         set.spawn(async move {
             let result: Result<graphirm_tools::ToolOutput, graphirm_tools::ToolError> =
