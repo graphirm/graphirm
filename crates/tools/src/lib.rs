@@ -41,6 +41,19 @@ use graphirm_graph::nodes::{GraphNode, NodeId};
 pub use registry::ToolRegistry;
 pub use retriever::{KnowledgeResult, KnowledgeRetriever};
 
+/// Lets a long-running tool report progress through the agent loop's event
+/// stream without depending on `graphirm-agent`. All methods are synchronous
+/// and must not block; implementations forward to a channel or `tokio::spawn`.
+pub trait ToolEventSink: Send + Sync {
+    /// A sub-step began. `response_node_id` is the assistant Interaction that
+    /// owns the current turn; `call_id` is unique within the run.
+    fn tool_started(&self, response_node_id: &NodeId, call_id: &str, tool_name: &str);
+    /// A sub-step's result node was written.
+    fn tool_finished(&self, node_id: &NodeId, is_error: bool);
+    /// Nodes were inserted; `anchor` is the node the update is about.
+    fn graph_changed(&self, anchor: &NodeId, touched: &[NodeId]);
+}
+
 /// Context passed to every tool execution.
 #[derive(Clone)]
 pub struct ToolContext {
@@ -62,6 +75,9 @@ pub struct ToolContext {
     /// When true, `write`/`edit` file Content nodes get a `relates_to` edge from the session’s
     /// linked planning Knowledge node (see `planning_link`).
     pub auto_link_write_to_planning: bool,
+    /// Optional progress emitter for long-running tools (e.g. `delegate_pi`).
+    /// `None` for tools that return promptly; existing tools ignore it.
+    pub event_sink: Option<Arc<dyn ToolEventSink>>,
 }
 
 impl ToolContext {
@@ -215,7 +231,43 @@ pub(crate) mod tests {
             impact_provider: None,
             disable_bash: false,
             auto_link_write_to_planning: true,
+            event_sink: None,
         }
+    }
+
+    #[test]
+    fn tool_context_event_sink_defaults_to_none_and_accepts_a_sink() {
+        use std::sync::Mutex;
+        struct Recording(Mutex<Vec<String>>);
+        impl ToolEventSink for Recording {
+            fn tool_started(&self, _r: &NodeId, call_id: &str, tool_name: &str) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(format!("start:{call_id}:{tool_name}"));
+            }
+            fn tool_finished(&self, node_id: &NodeId, is_error: bool) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(format!("end:{node_id}:{is_error}"));
+            }
+            fn graph_changed(&self, anchor: &NodeId, touched: &[NodeId]) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(format!("graph:{anchor}:{}", touched.len()));
+            }
+        }
+        let mut ctx = make_test_context();
+        assert!(ctx.event_sink.is_none());
+        let sink = Arc::new(Recording(Mutex::new(vec![])));
+        ctx.event_sink = Some(sink.clone());
+        let s = ctx.event_sink.as_ref().unwrap();
+        s.tool_started(&ctx.interaction_id, "c1", "bash");
+        s.tool_finished(&ctx.interaction_id, false);
+        s.graph_changed(&ctx.interaction_id, &[]);
+        assert_eq!(sink.0.lock().unwrap().len(), 3);
     }
 
     #[test]
