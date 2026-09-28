@@ -125,9 +125,10 @@ don'ts"). `AGENTS.md` in the workspace still loads — that is independent of tr
   kill is needed because Pi's own `bash` spawns grandchildren that
   `start_kill()` on the node process would orphan.
 - **Timeout:** `timeout_seconds` (default 900) total wall-clock. Same kill path,
-  `ToolError::Timeout`, Task `Failed` (`failure = "timeout"`), summary of what was
-  recorded so far is still returned in the error text so the parent can reason
-  about partial work. No idle timeout in v1 (total covers a hung network call);
+  `ToolError::Timeout(secs)` (typed variant, no message slot), Task `Failed`
+  (`failure = "timeout"`), summary of what was recorded so far is stored in
+  `Task.metadata.failure_detail` so the parent can reason about partial work via
+  `graph_query`. No idle timeout in v1 (total covers a hung network call);
   revisit if real runs show long silent stretches.
 - **Exit:** wait for `agent_end` **or** EOF, then `child.wait()`. Non-zero exit
   with no `message_end` → tool error carrying the stderr tail. Non-zero exit *with*
@@ -153,7 +154,7 @@ Malformed JSON → skipped, warned, counted. `\r` stripped.
 | `agent_start`, `turn_start`, `turn_end`, `queue_update`, `compaction_*` | Counters only. |
 | `message_start` | Nothing. (Pi's text is not the director's text; do **not** emit `MessageStart/Delta` on the parent's stream — the web-app would render it as the assistant speaking.) |
 | `message_update` (`assistantMessageEvent.type == text_delta`) | Append to an in-memory buffer for the current assistant message. Not forwarded in v1 (see D3 follow-up). |
-| `message_end`, `message.role == assistant` | New `Interaction { role: "assistant", content: flattened text parts }`, `Pi Agent --Produces--> node`, `RespondsTo` chain among Pi's nodes; metadata `executor: "pi"`, `stop_reason`, `usage`. Remember as `last_assistant_text`. |
+| `message_end`, `message.role == assistant` | New `Interaction { role: "assistant", content: flattened text parts }`, `Pi Agent --Produces--> node`, `RespondsTo` chain among Pi's nodes; metadata `executor: "pi"`, `stop_reason`, `usage`. Remember as `last_assistant_text` **only when `stopReason != "toolUse"`** (pre-tool narration is recorded as a node but is not Pi's result). |
 | `message_end`, `role == user` / `toolResult` | Skip (prompt echo; tool results are recorded from `tool_execution_end`). |
 | `tool_execution_start {toolCallId, toolName, args}` | Emit `ToolStart { response_node_id: ctx.interaction_id, call_id: toolCallId, tool_name: toolName }` via the sink. If `toolName ∈ {bash, write, edit}` and a judge exists: spawn `judge(toolName, args)` (non-blocking, keyed by `toolCallId`). |
 | `tool_execution_update` | Ignore. |
@@ -341,12 +342,14 @@ handling: none — graphirm passes its environment through and never reads
 registration (`<binary> --version`, 5 s timeout) to record `pi_version` and warn
 early if missing; a missing binary at registration does **not** fail startup (the
 tool still registers so the failure is visible to the model as a tool error).
+Registration validates the config first: an empty `binary` or `model` logs a warning
+and skips registration; `timeout_seconds = 0` falls back to the default with a warning.
 
 ### D7. Failure modes
 
 | Failure | Detection | Result to parent (never a panic, never a stuck turn) |
 |---|---|---|
-| Pi not installed / not executable | `spawn()` → `ErrorKind::NotFound` / `PermissionDenied` | `ExecutionFailed("pi not found at '<binary>'; set [agent.pi].binary or install @earendil-works/pi-coding-agent")`. No Task node created. |
+| Pi not installed / not executable | `spawn()` → `ErrorKind::NotFound` / `PermissionDenied` | `ExecutionFailed("pi is not available: pi not found at '<binary>'")` (probe runs before `PiRun::begin`). No Task node created. |
 | Provider key missing / auth error | Pi exits non-zero, emits `error` event or stderr text, no `message_end` | `ExecutionFailed("pi exited <code> without a result: <stderr tail ≤ 1 KiB>")`. Task `Failed`, `failure = "exit"`. |
 | Non-zero exit *with* a final message | `exit_code != 0 && last_assistant_text.is_some()` | Success summary with `exit_code` noted; Task `Completed`, `exit_code` in metadata. |
 | Malformed JSONL line | `serde_json` error | Skip, `warn!` (first 3 per run, then count), `malformed_lines` in Task metadata. |
@@ -354,7 +357,7 @@ tool still registers so the failure is visible to the model as a tool error).
 | Line > 4 MiB | reader cap | Drop line, `warn!`, counted. |
 | Trust prompt | cannot happen: non-interactive modes never prompt; `--approve` added anyway | — |
 | `extension_ui_request` | event | `warn!`; continue; Pi's own timeout resolves it. |
-| Pi hangs (no output, no exit) | `timeout_seconds` deadline | Kill group; `ToolError::Timeout`; Task `Failed`, `failure = "timeout"`; partial summary in error text. |
+| Pi hangs (no output, no exit) | `timeout_seconds` deadline | Kill group; `ToolError::Timeout`; Task `Failed`, `failure = "timeout"`; partial summary in `Task.metadata.failure_detail`. |
 | Session aborted | `ctx.signal.cancelled()` | Kill group within 5 s; `ToolError::Cancelled`; Task `Failed`, `failure = "cancelled"`. |
 | Graph write fails mid-run | `GraphError` | `error!`, keep draining Pi (do not kill it for our own bug), count `graph_write_errors`; summary notes it. |
 | Judge unavailable / errors | `build_judge → None` / `judge() → Err` | No `hitl_judge` metadata; one `warn!` per run. |
