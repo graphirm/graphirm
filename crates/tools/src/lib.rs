@@ -15,6 +15,7 @@ pub mod impact;
 pub mod ls;
 pub mod permissions;
 pub mod planning_link;
+pub mod process;
 pub mod read;
 pub mod read_many;
 pub mod registry;

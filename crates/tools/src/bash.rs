@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
+use crate::process::kill_group_and_reap;
 use crate::{Tool, ToolContext, ToolError, ToolOutput};
 
 pub struct BashTool;
@@ -84,12 +85,16 @@ impl Tool for BashTool {
         cmd.arg("-c")
             .arg(command)
             .current_dir(&working_dir)
+            // The shell runs in its own process group (below), i.e. as a background
+            // group relative to any controlling tty — a child reading an inherited
+            // terminal would get SIGTTIN and hang. Null stdin gives a clean EOF.
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            // Safety net: if this future is dropped without reaching `kill_child`
+            // Safety net: if this future is dropped without reaching the kill path
             // (e.g. the whole agent task is aborted), tokio SIGKILLs the shell.
             .kill_on_drop(true);
-        // Run the shell as leader of its own process group so `kill_child` can
+        // Run the shell as leader of its own process group so the kill path can
         // take down the shell *and* everything it launched (`bash -c 'sleep 30'`
         // forks `sleep`; killing only the shell would orphan it).
         #[cfg(unix)]
@@ -98,6 +103,10 @@ impl Tool for BashTool {
         let mut child = cmd
             .spawn()
             .map_err(|e| ToolError::ExecutionFailed(format!("failed to spawn bash: {e}")))?;
+        // Capture the pgid now: `child.id()` becomes `None` once the shell is reaped,
+        // and a shell that exited while a backgrounded grandchild still holds the
+        // pipe is precisely the case where the group kill matters.
+        let pgid = child.id();
         let stdout_pipe = child.stdout.take();
         let stderr_pipe = child.stderr.take();
 
@@ -106,18 +115,20 @@ impl Tool for BashTool {
         // Hold the child directly (not in a spawned task) so that on timeout or
         // cancel we can kill the OS process instead of merely dropping a future.
         let outcome = tokio::select! {
-            result = wait_with_output(&mut child, stdout_pipe, stderr_pipe) => Ok(result),
+            result = wait_with_output(&mut child, stdout_pipe, stderr_pipe) => {
+                result.map_err(|e| ToolError::ExecutionFailed(format!("command error: {e}")))
+            }
             _ = tokio::time::sleep(Duration::from_secs(timeout_secs)) => {
                 Err(ToolError::Timeout(timeout_secs))
             }
             _ = signal.cancelled() => Err(ToolError::Cancelled),
         };
         let output = match outcome {
-            Ok(result) => {
-                result.map_err(|e| ToolError::ExecutionFailed(format!("command error: {e}")))?
-            }
+            Ok(output) => output,
             Err(err) => {
-                kill_child(&mut child).await;
+                // Also on an I/O error from `wait_with_output`: the shell or a
+                // grandchild may still be running even though reading failed.
+                kill_group_and_reap(&mut child, pgid).await;
                 return Err(err);
             }
         };
@@ -186,33 +197,6 @@ async fn wait_with_output(
         stderr,
     })
 }
-
-/// Kill the shell and, on unix, its whole process group, then reap it.
-///
-/// The child was spawned with `process_group(0)`, so its pgid equals its pid and
-/// `kill -9 -- -<pid>` reaches every descendant the shell forked. We shell out to
-/// `kill(1)` rather than calling `kill(2)` to avoid a `libc` dependency here.
-/// `start_kill` is the portable fallback and is harmless if the group kill already
-/// landed. Errors are ignored: the process may already have exited.
-async fn kill_child(child: &mut Child) {
-    #[cfg(unix)]
-    if let Some(pid) = child.id() {
-        let _ = Command::new("kill")
-            .arg("-9")
-            .arg("--")
-            .arg(format!("-{pid}"))
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .await;
-    }
-    let _ = child.start_kill();
-    // Reap so the shell does not linger as a zombie. SIGKILL cannot be blocked, so
-    // this returns promptly; the timeout is only a guard against a pathological
-    // uninterruptible-sleep state.
-    let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,8 +319,21 @@ mod tests {
         assert!(matches!(result, Err(ToolError::Cancelled)));
     }
 
-    /// `kill -0 <pid>` via std::process (avoids a libc dep in tools). True if alive.
+    /// True if the pid is running. Zombie-aware: reads `/proc/<pid>/stat` and treats
+    /// state `Z` (or a missing entry) as gone — a zombie still answers `kill -0`, which
+    /// would make a "still alive" assertion lie. Falls back to `kill -0` where `/proc`
+    /// is unavailable.
     fn pid_is_alive(pid: i32) -> bool {
+        if std::path::Path::new("/proc/self").exists() {
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                return false;
+            };
+            // "pid (comm) S ..." — comm may contain spaces, so split after the last ')'.
+            let state = stat
+                .rsplit_once(')')
+                .and_then(|(_, rest)| rest.trim_start().chars().next());
+            return !matches!(state, None | Some('Z'));
+        }
         std::process::Command::new("kill")
             .arg("-0")
             .arg(pid.to_string())
@@ -357,7 +354,22 @@ mod tests {
         pid_is_alive(pid)
     }
 
-    /// Read the pid written by `echo $$ > <pidfile>` (the `bash -c` shell pid).
+    /// Poll (up to 5s) until the shell has written its pidfile, so tests cancel only
+    /// once the child is genuinely running rather than after a fixed sleep.
+    async fn wait_for_pidfile(pidfile: &std::path::Path) {
+        for _ in 0..50 {
+            if std::fs::read_to_string(pidfile)
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false)
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("pidfile {} never appeared", pidfile.display());
+    }
+
+    /// Read the pid written by `echo $$ > <pidfile>` (or `echo $! > …`).
     fn read_pidfile(pidfile: &std::path::Path) -> i32 {
         std::fs::read_to_string(pidfile)
             .unwrap()
@@ -366,20 +378,28 @@ mod tests {
             .unwrap()
     }
 
+    /// Cancel the context's signal as soon as `pidfile` has been written.
+    fn cancel_when_pidfile_appears(ctx: &ToolContext, pidfile: &std::path::Path) {
+        let signal = ctx.signal.clone();
+        let pidfile = pidfile.to_path_buf();
+        tokio::spawn(async move {
+            wait_for_pidfile(&pidfile).await;
+            signal.cancel();
+        });
+    }
+
     #[tokio::test]
     async fn cancel_kills_the_child_process() {
         let dir = TempDir::new().unwrap();
         let ctx = make_ctx_with_dir(&dir);
-        let signal = ctx.signal.clone();
         let pidfile = dir.path().join("pid");
         let cmd = format!("echo $$ > {} && sleep 30", pidfile.display());
         let tool = BashTool::new();
-        let fut = tool.execute(json!({"command": cmd}), &ctx);
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            signal.cancel();
-        });
-        let err = fut.await.unwrap_err();
+        cancel_when_pidfile_appears(&ctx, &pidfile);
+        let err = tool
+            .execute(json!({"command": cmd}), &ctx)
+            .await
+            .unwrap_err();
         assert!(matches!(err, ToolError::Cancelled));
         let pid = read_pidfile(&pidfile);
         assert!(
@@ -394,21 +414,44 @@ mod tests {
     async fn cancel_kills_the_shells_descendants() {
         let dir = TempDir::new().unwrap();
         let ctx = make_ctx_with_dir(&dir);
-        let signal = ctx.signal.clone();
         let sleep_pidfile = dir.path().join("sleep_pid");
         let cmd = format!("sleep 30 & echo $! > {}; wait", sleep_pidfile.display());
         let tool = BashTool::new();
-        let fut = tool.execute(json!({"command": cmd}), &ctx);
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            signal.cancel();
-        });
-        let err = fut.await.unwrap_err();
+        cancel_when_pidfile_appears(&ctx, &sleep_pidfile);
+        let err = tool
+            .execute(json!({"command": cmd}), &ctx)
+            .await
+            .unwrap_err();
         assert!(matches!(err, ToolError::Cancelled));
         let sleep_pid = read_pidfile(&sleep_pidfile);
         assert!(
             !wait_for_exit(sleep_pid).await,
             "orphaned `sleep` {sleep_pid} still alive after cancel"
+        );
+    }
+
+    /// The case `pgid` capture exists for: the shell exits at once, but a
+    /// backgrounded grandchild keeps the stdout pipe open. `child.id()` is `None`
+    /// by the time we cancel, so only the pgid captured at spawn can reach it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancel_kills_grandchild_after_shell_exited() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx_with_dir(&dir);
+        let sleep_pidfile = dir.path().join("sleep_pid");
+        // No `wait`: bash exits immediately; `sleep` inherits the pipe and lives on.
+        let cmd = format!("sleep 30 & echo $! > {}", sleep_pidfile.display());
+        let tool = BashTool::new();
+        cancel_when_pidfile_appears(&ctx, &sleep_pidfile);
+        let err = tool
+            .execute(json!({"command": cmd}), &ctx)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ToolError::Cancelled));
+        let sleep_pid = read_pidfile(&sleep_pidfile);
+        assert!(
+            !wait_for_exit(sleep_pid).await,
+            "grandchild `sleep` {sleep_pid} still alive after cancel"
         );
     }
 
@@ -429,5 +472,23 @@ mod tests {
             !wait_for_exit(pid).await,
             "bash child {pid} still alive after timeout"
         );
+    }
+
+    /// Nothing reads the terminal: stdin is `/dev/null`, so a command that reads
+    /// gets EOF instead of blocking (or SIGTTIN, now that the shell is in its own
+    /// process group).
+    #[tokio::test]
+    async fn bash_stdin_is_null() {
+        let tool = BashTool::new();
+        let ctx = make_test_context();
+        let out = tool
+            .execute(
+                json!({"command": "if read -r line; then echo got:$line; else echo eof; fi", "timeout": 5}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("eof"), "{}", out.content);
     }
 }

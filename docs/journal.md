@@ -22,6 +22,35 @@ Entry template:
 
 ---
 
+## 2026-09-28 — `bash` children run in their own process group and are SIGKILLed as a group on cancel/timeout
+
+**Context:** `BashTool` cancelled by `task.abort()` on a `tokio::spawn`ed `wait_with_output`.
+That drops the future but never signals the OS process: the `bash -c` shell and everything it
+forked (`sleep 30`, `npm run dev &`, …) kept running after the agent gave up. Task A1.4 fixed
+this now because `delegate_pi` (A2.5) needs the identical kill-on-cancel pattern.
+**Decision:** Spawn the shell with `process_group(0)` + `kill_on_drop(true)`, `stdin(null)`;
+capture `child.id()` immediately after `spawn()` as the pgid; on timeout, cancel, or an I/O error
+from the reader, call `graphirm_tools::process::kill_group_and_reap(&mut child, pgid)` — an
+explicit `libc::kill(-pgid, SIGKILL)`, then `start_kill()` as portable fallback, then `wait()`
+under a 5 s reap timeout. `libc` is a new `[target.'cfg(unix)'.dependencies]` of
+`graphirm-tools` (already in the lock file via tokio). The pgid is captured at spawn because
+`child.id()` is `None` once the shell has been reaped — exactly the "shell exited, grandchild
+still holds the pipe" case the group kill exists for.
+**Alternatives:** (a) `start_kill()` alone — kills the shell but orphans grandchildren; proven
+by `cancel_kills_the_shells_descendants`, which fails without the group kill. (b) Shelling out
+to `kill -9 -- -<pgid>` (no `libc` dep) — first implementation; rejected because `kill(1)` is
+absent from the `debian:bookworm-slim` runtime image (no `procps`), so the spawn failed with
+ENOENT, was swallowed, and descendants still leaked in production. (c) Inherited stdin — with
+the shell in a background process group a child reading the tty would get SIGTTIN and hang
+until timeout; null stdin gives a deterministic EOF.
+**Consequences:** bash children no longer receive the terminal's SIGINT/SIGHUP — acceptable
+because the TUI is raw-mode (Ctrl-C is an event, not a signal) and `serve` cancels sessions on
+SIGINT. `serve` still ignores SIGTERM, so a hard `pkill -f 'graphirm serve'` leaves live
+sessions' children detached (backlog, S·P2). `process.rs` is the reference implementation for
+`delegate_pi`'s kill path; A2.5 reuses it instead of adding `libc` to `graphirm-agent`.
+**Refs:** `docs/plans/2026-09-28-pi-delegate-executor.md` Task A1.4; `crates/tools/src/process.rs`,
+`crates/tools/src/bash.rs`; commits `136c7af` (kill(1) version) and its follow-up.
+
 ## 2026-09-28 — Pi becomes the delegated coding executor; graphirm stays the director
 
 **Context:** Graphirm has the control plane (Jev routing in shadow, HITL judge, graph memory,

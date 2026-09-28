@@ -4,13 +4,18 @@
 
 - `BashTool` held the child in a `tokio::spawn` and cancelled via `task.abort()`, which dropped the
   future but left the shell (and anything it forked) running
-- Now holds the `Child` directly: `kill_on_drop(true)`, `process_group(0)` (unix), `select!` over a
-  borrowing `wait_with_output` vs timeout vs `signal.cancelled()`; on either, `kill_child` sends
-  `kill -9 -- -<pgid>` via `kill(1)` (no `libc` dep), `start_kill()`, then reaps with `wait()`
+- Now holds the `Child` directly: `kill_on_drop(true)`, `process_group(0)` (unix), `stdin(null)`,
+  pgid captured at spawn, `select!` over a borrowing `wait_with_output` vs timeout vs
+  `signal.cancelled()`; on either (or a read error) `process::kill_group_and_reap` does
+  `libc::kill(-pgid, SIGKILL)` → `start_kill()` → reap under 5 s. Follow-up replaced the initial
+  `kill(1)` shell-out, which is absent from the `debian:bookworm-slim` runtime image
+- New `crates/tools/src/process.rs` (`kill_process_group`, `kill_group_and_reap`) — shared with
+  `delegate_pi` (A2.5); `libc` added to `graphirm-tools` under `[target.'cfg(unix)'.dependencies]`
 - Output/exit-code/error semantics unchanged; existing tests untouched
 - Tests: `cancel_kills_the_child_process`, `timeout_kills_the_child_process`,
-  `cancel_kills_the_shells_descendants` (proves the orphaned `sleep` dies too)
-- Key file: `crates/tools/src/bash.rs`
+  `cancel_kills_the_shells_descendants`, `cancel_kills_grandchild_after_shell_exited`,
+  `bash_stdin_is_null`; `process::tests` (group kill + reap, ESRCH, no-op, pgid guard)
+- Key files: `crates/tools/src/bash.rs`, `crates/tools/src/process.rs`, `crates/tools/Cargo.toml`
 
 ## 2026-04-05: Per-session LLM token cap (`max_session_tokens`) — COMPLETE ✅
 

@@ -278,10 +278,10 @@ async fn cancel_kills_the_child_process() {
 
 **Step 3: Implement** — replace the `tokio::spawn(child.wait_with_output())` +
 `abort()` pattern with `cmd.kill_on_drop(true)` and a `select!` over
-`child.wait_with_output()` held directly; on timeout/cancel call
-`child.start_kill()` before returning. Because `wait_with_output` consumes the
-child, structure as: spawn → `let mut child`; `let stdout/stderr` readers →
-`tokio::select! { out = read_both => …, _ = sleep => { child.start_kill().ok(); return Err(Timeout) }, _ = cancelled => { child.start_kill().ok(); return Err(Cancelled) } }`.
+`child.wait_with_output()` held directly. As shipped: `process_group(0)` + `stdin(null)`,
+pgid captured via `child.id()` right after `spawn()`, and on timeout/cancel/read error
+`graphirm_tools::process::kill_group_and_reap(&mut child, pgid)` (libc group SIGKILL →
+`start_kill()` fallback → reap) — `start_kill()` alone orphans grandchildren.
 Keep output semantics identical (stdout + "stderr:\n…").
 
 **Step 4:** `cargo test -p graphirm-tools bash` → PASS; whole workspace green.
@@ -571,7 +571,8 @@ pub struct PiConfig {
 **Files:**
 - Create: `crates/agent/src/pi_delegate/process.rs`
 - Create: `crates/agent/tests/fixtures/pi/fake_pi.sh` (executable; `chmod +x`, commit mode 755)
-- Modify: `crates/agent/Cargo.toml` — `[target.'cfg(unix)'.dependencies] libc = "0.2"`
+- Kill path reuses `graphirm_tools::process::{kill_process_group, kill_group_and_reap}` (A1.4) —
+  no new dependency in `graphirm-agent`
 
 **`fake_pi.sh`:**
 
@@ -658,9 +659,11 @@ its own test asserting the exact flag order from design D1 (`--no-approve` when
 `trust_project == false`, `--approve` when true, `extra_args` after `--model`, `--`
 before the task).
 
-Kill path (unix): `cmd.process_group(0)`; on cancel/timeout
-`unsafe { libc::killpg(child.id() as i32, libc::SIGKILL) }` then `child.wait()`
-under a 5 s `timeout`; non-unix: `child.start_kill()`. Env: `cmd.env("PI_SKIP_VERSION_CHECK", "1")`.
+Kill path: `cmd.process_group(0)` (unix) + `stdin(null)`; capture `let pgid = child.id();`
+right after `spawn()`; on cancel/timeout call
+`graphirm_tools::process::kill_group_and_reap(&mut child, pgid).await` (group SIGKILL →
+`start_kill()` fallback → reap under 5 s; no-op group kill on non-unix). Reuse it — do not
+add `libc` to `graphirm-agent`. Env: `cmd.env("PI_SKIP_VERSION_CHECK", "1")`.
 Task arg: if `task.len() > 64 * 1024` write to `temp_dir()/graphirm-pi-<uuid>.md`,
 pass `@<path>`, remove in a `defer`-style guard (a small `TempTask` struct with `Drop`).
 
