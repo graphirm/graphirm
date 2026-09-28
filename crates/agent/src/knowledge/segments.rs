@@ -544,6 +544,13 @@ mod tests {
     }
 
     #[test]
+    fn test_build_segment_prompt_includes_caveat_label() {
+        let labels = vec!["reasoning".into(), "caveat".into()];
+        let prompt = build_segment_prompt(&labels);
+        assert!(prompt.contains(r#""caveat""#));
+    }
+
+    #[test]
     fn test_segment_prompt_forbids_tool_calls() {
         let labels = vec![
             "observation".into(),

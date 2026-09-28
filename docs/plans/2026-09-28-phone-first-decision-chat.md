@@ -109,7 +109,7 @@ export function buildSteps(calls: StepInput[]): StepRow[]
 
 **Step 5: Commit** `feat(web): typed blocks and collapsed STEPS rows`
 
-- [ ] B2 done
+- [x] B2 done
 
 ---
 

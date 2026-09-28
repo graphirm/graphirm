@@ -54,12 +54,15 @@ export const api = {
       .filter((n) => n.node_type.type === 'Interaction' && 'role' in n.node_type)
       .map((n) => {
         const nt = n.node_type as Extract<typeof n.node_type, { type: 'Interaction' }>;
+        const toolNameRaw = n.metadata?.tool_name;
+        const toolName = typeof toolNameRaw === 'string' ? toolNameRaw : undefined;
         return {
           id: n.id,
           role: nt.role,
           content: nt.content ?? '',
           created_at: n.created_at,
           segmented: Boolean(n.metadata?.segmented),
+          ...(toolName ? { toolName } : {}),
         };
       });
   },

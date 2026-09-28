@@ -82,6 +82,8 @@ export interface Message {
   role: NodeRole;
   content: string;
   created_at: string;
+  /** Tool name from Interaction `metadata.tool_name` (tool-role messages). */
+  toolName?: string;
   /** True when structured segments were persisted (`metadata.segmented`). */
   segmented?: boolean;
   /** Populated from graph Contains children when `segmented` (see `segmentPartsForInteraction`). */

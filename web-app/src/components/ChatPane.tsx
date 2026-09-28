@@ -1,7 +1,10 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
+import type { StepInput, StepRow } from '../chat/steps';
+import { buildSteps } from '../chat/steps';
 import type { Message, PendingApproval } from '../types/graph';
 import { MarkdownBody } from './nodes/MarkdownBody';
-import { SegmentCard } from './SegmentCard';
+import { BlockView } from './BlockView';
+import { StepsRow } from './StepsRow';
 import { cleanLegacyAssistantContent } from '../utils/chatSegments';
 import { HitlOverlay } from './HitlOverlay';
 import { OutlinePanel } from './OutlinePanel';
@@ -34,6 +37,83 @@ interface ChatPaneProps {
   onOutlineSteer?: (outlineNodeId: string, interactionId: string) => void;
 }
 
+type ChatEntry =
+  | { kind: 'message'; message: Message }
+  | { kind: 'steps'; id: string; steps: StepRow[] };
+
+function firstLine(content: string): string {
+  return content.split('\n').map((line) => line.trim()).find((line) => line.length > 0) ?? '';
+}
+
+function stepInputFor(message: Message): StepInput {
+  const toolName = message.toolName?.trim() || 'tool';
+  if (toolName === 'delegate_pi') {
+    return { toolName, callId: message.id, piSummary: message.content };
+  }
+  return { toolName, callId: message.id, argsSummary: firstLine(message.content) };
+}
+
+/** A turn starts at each user message, matching `buildTurns`. Tool messages fold into one STEPS row before the final assistant reply. */
+function chatEntries(messages: Message[]): ChatEntry[] {
+  const sorted = [...messages].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  );
+  const turns: Message[][] = [];
+  let current: Message[] = [];
+  for (const message of sorted) {
+    if (message.role === 'user' && current.length > 0) {
+      turns.push(current);
+      current = [];
+    }
+    current.push(message);
+  }
+  if (current.length > 0) turns.push(current);
+
+  return turns.flatMap((turn) => {
+    const tools = turn.filter((message) => message.role === 'tool');
+    const steps = buildSteps(tools.map(stepInputFor));
+    const bubbles = turn.filter((message) => message.role !== 'tool');
+    let finalAssistant = -1;
+    for (let i = bubbles.length - 1; i >= 0; i--) {
+      if (bubbles[i].role === 'assistant') {
+        finalAssistant = i;
+        break;
+      }
+    }
+    const stepsEntry: ChatEntry | null = steps.length
+      ? { kind: 'steps', id: steps.map((step) => step.callId).join(':'), steps }
+      : null;
+    const entries: ChatEntry[] = [];
+    const head = finalAssistant === -1 ? bubbles : bubbles.slice(0, finalAssistant);
+    const tail = finalAssistant === -1 ? [] : bubbles.slice(finalAssistant);
+    for (const message of head) entries.push({ kind: 'message', message });
+    if (stepsEntry) entries.push(stepsEntry);
+    for (const message of tail) entries.push({ kind: 'message', message });
+    return entries;
+  });
+}
+
+function MessageBody({ message }: { message: Message }) {
+  if (message.role === 'user') {
+    return <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{message.content}</div>;
+  }
+  if (message.segments && message.segments.length > 0) {
+    return (
+      <div className={styles.segmentStack}>
+        {message.segments.map((seg, i) => (
+          <BlockView
+            key={`${message.id}-seg-${i}`}
+            kicker={seg.type}
+            content={seg.content}
+            state="done"
+          />
+        ))}
+      </div>
+    );
+  }
+  return <MarkdownBody content={cleanLegacyAssistantContent(message.content)} maxHeight={250} />;
+}
+
 export function ChatPane({
   messages,
   streamingMessage = null,
@@ -60,6 +140,7 @@ export function ChatPane({
     () => [...messages].reverse().find(m => m.role === 'assistant')?.id ?? null,
     [messages],
   );
+  const entries = useMemo(() => chatEntries(messages), [messages]);
 
   const handleSend = useCallback(() => {
     const trimmed = input.trim();
@@ -88,20 +169,15 @@ export function ChatPane({
         </button>
       )}
       <div className={styles.messages}>
-        {messages.map(msg => (
-          <div key={msg.id} className={[styles.message, styles[msg.role as keyof typeof styles] ?? ''].join(' ')}>
-            <div className={styles.roleLabel}>{msg.role}</div>
-            {msg.role === 'user' ? (
-              <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.content}</div>
-            ) : msg.segments && msg.segments.length > 0 ? (
-              <div className={styles.segmentStack}>
-                {msg.segments.map((seg, i) => (
-                  <SegmentCard key={`${msg.id}-seg-${i}`} segment={seg} />
-                ))}
-              </div>
-            ) : (
-              <MarkdownBody content={cleanLegacyAssistantContent(msg.content)} maxHeight={250} />
-            )}
+        {entries.map(entry => entry.kind === 'steps' ? (
+          <StepsRow key={`steps-${entry.id}`} steps={entry.steps} />
+        ) : (
+          <div
+            key={entry.message.id}
+            className={[styles.message, styles[entry.message.role as keyof typeof styles] ?? ''].join(' ')}
+          >
+            <div className={styles.roleLabel}>{entry.message.role}</div>
+            <MessageBody message={entry.message} />
           </div>
         ))}
         {streamingMessage && (

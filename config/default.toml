@@ -344,7 +344,7 @@ port = 3000
 
 [agent.segments]
 enabled = true
-labels = ["observation", "reasoning", "code", "plan", "answer"]
+labels = ["observation", "reasoning", "code", "plan", "answer", "caveat", "action"]
 structured_output = true
 gliner2_fallback = true
 min_confidence = 0.5
