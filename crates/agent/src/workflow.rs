@@ -18,6 +18,7 @@ use tracing::info;
 
 use crate::error::AgentError;
 use crate::event::{AgentEvent, EventBus};
+use crate::event_sink::EventBusSink;
 use crate::hitl::HitlDecision;
 use crate::session::Session;
 
@@ -922,6 +923,15 @@ async fn execute_tools_parallel(
             None
         };
 
+    // One sink per turn: every `ToolContext` clone below shares it, and it is
+    // dropped (worker exits) when this function returns. `EventBus` is `Clone`
+    // (shares subscriber channels), so no signature change is needed to get
+    // an `Arc<EventBus>`.
+    let event_sink: Arc<dyn graphirm_tools::ToolEventSink> = Arc::new(EventBusSink::new(
+        Arc::new(events.clone()),
+        session.graph.clone(),
+    ));
+
     let ctx = ToolContext {
         graph: session.graph.clone(),
         agent_id: session.id.clone(),
@@ -934,7 +944,7 @@ async fn execute_tools_parallel(
         impact_provider: impact_provider.clone(),
         disable_bash: session.agent_config.disable_bash,
         auto_link_write_to_planning: session.agent_config.auto_link_write_to_planning,
-        event_sink: None,
+        event_sink: Some(event_sink),
     };
 
     // Partition tool calls: destructive ones go through sequential HITL approval,
@@ -2412,6 +2422,96 @@ mod tests {
                 .iter()
                 .any(|node| node.label() == Some("interaction_1_4_1"))
         );
+    }
+
+    /// Tool that reports a sub-step through `ctx.event_sink` — the same path
+    /// long-running tools such as `delegate_pi` use.
+    struct SinkReportingTool;
+
+    #[async_trait::async_trait]
+    impl graphirm_tools::Tool for SinkReportingTool {
+        fn name(&self) -> &str {
+            "outer_tool"
+        }
+        fn description(&self) -> &str {
+            "Reports a sub-step via ToolContext.event_sink"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+            ctx: &ToolContext,
+        ) -> Result<graphirm_tools::ToolOutput, graphirm_tools::ToolError> {
+            let sink = ctx.event_sink.as_ref().expect("sink");
+            sink.tool_started(&ctx.interaction_id, "sub:1", "sub_tool");
+            sink.tool_finished(&ctx.interaction_id, false);
+            Ok(graphirm_tools::ToolOutput::success("done"))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_agent_loop_passes_event_sink_to_tools() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            pre_completion_verify: false,
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session
+            .add_user_message("Run the outer tool")
+            .await
+            .unwrap();
+
+        let provider = Arc::new(MockProvider::new(vec![
+            tool_call_response(vec![("outer_tool", "call_1", serde_json::json!({}))]),
+            text_response("Finished."),
+        ]));
+
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(SinkReportingTool));
+
+        let mut bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let token = CancellationToken::new();
+
+        run_agent_loop(&session, provider.clone(), &tools, &bus, &token)
+            .await
+            .unwrap();
+
+        let mut events = vec![];
+        while let Ok(e) = rx.try_recv() {
+            events.push(e);
+        }
+
+        // The sub-step reported through the sink surfaces as a ToolStart on
+        // the same bus, alongside the loop's own ToolStart for the outer tool.
+        let tool_starts: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ToolStart {
+                    call_id, tool_name, ..
+                } => Some((call_id.as_str(), tool_name.as_str())),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            tool_starts.contains(&("call_1", "outer_tool")),
+            "missing loop ToolStart: {tool_starts:?}"
+        );
+        assert!(
+            tool_starts.contains(&("sub:1", "sub_tool")),
+            "missing sink ToolStart: {tool_starts:?}"
+        );
+
+        // One ToolEnd from the sink (sub-step) + one from the loop (outer tool).
+        let tool_ends = events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::ToolEnd { .. }))
+            .count();
+        assert_eq!(tool_ends, 2);
     }
 
     #[tokio::test]

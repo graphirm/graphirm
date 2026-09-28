@@ -240,7 +240,7 @@ wrapper so the three existing call sites are untouched.
 **Steps:** failing test → wire → `cargo test -p graphirm-agent` → commit
 `feat(agent): pass EventBusSink to tools via ToolContext.event_sink`.
 
-- [ ] A1.3 done
+- [x] A1.3 done
 
 ### Task A1.4: `bash.rs` — kill the child on cancel/timeout (approved fix)
 
