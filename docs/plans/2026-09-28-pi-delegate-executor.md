@@ -674,7 +674,9 @@ pass `@<path>`, remove in a `defer`-style guard (a small `TempTask` struct with 
 
 **Step 5: Commit** — `feat(agent): Pi subprocess wrapper — spawn, JSONL drain, group kill, timeout (fake pi tests)`
 
-- [ ] A2.5 done
+Implementation note: shipped the receiver+JoinHandle shape as `pub async fn spawn_pi(spec, cancel: CancellationToken) -> Result<PiRunHandle, PiProcessError>` (async only for the `tokio::fs` temp-file write of oversized tasks; spawn errors still surface from the await) with `PiRunHandle { events, done }` + `wait()`; dropping the handle aborts the driver, which group-kills Pi. `fake_pi.sh` takes knobs as `--fake-knob KEY=VALUE` pairs in `extra_args` (argv wins over env) so tests never `set_var` and stay parallel-safe. A dropped event receiver keeps stdout draining (discarding) rather than stopping, so Pi can never deadlock on a full pipe.
+
+- [x] A2.5 done
 
 ### Task A2.6: Graph writes — Task, Pi Agent, tool nodes, result
 

@@ -1,0 +1,1148 @@
+//! Pi subprocess wrapper: spawn `pi --mode json`, stream-parse its JSONL
+//! stdout into [`PiEvent`]s, and tear the process (group) down on cancel or
+//! timeout.
+//!
+//! Process model (design D1):
+//!
+//! ```text
+//! <binary> --mode json -p --no-session <--approve|--no-approve>
+//!          --provider <p> --model <m> <extra_args...> -- <task>
+//! cwd = spec.cwd; stdin = null; stdout/stderr piped separately;
+//! env inherited + PI_SKIP_VERSION_CHECK=1; kill_on_drop; process_group(0) on unix
+//! ```
+//!
+//! Pi reads its provider key from its own environment / auth store; this
+//! module never reads, sets, or logs it. The only env change is
+//! `PI_SKIP_VERSION_CHECK=1`.
+//!
+//! A run is finished only when Pi's stdout closes *and* the process has
+//! exited. `agent_end` is not a terminator: Pi auto-retries transient provider
+//! errors (`AgentEnd { will_retry: true }` is followed by another
+//! `agent_start`), so the reader drains to EOF unconditionally.
+
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+
+use graphirm_tools::process::{kill_group_and_reap, kill_process_group};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::process::{Child, ChildStderr, ChildStdout, Command};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+
+use super::events::{PiEvent, parse_line};
+use crate::config::PiConfig;
+
+/// Longest stdout line we are willing to buffer. Longer lines are dropped
+/// (counted in [`PiRunOutcome::oversized_lines`]) and reading resumes at the
+/// next newline, so one pathological tool result cannot exhaust memory.
+pub const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
+
+/// How much of stderr is kept, from the end.
+pub const STDERR_TAIL_BYTES: usize = 4 * 1024;
+
+/// Tasks longer than this are handed to Pi as `@<tempfile>` instead of argv.
+pub const MAX_INLINE_TASK_BYTES: usize = 64 * 1024;
+
+/// Bound of the event channel handed to the consumer.
+const EVENT_CHANNEL_CAP: usize = 256;
+
+/// Wall-clock cap for `pi --version`.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Everything needed to start one Pi run. Borrows; [`spawn_pi`] clones what
+/// the background driver needs.
+pub struct PiSpawnSpec<'a> {
+    /// `[agent.pi]` settings (binary, provider, model, trust, extra args).
+    pub config: &'a PiConfig,
+    /// Working directory for Pi (the session workspace).
+    pub cwd: &'a Path,
+    /// Task text handed to Pi as the final positional argument.
+    pub task: &'a str,
+    /// Hard wall-clock cap; the process group is killed when exceeded.
+    pub timeout: Duration,
+}
+
+/// Failures of the process layer. Provider/model errors reported by Pi itself
+/// arrive as events, not here.
+#[derive(Debug, thiserror::Error)]
+pub enum PiProcessError {
+    /// The binary could not be located (absolute path missing or not on PATH).
+    #[error("pi not found at '{0}'")]
+    NotFound(String),
+    /// Any other failure to start the process (permissions, temp file, …).
+    #[error("failed to spawn pi: {0}")]
+    Spawn(String),
+    /// The run exceeded its deadline and was killed.
+    #[error("pi timed out after {0:?}")]
+    Timeout(Duration),
+    /// The cancellation token fired and the run was killed.
+    #[error("cancelled")]
+    Cancelled,
+}
+
+/// How a completed run ended. Only produced when Pi exited on its own.
+#[derive(Debug, Clone)]
+pub struct PiRunOutcome {
+    /// Process exit code; `None` when Pi died from a signal.
+    pub exit_code: Option<i32>,
+    /// Last [`STDERR_TAIL_BYTES`] of stderr (lossy UTF-8).
+    pub stderr_tail: String,
+    /// Non-blank stdout lines that were not valid JSON.
+    pub malformed_lines: u32,
+    /// Stdout lines longer than [`MAX_LINE_BYTES`] that were skipped.
+    pub oversized_lines: u32,
+    /// Wall-clock time from spawn to exit.
+    pub duration: Duration,
+}
+
+/// A running Pi process: a stream of parsed events plus the completion handle.
+///
+/// Dropping the handle aborts the driver task, which drops the [`Child`] and —
+/// via `kill_on_drop` — SIGKILLs Pi. Consumers that want the outcome must
+/// await [`PiRunHandle::wait`] (or `&mut handle.done`) before dropping.
+pub struct PiRunHandle {
+    /// Parsed events in stdout order. `PiEvent::Ignored` lines are not sent.
+    /// Closes when Pi's stdout closes or the run is killed.
+    pub events: mpsc::Receiver<PiEvent>,
+    /// Resolves when Pi exits, times out, or is cancelled.
+    pub done: JoinHandle<Result<PiRunOutcome, PiProcessError>>,
+}
+
+impl PiRunHandle {
+    /// Await the run's outcome. A panicked driver task is reported as
+    /// [`PiProcessError::Spawn`] rather than propagated.
+    pub async fn wait(&mut self) -> Result<PiRunOutcome, PiProcessError> {
+        match (&mut self.done).await {
+            Ok(res) => res,
+            Err(join_err) => Err(PiProcessError::Spawn(format!(
+                "pi driver task failed: {join_err}"
+            ))),
+        }
+    }
+}
+
+impl Drop for PiRunHandle {
+    fn drop(&mut self) {
+        self.done.abort();
+    }
+}
+
+/// Exact argv (excluding argv\[0\]) per design D1.
+pub fn build_argv(config: &PiConfig, task_arg: &str) -> Vec<String> {
+    let mut argv: Vec<String> = ["--mode", "json", "-p", "--no-session"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    argv.push(
+        if config.trust_project {
+            "--approve"
+        } else {
+            "--no-approve"
+        }
+        .to_string(),
+    );
+    argv.push("--provider".to_string());
+    argv.push(config.provider.clone());
+    argv.push("--model".to_string());
+    argv.push(config.model.clone());
+    argv.extend(config.extra_args.iter().cloned());
+    argv.push("--".to_string());
+    argv.push(task_arg.to_string());
+    argv
+}
+
+/// Expand a leading `~` / `~/` to `$HOME`. Anything else (bare names resolved
+/// via PATH, absolute paths, `~user/…`) is returned unchanged. When `HOME` is
+/// unset the input is returned as-is.
+pub fn expand_binary(binary: &str) -> PathBuf {
+    let rest = if binary == "~" {
+        Some("")
+    } else {
+        binary.strip_prefix("~/")
+    };
+    match (rest, std::env::var_os("HOME")) {
+        (Some(rest), Some(home)) => {
+            let home = PathBuf::from(home);
+            if rest.is_empty() {
+                home
+            } else {
+                home.join(rest)
+            }
+        }
+        _ => PathBuf::from(binary),
+    }
+}
+
+/// Run `<binary> --version` under a 5 s cap and return the trimmed first line
+/// of stdout.
+pub async fn probe_version(config: &PiConfig) -> Result<String, PiProcessError> {
+    let mut cmd = Command::new(expand_binary(&config.binary));
+    cmd.arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("PI_SKIP_VERSION_CHECK", "1")
+        .kill_on_drop(true);
+    let child = cmd
+        .spawn()
+        .map_err(|e| map_spawn_error(e, &config.binary))?;
+    // On timeout the future (and the `Child`) is dropped → kill_on_drop.
+    let output = tokio::time::timeout(PROBE_TIMEOUT, child.wait_with_output())
+        .await
+        .map_err(|_| PiProcessError::Timeout(PROBE_TIMEOUT))?
+        .map_err(|e| PiProcessError::Spawn(format!("pi --version: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(PiProcessError::Spawn(format!(
+            "pi --version exited with {}: {}",
+            output.status,
+            stderr.trim()
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.lines().next().unwrap_or("").trim().to_string())
+}
+
+/// Spawn Pi. Spawn-time failures ([`PiProcessError::NotFound`] /
+/// [`PiProcessError::Spawn`]) are returned immediately; everything after
+/// that — exit, timeout, cancellation — resolves through the returned handle.
+///
+/// Async only because an oversized task is written to a temp file with
+/// `tokio::fs` before the process starts.
+pub async fn spawn_pi(
+    spec: PiSpawnSpec<'_>,
+    cancel: CancellationToken,
+) -> Result<PiRunHandle, PiProcessError> {
+    let binary = spec.config.binary.clone();
+    let temp_task = TempTask::for_task(spec.task).await?;
+    let task_arg = match &temp_task {
+        Some(t) => format!("@{}", t.path.display()),
+        None => spec.task.to_string(),
+    };
+    let argv = build_argv(spec.config, &task_arg);
+
+    let mut cmd = Command::new(expand_binary(&binary));
+    cmd.args(&argv)
+        .current_dir(spec.cwd)
+        // Pi runs in its own process group (below); an inherited tty would
+        // SIGTTIN it on read. Null stdin gives a clean EOF.
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("PI_SKIP_VERSION_CHECK", "1")
+        // Safety net: if the driver future is dropped without reaching the
+        // kill path, tokio SIGKILLs Pi.
+        .kill_on_drop(true);
+    // Own process group so the kill path takes down Pi *and* its tool children.
+    #[cfg(unix)]
+    cmd.process_group(0);
+
+    let started = Instant::now();
+    let mut child = cmd.spawn().map_err(|e| map_spawn_error(e, &binary))?;
+    // Capture now: `child.id()` is `None` once the direct child is reaped, and
+    // a grandchild outliving Pi is exactly when the group kill matters.
+    let pgid = child.id();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    tracing::debug!(
+        pid = ?pgid,
+        cwd = %spec.cwd.display(),
+        provider = %spec.config.provider,
+        model = %spec.config.model,
+        via_temp_file = temp_task.is_some(),
+        "spawned pi"
+    );
+
+    let (events_tx, events_rx) = mpsc::channel(EVENT_CHANNEL_CAP);
+    let run = SpawnedRun {
+        child,
+        pgid,
+        stdout,
+        stderr,
+        started,
+        timeout: spec.timeout,
+        cancel,
+    };
+    let done = tokio::spawn(async move {
+        let result = drive(run, events_tx).await;
+        if let Some(t) = temp_task {
+            t.cleanup().await;
+        }
+        result
+    });
+    Ok(PiRunHandle {
+        events: events_rx,
+        done,
+    })
+}
+
+fn map_spawn_error(e: std::io::Error, binary: &str) -> PiProcessError {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        PiProcessError::NotFound(binary.to_string())
+    } else {
+        PiProcessError::Spawn(format!("{binary}: {e}"))
+    }
+}
+
+/// Why the first `select!` returned.
+enum Step {
+    Exited(std::io::Result<std::process::ExitStatus>),
+    Timeout,
+    Cancelled,
+}
+
+/// A freshly spawned Pi process plus everything the driver needs to see it out.
+struct SpawnedRun {
+    child: Child,
+    pgid: Option<u32>,
+    stdout: Option<ChildStdout>,
+    stderr: Option<ChildStderr>,
+    started: Instant,
+    timeout: Duration,
+    cancel: CancellationToken,
+}
+
+/// Own the run until exit / timeout / cancel. Readers are spawned as tasks and
+/// aborted on the way out if still running.
+async fn drive(
+    run: SpawnedRun,
+    events_tx: mpsc::Sender<PiEvent>,
+) -> Result<PiRunOutcome, PiProcessError> {
+    let SpawnedRun {
+        mut child,
+        pgid,
+        stdout,
+        stderr,
+        started,
+        timeout,
+        cancel,
+    } = run;
+    let child = &mut child;
+    let mut stdout_task = AbortOnDrop(tokio::spawn(drain_stdout(stdout, events_tx)));
+    let mut stderr_task = AbortOnDrop(tokio::spawn(drain_stderr(stderr)));
+    // If this future is dropped (handle dropped → task aborted) while Pi is
+    // still alive, `kill_on_drop` only reaches the direct child; this guard
+    // SIGKILLs the whole group so Pi's tool children die too.
+    let mut group_guard = GroupKillGuard { pgid };
+    let deadline = tokio::time::sleep(timeout);
+    tokio::pin!(deadline);
+
+    // Phase 1: wait for the process to exit.
+    let step = tokio::select! {
+        status = child.wait() => Step::Exited(status),
+        _ = &mut deadline => Step::Timeout,
+        _ = cancel.cancelled() => Step::Cancelled,
+    };
+    // Whatever happens next, the guard's job is done: either the direct child
+    // has exited (its pid, hence the pgid, may be recycled once the group is
+    // empty — never signal it blindly), or we kill the group explicitly.
+    group_guard.disarm();
+    let status = match step {
+        Step::Exited(status) => status,
+        Step::Timeout => {
+            tracing::warn!(?timeout, "pi timed out; killing process group");
+            kill_group_and_reap(child, pgid).await;
+            return Err(PiProcessError::Timeout(timeout));
+        }
+        Step::Cancelled => {
+            tracing::info!("pi run cancelled; killing process group");
+            kill_group_and_reap(child, pgid).await;
+            return Err(PiProcessError::Cancelled);
+        }
+    };
+
+    // Phase 2: the pipes close when every holder exits. A tool child Pi left
+    // behind could keep stdout open; the deadline and cancel still apply, and
+    // the group kill reaches such a straggler through the captured pgid.
+    let readers = async {
+        let stats = (&mut stdout_task.0).await;
+        let tail = (&mut stderr_task.0).await;
+        (stats, tail)
+    };
+    tokio::pin!(readers);
+    let (stats, tail) = tokio::select! {
+        r = &mut readers => r,
+        _ = &mut deadline => {
+            tracing::warn!(?timeout, "pi exited but stdout stayed open past the deadline");
+            kill_group_and_reap(child, pgid).await;
+            return Err(PiProcessError::Timeout(timeout));
+        }
+        _ = cancel.cancelled() => {
+            kill_group_and_reap(child, pgid).await;
+            return Err(PiProcessError::Cancelled);
+        }
+    };
+    let stats = stats.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "pi stdout reader task failed");
+        LineStats::default()
+    });
+    let stderr_tail = tail.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "pi stderr reader task failed");
+        String::new()
+    });
+    let exit_code = match status {
+        Ok(s) => s.code(),
+        Err(e) => {
+            tracing::warn!(error = %e, "waiting on pi failed");
+            None
+        }
+    };
+    let duration = started.elapsed();
+    tracing::debug!(
+        ?exit_code,
+        malformed = stats.malformed,
+        oversized = stats.oversized,
+        duration_ms = duration.as_millis() as u64,
+        "pi exited"
+    );
+    Ok(PiRunOutcome {
+        exit_code,
+        stderr_tail,
+        malformed_lines: stats.malformed,
+        oversized_lines: stats.oversized,
+        duration,
+    })
+}
+
+/// SIGKILL Pi's process group if dropped while armed (the driver future was
+/// dropped before Pi exited). `kill(2)` is a single non-blocking syscall, so
+/// this is safe to do in `Drop` on the runtime.
+struct GroupKillGuard {
+    pgid: Option<u32>,
+}
+
+impl GroupKillGuard {
+    fn disarm(&mut self) {
+        self.pgid = None;
+    }
+}
+
+impl Drop for GroupKillGuard {
+    fn drop(&mut self) {
+        if let Some(pgid) = self.pgid {
+            match kill_process_group(pgid) {
+                Ok(()) => tracing::info!(pgid, "pi driver dropped; killed process group"),
+                Err(e) => tracing::debug!(pgid, error = %e, "group kill on drop"),
+            }
+        }
+    }
+}
+
+/// Abort a spawned task when dropped (e.g. when `drive` returns early).
+struct AbortOnDrop<T>(JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct LineStats {
+    malformed: u32,
+    oversized: u32,
+}
+
+/// Result of one capped line read.
+enum LineRead {
+    /// `buf` holds a complete line (trailing newline included when present).
+    Line,
+    /// The line exceeded the cap; it was skipped up to and including its newline.
+    Oversized,
+    /// No more data.
+    Eof,
+}
+
+/// Read one line into `buf` without ever buffering more than `cap` bytes.
+///
+/// Unlike `read_until`, a line longer than `cap` is discarded rather than
+/// grown: the remainder up to the next `\n` is consumed and `Oversized`
+/// returned. A final line without a trailing newline is still a `Line`.
+async fn read_line_capped<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+    cap: usize,
+) -> std::io::Result<LineRead> {
+    buf.clear();
+    let mut oversized = false;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Ok(if oversized {
+                LineRead::Oversized
+            } else if buf.is_empty() {
+                LineRead::Eof
+            } else {
+                LineRead::Line
+            });
+        }
+        let newline = available.iter().position(|b| *b == b'\n');
+        let take = newline.map_or(available.len(), |i| i + 1);
+        if !oversized {
+            if buf.len() + take > cap {
+                oversized = true;
+                buf.clear();
+            } else {
+                buf.extend_from_slice(&available[..take]);
+            }
+        }
+        reader.consume(take);
+        if newline.is_some() {
+            return Ok(if oversized {
+                LineRead::Oversized
+            } else {
+                LineRead::Line
+            });
+        }
+    }
+}
+
+/// Drain Pi's stdout to EOF, parsing each line and forwarding events.
+///
+/// If the consumer drops the receiver we keep draining (discarding events) so
+/// Pi never blocks on a full pipe; the caller is expected to cancel the run.
+async fn drain_stdout(stdout: Option<ChildStdout>, events_tx: mpsc::Sender<PiEvent>) -> LineStats {
+    let mut stats = LineStats::default();
+    let Some(stdout) = stdout else {
+        tracing::warn!("pi stdout was not captured");
+        return stats;
+    };
+    let mut reader = BufReader::with_capacity(64 * 1024, stdout);
+    let mut buf = Vec::with_capacity(8 * 1024);
+    let mut receiver_open = true;
+    loop {
+        match read_line_capped(&mut reader, &mut buf, MAX_LINE_BYTES).await {
+            Ok(LineRead::Eof) => break,
+            Ok(LineRead::Oversized) => {
+                stats.oversized += 1;
+                tracing::warn!(cap = MAX_LINE_BYTES, "pi stdout line exceeded cap; skipped");
+            }
+            Ok(LineRead::Line) => {
+                let line = String::from_utf8_lossy(&buf);
+                match parse_line(&line) {
+                    Ok(PiEvent::Ignored) => {}
+                    Ok(event) => {
+                        if receiver_open && events_tx.send(event).await.is_err() {
+                            receiver_open = false;
+                            tracing::debug!("pi event receiver dropped; draining stdout");
+                        }
+                    }
+                    Err(e) => {
+                        stats.malformed += 1;
+                        let preview: String = line.trim_end().chars().take(200).collect();
+                        tracing::debug!(error = %e, line = %preview, "malformed pi stdout line");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "reading pi stdout failed");
+                break;
+            }
+        }
+    }
+    stats
+}
+
+/// Drain stderr to EOF, keeping only the last [`STDERR_TAIL_BYTES`].
+async fn drain_stderr(stderr: Option<ChildStderr>) -> String {
+    let Some(mut stderr) = stderr else {
+        return String::new();
+    };
+    let mut tail: Vec<u8> = Vec::with_capacity(STDERR_TAIL_BYTES);
+    let mut chunk = [0u8; 4096];
+    loop {
+        match stderr.read(&mut chunk).await {
+            Ok(0) => break,
+            Ok(n) => {
+                tail.extend_from_slice(&chunk[..n]);
+                if tail.len() > STDERR_TAIL_BYTES {
+                    let excess = tail.len() - STDERR_TAIL_BYTES;
+                    tail.drain(..excess);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "reading pi stderr failed");
+                break;
+            }
+        }
+    }
+    String::from_utf8_lossy(&tail).into_owned()
+}
+
+/// A task written to a temp file for `@<path>` hand-off; removed when the run
+/// ends (explicitly via [`TempTask::cleanup`], or in `Drop` as a fallback).
+struct TempTask {
+    path: PathBuf,
+    removed: bool,
+}
+
+impl TempTask {
+    /// `Ok(None)` when the task fits inline (≤ [`MAX_INLINE_TASK_BYTES`]).
+    async fn for_task(task: &str) -> Result<Option<Self>, PiProcessError> {
+        if task.len() <= MAX_INLINE_TASK_BYTES {
+            return Ok(None);
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path =
+            std::env::temp_dir().join(format!("graphirm-pi-{}-{nanos}.md", std::process::id()));
+        tokio::fs::write(&path, task).await.map_err(|e| {
+            PiProcessError::Spawn(format!("writing task file {}: {e}", path.display()))
+        })?;
+        Ok(Some(Self {
+            path,
+            removed: false,
+        }))
+    }
+
+    async fn cleanup(mut self) {
+        if let Err(e) = tokio::fs::remove_file(&self.path).await
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(path = %self.path.display(), error = %e, "failed to remove pi task file");
+        }
+        self.removed = true;
+    }
+}
+
+impl Drop for TempTask {
+    fn drop(&mut self) {
+        if !self.removed {
+            // Fallback only (e.g. spawn failed after the write); the happy
+            // path removes asynchronously in `cleanup`.
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    const FAKE_PI: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pi/fake_pi.sh");
+
+    /// Config pointing at the fake script. Knobs travel as `--fake-knob K=V`
+    /// pairs in `extra_args` (see the script header); a 1 ms per-line delay
+    /// keeps the replay fast while still exercising streaming.
+    fn fake_pi_config() -> PiConfig {
+        with_knobs(&[])
+    }
+
+    fn with_knobs(knobs: &[(&str, &str)]) -> PiConfig {
+        let mut extra_args = vec!["--fake-knob".to_string(), "FAKE_PI_DELAY_MS=1".to_string()];
+        for (k, v) in knobs {
+            extra_args.push("--fake-knob".to_string());
+            extra_args.push(format!("{k}={v}"));
+        }
+        PiConfig {
+            enabled: true,
+            binary: FAKE_PI.to_string(),
+            provider: "openrouter".to_string(),
+            model: "test/model".to_string(),
+            timeout_seconds: 60,
+            trust_project: false,
+            extra_args,
+            max_result_chars: 4000,
+        }
+    }
+
+    async fn run_to_end(
+        config: &PiConfig,
+        cwd: &Path,
+        task: &str,
+        timeout: Duration,
+        cancel: CancellationToken,
+    ) -> (Vec<PiEvent>, Result<PiRunOutcome, PiProcessError>) {
+        let spec = PiSpawnSpec {
+            config,
+            cwd,
+            task,
+            timeout,
+        };
+        let mut handle = spawn_pi(spec, cancel).await.expect("spawn");
+        let mut events = Vec::new();
+        while let Some(ev) = handle.events.recv().await {
+            events.push(ev);
+        }
+        let outcome = handle.wait().await;
+        (events, outcome)
+    }
+
+    fn proc_state(pid: u32) -> Option<char> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // "pid (comm) S ..." — comm may contain spaces/parens, so split after the last ')'.
+        let rest = stat.rsplit_once(')')?.1;
+        rest.trim_start().chars().next()
+    }
+
+    /// True when the pid is running (not gone, not a zombie).
+    fn is_running(pid: u32) -> bool {
+        !matches!(proc_state(pid), None | Some('Z'))
+    }
+
+    async fn wait_for_file(path: &Path) {
+        for _ in 0..100 {
+            if path.exists() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("{} never appeared", path.display());
+    }
+
+    async fn read_pid(path: &Path) -> u32 {
+        wait_for_file(path).await;
+        std::fs::read_to_string(path)
+            .expect("pidfile")
+            .trim()
+            .parse()
+            .expect("pid")
+    }
+
+    /// Poll up to 5 s for the pid to be gone (or a zombie).
+    async fn assert_dead_within_5s(pid: u32, what: &str) {
+        for _ in 0..50 {
+            if !is_running(pid) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("{what} {pid} still running after 5 s");
+    }
+
+    #[test]
+    fn build_argv_matches_design_d1() {
+        let mut cfg = PiConfig {
+            enabled: true,
+            binary: "pi".into(),
+            provider: "openrouter".into(),
+            model: "deepseek/deepseek-v4-flash".into(),
+            timeout_seconds: 900,
+            trust_project: false,
+            extra_args: vec!["--no-extensions".into(), "--thinking".into(), "off".into()],
+            max_result_chars: 4000,
+        };
+        assert_eq!(
+            build_argv(&cfg, "do the thing"),
+            vec![
+                "--mode",
+                "json",
+                "-p",
+                "--no-session",
+                "--no-approve",
+                "--provider",
+                "openrouter",
+                "--model",
+                "deepseek/deepseek-v4-flash",
+                "--no-extensions",
+                "--thinking",
+                "off",
+                "--",
+                "do the thing",
+            ]
+        );
+        cfg.trust_project = true;
+        cfg.extra_args.clear();
+        assert_eq!(
+            build_argv(&cfg, "@/tmp/task.md"),
+            vec![
+                "--mode",
+                "json",
+                "-p",
+                "--no-session",
+                "--approve",
+                "--provider",
+                "openrouter",
+                "--model",
+                "deepseek/deepseek-v4-flash",
+                "--",
+                "@/tmp/task.md",
+            ]
+        );
+    }
+
+    #[test]
+    fn expand_binary_expands_tilde() {
+        let home = std::env::var("HOME").expect("HOME set in tests");
+        assert_eq!(expand_binary("~/x/pi"), PathBuf::from(&home).join("x/pi"),);
+        assert_eq!(expand_binary("~"), PathBuf::from(&home));
+        assert_eq!(expand_binary("pi"), PathBuf::from("pi"));
+        assert_eq!(expand_binary("/abs/pi"), PathBuf::from("/abs/pi"));
+        // `~user` forms are not expanded.
+        assert_eq!(expand_binary("~bob/pi"), PathBuf::from("~bob/pi"));
+    }
+
+    #[tokio::test]
+    async fn probe_version_reports_fake_version() {
+        let v = probe_version(&fake_pi_config()).await.expect("version");
+        assert_eq!(v, "0.85.1-fake");
+    }
+
+    #[tokio::test]
+    async fn probe_version_missing_binary_is_not_found() {
+        let mut cfg = fake_pi_config();
+        cfg.binary = "/nonexistent/pi".into();
+        match probe_version(&cfg).await {
+            Err(PiProcessError::NotFound(b)) => assert_eq!(b, "/nonexistent/pi"),
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn runs_fixture_to_completion_and_yields_events() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let cfg = fake_pi_config();
+        let (events, outcome) = run_to_end(
+            &cfg,
+            dir.path(),
+            "make hello.txt",
+            Duration::from_secs(30),
+            CancellationToken::new(),
+        )
+        .await;
+        let outcome = outcome.expect("ok outcome");
+        assert_eq!(outcome.exit_code, Some(0));
+        assert_eq!(outcome.malformed_lines, 0);
+        assert_eq!(outcome.oversized_lines, 0);
+        assert!(outcome.duration > Duration::ZERO);
+
+        assert!(
+            events.contains(&PiEvent::AgentEnd { will_retry: false }),
+            "agent_end seen"
+        );
+        let starts = events
+            .iter()
+            .filter(|e| matches!(e, PiEvent::ToolStart { .. }))
+            .count();
+        let ends = events
+            .iter()
+            .filter(|e| matches!(e, PiEvent::ToolEnd { .. }))
+            .count();
+        assert!(starts >= 4, "tool starts: {starts}");
+        assert!(ends >= 4, "tool ends: {ends}");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, PiEvent::AssistantMessage { .. })),
+            "assistant message seen"
+        );
+        assert!(
+            !events.iter().any(|e| matches!(e, PiEvent::Ignored)),
+            "Ignored is never forwarded"
+        );
+        assert!(matches!(events.first(), Some(PiEvent::Session { .. })));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn argv_passed_to_binary_matches_build_argv() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let argv_file = dir.path().join("argv.txt");
+        let cfg = with_knobs(&[("FAKE_PI_ARGV", &argv_file.display().to_string())]);
+        let task = "write a haiku about pipes";
+        let (_, outcome) = run_to_end(
+            &cfg,
+            dir.path(),
+            task,
+            Duration::from_secs(30),
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(outcome.expect("ok").exit_code, Some(0));
+        let got: Vec<String> = std::fs::read_to_string(&argv_file)
+            .expect("argv file")
+            .lines()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(got, build_argv(&cfg, task));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn nonzero_exit_is_reported() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let cfg = with_knobs(&[("FAKE_PI_EXIT", "3")]);
+        let (_, outcome) = run_to_end(
+            &cfg,
+            dir.path(),
+            "t",
+            Duration::from_secs(30),
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(outcome.expect("ok").exit_code, Some(3));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn garbage_lines_are_counted_not_fatal() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let cfg = with_knobs(&[("FAKE_PI_GARBAGE", "1")]);
+        let (events, outcome) = run_to_end(
+            &cfg,
+            dir.path(),
+            "t",
+            Duration::from_secs(30),
+            CancellationToken::new(),
+        )
+        .await;
+        let outcome = outcome.expect("ok");
+        assert_eq!(outcome.exit_code, Some(0));
+        assert!(outcome.malformed_lines > 0, "{outcome:?}");
+        assert!(events.contains(&PiEvent::AgentEnd { will_retry: false }));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, PiEvent::AssistantMessage { .. }))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn oversized_line_is_counted_and_skipped() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let fixture = dir.path().join("big.jsonl");
+        let mut big = String::with_capacity(5 * 1024 * 1024 + 64);
+        big.push_str(r#"{"type":"error","message":""#);
+        big.extend(std::iter::repeat_n('x', 5 * 1024 * 1024));
+        big.push_str("\"}\n");
+        big.push_str("{\"type\":\"agent_end\",\"willRetry\":false}\n");
+        std::fs::write(&fixture, big).expect("write fixture");
+
+        let cfg = with_knobs(&[
+            ("FAKE_PI_FIXTURE", &fixture.display().to_string()),
+            ("FAKE_PI_DELAY_MS", "0"),
+        ]);
+        let (events, outcome) = run_to_end(
+            &cfg,
+            dir.path(),
+            "t",
+            Duration::from_secs(60),
+            CancellationToken::new(),
+        )
+        .await;
+        let outcome = outcome.expect("ok");
+        assert_eq!(outcome.oversized_lines, 1, "{outcome:?}");
+        assert_eq!(outcome.malformed_lines, 0);
+        assert_eq!(events, vec![PiEvent::AgentEnd { will_retry: false }]);
+    }
+
+    #[tokio::test]
+    async fn read_line_capped_handles_edge_cases() {
+        let data = b"short\n".to_vec();
+        let mut long = vec![b'a'; 20];
+        long.push(b'\n');
+        let mut input = data.clone();
+        input.extend_from_slice(&long);
+        input.extend_from_slice(b"tail-no-newline");
+        let mut reader = BufReader::with_capacity(4, std::io::Cursor::new(input));
+        let mut buf = Vec::new();
+
+        assert!(matches!(
+            read_line_capped(&mut reader, &mut buf, 10).await.unwrap(),
+            LineRead::Line
+        ));
+        assert_eq!(buf, b"short\n");
+        assert!(matches!(
+            read_line_capped(&mut reader, &mut buf, 10).await.unwrap(),
+            LineRead::Oversized
+        ));
+        assert!(matches!(
+            read_line_capped(&mut reader, &mut buf, 100).await.unwrap(),
+            LineRead::Line
+        ));
+        assert_eq!(buf, b"tail-no-newline");
+        assert!(matches!(
+            read_line_capped(&mut reader, &mut buf, 100).await.unwrap(),
+            LineRead::Eof
+        ));
+
+        // Oversized final line without newline is still counted as oversized.
+        let mut reader = BufReader::with_capacity(4, std::io::Cursor::new(vec![b'z'; 30]));
+        assert!(matches!(
+            read_line_capped(&mut reader, &mut buf, 10).await.unwrap(),
+            LineRead::Oversized
+        ));
+        assert!(matches!(
+            read_line_capped(&mut reader, &mut buf, 10).await.unwrap(),
+            LineRead::Eof
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancel_kills_child_within_5s() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let pidfile = dir.path().join("pid");
+        let cfg = with_knobs(&[
+            ("FAKE_PI_HANG_AT", "3"),
+            ("FAKE_PI_PIDFILE", &pidfile.display().to_string()),
+            ("FAKE_PI_CHILD", "1"),
+        ]);
+        let cancel = CancellationToken::new();
+        let spec = PiSpawnSpec {
+            config: &cfg,
+            cwd: dir.path(),
+            task: "t",
+            timeout: Duration::from_secs(60),
+        };
+        let mut handle = spawn_pi(spec, cancel.clone()).await.expect("spawn");
+        let script_pid = read_pid(&pidfile).await;
+        let child_pid = read_pid(&dir.path().join("pid.child")).await;
+        assert!(is_running(script_pid));
+        assert!(is_running(child_pid));
+
+        // Let it reach the hang so the cancel hits a blocked process.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        cancel.cancel();
+        match handle.wait().await {
+            Err(PiProcessError::Cancelled) => {}
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+        assert_dead_within_5s(script_pid, "fake pi").await;
+        assert_dead_within_5s(child_pid, "grandchild sleep").await;
+        // Events channel closes too.
+        while handle.events.recv().await.is_some() {}
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn timeout_kills_child() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let pidfile = dir.path().join("pid");
+        let cfg = with_knobs(&[
+            ("FAKE_PI_HANG_AT", "3"),
+            ("FAKE_PI_PIDFILE", &pidfile.display().to_string()),
+        ]);
+        let timeout = Duration::from_secs(1);
+        let started = Instant::now();
+        let (events, outcome) =
+            run_to_end(&cfg, dir.path(), "t", timeout, CancellationToken::new()).await;
+        match outcome {
+            Err(PiProcessError::Timeout(t)) => assert_eq!(t, timeout),
+            other => panic!("expected Timeout, got {other:?}"),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "kill path took {:?}",
+            started.elapsed()
+        );
+        // The three lines before the hang were still delivered.
+        assert!(events.len() >= 2, "{events:?}");
+        let script_pid = read_pid(&pidfile).await;
+        assert_dead_within_5s(script_pid, "fake pi").await;
+    }
+
+    #[tokio::test]
+    async fn missing_binary_is_not_found() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mut cfg = fake_pi_config();
+        cfg.binary = "/nonexistent/pi".into();
+        let spec = PiSpawnSpec {
+            config: &cfg,
+            cwd: dir.path(),
+            task: "t",
+            timeout: Duration::from_secs(5),
+        };
+        match spawn_pi(spec, CancellationToken::new()).await {
+            Err(PiProcessError::NotFound(b)) => assert_eq!(b, "/nonexistent/pi"),
+            Ok(_) => panic!("spawn unexpectedly succeeded"),
+            Err(other) => panic!("expected NotFound, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stderr_tail_is_captured() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let cfg = with_knobs(&[("FAKE_PI_STDERR", "1")]);
+        let (_, outcome) = run_to_end(
+            &cfg,
+            dir.path(),
+            "t",
+            Duration::from_secs(30),
+            CancellationToken::new(),
+        )
+        .await;
+        let outcome = outcome.expect("ok");
+        assert!(outcome.stderr_tail.contains("warn"), "{outcome:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn large_task_goes_through_temp_file_and_is_removed() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let argv_file = dir.path().join("argv.txt");
+        let cfg = with_knobs(&[("FAKE_PI_ARGV", &argv_file.display().to_string())]);
+        let task = "y".repeat(70 * 1024);
+        let (_, outcome) = run_to_end(
+            &cfg,
+            dir.path(),
+            &task,
+            Duration::from_secs(30),
+            CancellationToken::new(),
+        )
+        .await;
+        let outcome = outcome.expect("ok");
+        assert_eq!(outcome.exit_code, Some(0));
+        // The fake reports the referenced file's size while it exists.
+        assert!(
+            outcome
+                .stderr_tail
+                .contains(&format!("task-file-bytes: {}", 70 * 1024)),
+            "{}",
+            outcome.stderr_tail
+        );
+        let argv = std::fs::read_to_string(&argv_file).expect("argv file");
+        let last = argv.lines().last().expect("last arg");
+        let path = last.strip_prefix('@').expect("task passed as @file");
+        assert!(path.contains("graphirm-pi-"), "{path}");
+        assert!(
+            !Path::new(path).exists(),
+            "temp task file {path} should be removed after the run"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn small_task_is_passed_inline() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let argv_file = dir.path().join("argv.txt");
+        let cfg = with_knobs(&[("FAKE_PI_ARGV", &argv_file.display().to_string())]);
+        let task = "z".repeat(MAX_INLINE_TASK_BYTES);
+        let (_, outcome) = run_to_end(
+            &cfg,
+            dir.path(),
+            &task,
+            Duration::from_secs(30),
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(outcome.expect("ok").exit_code, Some(0));
+        let argv = std::fs::read_to_string(&argv_file).expect("argv file");
+        assert_eq!(argv.lines().last(), Some(task.as_str()));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dropping_handle_kills_child() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let pidfile = dir.path().join("pid");
+        let cfg = with_knobs(&[
+            ("FAKE_PI_HANG_AT", "3"),
+            ("FAKE_PI_PIDFILE", &pidfile.display().to_string()),
+            ("FAKE_PI_CHILD", "1"),
+        ]);
+        let spec = PiSpawnSpec {
+            config: &cfg,
+            cwd: dir.path(),
+            task: "t",
+            timeout: Duration::from_secs(60),
+        };
+        let handle = spawn_pi(spec, CancellationToken::new())
+            .await
+            .expect("spawn");
+        let script_pid = read_pid(&pidfile).await;
+        let child_pid = read_pid(&dir.path().join("pid.child")).await;
+        assert!(is_running(script_pid));
+        assert!(is_running(child_pid));
+        drop(handle);
+        assert_dead_within_5s(script_pid, "fake pi").await;
+        // Not just the direct child: the group guard takes the grandchild too.
+        assert_dead_within_5s(child_pid, "grandchild sleep").await;
+    }
+}
