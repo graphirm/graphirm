@@ -243,10 +243,9 @@ pub async fn stream_and_record(
     let raw_defs = tools.definitions();
     let mut tool_defs: Vec<graphirm_llm::ToolDefinition> = raw_defs
         .into_iter()
-        // `delegate_pi` runs shell through Pi, so it is locked down with `bash`.
         .filter(|t| {
             !(session.agent_config.disable_bash
-                && (t.name == "bash" || t.name == crate::pi_delegate::PI_DELEGATE_TOOL_NAME))
+                && crate::pi_delegate::tool::hidden_under_disable_bash(&t.name))
         })
         .map(|t| graphirm_llm::ToolDefinition::new(t.name, t.description, t.parameters))
         .collect();
@@ -2053,7 +2052,7 @@ pub async fn run_agent_loop(
 // ============== Test helpers ==============
 
 #[cfg(test)]
-mod test_helpers {
+pub(crate) mod test_helpers {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 

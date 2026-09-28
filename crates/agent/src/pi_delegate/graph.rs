@@ -27,7 +27,15 @@
 //! (the caller's future was cancelled, a panic unwound, the `JoinSet` was
 //! dropped) marks its Task `Failed` with `failure: "abandoned"` and its Pi
 //! Agent `"failed"` from `Drop`, so the server's session restore never lists a
-//! ghost `running` Pi agent.
+//! ghost `running` Pi agent. A `finish` whose store write fails enqueues the
+//! same best-effort mark with `failure: "finish_failed"`. Both go through
+//! `Handle::spawn_blocking` from a sync context: on a runtime that is already
+//! shutting down the closure may never run, and the Task keeps its last state.
+//!
+//! **Input bounds:** `pi_session_id`, `pi_cwd`, `tool_call_id`, `tool_name`,
+//! `stop_reason` and `usage` are stored as received. They are bounded upstream
+//! by the 4 MiB JSONL line cap in `process.rs` (`MAX_LINE_BYTES`), which is
+//! why this module caps only the free-text fields it composes itself.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -50,6 +58,8 @@ pub const PI_EXECUTOR: &str = "pi";
 pub const PI_TASK_TITLE: &str = "Delegated to pi";
 /// `metadata.failure` value written by `Drop` when `finish` never ran.
 pub const FAILURE_ABANDONED: &str = "abandoned";
+/// `metadata.failure` value written when `finish` ran but its store write failed.
+pub const FAILURE_FINISH_FAILED: &str = "finish_failed";
 /// Task description cap; the full brief lives in Pi's stdin, not the graph.
 pub const MAX_TASK_DESCRIPTION_CHARS: usize = 4000;
 /// Tool / assistant node content cap (fixed; see module docs).
@@ -298,7 +308,14 @@ impl PiRun {
 
     /// Finalises the Task and Pi Agent status and metadata. Consumes the run;
     /// copy `task_id` / `pi_agent_id` first if you need them, or use the
-    /// returned `[task_id, pi_agent_id]`.
+    /// returned `Vec<NodeId>` = `[task_id, pi_agent_id]`.
+    ///
+    /// `finished` is flipped before the first await so a `finish` whose future
+    /// is dropped mid-write is never double-marked from `Drop`. If the write
+    /// itself fails, the run is therefore *not* re-marked by `Drop` either;
+    /// instead a best-effort `failure: "finish_failed"` mark is enqueued on
+    /// the blocking pool (same path as abandonment) and the error is returned,
+    /// so the Task never stays `Pending` because of a transient store error.
     pub async fn finish(mut self, outcome: PiRunFinish) -> Result<Vec<NodeId>, AgentError> {
         // Flip before any await so a cancelled `finish` never double-marks from Drop.
         self.finished = true;
@@ -312,11 +329,16 @@ impl PiRun {
         let g = self.graph.clone();
         let task_id = self.task_id.clone();
         let pi_agent_id = self.pi_agent_id.clone();
-        run_blocking(move || {
+        let written = run_blocking(move || {
             set_task_status(&g, &task_id, task_status, extra)?;
             set_agent_status(&g, &pi_agent_id, agent_status)
         })
-        .await?;
+        .await;
+        if let Err(e) = written {
+            tracing::error!(task_id = %self.task_id, error = %e, "Pi finish write failed; marking finish_failed");
+            self.enqueue_failure_mark(FAILURE_FINISH_FAILED, duration_ms);
+            return Err(e);
+        }
 
         tracing::info!(
             task_id = %self.task_id,
@@ -335,77 +357,80 @@ impl PiRun {
         outcome: PiRunFinish,
         extra: &mut Map<String, Value>,
     ) -> (TaskStatus, &'static str) {
-        let (statuses, exit_code, errors, judge_over_threshold, pipes_lingered, stderr_tail) =
-            match outcome {
-                PiRunFinish::Completed {
-                    summary,
+        match outcome {
+            PiRunFinish::Completed {
+                summary,
+                exit_code,
+                errors,
+                judge_over_threshold,
+                pipes_lingered,
+                stderr_tail,
+            } => {
+                extra.insert(
+                    "result".into(),
+                    json!(truncate_within(&summary, self.max_result_chars)),
+                );
+                extra.insert("assistant_messages".into(), json!(self.assistant_messages));
+                insert_run_facts(
+                    extra,
                     exit_code,
-                    errors,
+                    &errors,
                     judge_over_threshold,
                     pipes_lingered,
                     stderr_tail,
-                } => {
-                    extra.insert(
-                        "result".into(),
-                        json!(truncate_within(&summary, self.max_result_chars)),
-                    );
-                    extra.insert("assistant_messages".into(), json!(self.assistant_messages));
-                    (
-                        (TaskStatus::Completed, "completed"),
-                        exit_code,
-                        errors,
-                        judge_over_threshold,
-                        pipes_lingered,
-                        stderr_tail,
-                    )
-                }
-                PiRunFinish::Failed {
-                    kind,
-                    detail,
+                );
+                (TaskStatus::Completed, "completed")
+            }
+            PiRunFinish::Failed {
+                kind,
+                detail,
+                exit_code,
+                errors,
+                judge_over_threshold,
+                pipes_lingered,
+                stderr_tail,
+            } => {
+                extra.insert("failure".into(), json!(kind));
+                extra.insert(
+                    "failure_detail".into(),
+                    json!(truncate_within(&detail, MAX_FAILURE_DETAIL_CHARS)),
+                );
+                insert_run_facts(
+                    extra,
                     exit_code,
-                    errors,
+                    &errors,
                     judge_over_threshold,
                     pipes_lingered,
                     stderr_tail,
-                } => {
-                    extra.insert("failure".into(), json!(kind));
-                    extra.insert(
-                        "failure_detail".into(),
-                        json!(truncate_within(&detail, MAX_FAILURE_DETAIL_CHARS)),
-                    );
-                    (
-                        (TaskStatus::Failed, "failed"),
-                        exit_code,
-                        errors,
-                        judge_over_threshold,
-                        pipes_lingered,
-                        stderr_tail,
-                    )
-                }
-            };
+                );
+                (TaskStatus::Failed, "failed")
+            }
+        }
+    }
 
-        extra.insert("exit_code".into(), json!(exit_code));
-        if !errors.is_empty() {
-            let capped: Vec<String> = errors
-                .iter()
-                .take(MAX_ERRORS)
-                .map(|e| truncate_within(e, MAX_ERROR_ENTRY_CHARS))
-                .collect();
-            extra.insert("errors".into(), json!(capped));
-        }
-        if judge_over_threshold > 0 {
-            extra.insert("judge_over_threshold".into(), json!(judge_over_threshold));
-        }
-        if pipes_lingered {
-            extra.insert("pipes_lingered".into(), json!(true));
-        }
-        if let Some(tail) = stderr_tail.filter(|t| !t.is_empty()) {
-            extra.insert(
-                "stderr_tail".into(),
-                json!(truncate_within(&tail, MAX_STDERR_TAIL_CHARS)),
+    /// Best-effort failure mark from a context that cannot `.await` (the
+    /// `Drop` path) or must not re-enter the normal `finish` path (a failed
+    /// `finish` write). Sync enqueue on the blocking pool; the write runs even
+    /// if the calling task is being torn down. On a runtime that is shutting
+    /// down the closure may never run — the Task then stays as it was; there
+    /// is no further fallback.
+    fn enqueue_failure_mark(&self, kind: &'static str, duration_ms: u64) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            tracing::error!(
+                task_id = %self.task_id,
+                kind,
+                "no tokio runtime; Pi Task left unmarked"
             );
-        }
-        statuses
+            return;
+        };
+        let g = self.graph.clone();
+        let task_id = self.task_id.clone();
+        let pi_agent_id = self.pi_agent_id.clone();
+        handle.spawn_blocking(move || {
+            if let Err(e) = mark_failed(&g, &task_id, &pi_agent_id, kind, duration_ms) {
+                tracing::error!(task_id = %task_id, kind, error = %e, "failed to mark Pi Task failed");
+            }
+        });
     }
 
     /// Metadata keys common to every Interaction node written by this run.
@@ -455,23 +480,41 @@ impl Drop for PiRun {
             tool_calls = self.tool_calls,
             "PiRun dropped without finish(); marking Task failed (abandoned)"
         );
-        let Ok(handle) = tokio::runtime::Handle::try_current() else {
-            tracing::error!(
-                task_id = %self.task_id,
-                "no tokio runtime at PiRun drop; Task left pending"
-            );
-            return;
-        };
-        let g = self.graph.clone();
-        let task_id = self.task_id.clone();
-        let pi_agent_id = self.pi_agent_id.clone();
-        // Sync enqueue only — `.await` is impossible here; the blocking pool
-        // runs the write even if the dropping task is being torn down.
-        handle.spawn_blocking(move || {
-            if let Err(e) = mark_abandoned(&g, &task_id, &pi_agent_id, duration_ms) {
-                tracing::error!(task_id = %task_id, error = %e, "failed to mark PiRun abandoned");
-            }
-        });
+        self.enqueue_failure_mark(FAILURE_ABANDONED, duration_ms);
+    }
+}
+
+/// Keys shared by both outcomes: `exit_code` always; `errors` (capped),
+/// `judge_over_threshold`, `pipes_lingered`, `stderr_tail` (capped) only when
+/// non-default.
+fn insert_run_facts(
+    extra: &mut Map<String, Value>,
+    exit_code: Option<i32>,
+    errors: &[String],
+    judge_over_threshold: u32,
+    pipes_lingered: bool,
+    stderr_tail: Option<String>,
+) {
+    extra.insert("exit_code".into(), json!(exit_code));
+    if !errors.is_empty() {
+        let capped: Vec<String> = errors
+            .iter()
+            .take(MAX_ERRORS)
+            .map(|e| truncate_within(e, MAX_ERROR_ENTRY_CHARS))
+            .collect();
+        extra.insert("errors".into(), json!(capped));
+    }
+    if judge_over_threshold > 0 {
+        extra.insert("judge_over_threshold".into(), json!(judge_over_threshold));
+    }
+    if pipes_lingered {
+        extra.insert("pipes_lingered".into(), json!(true));
+    }
+    if let Some(tail) = stderr_tail.filter(|t| !t.is_empty()) {
+        extra.insert(
+            "stderr_tail".into(),
+            json!(truncate_within(&tail, MAX_STDERR_TAIL_CHARS)),
+        );
     }
 }
 
@@ -544,15 +587,18 @@ fn set_agent_status(g: &GraphStore, agent_id: &NodeId, status: &str) -> Result<(
     Ok(())
 }
 
-/// Sync: the `Drop` path — Task `Failed` + `failure: "abandoned"`, Agent `"failed"`.
-fn mark_abandoned(
+/// Sync: the fallback paths — Task `Failed` + `failure: <kind>`
+/// (`"abandoned"` from `Drop`, `"finish_failed"` from a failed `finish`
+/// write), Agent `"failed"`.
+fn mark_failed(
     g: &GraphStore,
     task_id: &NodeId,
     pi_agent_id: &NodeId,
+    kind: &str,
     duration_ms: u64,
 ) -> Result<(), AgentError> {
     let mut extra = Map::new();
-    extra.insert("failure".into(), json!(FAILURE_ABANDONED));
+    extra.insert("failure".into(), json!(kind));
     extra.insert("duration_ms".into(), json!(duration_ms));
     set_task_status(g, task_id, TaskStatus::Failed, extra)?;
     set_agent_status(g, pi_agent_id, "failed")
@@ -592,8 +638,8 @@ fn compact_args(args: &Value) -> String {
 }
 
 /// Keep at most `max` chars; when cut, end with `…` (counted within `max`).
-/// `max == 0` yields an empty string.
-fn truncate_within(s: &str, max: usize) -> String {
+/// `max == 0` yields an empty string. Shared with `tool.rs` (summary / error caps).
+pub(super) fn truncate_within(s: &str, max: usize) -> String {
     if max == 0 {
         return String::new();
     }

@@ -64,6 +64,12 @@ pub const TASK_FILE_INSTRUCTION: &str = "Carry out the task described in the att
 /// [`PiRunOutcome::pipes_lingered`].
 pub const POST_EXIT_GRACE: Duration = Duration::from_secs(3);
 
+/// Floor of the post-exit grace. When Pi exits right at the deadline the
+/// remaining budget is ~0, which would kill the pipes before the final events
+/// (already written by the exited process) were drained. The run may thus
+/// overshoot `timeout` by at most this much.
+pub const MIN_POST_EXIT_GRACE: Duration = Duration::from_millis(250);
+
 /// Bound of the event channel handed to the consumer.
 const EVENT_CHANNEL_CAP: usize = 256;
 
@@ -438,11 +444,13 @@ async fn drive(
 
     // Phase 2: the pipes close when every holder exits. A tool child Pi left
     // behind can keep them open; give it a short grace (bounded by what is
-    // left of the deadline), then kill the group through the captured pgid
-    // and report what was captured so far.
+    // left of the deadline, floored at MIN_POST_EXIT_GRACE so an exit at the
+    // deadline still drains the last events), then kill the group through the
+    // captured pgid and report what was captured so far.
     let grace = timeout
         .saturating_sub(started.elapsed())
-        .min(POST_EXIT_GRACE);
+        .min(POST_EXIT_GRACE)
+        .max(MIN_POST_EXIT_GRACE);
     let drained = {
         let readers = async {
             let _ = (&mut stdout_task.0).await;
@@ -1183,9 +1191,12 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn wait_without_draining_events_completes_quickly() {
-        // More events than the channel holds: without `events.close()` in
-        // `wait()` the reader would block on `send`, the fake on a full pipe,
-        // and the run would only end at the deadline.
+        // More events than the channel holds (but small enough to fit the
+        // pipe buffer, so the fake exits normally): without `events.close()`
+        // in `wait()` the stdout reader would sit on a full channel `send`
+        // through phase 2, the run would end only after POST_EXIT_GRACE with
+        // `pipes_lingered = true`, and the tail events would be lost. With
+        // `close()` the reader drains stdout and the run ends promptly.
         let dir = tempfile::TempDir::new().expect("tempdir");
         let fixture = dir.path().join("many.jsonl");
         let mut body = String::new();

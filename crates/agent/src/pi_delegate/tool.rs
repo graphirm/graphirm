@@ -34,8 +34,8 @@ use graphirm_tools::{Tool, ToolContext, ToolError, ToolEventSink, ToolOutput};
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 
-use super::events::{PiEvent, flatten_result};
-use super::graph::{PiRun, PiRunFinish, PiToolCall};
+use super::events::{MAX_ERROR_CHARS, PiEvent, flatten_result};
+use super::graph::{PiRun, PiRunFinish, PiToolCall, truncate_within};
 use super::process::{
     PiProcessError, PiRunHandle, PiRunOutcome, PiSpawnSpec, probe_version, spawn_pi,
 };
@@ -90,9 +90,17 @@ pub fn apply_pi_delegate_system_notice(prompt: &mut String) {
     prompt.push_str(NOTICE_BODY);
 }
 
-/// Registers `delegate_pi` when `[agent.pi].enabled` is true.
+/// `true` for tools that `disable_bash` removes from every tool list: `bash`
+/// itself and `delegate_pi` (Pi runs shell). Shared by the director's list in
+/// `workflow::stream_and_record` and the subagent scoping in `multi.rs`.
+pub(crate) fn hidden_under_disable_bash(name: &str) -> bool {
+    name == "bash" || name == PI_DELEGATE_TOOL_NAME
+}
+
+/// Registers `delegate_pi` when `[agent.pi]` is registrable
+/// ([`PiConfig::is_registrable`]: enabled, non-blank binary/provider/model).
 ///
-/// Skips (with a warning) an empty `binary` or `model`; a zero
+/// An enabled-but-invalid config is skipped with a warning; a zero
 /// `timeout_seconds` falls back to the default. The binary is probed once so
 /// a missing Pi is visible in the logs at startup, but the tool is registered
 /// regardless — the failure then surfaces to the model as a tool error rather
@@ -102,9 +110,10 @@ pub async fn register_pi_delegate(registry: &mut ToolRegistry, config: &AgentCon
     let Some(pi) = config.pi.as_ref().filter(|p| p.enabled) else {
         return;
     };
-    if pi.binary.trim().is_empty() || pi.model.trim().is_empty() {
+    if !pi.is_registrable() {
         tracing::warn!(
-            "[agent.pi] is enabled but `binary` or `model` is empty; delegate_pi not registered"
+            "[agent.pi] is enabled but `binary`, `provider` or `model` is blank; \
+             delegate_pi not registered"
         );
         return;
     }
@@ -257,7 +266,10 @@ impl Tool for PiDelegateTool {
             ));
         }
         let parsed = self.parse_args(&args)?;
-        // Before `begin`: an uninstalled Pi must not create a Task node.
+        // Deliberately probed on every call (not only at registration): this is
+        // what guarantees an uninstalled or broken Pi never creates a Task
+        // node. Cost is one `pi --version` (typically ~100 ms, capped at 5 s)
+        // against runs that last minutes; the result becomes `pi_version`.
         let version = probe_version(&self.config)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("pi is not available: {e}")))?;
@@ -479,6 +491,7 @@ impl<'a> RunDriver<'a> {
     ) -> Option<JudgeVerdict> {
         let handle = handle?;
         let timeout = self.tool.judge.as_ref()?.timeout();
+        let abort = handle.abort_handle();
         match tokio::time::timeout(timeout, handle).await {
             Ok(Ok(Ok(verdict))) => Some(verdict),
             Ok(Ok(Err(e))) => {
@@ -490,6 +503,8 @@ impl<'a> RunDriver<'a> {
                 None
             }
             Err(_) => {
+                // Dropping the JoinHandle only detaches; stop the request too.
+                abort.abort();
                 self.warn_judge_once("judge did not answer within its timeout");
                 None
             }
@@ -524,7 +539,11 @@ impl<'a> RunDriver<'a> {
         usage: Option<Value>,
     ) {
         if let Some(err) = error_message {
-            self.stats.errors.push(format!("provider: {err}"));
+            // `PiEvent::Error` is capped by the parser; `errorMessage` is not.
+            self.stats.errors.push(format!(
+                "provider: {}",
+                truncate_within(&err, MAX_ERROR_CHARS)
+            ));
         }
         if text.trim().is_empty() {
             return;
@@ -678,7 +697,7 @@ impl<'a> RunDriver<'a> {
         }
         s.push_str("\n\nResult:\n");
         match &self.stats.last_text {
-            Some(text) => s.push_str(&truncate_chars(text, self.tool.config.max_result_chars)),
+            Some(text) => s.push_str(&truncate_within(text, self.tool.config.max_result_chars)),
             None => s.push_str("(Pi produced no final message)"),
         }
         let warnings = self.warnings(outcome);
@@ -745,25 +764,12 @@ impl<'a> RunDriver<'a> {
             .stats
             .last_text
             .as_deref()
-            .map_or_else(|| "(none)".to_string(), |t| truncate_chars(t, 500));
+            .map_or_else(|| "(none)".to_string(), |t| truncate_within(t, 500));
         format!(
             "Tool calls before the cut: {} ({} errors). Last message: {last}",
             self.stats.tool_calls, self.stats.tool_errors
         )
     }
-}
-
-/// Keep at most `max` chars; when cut, end with `…` (counted within `max`).
-fn truncate_chars(s: &str, max: usize) -> String {
-    if max == 0 {
-        return String::new();
-    }
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    let mut out: String = s.chars().take(max - 1).collect();
-    out.push('…');
-    out
 }
 
 #[cfg(all(test, unix))]
@@ -1345,10 +1351,16 @@ mod tests {
 
     #[tokio::test]
     async fn register_skips_invalid_config() {
-        for (binary, model) in [("", "m"), ("pi", ""), ("  ", "m")] {
+        for (binary, provider, model) in [
+            ("", "p", "m"),
+            ("pi", "p", ""),
+            ("  ", "p", "m"),
+            ("pi", "", "m"),
+        ] {
             let mut reg = ToolRegistry::new();
             let mut pi = fake_config(&[]);
             pi.binary = binary.to_string();
+            pi.provider = provider.to_string();
             pi.model = model.to_string();
             let cfg = AgentConfig {
                 pi: Some(pi),
@@ -1357,7 +1369,7 @@ mod tests {
             register_pi_delegate(&mut reg, &cfg).await;
             assert!(
                 reg.get("delegate_pi").is_err(),
-                "binary={binary:?} model={model:?} must not register"
+                "binary={binary:?} provider={provider:?} model={model:?} must not register"
             );
         }
     }
@@ -1400,17 +1412,92 @@ mod tests {
 
     #[test]
     fn config_applies_notice_only_when_pi_enabled() {
-        let mut cfg = AgentConfig {
-            system_prompt: "base".to_string(),
-            ..AgentConfig::default()
-        };
-        cfg.apply_pi_delegate_system_notice();
-        assert_eq!(cfg.system_prompt, "base");
-        cfg.pi = Some(PiConfig {
+        fn prompt_after(pi: Option<PiConfig>, disable_bash: bool) -> String {
+            let mut cfg = AgentConfig {
+                system_prompt: "base".to_string(),
+                disable_bash,
+                pi,
+                ..AgentConfig::default()
+            };
+            cfg.apply_pi_delegate_system_notice();
+            cfg.system_prompt
+        }
+        let enabled = PiConfig {
             enabled: true,
             ..PiConfig::default()
-        });
-        cfg.apply_pi_delegate_system_notice();
-        assert!(cfg.system_prompt.contains("delegate_pi"));
+        };
+        assert_eq!(prompt_after(None, false), "base");
+        assert_eq!(prompt_after(Some(PiConfig::default()), false), "base");
+        assert!(prompt_after(Some(enabled.clone()), false).contains("delegate_pi"));
+        // The tool is hidden under disable_bash, so the prompt must not advertise it.
+        assert_eq!(prompt_after(Some(enabled.clone()), true), "base");
+        // Same validation as registration: a config that would not register
+        // must not produce a notice either.
+        for (binary, provider, model) in [("", "p", "m"), ("pi", " ", "m"), ("pi", "p", "")] {
+            let pi = PiConfig {
+                binary: binary.to_string(),
+                provider: provider.to_string(),
+                model: model.to_string(),
+                ..enabled.clone()
+            };
+            assert!(!pi.is_registrable());
+            assert_eq!(prompt_after(Some(pi), false), "base");
+        }
+        assert!(enabled.is_registrable());
+        assert!(!PiConfig::default().is_registrable(), "disabled by default");
+    }
+
+    #[test]
+    fn hidden_under_disable_bash_covers_bash_and_delegate_pi() {
+        assert!(hidden_under_disable_bash("bash"));
+        assert!(hidden_under_disable_bash(PI_DELEGATE_TOOL_NAME));
+        assert!(!hidden_under_disable_bash("read"));
+        assert!(!hidden_under_disable_bash("write"));
+    }
+
+    /// A provider error message is capped before it reaches the errors list
+    /// (and thus `Task.metadata.errors` / the `Warnings:` bullets).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn provider_error_message_is_capped() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let fixture = dir.path().join("err.jsonl");
+        let huge = "e".repeat(10_000);
+        std::fs::write(
+            &fixture,
+            format!(
+                "{{\"type\":\"session\",\"id\":\"s\",\"cwd\":\"/w\"}}\n\
+                 {{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[],\
+                 \"stopReason\":\"error\",\"errorMessage\":\"{huge}\"}}}}\n\
+                 {{\"type\":\"agent_end\",\"willRetry\":false}}\n"
+            ),
+        )
+        .expect("fixture");
+        let (ctx, _) = make_ctx(dir.path());
+        let cfg = fake_config(&[
+            ("FAKE_PI_FIXTURE", &fixture.display().to_string()),
+            ("FAKE_PI_DELAY_MS", "0"),
+        ]);
+        let tool = PiDelegateTool::new(cfg, None);
+
+        let out = tool
+            .execute(json!({"task": "t"}), &ctx)
+            .await
+            .expect("exit 0");
+        // The tool result renders `stats.errors` verbatim, so the cap must be
+        // applied there (graph.rs caps Task metadata entries separately).
+        let bullet = out
+            .content
+            .lines()
+            .find(|l| l.starts_with("- provider: eeee"))
+            .expect("provider warning bullet");
+        assert!(
+            bullet.chars().count() <= "- provider: ".len() + MAX_ERROR_CHARS,
+            "{}",
+            bullet.chars().count()
+        );
+        assert!(bullet.ends_with('…'));
+        let (_, meta) = task_data(&ctx.graph, &delegated_tasks(&ctx)[0].id);
+        let stored = meta["errors"][0].as_str().expect("error entry");
+        assert!(stored.starts_with("provider: eeee"));
     }
 }

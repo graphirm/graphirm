@@ -109,11 +109,13 @@ pub struct SubagentHandle {
 }
 
 /// Build a scoped ToolRegistry for a subagent based on its permission config.
-/// Tools explicitly denied are excluded. Unlisted tools are allowed.
+/// Tools explicitly denied are excluded. Unlisted tools are allowed. Under
+/// `disable_bash`, `bash` and `delegate_pi` are dropped (same predicate as the
+/// director's tool list).
 fn build_scoped_tools(base_tools: &ToolRegistry, config: &AgentConfig) -> ToolRegistry {
     let mut scoped = ToolRegistry::new();
     for name in base_tools.list() {
-        if config.disable_bash && name == "bash" {
+        if config.disable_bash && crate::pi_delegate::tool::hidden_under_disable_bash(name) {
             continue;
         }
         if config.is_tool_allowed(name)
@@ -516,6 +518,30 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::TempDir;
+
+    /// `disable_bash` hides `delegate_pi` from subagents too (Pi runs shell);
+    /// the predicate is shared with the director's tool list in `workflow.rs`.
+    #[test]
+    fn scoped_tools_hide_bash_and_delegate_pi_under_disable_bash() {
+        use crate::workflow::test_helpers::MockTool;
+        let mut base = ToolRegistry::new();
+        for name in ["bash", "delegate_pi", "read"] {
+            base.register(Arc::new(MockTool {
+                tool_name: name.to_string(),
+                output: "ok".to_string(),
+            }));
+        }
+        let open = build_scoped_tools(&base, &AgentConfig::default());
+        assert_eq!(open.list(), vec!["bash", "delegate_pi", "read"]);
+        let locked = build_scoped_tools(
+            &base,
+            &AgentConfig {
+                disable_bash: true,
+                ..AgentConfig::default()
+            },
+        );
+        assert_eq!(locked.list(), vec!["read"]);
+    }
 
     use graphirm_graph::nodes::{AgentData, GraphNode, NodeType, TaskData, TaskStatus};
     use graphirm_llm::{MockProvider, MockResponse};

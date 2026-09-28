@@ -421,6 +421,19 @@ pub struct PiConfig {
     pub max_result_chars: usize,
 }
 
+impl PiConfig {
+    /// Whether `delegate_pi` should exist for this config: `enabled` with a
+    /// non-blank `binary`, `provider` and `model`. The single predicate behind
+    /// both `register_pi_delegate` and the system-prompt notice, so a config
+    /// that does not register never advertises the tool.
+    pub fn is_registrable(&self) -> bool {
+        self.enabled
+            && !self.binary.trim().is_empty()
+            && !self.provider.trim().is_empty()
+            && !self.model.trim().is_empty()
+    }
+}
+
 impl Default for PiConfig {
     fn default() -> Self {
         Self {
@@ -813,10 +826,12 @@ impl AgentConfig {
         ));
     }
 
-    /// Appends the `delegate_pi` guidance when `[agent.pi].enabled` is true.
+    /// Appends the `delegate_pi` guidance when the tool will actually be
+    /// offered: `[agent.pi]` is registrable ([`PiConfig::is_registrable`]) and
+    /// `bash` is not disabled (the tool is hidden with `bash` in that case).
     /// Idempotent (see [`crate::pi_delegate::apply_pi_delegate_system_notice`]).
     pub fn apply_pi_delegate_system_notice(&mut self) {
-        if self.pi.as_ref().is_some_and(|p| p.enabled) {
+        if !self.disable_bash && self.pi.as_ref().is_some_and(PiConfig::is_registrable) {
             crate::pi_delegate::apply_pi_delegate_system_notice(&mut self.system_prompt);
         }
     }
