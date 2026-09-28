@@ -250,6 +250,15 @@ pub struct AgentConfig {
     /// so the model cannot emit tool calls on greetings and small talk. Primary agents only.
     #[serde(default = "default_tool_gate_enabled")]
     pub tool_gate_enabled: bool,
+    /// Pi (`@earendil-works/pi-coding-agent`) as an external delegate executor.
+    /// `None` (or `enabled = false`) → the `delegate_pi` tool is not registered.
+    #[serde(default)]
+    pub pi: Option<PiConfig>,
+    /// Sessions created via the HTTP API without an explicit `auto_approve` start with
+    /// auto-approve ON (destructive tools run without a confirm card). Set to false to
+    /// require per-call approval by default. The TUI has no HITL gate today.
+    #[serde(default = "default_true")]
+    pub default_auto_approve: bool,
 }
 
 /// Objective weights for composite score optimisation.
@@ -371,6 +380,87 @@ impl Default for HitlJudgeConfig {
 
 fn default_hitl_judge_threshold() -> f64 {
     0.8
+}
+
+/// `[agent.pi]` — Pi (`@earendil-works/pi-coding-agent`) as an external delegate executor.
+///
+/// When present and `enabled`, the director gets a destructive `delegate_pi(task)` tool
+/// that runs `pi --mode json` as a subprocess in the session workspace. Pi reads its
+/// provider key from its own environment / auth store; graphirm never reads it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PiConfig {
+    /// Register the `delegate_pi` tool. Off by default until the A4 live check.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Executable name or path; resolved via PATH when not absolute.
+    #[serde(default = "default_pi_binary")]
+    pub binary: String,
+    /// Passed as `--provider`. Pi reads the provider key from its own
+    /// environment/auth store; graphirm never reads it.
+    #[serde(default = "default_pi_provider")]
+    pub provider: String,
+    /// Passed as `--model`.
+    #[serde(default = "default_pi_model")]
+    pub model: String,
+    /// Hard wall-clock cap for one delegation; Pi is killed when exceeded.
+    #[serde(default = "default_pi_timeout")]
+    pub timeout_seconds: u64,
+    /// `false` → `--no-approve` (ignore the workspace's `.pi/` resources); `true` → `--approve`.
+    #[serde(default)]
+    pub trust_project: bool,
+    /// Extra argv appended after `--model`. Default runs Pi bare.
+    #[serde(default = "default_pi_extra_args")]
+    pub extra_args: Vec<String>,
+    /// Pi's final message is truncated to this many chars in the tool result.
+    #[serde(default = "default_pi_max_result_chars")]
+    pub max_result_chars: usize,
+}
+
+impl Default for PiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            binary: default_pi_binary(),
+            provider: default_pi_provider(),
+            model: default_pi_model(),
+            timeout_seconds: default_pi_timeout(),
+            trust_project: false,
+            extra_args: default_pi_extra_args(),
+            max_result_chars: default_pi_max_result_chars(),
+        }
+    }
+}
+
+fn default_pi_binary() -> String {
+    "pi".to_string()
+}
+
+fn default_pi_provider() -> String {
+    "openrouter".to_string()
+}
+
+fn default_pi_model() -> String {
+    "deepseek/deepseek-v4-flash".to_string()
+}
+
+fn default_pi_timeout() -> u64 {
+    900
+}
+
+fn default_pi_extra_args() -> Vec<String> {
+    vec![
+        "--no-extensions".to_string(),
+        "--no-skills".to_string(),
+        "--no-prompt-templates".to_string(),
+    ]
+}
+
+fn default_pi_max_result_chars() -> usize {
+    16_000
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// A single model candidate with pricing metadata.
@@ -524,6 +614,8 @@ impl Default for AgentConfig {
             max_session_tokens: None,
             outline: None,
             tool_gate_enabled: default_tool_gate_enabled(),
+            pi: None,
+            default_auto_approve: true,
         }
     }
 }
@@ -615,6 +707,10 @@ struct AgentConfigSection {
     outline: Option<OutlineConfig>,
     #[serde(default = "default_tool_gate_enabled")]
     tool_gate_enabled: bool,
+    #[serde(default)]
+    pi: Option<PiConfig>,
+    #[serde(default = "default_true")]
+    default_auto_approve: bool,
 }
 
 fn default_system_prompt() -> String {
@@ -676,6 +772,8 @@ impl AgentConfig {
             max_session_tokens: file.agent.max_session_tokens,
             outline: file.agent.outline,
             tool_gate_enabled: file.agent.tool_gate_enabled,
+            pi: file.agent.pi,
+            default_auto_approve: file.agent.default_auto_approve,
         })
     }
 
@@ -1478,6 +1576,100 @@ segment_filter = ["reasoning", "code"]
         assert_eq!(jev.api_key_env.as_deref(), Some("LAYA_API_KEY"));
         assert_eq!(jev.model.as_deref(), Some("laya/systemone-1"));
     }
+
+    #[test]
+    fn pi_config_parses_and_defaults() {
+        let toml = r#"
+[agent]
+name = "a"
+model = "m"
+system_prompt = "s"
+max_turns = 1
+[agent.pi]
+enabled = true
+model = "deepseek/deepseek-v4-flash"
+"#;
+        let cfg = AgentConfig::from_toml(toml).expect("parse");
+        let pi = cfg.pi.expect("pi");
+        assert!(pi.enabled);
+        assert_eq!(pi.binary, "pi");
+        assert_eq!(pi.provider, "openrouter");
+        assert_eq!(pi.model, "deepseek/deepseek-v4-flash");
+        assert_eq!(pi.timeout_seconds, 900);
+        assert!(!pi.trust_project);
+        assert_eq!(
+            pi.extra_args,
+            vec!["--no-extensions", "--no-skills", "--no-prompt-templates"]
+        );
+        assert_eq!(pi.max_result_chars, 16_000);
+    }
+
+    #[test]
+    fn pi_config_parses_explicit_overrides() {
+        let toml = r#"
+[agent]
+name = "a"
+model = "m"
+system_prompt = "s"
+max_turns = 1
+[agent.pi]
+enabled = true
+binary = "/opt/pi/bin/pi"
+provider = "anthropic"
+model = "claude"
+timeout_seconds = 30
+trust_project = true
+extra_args = []
+max_result_chars = 500
+"#;
+        let pi = AgentConfig::from_toml(toml).expect("parse").pi.expect("pi");
+        assert_eq!(pi.binary, "/opt/pi/bin/pi");
+        assert_eq!(pi.provider, "anthropic");
+        assert_eq!(pi.model, "claude");
+        assert_eq!(pi.timeout_seconds, 30);
+        assert!(pi.trust_project);
+        assert!(pi.extra_args.is_empty());
+        assert_eq!(pi.max_result_chars, 500);
+    }
+
+    #[test]
+    fn pi_absent_is_none_and_default_auto_approve_is_true() {
+        let cfg = AgentConfig::default();
+        assert!(cfg.pi.is_none());
+        assert!(cfg.default_auto_approve);
+
+        let toml = r#"
+[agent]
+name = "a"
+model = "m"
+system_prompt = "s"
+max_turns = 1
+"#;
+        let cfg = AgentConfig::from_toml(toml).expect("parse");
+        assert!(cfg.pi.is_none());
+        assert!(cfg.default_auto_approve);
+    }
+
+    #[test]
+    fn default_auto_approve_false_parses() {
+        let toml = r#"
+[agent]
+name = "a"
+model = "m"
+system_prompt = "s"
+max_turns = 1
+default_auto_approve = false
+"#;
+        let cfg = AgentConfig::from_toml(toml).expect("parse");
+        assert!(!cfg.default_auto_approve);
+    }
+
+    #[test]
+    fn pi_config_default_impl_matches_serde_defaults() {
+        let from_serde: PiConfig = toml::from_str("enabled = false").expect("parse");
+        assert_eq!(PiConfig::default(), from_serde);
+        assert!(!PiConfig::default().enabled);
+    }
 }
 
 #[cfg(test)]
@@ -1508,5 +1700,15 @@ mod default_toml_tests {
         let judge = config.hitl_judge.expect("hitl_judge section");
         assert!(judge.enabled);
         assert!((judge.threshold - 0.8).abs() < 1e-9);
+    }
+
+    /// `[agent.pi]` ships present-but-disabled until the A4 live check; sessions
+    /// created over HTTP default to auto-approve (decision 17).
+    #[test]
+    fn default_toml_has_pi_disabled() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
+        let config = AgentConfig::from_file(std::path::Path::new(path)).expect("default.toml");
+        assert!(!config.pi.expect("pi block present").enabled);
+        assert!(config.default_auto_approve);
     }
 }

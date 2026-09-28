@@ -554,7 +554,7 @@ pub struct PiConfig {
 
 **Step 5: Commit** — `feat(agent): [agent.pi] PiConfig and [agent] default_auto_approve`
 
-- [ ] A2.3 done
+- [x] A2.3 done
 
 ### Task A2.4: Server honours `default_auto_approve`
 
