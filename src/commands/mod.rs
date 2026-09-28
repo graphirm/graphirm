@@ -54,6 +54,23 @@ pub fn api_key_for_provider(provider_name: &str) -> Result<String, GraphirmError
     }
 }
 
+/// Load `config/default.toml` from the working directory, falling back to
+/// `AgentConfig::default()` (with a warning) when it is missing or invalid.
+pub fn load_agent_config() -> graphirm_agent::AgentConfig {
+    let config_path = Path::new("config/default.toml");
+    if !config_path.exists() {
+        tracing::warn!("config/default.toml not found; using AgentConfig defaults");
+        return graphirm_agent::AgentConfig::default();
+    }
+    graphirm_agent::AgentConfig::from_file(config_path).unwrap_or_else(|e| {
+        tracing::warn!(
+            "Failed to load {}: {e}; using defaults",
+            config_path.display()
+        );
+        graphirm_agent::AgentConfig::default()
+    })
+}
+
 pub fn build_tool_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(graphirm_tools::bash::BashTool));
