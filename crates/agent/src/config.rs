@@ -1488,13 +1488,16 @@ mod default_toml_tests {
     /// be the Jev shadow arm (DEC-0928i(a)) — a typo here would silently fall
     /// back to plain rules and the week of agreement data would never exist.
     #[test]
-    fn shipped_default_toml_parses_with_jev_shadow() {
+    fn shipped_default_toml_parses_with_jev_live() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
         let toml = std::fs::read_to_string(path).expect("read config/default.toml");
         let config = AgentConfig::from_toml(&toml).expect("default.toml parses");
         let ar = config.adaptive_routing.expect("adaptive_routing present");
         assert_eq!(ar.strategy, "jev");
-        assert!(ar.jev.expect("jev section").shadow, "shadow must be on");
+        assert!(
+            !ar.jev.expect("jev section").shadow,
+            "DEC-0928j(c): Jev decides; shadow is the rollback, not the default"
+        );
     }
 
     #[test]

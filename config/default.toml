@@ -234,12 +234,13 @@ tier = "smart"
 #            or a local System One server such as Laya /v1/systemone); falls back to
 #            rules per turn on error/timeout (see crates/agent/src/strategy/jev_router.rs)
 [agent.adaptive_routing]
-strategy = "jev"   # shadow mode below: rules still decide; Jev's verdict is recorded per turn
+strategy = "jev"   # Jev decides the tier per turn; rules take over only on error/timeout.
 
 [agent.adaptive_routing.jev]
-shadow = true      # DEC-0928i(a), 2026-09-28: measure agreement for a week before Jev decides.
-                   # routing_reason = "rule:<name> | jev:<tier> p=.. conf=.. agree=<bool> v1";
-                   # strategy_name = "jev_shadow". Needs OPENROUTER_API_KEY; without it → rules.
+shadow = false     # DEC-0928j(c), 2026-09-28: human chose to go live without the shadow week.
+                   # routing_reason = "jev:<tier> p=.. conf=.. v1" (or "jev_fallback(<err>) -> rule:…");
+                   # strategy_name = "jev_router". Rollback = `shadow = true` (rules decide, Jev recorded).
+                   # Needs OPENROUTER_API_KEY; without it → rules.
 
 [agent.adaptive_routing.objective]
 preset = "balanced"   # cost_focused | quality_first | speed | balanced
