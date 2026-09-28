@@ -332,7 +332,7 @@ parser in A2.2 follows the recording.
 
 **Commit:** `test(agent): record scrubbed Pi --mode json fixture (hello-run)`
 
-- [ ] A2.1 done
+- [x] A2.1 done
 
 ### Task A2.2: `PiEvent` parser (pure)
 
