@@ -124,7 +124,9 @@ mod tests {
             _ => panic!("expected preamble text"),
         }
         match &out.content[1] {
-            ContentPart::ToolCall { name, arguments, .. } => {
+            ContentPart::ToolCall {
+                name, arguments, ..
+            } => {
                 assert_eq!(name, "read");
                 assert_eq!(arguments["path"], "crates/graph/src/graph.rs");
             }

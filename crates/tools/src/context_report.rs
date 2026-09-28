@@ -162,10 +162,10 @@ mod tests {
 
     #[test]
     fn stat_helpers_handle_missing_keys() {
-        let v = serde_json::json!({"a": 5, "b": 3.14, "c": true});
+        let v = serde_json::json!({"a": 5, "b": 3.5, "c": true});
         assert_eq!(stat_u64(&v, "a"), 5);
         assert_eq!(stat_u64(&v, "missing"), 0);
-        assert!((stat_f64(&v, "b") - 3.14).abs() < f64::EPSILON);
+        assert!((stat_f64(&v, "b") - 3.5).abs() < f64::EPSILON);
         assert_eq!(stat_f64(&v, "missing"), 0.0);
         assert!(stat_bool(&v, "c"));
         assert!(!stat_bool(&v, "missing"));
