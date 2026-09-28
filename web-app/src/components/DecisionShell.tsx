@@ -5,6 +5,7 @@ import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { ChatPane } from './ChatPane';
 import { GraphCanvas } from './GraphCanvas';
 import { SessionBar } from './SessionBar';
+import { RulesTab } from './RulesTab';
 import { TabBar, type ChatTab } from './TabBar';
 
 export interface DecisionShellProps {
@@ -101,7 +102,7 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
             <div className={styles.columnBody}>
               {tab === 'chat' && chatPane}
               {tab === 'review' && <p>Review</p>}
-              {tab === 'rules' && <p>Rules</p>}
+              {tab === 'rules' && <RulesTab />}
               {graphMounted && (
                 <div
                   className={styles.graphKeepAlive}

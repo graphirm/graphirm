@@ -236,7 +236,7 @@ export function confirmSections(toolName: string, args: Record<string, unknown> 
 
 **Step 4: Commit** `feat(web): Rules tab for pinned knowledge`
 
-- [ ] B6 done
+- [x] B6 done
 
 ---
 

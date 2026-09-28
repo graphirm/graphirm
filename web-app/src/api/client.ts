@@ -256,4 +256,25 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ summary }),
     }),
+
+  listPinnedKnowledge: (limit?: number): Promise<GraphNode[]> => {
+    const q = limit != null ? `?${new URLSearchParams({ limit: String(limit) })}` : '';
+    return apiFetch(`/api/knowledge/pinned${q}`);
+  },
+
+  createKnowledge: (body: {
+    entity: string;
+    entity_type: string;
+    summary: string;
+    confidence?: number;
+    pinned?: boolean;
+    session_id?: string;
+  }): Promise<GraphNode> =>
+    apiFetch('/api/knowledge', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  deleteKnowledge: (nodeId: string): Promise<void> =>
+    apiFetch(`/api/knowledge/${nodeId}`, { method: 'DELETE' }),
 };
