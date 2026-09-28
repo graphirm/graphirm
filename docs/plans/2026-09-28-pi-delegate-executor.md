@@ -668,6 +668,9 @@ right after `spawn()`; on cancel/timeout call
 add `libc` to `graphirm-agent`. Env: `cmd.env("PI_SKIP_VERSION_CHECK", "1")`.
 Task arg: if `task.len() > 64 * 1024` write to `temp_dir()/graphirm-pi-<uuid>.md`,
 pass `@<path>`, remove in a `defer`-style guard (a small `TempTask` struct with `Drop`).
+`binary`: expand a leading `~` to `$HOME` before spawning. Validate at registration
+(`register_pi_delegate`): empty `binary`/`model` → warn and skip registration;
+`timeout_seconds == 0` → warn and use the default 900.
 
 **Step 5: Commit** — `feat(agent): Pi subprocess wrapper — spawn, JSONL drain, group kill, timeout (fake pi tests)`
 
@@ -702,7 +705,9 @@ pass `@<path>`, remove in a `defer`-style guard (a small `TempTask` struct with 
 **Step 3: Implement** a `PiRun` struct holding `graph`, `ctx` clones, `task_id`,
 `pi_agent_id`, `last_node: Option<NodeId>`, counters, `max_result_chars`. All
 graph calls inside `tokio::task::spawn_blocking` (the store is sync; never block
-the runtime — the existing `record_content_node` is the template).
+the runtime — the existing `record_content_node` is the template). Task/Agent
+metadata must NOT store `binary` (it is returned by `GET /api/sessions/{id}/graph`);
+store `provider`, `model`, `exit_code`, `pi_version` only.
 
 **Step 5: Commit** — `feat(agent): Pi delegation graph writes mirror spawn_subagent shape`
 

@@ -330,7 +330,7 @@ max_result_chars = 16000              # truncation for tool-result content and T
 ```
 
 `[agent] default_auto_approve = true` is added in the same phase (Decision 17): used when
-`POST /api/sessions` omits `auto_approve`; the TUI reads the same value.
+`POST /api/sessions` omits `auto_approve`; server only; the TUI has no HITL gate today.
 
 `PiConfig` in `crates/agent/src/config.rs` with `#[serde(default)]` and a `Default`
 impl matching the values above; `AgentConfig.pi: Option<PiConfig>`. Provider key
@@ -469,7 +469,7 @@ means for this design.
 3. ~~Decision 13~~ **Answered 2026-09-28: yes, and auto-approve should be on by
    default.** Today `auto_approve` is a per-request flag on `POST /api/sessions`
    defaulting to `false`. Add `[agent] default_auto_approve = true` (used when the
-   request omits the flag; the TUI reads the same setting). The `hitl_judge` still
+   request omits the flag; server only; the TUI has no HITL gate today). The `hitl_judge` still
    adds a pause for graphirm's own calls scoring ≥ 0.8, so the safety net stays.
    Scheduled in A2 (config phase).
 4. ~~Pre-existing gaps~~ **Answered 2026-09-28: fix now.** Split by size:

@@ -392,7 +392,8 @@ pub struct PiConfig {
     /// Register the `delegate_pi` tool. Off by default until the A4 live check.
     #[serde(default)]
     pub enabled: bool,
-    /// Executable name or path; resolved via PATH when not absolute.
+    /// Executable name or path. A leading `~` is expanded to `$HOME` at spawn time;
+    /// otherwise resolved via PATH when not absolute.
     #[serde(default = "default_pi_binary")]
     pub binary: String,
     /// Passed as `--provider`. Pi reads the provider key from its own
@@ -403,12 +404,16 @@ pub struct PiConfig {
     #[serde(default = "default_pi_model")]
     pub model: String,
     /// Hard wall-clock cap for one delegation; Pi is killed when exceeded.
+    /// Also the ceiling for the per-call `timeout_seconds` tool argument.
     #[serde(default = "default_pi_timeout")]
     pub timeout_seconds: u64,
     /// `false` → `--no-approve` (ignore the workspace's `.pi/` resources); `true` → `--approve`.
+    /// Governs project-level `.pi/` only; see `extra_args` for user-level extensions.
     #[serde(default)]
     pub trust_project: bool,
     /// Extra argv appended after `--model`. Default runs Pi bare.
+    /// Removing `--no-extensions` loads user-level `~/.pi/agent/extensions` (code that
+    /// runs inside the Pi process) regardless of `trust_project`.
     #[serde(default = "default_pi_extra_args")]
     pub extra_args: Vec<String>,
     /// Pi's final message is truncated to this many chars in the tool result.

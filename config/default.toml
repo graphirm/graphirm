@@ -266,13 +266,16 @@ threshold = 0.8
 # nodes and scored observe-only by the HITL judge. Pi reads its provider key from
 # its own environment (`~/.pi/agent/auth.json` or provider env vars) — graphirm
 # never reads or logs it. Kept disabled until the A4 live check.
+# Removing `--no-extensions` from extra_args loads user-level `~/.pi/agent/extensions`
+# (code that runs inside the Pi process) regardless of `trust_project`, which governs
+# project-level `.pi/` only.
 [agent.pi]
 enabled = false
-binary = "pi"
+binary = "pi"                    # executable name or path; leading `~` expands to $HOME at spawn time, otherwise resolved via PATH when not absolute
 provider = "openrouter"
 model = "deepseek/deepseek-v4-flash"
-timeout_seconds = 900
-trust_project = false            # false → --no-approve (workspace .pi/ resources ignored)
+timeout_seconds = 900            # hard cap per delegation; also the ceiling for the per-call timeout_seconds tool argument
+trust_project = false            # false → --no-approve (project-level .pi/ only; see extra_args for user-level extensions)
 extra_args = ["--no-extensions", "--no-skills", "--no-prompt-templates"]
 max_result_chars = 16000
 
