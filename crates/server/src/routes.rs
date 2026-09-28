@@ -1866,15 +1866,19 @@ fn agent_event_to_sse(session_id: &str, event: &graphirm_agent::AgentEvent) -> S
             tool_name,
             arguments,
             is_pause,
-        } => (
-            SseEventType::AwaitingApproval,
-            serde_json::json!({
+            hitl_judge,
+        } => {
+            let mut data = serde_json::json!({
                 "node_id": node_id.to_string(),
                 "tool_name": tool_name,
                 "arguments": arguments,
                 "is_pause": is_pause,
-            }),
-        ),
+            });
+            if let Some(judge) = hitl_judge {
+                data["hitl_judge"] = judge.clone();
+            }
+            (SseEventType::AwaitingApproval, data)
+        }
         _ => (
             SseEventType::Heartbeat,
             serde_json::json!({ "debug": format!("{event:?}") }),
@@ -3307,6 +3311,7 @@ mod tests {
             tool_name: "write".to_string(),
             arguments: serde_json::json!({"path": "/tmp/x.rs"}),
             is_pause: false,
+            hitl_judge: None,
         };
         let sse = agent_event_to_sse("session-1", &event);
         assert!(
@@ -3318,6 +3323,35 @@ mod tests {
         assert_eq!(sse.data["node_id"], "n1");
         assert_eq!(sse.data["is_pause"], false);
         assert_eq!(sse.data["arguments"]["path"], "/tmp/x.rs");
+        assert!(
+            sse.data.get("hitl_judge").is_none(),
+            "hitl_judge must be omitted when None"
+        );
+    }
+
+    #[test]
+    fn agent_event_awaiting_approval_includes_hitl_judge_when_set() {
+        use graphirm_agent::AgentEvent;
+        use graphirm_graph::NodeId;
+
+        let judge = serde_json::json!({
+            "p_irreversible": 0.91,
+            "action": "paused",
+        });
+        let event = AgentEvent::AwaitingApproval {
+            node_id: NodeId::from("n2"),
+            tool_name: "bash".to_string(),
+            arguments: serde_json::json!({"command": "rm -rf /tmp/x"}),
+            is_pause: false,
+            hitl_judge: Some(judge.clone()),
+        };
+        let sse = agent_event_to_sse("session-1", &event);
+        assert!(matches!(
+            sse.event_type,
+            crate::types::SseEventType::AwaitingApproval
+        ));
+        assert_eq!(sse.data["hitl_judge"], judge);
+        assert_eq!(sse.data["hitl_judge"]["p_irreversible"], 0.91);
     }
 
     // ── trace-analysis ────────────────────────────────────────────────────

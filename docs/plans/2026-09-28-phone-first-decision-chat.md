@@ -213,7 +213,7 @@ export function confirmSections(toolName: string, args: Record<string, unknown> 
 
 **Step 6: Commit** `feat: confirm card per tool, judge score on the approval event`
 
-- [ ] B5 done
+- [x] B5 done
 
 ---
 

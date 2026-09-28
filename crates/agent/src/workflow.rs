@@ -1123,6 +1123,7 @@ async fn run_tool_calls(
                 tool_name: name.clone(),
                 arguments: arguments.clone(),
                 is_pause: false,
+                hitl_judge: judge_outcome.as_ref().map(|o| o.to_metadata()),
             });
 
             let rx = hitl.gate(&gate_key).await;
@@ -1622,6 +1623,7 @@ pub async fn run_agent_loop(
                     tool_name: "pause".to_string(),
                     arguments: serde_json::json!({}),
                     is_pause: true,
+                    hitl_judge: None,
                 });
                 let rx = hitl.gate(&session.id).await;
                 tokio::select! {

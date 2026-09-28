@@ -66,11 +66,16 @@ pub enum AgentEvent {
     ///
     /// `is_pause` is `true` when this is a manual pause (turn-start hold) rather
     /// than an automatic gate on a destructive tool call.
+    ///
+    /// `hitl_judge` copies verdict metadata when the destructive-tool judge
+    /// scored the call. Manual pause emits `None`. Presence does not change
+    /// whether the gate pauses.
     AwaitingApproval {
         node_id: NodeId,
         tool_name: String,
         arguments: serde_json::Value,
         is_pause: bool,
+        hitl_judge: Option<serde_json::Value>,
     },
 }
 
@@ -179,6 +184,7 @@ mod tests {
             tool_name: "write".to_string(),
             arguments: serde_json::json!({"path": "/tmp/foo.rs", "content": "fn main() {}"}),
             is_pause: false,
+            hitl_judge: None,
         };
         let debug = format!("{:?}", event);
         assert!(debug.contains("AwaitingApproval"));

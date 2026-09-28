@@ -243,6 +243,18 @@
   border-radius: 4px;
 }
 
+.hitlNote {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.hitlScore {
+  margin-top: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .hitlActions {
   display: flex;
   gap: 8px;

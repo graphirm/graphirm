@@ -298,6 +298,7 @@ export function ChatPane({
             onApprove={onApprove}
             onReject={onReject}
             onModify={onModify}
+            onAbort={onAbort}
           />
         )}
         <div ref={messagesEndRef} />

@@ -117,4 +117,6 @@ export interface PendingApproval {
   arguments: Record<string, unknown> | string;
   is_pause: boolean;
   session_id: string;
+  /** Present when the destructive-tool judge scored this call. */
+  hitl_judge?: { p_irreversible?: number };
 }
