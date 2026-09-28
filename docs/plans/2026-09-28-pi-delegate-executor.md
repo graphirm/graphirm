@@ -211,6 +211,8 @@ impl ToolEventSink for EventBusSink {
 }
 ```
 
+Implementation note: GraphUpdate emission is serialised and coalesced through a single worker task fed by an unbounded channel, rather than a per-call `tokio::spawn` (preserves snapshot ordering and bounds task count); `graph_changed` is a sync `send`, so no runtime `Handle` is needed.
+
 `emit_graph_update_for` is the body of today's `emit_graph_update` with `session.graph`
 replaced by the `graph` parameter; keep `emit_graph_update(session, …)` as a one-line
 wrapper so the three existing call sites are untouched.
