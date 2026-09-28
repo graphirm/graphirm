@@ -1303,9 +1303,11 @@ design doc.
 ### Track A — Pi as delegate executor — L · P1
 
 **Design:** `docs/plans/2026-09-28-pi-delegate-executor-design.md` (A0, approved 2026-09-28). **Plan:** `docs/plans/2026-09-28-pi-delegate-executor.md`.
-Phases: A1 `ToolEventSink` on `ToolContext` · A2 `delegate_pi` tool (subprocess, JSONL parser,
-graph writes, cancel, fake-`pi` offline tests) · A3 `hitl_judge` observe-only on Pi's
-`bash`/`write`/`edit` · A4 live check in whiteboard + TUI, then `enabled = true`.
+Phases: A1 `ToolEventSink` on `ToolContext` · ✅ A2 `delegate_pi` tool (subprocess, JSONL parser,
+graph writes, cancel, fake-`pi` offline tests) — done 2026-09-28, still `enabled = false` ·
+A3 `hitl_judge` observe-only on Pi's `bash`/`write`/`edit` (A2.7 already threads the judge;
+A3 = dedicated coverage + metadata contract) · A4 live check in whiteboard + TUI, then
+`enabled = true`.
 
 **Key files:** `crates/tools/src/lib.rs`, `crates/agent/src/pi_delegate/`, `crates/agent/src/event_sink.rs`,
 `crates/agent/src/config.rs`, `config/default.toml`, `src/commands/{serve,chat}.rs`.
@@ -1331,6 +1333,9 @@ feedback seats (server), plan card.
   subagent (in-process and Pi) nodes are orphaned when a director session is deleted (S·P2).
 - `GET /api/sessions` lists subagent Agent nodes (in-process and Pi, name `pi`) as sessions;
   filter agents with an incoming `SpawnedBy` edge (S·P2).
+- `graphirm chat` (TUI) never loads `config/default.toml` — it runs on `AgentConfig::default()`
+  plus the CLI model; only `[agent.pi]` is lifted from the file (A2.7). Load the whole file like
+  `serve` does, once the prompt/judge/routing differences are reviewed (S·P2).
 
 ---
 

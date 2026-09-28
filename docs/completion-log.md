@@ -1,5 +1,29 @@
 # Graphirm Development Progress Log
 
+## 2026-09-28: Phase A2 — Pi delegate executor: plumbing, parser, process wrapper, graph writes, tool — COMPLETE ✅
+
+- `delegate_pi` ships end to end behind `[agent.pi] enabled = false` (flipped only after the A4
+  live check): `PiConfig` + TOML section (A2.2/A2.3), JSONL parser `pi_delegate/events.rs` with a
+  recorded Pi 0.85.1 golden fixture (A2.1/A2.4), subprocess wrapper `process.rs` (spawn, JSONL
+  drain, process-group kill on cancel/timeout, `@`/oversize task via 0600 temp file) (A2.5),
+  graph writes `graph.rs` mirroring `spawn_subagent` (Task + Pi Agent + `role:"tool"` /
+  `role:"assistant"` nodes, `executor: "pi"`, abandonment `Drop` net) (A2.6)
+- A2.7: `PiDelegateTool` (`pi_delegate/tool.rs`) — `disable_bash` refusal, `--version` probe before
+  any graph write, `PiRun::begin` → `spawn_pi` → event loop → `PiRun::finish` on every path;
+  `ToolStart`/`ToolEnd`/`graph_changed` on the `ToolEventSink`; Pi's `bash`/`write`/`edit` scored
+  by `DestructiveJudge` observe-only (`hitl_judge{action:"observed"}`, `JUDGE_ACTION_OBSERVED`);
+  only a turn-ending assistant message (`stopReason != toolUse`) counts as the result
+- `register_pi_delegate` (async, validates config, probes once, registers regardless),
+  `apply_pi_delegate_system_notice` (idempotent, applied in `Session::new`/`restore` when enabled),
+  `stream_and_record` hides `delegate_pi` with `bash` under `disable_bash`; `serve.rs` loads config
+  before tools (`commands::load_agent_config`), `chat.rs` lifts `[agent.pi]` from the file
+- Tests: 16 fake-`pi` unit tests in `tool.rs`, workflow filter test,
+  `tests/pi_delegate_integration.rs` (MockProvider → `delegate_pi` → graph shape); whole agent
+  crate ≈ 6 s
+- Key files: `crates/agent/src/pi_delegate/{mod,events,process,graph,tool}.rs`,
+  `crates/agent/src/{hitl_judge,workflow,session,config,lib}.rs`, `src/commands/{mod,serve,chat}.rs`,
+  `crates/agent/tests/fixtures/pi/`, `crates/agent/tests/pi_delegate_integration.rs`
+
 ## 2026-09-28: bash cancel leak fixed (Task A1.4) — COMPLETE ✅
 
 - `BashTool` held the child in a `tokio::spawn` and cancelled via `task.abort()`, which dropped the

@@ -820,7 +820,39 @@ tools before claiming done. Prefer a clean git state or a branch.
 - `feat(cli): register delegate_pi in serve and chat when [agent.pi].enabled`
 - Governance: mark A2 in `docs/backlog.md`, entry in `docs/completion-log.md`.
 
-- [ ] A2.7 done
+**Implementation notes (2026-09-28):**
+- `PiDelegateTool` lives in `pi_delegate/tool.rs` (re-exported from `mod.rs`); `execute` is
+  split into `parse_args` → `probe_version` → `PiRun::begin` → `RunDriver` (event loop,
+  judge hand-off, summary, outcome mapping, `close` = `finish` + final `graph_changed`).
+- **Result = turn-ending message only.** Pi emits intermediate assistant messages with
+  `stopReason: "toolUse"` ("Let me check the directory…") before its tool calls. Treating
+  those as `last_assistant_text` made `FAKE_PI_NO_END` + nonzero exit look like a success.
+  Only a message whose `stopReason != "toolUse"` sets the result; every assistant message is
+  still recorded as a node.
+- Judge metadata reuses `hitl::JudgeOutcome::to_metadata()` with `pause: false, action:
+  JUDGE_ACTION_OBSERVED`, so the keys are identical to the in-process gate's; the await at
+  `tool_execution_end` is bounded by the new `DestructiveJudge::timeout()`; failures warn once
+  per run. Judges whose end event never arrives (run killed) are aborted.
+- `ToolError::Timeout(u64)` carries only seconds, so the "partial summary" for a timeout goes
+  to the Task's `failure_detail` (tool calls before the cut + last message) rather than the
+  tool error text.
+- `register_pi_delegate` is `async` (both callers are `async fn run`); no `block_in_place`.
+  A missing binary at registration is a warning, the tool is still registered.
+- `chat.rs` lifts only `[agent.pi]` from `config/default.toml` (the TUI has never loaded the
+  file; loading all of it would change its prompt/judge/routing — backlog item added).
+  `serve.rs` reorders config-before-tools via the new `commands::load_agent_config()`.
+- Summary text: `Pi completed (exit 0, 42.3s)` / `Pi finished with exit N (…s)` /
+  `Pi finished without an exit code (killed by a signal, …s)`, then `Tool calls: N (M errors)`,
+  `Judge: N calls ≥ T (observed, not gated)` (only when a judge is configured), `Result:` +
+  last message (≤ `max_result_chars`), `Warnings:` bullets (errors ≤ 10, retries,
+  pipes_lingered, malformed/oversized lines, unknown event types).
+- Extra tests beyond the plan's list: `context_paths_are_appended_to_the_task`,
+  `missing_or_empty_task_is_invalid_arguments`, `timeout_is_capped_by_config_and_marks_task_failed`,
+  `judge_verdicts_are_observed_not_gated`, `judge_failure_is_fail_soft`,
+  `register_skips_invalid_config`, `register_replaces_zero_timeout_with_default`,
+  `config_applies_notice_only_when_pi_enabled` (A3.1 can build on the judge ones).
+
+- [x] A2.7 done
 
 **Phase A2 checkpoint:** workspace fmt/clippy/test green; `config/default.toml` still `enabled = false`. Report progress.
 

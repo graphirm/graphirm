@@ -22,6 +22,39 @@ Entry template:
 
 ---
 
+## 2026-09-28 — `delegate_pi`: only a turn-ending message is Pi's result; judge observe-only reuses `JudgeOutcome`; TUI lifts only `[agent.pi]`
+
+**Context:** Assembling `PiDelegateTool` (plan A2.7) over the reviewed `process.rs` / `graph.rs`.
+Three choices were not determined by the design doc.
+**Decision:** (1) `last_assistant_text` is set only by an assistant `message_end` whose
+`stopReason != "toolUse"`. Pi narrates before tool calls ("Let me check the directory…") as a
+`toolUse` message; the plan's "nonzero exit *without a result* → failure" rule only works if that
+narration does not count. Every assistant message is still recorded as a graph node. (2) The
+observe-only judge verdict is written through the existing `hitl::JudgeOutcome::to_metadata()` with
+`pause: false, action: JUDGE_ACTION_OBSERVED` ("observed"), so Pi tool nodes carry exactly the keys
+the in-process gate writes (`version`, `p_irreversible`, `threshold`, `action`, `latency_ms`) and
+read-outs can group by `action`. The judge is spawned at `tool_execution_start` and awaited at
+`tool_execution_end` under `DestructiveJudge::timeout()`; one warning per run on failure; handles
+without an end event are aborted. (3) `graphirm chat` has never read `config/default.toml`;
+`chat.rs` now lifts only `pi` from the file so `[agent.pi].enabled` reaches the TUI without
+changing its prompt/judge/routing. `serve.rs` loads config before tools via
+`commands::load_agent_config()`. (4) `register_pi_delegate` is `async` (both callers are async);
+a missing binary is a startup warning and the tool is still registered so the failure is visible
+to the model. (5) `ToolError::Timeout(u64)` has no message slot; the timeout's partial summary
+goes to `Task.metadata.failure_detail`.
+**Alternatives:** Count any assistant text as the result — made `FAKE_PI_NO_END` + exit 2 a
+success. A separate metadata builder for Pi verdicts — drifts from the gate's keys. Load the whole
+TOML in the TUI — right long-term (backlog S·P2) but a behaviour change the task did not ask for.
+`block_in_place` for a sync `register_pi_delegate` — panics on a current-thread runtime for no gain.
+`ExecutionFailed("timed out …")` for the timeout — loses the typed variant the loop can match on.
+**Consequences:** A Pi run whose final message is a `toolUse` turn (Pi died mid-turn) reports
+"(Pi produced no final message)" on exit 0 and fails on nonzero exit. `JUDGE_ACTION_OBSERVED`
+is part of the metadata contract A3.1 tests against. The TUI still ignores every other TOML
+section until the backlog item lands.
+**Refs:** `docs/plans/2026-09-28-pi-delegate-executor.md` A2.7 implementation notes;
+`crates/agent/src/pi_delegate/tool.rs`; `crates/agent/tests/fixtures/pi/hello-run.jsonl`
+(line 170 is the `stop` message; earlier assistant messages are `toolUse`).
+
 ## 2026-09-28 — Pi subprocess wrapper: drain to EOF, receiver-drop discards, handle+JoinHandle shape
 
 **Context:** `delegate_pi` (plan A2.5) runs `pi --mode json` as a child and turns its JSONL stdout
