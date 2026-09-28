@@ -22,6 +22,49 @@ Entry template:
 
 ---
 
+## 2026-09-28 — Pi subprocess wrapper: drain to EOF, receiver-drop discards, handle+JoinHandle shape
+
+**Context:** `delegate_pi` (plan A2.5) runs `pi --mode json` as a child and turns its JSONL stdout
+into `PiEvent`s. Four things about Pi 0.85.1 shaped the wrapper: it auto-retries transient provider
+errors (`agent_end {willRetry:true}` → `auto_retry_start` → `agent_start` …), so `agent_end` is not
+a terminator; it parses a leading `@` in a positional argument as a file reference (`Error: File not
+found`, exit 1); its `bash` tool can leave a backgrounded grandchild holding the stdout pipe after Pi
+itself has exited; and a consumer that stops reading events would, through a bounded channel and a
+full 64 KiB pipe, stall Pi until the deadline and misreport `Timeout`.
+**Decision:** (1) Read stdout to EOF and then wait for exit; `AgentEnd` is forwarded like any other
+event and never ends the read loop. (2) A dropped or closed event receiver flips the reader into
+*discard* mode instead of stopping it, so Pi can never block on a full pipe; `PiRunHandle::wait()`
+closes the receiver first — "wait" means "stop consuming". (3) The public shape is
+`spawn_pi(spec, cancel) -> PiRunHandle { events: mpsc::Receiver<PiEvent>, done: JoinHandle<..> }`
+rather than an async `on_event` callback; the tool layer (A2.7) awaits graph writes between
+`recv()`s, and `process.rs` stays free of graph/judge concerns. Dropping the handle aborts the
+driver; a `GroupKillGuard` armed in `spawn_pi` right after `child.id()` SIGKILLs the whole process
+group when the driver future is dropped — armed at spawn, not in the driver, because a handle dropped
+before the driver's first poll never runs driver code. (4) Tasks longer than 64 KiB *or* starting
+with `@` are written to a `0600` `create_new` temp file and passed as
+`-- @<path> "Carry out the task described in the attached file."`; the file is removed when the run
+ends. (5) After exit, the pipes get `POST_EXIT_GRACE` (3 s, capped by the remaining deadline) to
+close; on expiry the group is killed and the run still returns `Ok` with the exit code and
+`pipes_lingered: true` — Pi *did* finish; a straggler is a warning, not a failure. (6) Pi's env is
+the inherited env plus `PI_SKIP_VERSION_CHECK=1` minus `GRAPHIRM_API_KEY`; the provider key is Pi's
+own business (`~/.pi/agent/auth.json` / provider env vars) and is never read or logged.
+**Alternatives:** Stop reading at `agent_end` — wrong under auto-retry and races the exit. Stop the
+reader when the receiver drops — deadlocks Pi on a full pipe; the "caller must cancel" contract was
+too easy to violate (the reviewer hit it by calling `wait()` without draining). Async callback API —
+forces graph I/O into the process layer and makes cancel/timeout tests awkward. Returning `Timeout`
+when a straggler holds the pipe after a clean exit — loses the exit code for a condition Pi is not
+responsible for. Passing `--fake-knob` env through `spawn_pi` — rejected; the fake reads knobs from
+argv (`PiConfig.extra_args`) so `spawn_pi` never takes arbitrary env and tests stay parallel-safe.
+**Consequences:** `PiRunHandle` has a `Drop` impl, so it cannot be destructured; consumers use
+`handle.events.recv()` + `handle.wait()`. Under `pipes_lingered` the last stdout lines may be lost
+(the reader is aborted); counters and the stderr tail survive via shared atomics/mutex. A pgid is
+never signalled after the direct child has been reaped except through the explicit
+`kill_group_and_reap` path (same pid-reuse caveat as `bash`). The `@` rule means a task that
+legitimately starts with an `@mention` still works — via the file.
+**Refs:** `docs/plans/2026-09-28-pi-delegate-executor-design.md` D1;
+`docs/plans/2026-09-28-pi-delegate-executor.md` A2.5; `crates/agent/src/pi_delegate/process.rs`;
+`crates/agent/tests/fixtures/pi/fake_pi.sh`; commits `266a892` and its review follow-up.
+
 ## 2026-09-28 — `bash` children run in their own process group and are SIGKILLed as a group on cancel/timeout
 
 **Context:** `BashTool` cancelled by `task.abort()` on a `tokio::spawn`ed `wait_with_output`.

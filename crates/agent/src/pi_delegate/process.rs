@@ -8,12 +8,20 @@
 //! <binary> --mode json -p --no-session <--approve|--no-approve>
 //!          --provider <p> --model <m> <extra_args...> -- <task>
 //! cwd = spec.cwd; stdin = null; stdout/stderr piped separately;
-//! env inherited + PI_SKIP_VERSION_CHECK=1; kill_on_drop; process_group(0) on unix
+//! env inherited + PI_SKIP_VERSION_CHECK=1 − GRAPHIRM_API_KEY;
+//! kill_on_drop; process_group(0) on unix
 //! ```
 //!
 //! Pi reads its provider key from its own environment / auth store; this
-//! module never reads, sets, or logs it. The only env change is
-//! `PI_SKIP_VERSION_CHECK=1`.
+//! module never reads, sets, or logs it. The env changes are exactly two:
+//! `PI_SKIP_VERSION_CHECK=1` is added, and `GRAPHIRM_API_KEY` is removed —
+//! graphirm's own server key is not something Pi or its `bash` children need.
+//!
+//! The task is passed inline unless it is longer than
+//! [`MAX_INLINE_TASK_BYTES`] **or starts with `@`** (Pi treats a leading `@`
+//! as a file reference and fails with `File not found`). In either case it is
+//! written to a private (`0600`) temp file and passed as
+//! `-- @<path> "<instruction>"`; Pi concatenates the file text and the message.
 //!
 //! A run is finished only when Pi's stdout closes *and* the process has
 //! exited. `agent_end` is not a terminator: Pi auto-retries transient provider
@@ -22,10 +30,12 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use graphirm_tools::process::{kill_group_and_reap, kill_process_group};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -45,6 +55,15 @@ pub const STDERR_TAIL_BYTES: usize = 4 * 1024;
 /// Tasks longer than this are handed to Pi as `@<tempfile>` instead of argv.
 pub const MAX_INLINE_TASK_BYTES: usize = 64 * 1024;
 
+/// Message that follows the `@<file>` argument when the task goes through a
+/// file, so the model receives an instruction rather than a bare file block.
+pub const TASK_FILE_INSTRUCTION: &str = "Carry out the task described in the attached file.";
+
+/// After Pi exits, how long the pipes may stay open (held by a straggling tool
+/// child) before the group is killed and the run reported with
+/// [`PiRunOutcome::pipes_lingered`].
+pub const POST_EXIT_GRACE: Duration = Duration::from_secs(3);
+
 /// Bound of the event channel handed to the consumer.
 const EVENT_CHANNEL_CAP: usize = 256;
 
@@ -56,7 +75,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct PiSpawnSpec<'a> {
     /// `[agent.pi]` settings (binary, provider, model, trust, extra args).
     pub config: &'a PiConfig,
-    /// Working directory for Pi (the session workspace).
+    /// Working directory for Pi (the session workspace). Must exist.
     pub cwd: &'a Path,
     /// Task text handed to Pi as the final positional argument.
     pub task: &'a str,
@@ -95,25 +114,42 @@ pub struct PiRunOutcome {
     pub oversized_lines: u32,
     /// Wall-clock time from spawn to exit.
     pub duration: Duration,
+    /// Pi exited but something it left behind kept stdout/stderr open past
+    /// [`POST_EXIT_GRACE`]; the process group was killed. Output captured up
+    /// to that point is still reported.
+    pub pipes_lingered: bool,
 }
 
 /// A running Pi process: a stream of parsed events plus the completion handle.
 ///
-/// Dropping the handle aborts the driver task, which drops the [`Child`] and —
-/// via `kill_on_drop` — SIGKILLs Pi. Consumers that want the outcome must
-/// await [`PiRunHandle::wait`] (or `&mut handle.done`) before dropping.
+/// Dropping the handle aborts the driver task; the group-kill guard armed at
+/// spawn then SIGKILLs Pi's whole process group (and `kill_on_drop` the direct
+/// child). Consumers that want the outcome must await [`PiRunHandle::wait`]
+/// (or `&mut handle.done`) before dropping.
 pub struct PiRunHandle {
     /// Parsed events in stdout order. `PiEvent::Ignored` lines are not sent.
     /// Closes when Pi's stdout closes or the run is killed.
     pub events: mpsc::Receiver<PiEvent>,
     /// Resolves when Pi exits, times out, or is cancelled.
     pub done: JoinHandle<Result<PiRunOutcome, PiProcessError>>,
+    pid: Option<u32>,
 }
 
 impl PiRunHandle {
-    /// Await the run's outcome. A panicked driver task is reported as
-    /// [`PiProcessError::Spawn`] rather than propagated.
+    /// Pi's pid (also its process-group id), captured at spawn.
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+
+    /// Stop consuming events and await the run's outcome.
+    ///
+    /// Closes `events` first: the reader switches to discard mode, so a
+    /// consumer that stopped reading cannot stall Pi on a full pipe (which
+    /// would otherwise surface as a bogus `Timeout`). Events already buffered
+    /// remain readable via `events.recv()` afterwards. A panicked driver task
+    /// is reported as [`PiProcessError::Spawn`] rather than propagated.
     pub async fn wait(&mut self) -> Result<PiRunOutcome, PiProcessError> {
+        self.events.close();
         match (&mut self.done).await {
             Ok(res) => res,
             Err(join_err) => Err(PiProcessError::Spawn(format!(
@@ -129,8 +165,9 @@ impl Drop for PiRunHandle {
     }
 }
 
-/// Exact argv (excluding argv\[0\]) per design D1.
-pub fn build_argv(config: &PiConfig, task_arg: &str) -> Vec<String> {
+/// Exact argv (excluding argv\[0\]) per design D1. `task_args` is the
+/// positional tail after `--`: the task itself, or `@<file>` + instruction.
+pub fn build_argv(config: &PiConfig, task_args: &[&str]) -> Vec<String> {
     let mut argv: Vec<String> = ["--mode", "json", "-p", "--no-session"]
         .iter()
         .map(|s| s.to_string())
@@ -149,7 +186,7 @@ pub fn build_argv(config: &PiConfig, task_arg: &str) -> Vec<String> {
     argv.push(config.model.clone());
     argv.extend(config.extra_args.iter().cloned());
     argv.push("--".to_string());
-    argv.push(task_arg.to_string());
+    argv.extend(task_args.iter().map(|s| s.to_string()));
     argv
 }
 
@@ -175,16 +212,37 @@ pub fn expand_binary(binary: &str) -> PathBuf {
     }
 }
 
-/// Run `<binary> --version` under a 5 s cap and return the trimmed first line
-/// of stdout.
-pub async fn probe_version(config: &PiConfig) -> Result<String, PiProcessError> {
-    let mut cmd = Command::new(expand_binary(&config.binary));
-    cmd.arg("--version")
+/// Whether the task must travel through a file: too long for argv, or it
+/// starts with `@`, which Pi would otherwise parse as a file path.
+pub fn task_needs_file(task: &str) -> bool {
+    task.len() > MAX_INLINE_TASK_BYTES || task.starts_with('@')
+}
+
+/// Base command shared by [`probe_version`] and [`spawn_pi`]: binary, stdio,
+/// env policy, `kill_on_drop`.
+fn pi_command(binary: &str) -> Command {
+    let mut cmd = Command::new(expand_binary(binary));
+    cmd
+        // Pi runs in its own process group (spawn_pi); an inherited tty would
+        // SIGTTIN it on read. Null stdin gives a clean EOF.
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env("PI_SKIP_VERSION_CHECK", "1")
+        // graphirm's own API key is for graphirm's HTTP server; Pi and the
+        // shells it spawns have no business seeing it.
+        .env_remove("GRAPHIRM_API_KEY")
+        // Safety net: if the owning future is dropped without reaching the
+        // kill path, tokio SIGKILLs the direct child.
         .kill_on_drop(true);
+    cmd
+}
+
+/// Run `<binary> --version` under a 5 s cap and return the trimmed first line
+/// of stdout.
+pub async fn probe_version(config: &PiConfig) -> Result<String, PiProcessError> {
+    let mut cmd = pi_command(&config.binary);
+    cmd.arg("--version");
     let child = cmd
         .spawn()
         .map_err(|e| map_spawn_error(e, &config.binary))?;
@@ -206,35 +264,39 @@ pub async fn probe_version(config: &PiConfig) -> Result<String, PiProcessError> 
 }
 
 /// Spawn Pi. Spawn-time failures ([`PiProcessError::NotFound`] /
-/// [`PiProcessError::Spawn`]) are returned immediately; everything after
-/// that — exit, timeout, cancellation — resolves through the returned handle.
+/// [`PiProcessError::Spawn`], including a missing `cwd`) are returned
+/// immediately; everything after that — exit, timeout, cancellation —
+/// resolves through the returned handle.
 ///
-/// Async only because an oversized task is written to a temp file with
-/// `tokio::fs` before the process starts.
+/// Async only because the workspace check and an oversized / `@`-prefixed
+/// task's temp file go through `tokio::fs` before the process starts.
 pub async fn spawn_pi(
     spec: PiSpawnSpec<'_>,
     cancel: CancellationToken,
 ) -> Result<PiRunHandle, PiProcessError> {
     let binary = spec.config.binary.clone();
+    match tokio::fs::metadata(spec.cwd).await {
+        Ok(meta) if meta.is_dir() => {}
+        _ => {
+            return Err(PiProcessError::Spawn(format!(
+                "workspace directory {} does not exist",
+                spec.cwd.display()
+            )));
+        }
+    }
     let temp_task = TempTask::for_task(spec.task).await?;
-    let task_arg = match &temp_task {
-        Some(t) => format!("@{}", t.path.display()),
-        None => spec.task.to_string(),
+    let file_arg;
+    let task_args: Vec<&str> = match &temp_task {
+        Some(t) => {
+            file_arg = format!("@{}", t.path.display());
+            vec![file_arg.as_str(), TASK_FILE_INSTRUCTION]
+        }
+        None => vec![spec.task],
     };
-    let argv = build_argv(spec.config, &task_arg);
+    let argv = build_argv(spec.config, &task_args);
 
-    let mut cmd = Command::new(expand_binary(&binary));
-    cmd.args(&argv)
-        .current_dir(spec.cwd)
-        // Pi runs in its own process group (below); an inherited tty would
-        // SIGTTIN it on read. Null stdin gives a clean EOF.
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env("PI_SKIP_VERSION_CHECK", "1")
-        // Safety net: if the driver future is dropped without reaching the
-        // kill path, tokio SIGKILLs Pi.
-        .kill_on_drop(true);
+    let mut cmd = pi_command(&binary);
+    cmd.args(&argv).current_dir(spec.cwd);
     // Own process group so the kill path takes down Pi *and* its tool children.
     #[cfg(unix)]
     cmd.process_group(0);
@@ -244,6 +306,10 @@ pub async fn spawn_pi(
     // Capture now: `child.id()` is `None` once the direct child is reaped, and
     // a grandchild outliving Pi is exactly when the group kill matters.
     let pgid = child.id();
+    // Armed here, not in the driver: a handle dropped before the driver task
+    // is ever polled must still take the whole group down (the guard is
+    // dropped with the un-polled future).
+    let group_guard = GroupKillGuard { pgid };
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     tracing::debug!(
@@ -259,6 +325,7 @@ pub async fn spawn_pi(
     let run = SpawnedRun {
         child,
         pgid,
+        group_guard,
         stdout,
         stderr,
         started,
@@ -275,6 +342,7 @@ pub async fn spawn_pi(
     Ok(PiRunHandle {
         events: events_rx,
         done,
+        pid: pgid,
     })
 }
 
@@ -286,10 +354,17 @@ fn map_spawn_error(e: std::io::Error, binary: &str) -> PiProcessError {
     }
 }
 
-/// Why the first `select!` returned.
+/// Why the exit-wait `select!` returned.
 enum Step {
     Exited(std::io::Result<std::process::ExitStatus>),
     Timeout,
+    Cancelled,
+}
+
+/// Why the post-exit pipe-drain `select!` returned.
+enum Drained {
+    Closed,
+    GraceExpired,
     Cancelled,
 }
 
@@ -297,6 +372,7 @@ enum Step {
 struct SpawnedRun {
     child: Child,
     pgid: Option<u32>,
+    group_guard: GroupKillGuard,
     stdout: Option<ChildStdout>,
     stderr: Option<ChildStderr>,
     started: Instant,
@@ -313,6 +389,7 @@ async fn drive(
     let SpawnedRun {
         mut child,
         pgid,
+        mut group_guard,
         stdout,
         stderr,
         started,
@@ -320,19 +397,18 @@ async fn drive(
         cancel,
     } = run;
     let child = &mut child;
-    let mut stdout_task = AbortOnDrop(tokio::spawn(drain_stdout(stdout, events_tx)));
-    let mut stderr_task = AbortOnDrop(tokio::spawn(drain_stderr(stderr)));
-    // If this future is dropped (handle dropped → task aborted) while Pi is
-    // still alive, `kill_on_drop` only reaches the direct child; this guard
-    // SIGKILLs the whole group so Pi's tool children die too.
-    let mut group_guard = GroupKillGuard { pgid };
-    let deadline = tokio::time::sleep(timeout);
-    tokio::pin!(deadline);
+    let capture = Arc::new(Capture::default());
+    let mut stdout_task = AbortOnDrop(tokio::spawn(drain_stdout(
+        stdout,
+        events_tx,
+        Arc::clone(&capture),
+    )));
+    let mut stderr_task = AbortOnDrop(tokio::spawn(drain_stderr(stderr, Arc::clone(&capture))));
 
     // Phase 1: wait for the process to exit.
     let step = tokio::select! {
         status = child.wait() => Step::Exited(status),
-        _ = &mut deadline => Step::Timeout,
+        _ = tokio::time::sleep(timeout) => Step::Timeout,
         _ = cancel.cancelled() => Step::Cancelled,
     };
     // Whatever happens next, the guard's job is done: either the direct child
@@ -352,36 +428,6 @@ async fn drive(
             return Err(PiProcessError::Cancelled);
         }
     };
-
-    // Phase 2: the pipes close when every holder exits. A tool child Pi left
-    // behind could keep stdout open; the deadline and cancel still apply, and
-    // the group kill reaches such a straggler through the captured pgid.
-    let readers = async {
-        let stats = (&mut stdout_task.0).await;
-        let tail = (&mut stderr_task.0).await;
-        (stats, tail)
-    };
-    tokio::pin!(readers);
-    let (stats, tail) = tokio::select! {
-        r = &mut readers => r,
-        _ = &mut deadline => {
-            tracing::warn!(?timeout, "pi exited but stdout stayed open past the deadline");
-            kill_group_and_reap(child, pgid).await;
-            return Err(PiProcessError::Timeout(timeout));
-        }
-        _ = cancel.cancelled() => {
-            kill_group_and_reap(child, pgid).await;
-            return Err(PiProcessError::Cancelled);
-        }
-    };
-    let stats = stats.unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "pi stdout reader task failed");
-        LineStats::default()
-    });
-    let stderr_tail = tail.unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "pi stderr reader task failed");
-        String::new()
-    });
     let exit_code = match status {
         Ok(s) => s.code(),
         Err(e) => {
@@ -389,26 +435,69 @@ async fn drive(
             None
         }
     };
+
+    // Phase 2: the pipes close when every holder exits. A tool child Pi left
+    // behind can keep them open; give it a short grace (bounded by what is
+    // left of the deadline), then kill the group through the captured pgid
+    // and report what was captured so far.
+    let grace = timeout
+        .saturating_sub(started.elapsed())
+        .min(POST_EXIT_GRACE);
+    let drained = {
+        let readers = async {
+            let _ = (&mut stdout_task.0).await;
+            let _ = (&mut stderr_task.0).await;
+        };
+        tokio::pin!(readers);
+        tokio::select! {
+            _ = &mut readers => Drained::Closed,
+            _ = tokio::time::sleep(grace) => Drained::GraceExpired,
+            _ = cancel.cancelled() => Drained::Cancelled,
+        }
+    };
+    let pipes_lingered = match drained {
+        Drained::Closed => false,
+        Drained::GraceExpired => {
+            tracing::warn!(
+                ?exit_code,
+                grace_ms = grace.as_millis() as u64,
+                "pi exited but its pipes stayed open; killing stragglers"
+            );
+            kill_group_and_reap(child, pgid).await;
+            stdout_task.0.abort();
+            stderr_task.0.abort();
+            true
+        }
+        Drained::Cancelled => {
+            kill_group_and_reap(child, pgid).await;
+            return Err(PiProcessError::Cancelled);
+        }
+    };
+
     let duration = started.elapsed();
+    let malformed_lines = capture.malformed.load(Ordering::Relaxed);
+    let oversized_lines = capture.oversized.load(Ordering::Relaxed);
     tracing::debug!(
         ?exit_code,
-        malformed = stats.malformed,
-        oversized = stats.oversized,
+        malformed_lines,
+        oversized_lines,
+        pipes_lingered,
         duration_ms = duration.as_millis() as u64,
         "pi exited"
     );
     Ok(PiRunOutcome {
         exit_code,
-        stderr_tail,
-        malformed_lines: stats.malformed,
-        oversized_lines: stats.oversized,
+        stderr_tail: capture.stderr_tail(),
+        malformed_lines,
+        oversized_lines,
         duration,
+        pipes_lingered,
     })
 }
 
 /// SIGKILL Pi's process group if dropped while armed (the driver future was
-/// dropped before Pi exited). `kill(2)` is a single non-blocking syscall, so
-/// this is safe to do in `Drop` on the runtime.
+/// dropped — or never polled — before Pi exited). `kill(2)` is a single
+/// non-blocking syscall, so this is safe to do in `Drop` on the runtime.
 struct GroupKillGuard {
     pgid: Option<u32>,
 }
@@ -439,10 +528,36 @@ impl<T> Drop for AbortOnDrop<T> {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-struct LineStats {
-    malformed: u32,
-    oversized: u32,
+/// Counters and stderr tail shared between the reader tasks and the driver,
+/// so partial results survive a reader that has to be aborted (straggler
+/// holding the pipe after Pi exited).
+#[derive(Default)]
+struct Capture {
+    malformed: AtomicU32,
+    oversized: AtomicU32,
+    stderr_tail: std::sync::Mutex<Vec<u8>>,
+}
+
+impl Capture {
+    fn stderr_tail(&self) -> String {
+        let tail = self
+            .stderr_tail
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        String::from_utf8_lossy(&tail).into_owned()
+    }
+
+    fn push_stderr(&self, chunk: &[u8]) {
+        let mut tail = self
+            .stderr_tail
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        tail.extend_from_slice(chunk);
+        if tail.len() > STDERR_TAIL_BYTES {
+            let excess = tail.len() - STDERR_TAIL_BYTES;
+            tail.drain(..excess);
+        }
+    }
 }
 
 /// Result of one capped line read.
@@ -501,13 +616,16 @@ async fn read_line_capped<R: AsyncBufRead + Unpin>(
 
 /// Drain Pi's stdout to EOF, parsing each line and forwarding events.
 ///
-/// If the consumer drops the receiver we keep draining (discarding events) so
-/// Pi never blocks on a full pipe; the caller is expected to cancel the run.
-async fn drain_stdout(stdout: Option<ChildStdout>, events_tx: mpsc::Sender<PiEvent>) -> LineStats {
-    let mut stats = LineStats::default();
+/// If the consumer drops or closes the receiver we keep draining (discarding
+/// events) so Pi never blocks on a full pipe.
+async fn drain_stdout(
+    stdout: Option<ChildStdout>,
+    events_tx: mpsc::Sender<PiEvent>,
+    capture: Arc<Capture>,
+) {
     let Some(stdout) = stdout else {
         tracing::warn!("pi stdout was not captured");
-        return stats;
+        return;
     };
     let mut reader = BufReader::with_capacity(64 * 1024, stdout);
     let mut buf = Vec::with_capacity(8 * 1024);
@@ -516,7 +634,7 @@ async fn drain_stdout(stdout: Option<ChildStdout>, events_tx: mpsc::Sender<PiEve
         match read_line_capped(&mut reader, &mut buf, MAX_LINE_BYTES).await {
             Ok(LineRead::Eof) => break,
             Ok(LineRead::Oversized) => {
-                stats.oversized += 1;
+                capture.oversized.fetch_add(1, Ordering::Relaxed);
                 tracing::warn!(cap = MAX_LINE_BYTES, "pi stdout line exceeded cap; skipped");
             }
             Ok(LineRead::Line) => {
@@ -526,11 +644,11 @@ async fn drain_stdout(stdout: Option<ChildStdout>, events_tx: mpsc::Sender<PiEve
                     Ok(event) => {
                         if receiver_open && events_tx.send(event).await.is_err() {
                             receiver_open = false;
-                            tracing::debug!("pi event receiver dropped; draining stdout");
+                            tracing::debug!("pi event receiver closed; draining stdout");
                         }
                     }
                     Err(e) => {
-                        stats.malformed += 1;
+                        capture.malformed.fetch_add(1, Ordering::Relaxed);
                         let preview: String = line.trim_end().chars().take(200).collect();
                         tracing::debug!(error = %e, line = %preview, "malformed pi stdout line");
                     }
@@ -542,46 +660,38 @@ async fn drain_stdout(stdout: Option<ChildStdout>, events_tx: mpsc::Sender<PiEve
             }
         }
     }
-    stats
 }
 
-/// Drain stderr to EOF, keeping only the last [`STDERR_TAIL_BYTES`].
-async fn drain_stderr(stderr: Option<ChildStderr>) -> String {
+/// Drain stderr to EOF into the shared tail (last [`STDERR_TAIL_BYTES`]).
+async fn drain_stderr(stderr: Option<ChildStderr>, capture: Arc<Capture>) {
     let Some(mut stderr) = stderr else {
-        return String::new();
+        return;
     };
-    let mut tail: Vec<u8> = Vec::with_capacity(STDERR_TAIL_BYTES);
     let mut chunk = [0u8; 4096];
     loop {
         match stderr.read(&mut chunk).await {
             Ok(0) => break,
-            Ok(n) => {
-                tail.extend_from_slice(&chunk[..n]);
-                if tail.len() > STDERR_TAIL_BYTES {
-                    let excess = tail.len() - STDERR_TAIL_BYTES;
-                    tail.drain(..excess);
-                }
-            }
+            Ok(n) => capture.push_stderr(&chunk[..n]),
             Err(e) => {
                 tracing::warn!(error = %e, "reading pi stderr failed");
                 break;
             }
         }
     }
-    String::from_utf8_lossy(&tail).into_owned()
 }
 
-/// A task written to a temp file for `@<path>` hand-off; removed when the run
-/// ends (explicitly via [`TempTask::cleanup`], or in `Drop` as a fallback).
+/// A task written to a private temp file for `@<path>` hand-off; removed when
+/// the run ends (explicitly via [`TempTask::cleanup`], or in `Drop` as a
+/// fallback).
 struct TempTask {
     path: PathBuf,
     removed: bool,
 }
 
 impl TempTask {
-    /// `Ok(None)` when the task fits inline (≤ [`MAX_INLINE_TASK_BYTES`]).
+    /// `Ok(None)` when the task can go inline (see [`task_needs_file`]).
     async fn for_task(task: &str) -> Result<Option<Self>, PiProcessError> {
-        if task.len() <= MAX_INLINE_TASK_BYTES {
+        if !task_needs_file(task) {
             return Ok(None);
         }
         let nanos = std::time::SystemTime::now()
@@ -590,13 +700,24 @@ impl TempTask {
             .unwrap_or(0);
         let path =
             std::env::temp_dir().join(format!("graphirm-pi-{}-{nanos}.md", std::process::id()));
-        tokio::fs::write(&path, task).await.map_err(|e| {
-            PiProcessError::Spawn(format!("writing task file {}: {e}", path.display()))
+        let mut options = tokio::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(&path).await.map_err(|e| {
+            PiProcessError::Spawn(format!("creating task file {}: {e}", path.display()))
         })?;
-        Ok(Some(Self {
+        let guard = Self {
             path,
             removed: false,
-        }))
+        };
+        file.write_all(task.as_bytes()).await.map_err(|e| {
+            PiProcessError::Spawn(format!("writing task file {}: {e}", guard.path.display()))
+        })?;
+        file.flush().await.map_err(|e| {
+            PiProcessError::Spawn(format!("flushing task file {}: {e}", guard.path.display()))
+        })?;
+        Ok(Some(guard))
     }
 
     async fn cleanup(mut self) {
@@ -672,18 +793,6 @@ mod tests {
         (events, outcome)
     }
 
-    fn proc_state(pid: u32) -> Option<char> {
-        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-        // "pid (comm) S ..." — comm may contain spaces/parens, so split after the last ')'.
-        let rest = stat.rsplit_once(')')?.1;
-        rest.trim_start().chars().next()
-    }
-
-    /// True when the pid is running (not gone, not a zombie).
-    fn is_running(pid: u32) -> bool {
-        !matches!(proc_state(pid), None | Some('Z'))
-    }
-
     async fn wait_for_file(path: &Path) {
         for _ in 0..100 {
             if path.exists() {
@@ -703,7 +812,55 @@ mod tests {
             .expect("pid")
     }
 
+    fn argv_lines(path: &Path) -> Vec<String> {
+        std::fs::read_to_string(path)
+            .expect("argv file")
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    // ---- /proc-based liveness helpers (Linux only) ----
+
+    #[cfg(target_os = "linux")]
+    fn proc_state(pid: u32) -> Option<char> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // "pid (comm) S ..." — comm may contain spaces/parens, so split after the last ')'.
+        let rest = stat.rsplit_once(')')?.1;
+        rest.trim_start().chars().next()
+    }
+
+    /// True when the pid is running (not gone, not a zombie).
+    #[cfg(target_os = "linux")]
+    fn is_running(pid: u32) -> bool {
+        !matches!(proc_state(pid), None | Some('Z'))
+    }
+
+    /// Pids of live (non-zombie) processes whose process group is `pgid`.
+    #[cfg(target_os = "linux")]
+    fn group_members(pgid: u32) -> Vec<u32> {
+        let Ok(entries) = std::fs::read_dir("/proc") else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+            .filter(|pid| {
+                let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                    return false;
+                };
+                let Some((_, rest)) = stat.rsplit_once(')') else {
+                    return false;
+                };
+                // rest = " S ppid pgrp session ..." → fields[0]=state, [2]=pgrp
+                let fields: Vec<&str> = rest.split_whitespace().collect();
+                fields.first() != Some(&"Z") && fields.get(2) == Some(&pgid.to_string().as_str())
+            })
+            .collect()
+    }
+
     /// Poll up to 5 s for the pid to be gone (or a zombie).
+    #[cfg(target_os = "linux")]
     async fn assert_dead_within_5s(pid: u32, what: &str) {
         for _ in 0..50 {
             if !is_running(pid) {
@@ -712,6 +869,20 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         panic!("{what} {pid} still running after 5 s");
+    }
+
+    /// Poll up to 5 s for the process group to have no live members.
+    #[cfg(target_os = "linux")]
+    async fn assert_group_empty_within_5s(pgid: u32) {
+        let mut members = Vec::new();
+        for _ in 0..50 {
+            members = group_members(pgid);
+            if members.is_empty() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("process group {pgid} still has members after 5 s: {members:?}");
     }
 
     #[test]
@@ -727,7 +898,7 @@ mod tests {
             max_result_chars: 4000,
         };
         assert_eq!(
-            build_argv(&cfg, "do the thing"),
+            build_argv(&cfg, &["do the thing"]),
             vec![
                 "--mode",
                 "json",
@@ -748,7 +919,7 @@ mod tests {
         cfg.trust_project = true;
         cfg.extra_args.clear();
         assert_eq!(
-            build_argv(&cfg, "@/tmp/task.md"),
+            build_argv(&cfg, &["@/tmp/task.md", TASK_FILE_INSTRUCTION]),
             vec![
                 "--mode",
                 "json",
@@ -761,8 +932,18 @@ mod tests {
                 "deepseek/deepseek-v4-flash",
                 "--",
                 "@/tmp/task.md",
+                TASK_FILE_INSTRUCTION,
             ]
         );
+    }
+
+    #[test]
+    fn task_needs_file_rules() {
+        assert!(!task_needs_file("hello"));
+        assert!(!task_needs_file(&"a".repeat(MAX_INLINE_TASK_BYTES)));
+        assert!(task_needs_file(&"a".repeat(MAX_INLINE_TASK_BYTES + 1)));
+        assert!(task_needs_file("@notes.md please"));
+        assert!(!task_needs_file("see @notes.md"));
     }
 
     #[test]
@@ -774,6 +955,32 @@ mod tests {
         assert_eq!(expand_binary("/abs/pi"), PathBuf::from("/abs/pi"));
         // `~user` forms are not expanded.
         assert_eq!(expand_binary("~bob/pi"), PathBuf::from("~bob/pi"));
+    }
+
+    #[test]
+    fn pi_command_env_policy() {
+        let cmd = pi_command("pi");
+        let envs: Vec<(String, Option<String>)> = cmd
+            .as_std()
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        assert!(
+            envs.contains(&("PI_SKIP_VERSION_CHECK".to_string(), Some("1".to_string()))),
+            "{envs:?}"
+        );
+        // `None` is std's marker for `env_remove`.
+        assert!(
+            envs.contains(&("GRAPHIRM_API_KEY".to_string(), None)),
+            "{envs:?}"
+        );
+        // Only those two entries: everything else is inherited untouched.
+        assert_eq!(envs.len(), 2, "{envs:?}");
     }
 
     #[tokio::test]
@@ -792,6 +999,28 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn temp_task_file_is_private_and_removed() {
+        let t = TempTask::for_task("@x")
+            .await
+            .expect("ok")
+            .expect("needs file");
+        let path = t.path.clone();
+        assert!(path.exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "@x");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "mode {mode:o}");
+        }
+        t.cleanup().await;
+        assert!(!path.exists());
+
+        // Inline tasks never touch the filesystem.
+        assert!(TempTask::for_task("plain").await.expect("ok").is_none());
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn runs_fixture_to_completion_and_yields_events() {
         let dir = tempfile::TempDir::new().expect("tempdir");
@@ -808,6 +1037,7 @@ mod tests {
         assert_eq!(outcome.exit_code, Some(0));
         assert_eq!(outcome.malformed_lines, 0);
         assert_eq!(outcome.oversized_lines, 0);
+        assert!(!outcome.pipes_lingered);
         assert!(outcome.duration > Duration::ZERO);
 
         assert!(
@@ -852,12 +1082,36 @@ mod tests {
         )
         .await;
         assert_eq!(outcome.expect("ok").exit_code, Some(0));
-        let got: Vec<String> = std::fs::read_to_string(&argv_file)
-            .expect("argv file")
-            .lines()
-            .map(str::to_string)
-            .collect();
-        assert_eq!(got, build_argv(&cfg, task));
+        assert_eq!(argv_lines(&argv_file), build_argv(&cfg, &[task]));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn child_env_has_skip_version_check_and_no_graphirm_key() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_file = dir.path().join("env.txt");
+        let cfg = with_knobs(&[("FAKE_PI_ENV_DUMP", &env_file.display().to_string())]);
+        let (_, outcome) = run_to_end(
+            &cfg,
+            dir.path(),
+            "t",
+            Duration::from_secs(30),
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(outcome.expect("ok").exit_code, Some(0));
+        // `export -p` format: `declare -x KEY="value"`.
+        let env = std::fs::read_to_string(&env_file).expect("env dump");
+        assert!(
+            env.contains("PI_SKIP_VERSION_CHECK=\"1\""),
+            "PI_SKIP_VERSION_CHECK missing:\n{env}"
+        );
+        // Whether or not the test process has GRAPHIRM_API_KEY set, the child
+        // must not see it (env_remove is asserted structurally in
+        // `pi_command_env_policy`).
+        assert!(
+            !env.contains("GRAPHIRM_API_KEY"),
+            "GRAPHIRM_API_KEY leaked into pi's env:\n{env}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -927,6 +1181,50 @@ mod tests {
         assert_eq!(events, vec![PiEvent::AgentEnd { will_retry: false }]);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn wait_without_draining_events_completes_quickly() {
+        // More events than the channel holds: without `events.close()` in
+        // `wait()` the reader would block on `send`, the fake on a full pipe,
+        // and the run would only end at the deadline.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let fixture = dir.path().join("many.jsonl");
+        let mut body = String::new();
+        for _ in 0..(EVENT_CHANNEL_CAP * 4) {
+            body.push_str("{\"type\":\"agent_start\"}\n");
+        }
+        body.push_str("{\"type\":\"agent_end\",\"willRetry\":false}\n");
+        std::fs::write(&fixture, body).expect("write fixture");
+        let cfg = with_knobs(&[
+            ("FAKE_PI_FIXTURE", &fixture.display().to_string()),
+            ("FAKE_PI_DELAY_MS", "0"),
+        ]);
+        let spec = PiSpawnSpec {
+            config: &cfg,
+            cwd: dir.path(),
+            task: "t",
+            timeout: Duration::from_secs(60),
+        };
+        let started = Instant::now();
+        let mut handle = spawn_pi(spec, CancellationToken::new())
+            .await
+            .expect("spawn");
+        let outcome = handle.wait().await.expect("ok");
+        assert_eq!(outcome.exit_code, Some(0));
+        assert!(!outcome.pipes_lingered);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "wait() stalled for {:?}",
+            started.elapsed()
+        );
+        // The channel is closed, not poisoned: draining what (if anything) was
+        // buffered before `close()` terminates with `None`.
+        let mut leftover = 0;
+        while handle.events.recv().await.is_some() {
+            leftover += 1;
+        }
+        assert!(leftover <= EVENT_CHANNEL_CAP, "{leftover}");
+    }
+
     #[tokio::test]
     async fn read_line_capped_handles_edge_cases() {
         let data = b"short\n".to_vec();
@@ -969,6 +1267,7 @@ mod tests {
         ));
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cancel_kills_child_within_5s() {
         let dir = tempfile::TempDir::new().expect("tempdir");
@@ -988,6 +1287,7 @@ mod tests {
         let mut handle = spawn_pi(spec, cancel.clone()).await.expect("spawn");
         let script_pid = read_pid(&pidfile).await;
         let child_pid = read_pid(&dir.path().join("pid.child")).await;
+        assert_eq!(handle.pid(), Some(script_pid));
         assert!(is_running(script_pid));
         assert!(is_running(child_pid));
 
@@ -1004,6 +1304,7 @@ mod tests {
         while handle.events.recv().await.is_some() {}
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn timeout_kills_child() {
         let dir = tempfile::TempDir::new().expect("tempdir");
@@ -1031,6 +1332,44 @@ mod tests {
         assert_dead_within_5s(script_pid, "fake pi").await;
     }
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn post_exit_straggler_sets_pipes_lingered() {
+        // The fake exits normally (code 2) but forks `sleep 3600` that keeps
+        // stdout/stderr open. Phase 2 must give up after POST_EXIT_GRACE,
+        // kill the group, and still report exit code and captured output.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let pidfile = dir.path().join("pid");
+        let cfg = with_knobs(&[
+            ("FAKE_PI_PIDFILE", &pidfile.display().to_string()),
+            ("FAKE_PI_CHILD", "1"),
+            ("FAKE_PI_CHILD_HOLDS_STDOUT", "1"),
+            ("FAKE_PI_STDERR", "1"),
+            ("FAKE_PI_EXIT", "2"),
+        ]);
+        let started = Instant::now();
+        let (events, outcome) = run_to_end(
+            &cfg,
+            dir.path(),
+            "t",
+            Duration::from_secs(60),
+            CancellationToken::new(),
+        )
+        .await;
+        let outcome = outcome.expect("ok despite straggler");
+        assert!(outcome.pipes_lingered, "{outcome:?}");
+        assert_eq!(outcome.exit_code, Some(2));
+        assert!(outcome.stderr_tail.contains("warn"), "{outcome:?}");
+        assert!(events.contains(&PiEvent::AgentEnd { will_retry: false }));
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= POST_EXIT_GRACE && elapsed < POST_EXIT_GRACE + Duration::from_secs(6),
+            "took {elapsed:?}"
+        );
+        let child_pid = read_pid(&dir.path().join("pid.child")).await;
+        assert_dead_within_5s(child_pid, "straggler sleep").await;
+    }
+
     #[tokio::test]
     async fn missing_binary_is_not_found() {
         let dir = tempfile::TempDir::new().expect("tempdir");
@@ -1049,6 +1388,40 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn missing_cwd_is_spawn_error() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let missing = dir.path().join("nope");
+        let cfg = fake_pi_config();
+        let spec = PiSpawnSpec {
+            config: &cfg,
+            cwd: &missing,
+            task: "t",
+            timeout: Duration::from_secs(5),
+        };
+        match spawn_pi(spec, CancellationToken::new()).await {
+            Err(PiProcessError::Spawn(msg)) => {
+                assert!(msg.contains("workspace directory"), "{msg}");
+                assert!(msg.contains("nope"), "{msg}");
+            }
+            Ok(_) => panic!("spawn unexpectedly succeeded"),
+            Err(other) => panic!("expected Spawn, got {other:?}"),
+        }
+        // A file is not a directory either.
+        let file = dir.path().join("file");
+        std::fs::write(&file, "x").unwrap();
+        let spec = PiSpawnSpec {
+            config: &cfg,
+            cwd: &file,
+            task: "t",
+            timeout: Duration::from_secs(5),
+        };
+        assert!(matches!(
+            spawn_pi(spec, CancellationToken::new()).await,
+            Err(PiProcessError::Spawn(_))
+        ));
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn stderr_tail_is_captured() {
         let dir = tempfile::TempDir::new().expect("tempdir");
@@ -1065,16 +1438,16 @@ mod tests {
         assert!(outcome.stderr_tail.contains("warn"), "{outcome:?}");
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn large_task_goes_through_temp_file_and_is_removed() {
+    /// Runs a task that must go through the file route and checks argv shape,
+    /// the file's presence during the run, and its removal afterwards.
+    async fn assert_file_route(task: &str) {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let argv_file = dir.path().join("argv.txt");
         let cfg = with_knobs(&[("FAKE_PI_ARGV", &argv_file.display().to_string())]);
-        let task = "y".repeat(70 * 1024);
         let (_, outcome) = run_to_end(
             &cfg,
             dir.path(),
-            &task,
+            task,
             Duration::from_secs(30),
             CancellationToken::new(),
         )
@@ -1085,18 +1458,31 @@ mod tests {
         assert!(
             outcome
                 .stderr_tail
-                .contains(&format!("task-file-bytes: {}", 70 * 1024)),
+                .contains(&format!("task-file-bytes: {}", task.len())),
             "{}",
             outcome.stderr_tail
         );
-        let argv = std::fs::read_to_string(&argv_file).expect("argv file");
-        let last = argv.lines().last().expect("last arg");
-        let path = last.strip_prefix('@').expect("task passed as @file");
+        let argv = argv_lines(&argv_file);
+        let n = argv.len();
+        assert_eq!(argv[n - 1], TASK_FILE_INSTRUCTION);
+        let path = argv[n - 2].strip_prefix('@').expect("task passed as @file");
         assert!(path.contains("graphirm-pi-"), "{path}");
+        assert_eq!(argv[n - 3], "--");
         assert!(
             !Path::new(path).exists(),
             "temp task file {path} should be removed after the run"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn large_task_goes_through_temp_file_and_is_removed() {
+        assert_file_route(&"y".repeat(70 * 1024)).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn at_prefixed_task_goes_through_temp_file() {
+        // Pi would parse a bare leading `@` as a file path → "File not found".
+        assert_file_route("@todo.md is not a file, just the first word").await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1114,10 +1500,10 @@ mod tests {
         )
         .await;
         assert_eq!(outcome.expect("ok").exit_code, Some(0));
-        let argv = std::fs::read_to_string(&argv_file).expect("argv file");
-        assert_eq!(argv.lines().last(), Some(task.as_str()));
+        assert_eq!(argv_lines(&argv_file).last(), Some(&task));
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn dropping_handle_kills_child() {
         let dir = tempfile::TempDir::new().expect("tempdir");
@@ -1144,5 +1530,27 @@ mod tests {
         assert_dead_within_5s(script_pid, "fake pi").await;
         // Not just the direct child: the group guard takes the grandchild too.
         assert_dead_within_5s(child_pid, "grandchild sleep").await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dropping_handle_immediately_after_spawn_kills_group() {
+        // No await between spawn and drop: the driver task may never have
+        // been polled, so the guard must already be armed at spawn time.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let cfg = with_knobs(&[("FAKE_PI_HANG_AT", "3"), ("FAKE_PI_CHILD", "1")]);
+        let spec = PiSpawnSpec {
+            config: &cfg,
+            cwd: dir.path(),
+            task: "t",
+            timeout: Duration::from_secs(60),
+        };
+        let handle = spawn_pi(spec, CancellationToken::new())
+            .await
+            .expect("spawn");
+        let pgid = handle.pid().expect("pid captured at spawn");
+        drop(handle);
+        assert_dead_within_5s(pgid, "fake pi").await;
+        assert_group_empty_within_5s(pgid).await;
     }
 }

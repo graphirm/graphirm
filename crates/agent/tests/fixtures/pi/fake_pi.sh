@@ -17,14 +17,20 @@
 #   FAKE_PI_PIDFILE   write $$ here (kill tests)
 #   FAKE_PI_STDERR    1 → write "warn: fake stderr" to stderr once
 #   FAKE_PI_ARGV      path → write "$@" (one per line) here (argv tests)
-#   FAKE_PI_CHILD     1 → also fork `sleep 3600 &` and write its pid to
-#                     ${FAKE_PI_PIDFILE}.child (group-kill test); written
-#                     before the main pidfile so a test that sees the main
-#                     pidfile can rely on the child pidfile
+#   FAKE_PI_CHILD     1 → also fork `sleep 3600 &` (a grandchild in the same
+#                     process group) and, when FAKE_PI_PIDFILE is set, write
+#                     its pid to ${FAKE_PI_PIDFILE}.child before the main
+#                     pidfile, so a test that sees the main pidfile can rely
+#                     on the child pidfile. The child's stdout/stderr go to
+#                     /dev/null unless …
+#   FAKE_PI_CHILD_HOLDS_STDOUT
+#                     1 → the sleep child inherits stdout/stderr, so the pipes
+#                     stay open after this script exits (post-exit grace test)
+#   FAKE_PI_ENV_DUMP  path → write `export -p` there (env policy test)
 #
-# When the task (last argument) starts with `@`, the byte length of the
-# referenced file is written to stderr as `task-file-bytes: N` (large-task
-# test). Also answers `--version` with 0.85.1-fake and exits 0.
+# When the task (first positional after `--`) starts with `@`, the byte length
+# of the referenced file is written to stderr as `task-file-bytes: N`
+# (file-route tests). Also answers `--version` with 0.85.1-fake and exits 0.
 #
 # Uses only bash builtins plus `sleep` and `wc` (coreutils).
 set -u
@@ -39,10 +45,13 @@ while [ $# -gt 0 ]; do
     *) shift ;;
   esac
 done
-task="${*:-}"
+task="${1:-}"
 
 if [ -n "${FAKE_PI_ARGV:-}" ]; then
   printf '%s\n' "${argv_all[@]}" > "$FAKE_PI_ARGV"
+fi
+if [ -n "${FAKE_PI_ENV_DUMP:-}" ]; then
+  export -p > "$FAKE_PI_ENV_DUMP"
 fi
 if [ "${task:0:1}" = "@" ]; then
   task_file=${task#@}
@@ -53,9 +62,13 @@ if [ "${task:0:1}" = "@" ]; then
   fi
 fi
 
-if [ "${FAKE_PI_CHILD:-0}" = 1 ] && [ -n "${FAKE_PI_PIDFILE:-}" ]; then
-  sleep 3600 &
-  echo $! > "${FAKE_PI_PIDFILE}.child"
+if [ "${FAKE_PI_CHILD:-0}" = 1 ]; then
+  if [ "${FAKE_PI_CHILD_HOLDS_STDOUT:-0}" = 1 ]; then
+    sleep 3600 &
+  else
+    sleep 3600 >/dev/null 2>&1 &
+  fi
+  [ -n "${FAKE_PI_PIDFILE:-}" ] && echo $! > "${FAKE_PI_PIDFILE}.child"
 fi
 [ -n "${FAKE_PI_PIDFILE:-}" ] && echo $$ > "$FAKE_PI_PIDFILE"
 [ "${FAKE_PI_STDERR:-0}" = 1 ] && echo "warn: fake stderr" >&2

@@ -109,6 +109,9 @@ mod tests {
     use super::*;
     use tokio::process::Command;
 
+    /// `/proc` is Linux-only; the zombie-aware liveness check (and the test
+    /// that needs it) is gated accordingly.
+    #[cfg(target_os = "linux")]
     fn proc_state(pid: u32) -> Option<char> {
         let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
         // "pid (comm) S ..." — comm may contain spaces/parens, so split after the last ')'.
@@ -117,10 +120,12 @@ mod tests {
     }
 
     /// True when the pid is running (not gone, not a zombie).
+    #[cfg(target_os = "linux")]
     fn is_running(pid: u32) -> bool {
         !matches!(proc_state(pid), None | Some('Z'))
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn kill_group_takes_down_descendants_and_reaps() {
         let dir = tempfile::TempDir::new().unwrap();
