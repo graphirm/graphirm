@@ -276,10 +276,7 @@ pub async fn stream_and_record(
                 let last_assistant = chain.iter().rev().find(|n| {
                     matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "assistant")
                 });
-                let tool_errored = chain.iter().rev().any(|n| {
-                    matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "tool_result")
-                        && n.metadata.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false)
-                });
+                let tool_errored = last_tool_errored(&chain);
                 let tool_only = last_assistant
                     .map(|n| {
                         n.metadata.get("tool_calls").is_some()
@@ -354,10 +351,7 @@ pub async fn stream_and_record(
                 let last_assistant = chain.iter().rev().find(|n| {
                     matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "assistant")
                 });
-                let tool_errored = chain.iter().rev().any(|n| {
-                    matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "tool_result")
-                        && n.metadata.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false)
-                });
+                let tool_errored = last_tool_errored(&chain);
                 let tool_only = last_assistant
                     .map(|n| {
                         n.metadata.get("tool_calls").is_some()
@@ -1395,6 +1389,22 @@ fn infer_task_phase(chain: &[graphirm_graph::nodes::GraphNode]) -> crate::router
     TaskPhase::Implementation
 }
 
+/// Whether the most recent tool result in the session chain errored.
+///
+/// Tool results are recorded with role `"tool"` (see the tool-node writers in
+/// `execute_tool_calls`); the signal used to look for `"tool_result"` and scan
+/// the whole chain, so it never fired and `error_recovery` routing was dead.
+fn last_tool_errored(chain: &[graphirm_graph::nodes::GraphNode]) -> bool {
+    chain
+        .iter()
+        .rev()
+        .find(|n| {
+            matches!(&n.node_type, graphirm_graph::nodes::NodeType::Interaction(i) if i.role == "tool")
+        })
+        .and_then(|n| n.metadata.get("is_error").and_then(|v| v.as_bool()))
+        .unwrap_or(false)
+}
+
 async fn emit_graph_update(
     session: &Session,
     node_id: &NodeId,
@@ -2140,6 +2150,66 @@ mod test_helpers {
             usage: TokenUsage::new(100, 50),
             stop_reason: StopReason::ToolUse,
         }
+    }
+}
+
+#[cfg(test)]
+mod signal_tests {
+    use graphirm_graph::nodes::{GraphNode, InteractionData, NodeType};
+
+    use super::last_tool_errored;
+
+    fn interaction(role: &str, metadata: serde_json::Value) -> GraphNode {
+        let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: role.to_string(),
+            content: String::new(),
+            token_count: None,
+        }));
+        node.metadata = metadata;
+        node
+    }
+
+    fn tool(is_error: bool) -> GraphNode {
+        interaction(
+            "tool",
+            serde_json::json!({"tool_name": "bash", "is_error": is_error}),
+        )
+    }
+
+    #[test]
+    fn empty_chain_is_not_errored() {
+        assert!(!last_tool_errored(&[]));
+    }
+
+    #[test]
+    fn fires_when_most_recent_tool_result_errored() {
+        // Regression: the signal looked for role "tool_result" (never written)
+        // so error_recovery routing was dead.
+        let chain = [
+            interaction("user", serde_json::json!({})),
+            tool(false),
+            tool(true),
+        ];
+        assert!(last_tool_errored(&chain));
+    }
+
+    #[test]
+    fn does_not_fire_when_a_later_tool_result_succeeded() {
+        let chain = [
+            tool(true),
+            interaction("assistant", serde_json::json!({})),
+            tool(false),
+        ];
+        assert!(!last_tool_errored(&chain));
+    }
+
+    #[test]
+    fn ignores_assistant_nodes_after_the_last_tool_result() {
+        let chain = [
+            tool(true),
+            interaction("assistant", serde_json::json!({"is_error": false})),
+        ];
+        assert!(last_tool_errored(&chain));
     }
 }
 
