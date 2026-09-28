@@ -1,7 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api } from '../api/client';
 import type { GraphNode } from '../types/graph';
 import styles from './RulesTab.module.css';
+
+const PIN_LIMIT = 200;
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -22,35 +24,35 @@ export function RulesTab() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const loadGen = useRef(0);
 
-  async function reload() {
-    const nodes = await api.listPinnedKnowledge();
-    setItems(nodes);
-    setLoaded(true);
-  }
+  const loadPinned = useCallback(async () => {
+    const gen = ++loadGen.current;
+    try {
+      const nodes = await api.listPinnedKnowledge(PIN_LIMIT);
+      if (gen !== loadGen.current) return;
+      setItems(nodes);
+      setLoaded(true);
+      setError(null);
+    } catch (err: unknown) {
+      if (gen !== loadGen.current) return;
+      setError(errorText(err));
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    api
-      .listPinnedKnowledge()
-      .then((nodes) => {
-        if (cancelled) return;
-        setItems(nodes);
-        setLoaded(true);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(errorText(err));
-      });
+    void loadPinned();
     return () => {
-      cancelled = true;
+      loadGen.current += 1;
     };
-  }, []);
+  }, [loadPinned]);
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
     const entity = name.trim();
     const summary = note.trim();
     if (!entity || !summary || busy) return;
+    loadGen.current += 1;
     setError(null);
     setBusy(true);
     try {
@@ -62,7 +64,7 @@ export function RulesTab() {
       });
       setName('');
       setNote('');
-      await reload();
+      await loadPinned();
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -79,12 +81,13 @@ export function RulesTab() {
   async function saveEdit(id: string) {
     const summary = draft.trim();
     if (!summary || busy) return;
+    loadGen.current += 1;
     setError(null);
     setBusy(true);
     try {
       await api.patchKnowledge(id, { summary });
       setEditingId(null);
-      await reload();
+      await loadPinned();
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -94,12 +97,13 @@ export function RulesTab() {
 
   async function remove(id: string) {
     if (busy) return;
+    loadGen.current += 1;
     setError(null);
     setBusy(true);
     try {
       await api.deleteKnowledge(id);
       if (editingId === id) setEditingId(null);
-      await reload();
+      await loadPinned();
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -128,6 +132,11 @@ export function RulesTab() {
       </form>
       {error && <p className={styles.error}>{error}</p>}
       {loaded && items.length === 0 ? <p className={styles.empty}>No pinned rules.</p> : null}
+      {items.length === PIN_LIMIT ? (
+        <p className={styles.truncated}>
+          Showing 200 pinned rules. Newer pins are not in this list.
+        </p>
+      ) : null}
       <ul className={styles.list}>
         {items.map((node) => {
           const fields = knowledgeFields(node);
