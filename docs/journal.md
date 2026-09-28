@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-09-29 — Phone-first chat design approved as written
+
+**Context:** Track B B0 draft. The parent brief already locked the column, the four tabs, and the legacy switch.
+**Decision:** Approve `docs/plans/2026-09-28-phone-first-decision-chat-design.md` with no row changed. Implementation plan is `docs/plans/2026-09-28-phone-first-decision-chat.md`.
+**Alternatives:** None raised at approval.
+**Consequences:** B1–B9 can start. Graph canvas stays mounted after first open. Review does not use `GET …/tasks`. Plan "Run" only resumes.
+**Refs:** design doc Decisions table.
+
 ## 2026-09-28 — Session restore skips spawned Agents; `enabled = true` stays the product default
 
 **Context:** Final review of Track A. `restore_sessions_from_graph` loaded every Agent node. A Pi Agent (`status = "running"`, no workspace) would become a promptable session after a spoke restart. Separately, `config/default.toml` is both the local default and the spoke file (`workspaces_root = /data/workspaces`), and A4.2 set `[agent.pi] enabled = true` while `disable_bash` stays commented out.

@@ -1314,8 +1314,7 @@ tests) — done 2026-09-28 · ✅ A4 live check + `enabled = true` — done 2026
 
 ### Track B — phone-first decision chat (`web-app/`) — L · P1
 
-Blocked on A4. Design doc `docs/plans/2026-09-28-phone-first-decision-chat-design.md` (B0) to be
-written after A4. Phases B1–B9: layout inversion + tab bar, typed blocks + STEPS, streaming
+A4 is done. **Design approved 2026-09-29:** `docs/plans/2026-09-28-phone-first-decision-chat-design.md` (B0). **Plan:** `docs/plans/2026-09-28-phone-first-decision-chat.md`. Phases B1–B9: layout inversion + tab bar, typed blocks + STEPS, streaming
 segment parser, Jev chip + sheet, confirm card, Rules tab, Review tab, reply-judging + routing
 feedback seats (server), plan card.
 
