@@ -219,7 +219,7 @@ wrapper so the three existing call sites are untouched.
 
 **Step 5: Commit** — `feat(agent): EventBusSink bridges ToolEventSink to AgentEvent`
 
-- [ ] A1.2 done
+- [x] A1.2 done
 
 ### Task A1.3: Wire the sink into the agent loop
 

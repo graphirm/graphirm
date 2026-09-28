@@ -8,6 +8,7 @@ pub mod delegate;
 pub mod error;
 pub mod escalation;
 pub mod event;
+pub mod event_sink;
 pub mod hitl;
 pub mod hitl_judge;
 pub mod impact;
@@ -35,6 +36,7 @@ pub use coordinator::Coordinator;
 pub use delegate::SubagentTool;
 pub use error::AgentError;
 pub use event::{AgentEvent, EventBus};
+pub use event_sink::EventBusSink;
 pub use hitl::{HitlDecision, HitlGate, JudgeOutcome, is_destructive_tool};
 pub use hitl_judge::{DestructiveJudge, JudgeVerdict, build_judge};
 pub use import::{

@@ -1402,7 +1402,21 @@ async fn emit_graph_update(
     tool_result_node_ids: Vec<NodeId>,
     events: &EventBus,
 ) {
-    let graph = session.graph.clone();
+    emit_graph_update_for(session.graph.clone(), node_id, tool_result_node_ids, events).await;
+}
+
+/// Build a `GraphUpdate` payload from `graph` (in `spawn_blocking`) and emit it
+/// on `events`. `node_id` is the anchor; `tool_result_node_ids` are the nodes
+/// whose incident edges are included in `recent_edges`.
+///
+/// Session-independent so it can be reused by `EventBusSink`, which only has
+/// access to the graph store.
+pub(crate) async fn emit_graph_update_for(
+    graph: Arc<graphirm_graph::GraphStore>,
+    node_id: &NodeId,
+    tool_result_node_ids: Vec<NodeId>,
+    events: &EventBus,
+) {
     let anchor = node_id.clone();
     let tools = tool_result_node_ids.clone();
     let payload = match tokio::task::spawn_blocking(move || {

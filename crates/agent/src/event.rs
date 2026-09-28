@@ -74,6 +74,12 @@ pub enum AgentEvent {
     },
 }
 
+/// Fan-out of `AgentEvent`s to every subscriber channel.
+///
+/// Cloning is cheap and shares the same underlying channels: a clone emits to
+/// the same subscribers as the original (subscriptions made on one clone after
+/// the split are *not* visible to the other).
+#[derive(Clone)]
 pub struct EventBus {
     subscribers: Vec<mpsc::Sender<AgentEvent>>,
 }
