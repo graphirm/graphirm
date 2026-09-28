@@ -194,6 +194,7 @@ pub trait RoutingStrategy: Send + Sync {
 
 pub mod builder;
 pub mod experiment;
+pub mod jev_router;
 pub mod prompt_router;
 pub mod rule_router;
 

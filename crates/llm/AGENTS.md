@@ -19,6 +19,7 @@ embedding providers (Mistral API + optional local `fastembed`).
 | `deepseek.rs` | DeepSeek provider (default for graphirm) |
 | `ollama.rs` | Ollama (local) provider |
 | `openrouter.rs` | OpenRouter provider |
+| `decisions.rs` | `DecisionsClient` — typed Jev decisions (choice/score/noul) over any Decisions-shaped endpoint (`DecisionsConfig`: endpoint, optional key, model; default OpenRouter + pinned `JEV_MODEL`, also local Laya `/v1/systemone`); `DecisionsTransport` trait for test fakes |
 | `mistral_embed.rs` | `MistralEmbeddingProvider` — remote embeddings |
 | `fastembed_provider.rs` | `FastEmbedProvider` — local embeddings (feature: `local-embed`) |
 | `mock.rs` | `MockProvider`, `MockResponse` — deterministic responses for tests |

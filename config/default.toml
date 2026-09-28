@@ -226,7 +226,13 @@ turn = 15
 tier = "smart"
 
 # Adaptive model routing — strategy-based model selection with A/B testing.
-# strategy: "rules" | "prompt" | "experiment"
+# strategy: "rules" | "prompt" | "jev" | "experiment"
+#   rules  — ordered [agent.routing.rules] above, deterministic
+#   prompt — generative LLM asked for one word ("cheap"/"smart"), parsed
+#   jev    — typed Jev `choice` over the TurnSignals via a Decisions-shaped API
+#            (default OpenRouter, ~300 ms, ~$0.00004/turn, needs OPENROUTER_API_KEY;
+#            or a local System One server such as Laya /v1/systemone); falls back to
+#            rules per turn on error/timeout (see crates/agent/src/strategy/jev_router.rs)
 [agent.adaptive_routing]
 strategy = "rules"
 
@@ -243,6 +249,14 @@ preset = "balanced"   # cost_focused | quality_first | speed | balanced
 # [agent.adaptive_routing.prompt]
 # classifier_model = "openrouter/qwen/qwen3-coder:free"
 # timeout_seconds = 3
+
+# For the Jev typed classifier (strategy = "jev"; section optional).
+# Defaults: OpenRouter endpoint, OPENROUTER_API_KEY, model typesafe/jev-1.13.
+# [agent.adaptive_routing.jev]
+# timeout_ms = 1500
+# endpoint = "http://localhost:8787/v1/systemone"   # local Laya; no key sent unless api_key_env is set
+# api_key_env = "LAYA_API_KEY"                      # name of the env var holding the bearer token
+# model = "typesafe/jev-1.13"
 
 # Model pricing for cost estimation (optional):
 # [[agent.adaptive_routing.candidates]]

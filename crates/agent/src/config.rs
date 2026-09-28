@@ -297,6 +297,41 @@ fn default_classifier_timeout() -> u64 {
     3
 }
 
+/// Configuration for the Jev Decisions-based tier classifier (`strategy = "jev"`).
+///
+/// Provider-agnostic: any server speaking the Decisions request/reply shape works
+/// (OpenRouter `/api/alpha/decisions`, a local Laya `/v1/systemone`, ...).
+/// Defaults to OpenRouter, keyed by `OPENROUTER_API_KEY`; when the key cannot be
+/// resolved the strategy degrades to rules at build time.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JevRouterConfig {
+    /// Per-call timeout. Jev answers in ~300 ms; on timeout the rule router decides.
+    #[serde(default = "default_jev_timeout_ms")]
+    pub timeout_ms: u64,
+    /// Full endpoint URL. `None` → OpenRouter.
+    pub endpoint: Option<String>,
+    /// Environment variable holding the bearer token. `None` → `OPENROUTER_API_KEY`
+    /// for the OpenRouter default, otherwise no `Authorization` header (local server).
+    pub api_key_env: Option<String>,
+    /// Model string sent in the request. `None` → the pinned `typesafe/jev-1.13`.
+    pub model: Option<String>,
+}
+
+impl Default for JevRouterConfig {
+    fn default() -> Self {
+        Self {
+            timeout_ms: default_jev_timeout_ms(),
+            endpoint: None,
+            api_key_env: None,
+            model: None,
+        }
+    }
+}
+
+fn default_jev_timeout_ms() -> u64 {
+    1500
+}
+
 /// A single model candidate with pricing metadata.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelCandidateConfig {
@@ -315,6 +350,7 @@ pub struct AdaptiveRoutingConfig {
     pub objective: Option<AdaptiveObjectiveConfig>,
     pub experiment: Option<ExperimentConfig>,
     pub prompt: Option<PromptRouterConfig>,
+    pub jev: Option<JevRouterConfig>,
     #[serde(default)]
     pub candidates: Vec<ModelCandidateConfig>,
 }
@@ -1254,5 +1290,76 @@ segment_filter = ["reasoning", "code"]
             Some("cost_focused")
         );
         assert!((ar.experiment.as_ref().unwrap().split - 0.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn adaptive_routing_jev_config_parses_with_default_timeout() {
+        let toml = r#"
+            [agent]
+            name = "test"
+            model = "fallback"
+            system_prompt = "test"
+            max_turns = 5
+
+            [agent.adaptive_routing]
+            strategy = "jev"
+        "#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        let ar = config.adaptive_routing.unwrap();
+        assert_eq!(ar.strategy, "jev");
+        assert!(ar.jev.is_none());
+        assert_eq!(JevRouterConfig::default().timeout_ms, 1500);
+    }
+
+    #[test]
+    fn adaptive_routing_jev_config_parses_explicit_timeout() {
+        let toml = r#"
+            [agent]
+            name = "test"
+            model = "fallback"
+            system_prompt = "test"
+            max_turns = 5
+
+            [agent.adaptive_routing]
+            strategy = "jev"
+
+            [agent.adaptive_routing.jev]
+            timeout_ms = 800
+        "#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        let ar = config.adaptive_routing.unwrap();
+        let jev = ar.jev.unwrap();
+        assert_eq!(jev.timeout_ms, 800);
+        assert!(jev.endpoint.is_none());
+        assert!(jev.api_key_env.is_none());
+        assert!(jev.model.is_none());
+    }
+
+    #[test]
+    fn adaptive_routing_jev_config_parses_local_provider() {
+        let toml = r#"
+            [agent]
+            name = "test"
+            model = "fallback"
+            system_prompt = "test"
+            max_turns = 5
+
+            [agent.adaptive_routing]
+            strategy = "jev"
+
+            [agent.adaptive_routing.jev]
+            endpoint = "http://localhost:8787/v1/systemone"
+            api_key_env = "LAYA_API_KEY"
+            model = "laya/systemone-1"
+        "#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        let jev = config.adaptive_routing.unwrap().jev.unwrap();
+        assert_eq!(jev.timeout_ms, 1500);
+        assert_eq!(
+            jev.endpoint.as_deref(),
+            Some("http://localhost:8787/v1/systemone")
+        );
+        assert_eq!(jev.api_key_env.as_deref(), Some("LAYA_API_KEY"));
+        assert_eq!(jev.model.as_deref(), Some("laya/systemone-1"));
     }
 }

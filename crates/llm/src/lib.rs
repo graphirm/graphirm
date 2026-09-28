@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod decisions;
 pub mod deepseek;
 pub mod embedded_tool_adapter;
 pub mod error;
@@ -17,6 +18,7 @@ pub mod fastembed_provider;
 #[cfg(feature = "local-embed")]
 pub use fastembed_provider::FastEmbedProvider;
 
+pub use decisions::{Answer, Decision, DecisionsClient, DecisionsConfig, DecisionsTransport};
 pub use embedded_tool_adapter::augment_embedded_tool_calls;
 pub use error::LlmError;
 pub use mistral_embed::{MistralEmbedModel, MistralEmbeddingProvider};
