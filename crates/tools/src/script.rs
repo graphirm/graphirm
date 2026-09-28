@@ -183,6 +183,7 @@ mod tests {
             impact_provider: None,
             disable_bash: false,
             auto_link_write_to_planning: true,
+            event_sink: None,
         }
     }
 

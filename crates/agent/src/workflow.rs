@@ -18,6 +18,7 @@ use tracing::info;
 
 use crate::error::AgentError;
 use crate::event::{AgentEvent, EventBus};
+use crate::event_sink::EventBusSink;
 use crate::hitl::HitlDecision;
 use crate::session::Session;
 
@@ -242,7 +243,10 @@ pub async fn stream_and_record(
     let raw_defs = tools.definitions();
     let mut tool_defs: Vec<graphirm_llm::ToolDefinition> = raw_defs
         .into_iter()
-        .filter(|t| !(session.agent_config.disable_bash && t.name == "bash"))
+        .filter(|t| {
+            !(session.agent_config.disable_bash
+                && crate::pi_delegate::tool::hidden_under_disable_bash(&t.name))
+        })
         .map(|t| graphirm_llm::ToolDefinition::new(t.name, t.description, t.parameters))
         .collect();
 
@@ -916,6 +920,14 @@ async fn execute_tools_parallel(
             None
         };
 
+    // One sink per turn, shared by every `ToolContext` clone handed to a tool.
+    // `EventBus` is `Clone` (shares subscriber channels), so no signature
+    // change is needed to get an `Arc<EventBus>`.
+    let sink = Arc::new(EventBusSink::new(
+        Arc::new(events.clone()),
+        session.graph.clone(),
+    ));
+
     let ctx = ToolContext {
         graph: session.graph.clone(),
         agent_id: session.id.clone(),
@@ -925,11 +937,44 @@ async fn execute_tools_parallel(
         turn: session.current_turn(),
         turn_pos_counter: session.turn_position_counter(),
         knowledge_retriever,
-        impact_provider: impact_provider.clone(),
+        impact_provider,
         disable_bash: session.agent_config.disable_bash,
         auto_link_write_to_planning: session.agent_config.auto_link_write_to_planning,
+        event_sink: Some(Arc::clone(&sink) as Arc<dyn graphirm_tools::ToolEventSink>),
     };
 
+    // `ctx` is moved into `run_tool_calls` and dropped (along with every clone
+    // spawned into tool tasks) before it returns, on success and error alike.
+    let result = run_tool_calls(session, tools, response_id, tool_calls, events, cancel, ctx).await;
+
+    // Drain the sink *before* the caller emits its own turn-end GraphUpdate, so
+    // a `graph_changed` queued at the tail of a tool's run can never be emitted
+    // after it and regress the view. `try_unwrap` fails only if a tool stashed
+    // `ctx.event_sink` somewhere that outlives `execute`, or a tool task is
+    // still winding down after a join error.
+    match Arc::try_unwrap(sink) {
+        Ok(s) => s.close().await,
+        Err(_) => tracing::warn!(
+            "EventBusSink still shared at turn end (a tool stashed ctx.event_sink or is \
+             still running); GraphUpdate ordering not guaranteed for this turn"
+        ),
+    }
+
+    result
+}
+
+/// Body of [`execute_tools_parallel`]: partition, run, and record every tool
+/// call in `tool_calls` using `ctx`. Takes `ctx` by value so that all
+/// references to its `event_sink` are gone when this returns.
+async fn run_tool_calls(
+    session: &Session,
+    tools: &ToolRegistry,
+    response_id: &NodeId,
+    tool_calls: &[&graphirm_llm::ContentPart],
+    events: &EventBus,
+    cancel: &CancellationToken,
+    ctx: ToolContext,
+) -> Result<Vec<NodeId>, AgentError> {
     // Partition tool calls: destructive ones go through sequential HITL approval,
     // safe ones run in parallel without gating.
     // `.copied()` turns `&&ContentPart` (from iterating `&[&ContentPart]`) into
@@ -956,8 +1001,12 @@ async fn execute_tools_parallel(
         tokio::sync::Mutex<HashMap<std::path::PathBuf, graphirm_tools::impact::ImpactBrief>>,
     > = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
 
-    // Phase 1: spawn SAFE tools in parallel and collect results
-    let mut set = JoinSet::new();
+    // Phase 1: spawn SAFE tools in parallel and collect results.
+    // Resolve every tool BEFORE spawning anything: an unknown tool name must
+    // bail out with an empty JoinSet, otherwise the `?` would return while
+    // spawned tasks still hold clones of `ctx` (and its event sink), racing
+    // the `Arc::try_unwrap(sink)` in `execute_tools_parallel`.
+    let mut resolved = Vec::with_capacity(safe_calls.len());
     for part in safe_calls {
         let ContentPart::ToolCall {
             id: call_id,
@@ -973,6 +1022,11 @@ async fn execute_tools_parallel(
             name: name.clone(),
             arguments: arguments.clone(),
         };
+        resolved.push((tool, call));
+    }
+
+    let mut set = JoinSet::new();
+    for (tool, call) in resolved {
         let ctx_clone = ctx.clone();
         set.spawn(async move {
             let result: Result<graphirm_tools::ToolOutput, graphirm_tools::ToolError> =
@@ -981,9 +1035,20 @@ async fn execute_tools_parallel(
         });
     }
 
+    // Drain every task before propagating a join error so no spawned clone of
+    // `ctx` outlives this function (the sink is closed right after we return).
     let mut exec_results = Vec::new();
+    let mut join_error: Option<AgentError> = None;
     while let Some(join_result) = set.join_next().await {
-        exec_results.push(join_result.map_err(|e| AgentError::Join(e.to_string()))?);
+        match join_result {
+            Ok(r) => exec_results.push(r),
+            Err(e) => {
+                join_error.get_or_insert_with(|| AgentError::Join(e.to_string()));
+            }
+        }
+    }
+    if let Some(e) = join_error {
+        return Err(e);
     }
 
     // Phase 2: record safe tool results to graph (best-effort — log failures
@@ -1085,7 +1150,7 @@ async fn execute_tools_parallel(
                 let exec_result = tool.execute(exec_args.clone(), &ctx).await;
 
                 // Compute impact brief (if applicable)
-                let impact_brief_text = if let Some(ref provider) = impact_provider {
+                let impact_brief_text = if let Some(ref provider) = ctx.impact_provider {
                     pre_edit_impact_brief(
                         provider.as_ref(),
                         name,
@@ -1411,7 +1476,21 @@ async fn emit_graph_update(
     tool_result_node_ids: Vec<NodeId>,
     events: &EventBus,
 ) {
-    let graph = session.graph.clone();
+    emit_graph_update_for(session.graph.clone(), node_id, tool_result_node_ids, events).await;
+}
+
+/// Build a `GraphUpdate` payload from `graph` (in `spawn_blocking`) and emit it
+/// on `events`. `node_id` is the anchor; `tool_result_node_ids` are the nodes
+/// whose incident edges are included in `recent_edges`.
+///
+/// Session-independent so it can be reused by `EventBusSink`, which only has
+/// access to the graph store.
+pub(crate) async fn emit_graph_update_for(
+    graph: Arc<graphirm_graph::GraphStore>,
+    node_id: &NodeId,
+    tool_result_node_ids: Vec<NodeId>,
+    events: &EventBus,
+) {
     let anchor = node_id.clone();
     let tools = tool_result_node_ids.clone();
     let payload = match tokio::task::spawn_blocking(move || {
@@ -1983,7 +2062,7 @@ pub async fn run_agent_loop(
 // ============== Test helpers ==============
 
 #[cfg(test)]
-mod test_helpers {
+pub(crate) mod test_helpers {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1999,6 +2078,8 @@ mod test_helpers {
     pub struct MockProvider {
         pub responses: Vec<LlmResponse>,
         pub call_index: AtomicUsize,
+        /// Tool names offered on each call, in call order.
+        pub seen_tool_names: std::sync::Mutex<Vec<Vec<String>>>,
     }
 
     impl MockProvider {
@@ -2006,11 +2087,29 @@ mod test_helpers {
             Self {
                 responses,
                 call_index: AtomicUsize::new(0),
+                seen_tool_names: std::sync::Mutex::new(Vec::new()),
             }
         }
 
         pub fn call_count(&self) -> usize {
             self.call_index.load(Ordering::SeqCst)
+        }
+
+        /// Tool names offered on the most recent call.
+        pub fn last_tool_names(&self) -> Vec<String> {
+            self.seen_tool_names
+                .lock()
+                .expect("lock")
+                .last()
+                .cloned()
+                .unwrap_or_default()
+        }
+
+        fn record_tools(&self, tools: &[ToolDefinition]) {
+            self.seen_tool_names
+                .lock()
+                .expect("lock")
+                .push(tools.iter().map(|t| t.name.clone()).collect());
         }
     }
 
@@ -2019,9 +2118,10 @@ mod test_helpers {
         async fn complete(
             &self,
             _messages: Vec<LlmMessage>,
-            _tools: &[ToolDefinition],
+            tools: &[ToolDefinition],
             _config: &CompletionConfig,
         ) -> Result<LlmResponse, LlmError> {
+            self.record_tools(tools);
             let idx = self.call_index.fetch_add(1, Ordering::SeqCst);
             if idx < self.responses.len() {
                 Ok(self.responses[idx].clone())
@@ -2033,10 +2133,11 @@ mod test_helpers {
         async fn stream(
             &self,
             _messages: Vec<LlmMessage>,
-            _tools: &[ToolDefinition],
+            tools: &[ToolDefinition],
             _config: &CompletionConfig,
         ) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = StreamEvent> + Send>>, LlmError>
         {
+            self.record_tools(tools);
             let idx = self.call_index.fetch_add(1, Ordering::SeqCst);
             let response = if idx < self.responses.len() {
                 self.responses[idx].clone()
@@ -2256,6 +2357,41 @@ mod tests {
         }
     }
 
+    /// `disable_bash` hides `delegate_pi` from the model alongside `bash`:
+    /// Pi runs shell, so a locked-down server must not offer it.
+    #[tokio::test]
+    async fn disable_bash_hides_bash_and_delegate_pi_from_tool_definitions() {
+        fn registry() -> ToolRegistry {
+            let mut tools = ToolRegistry::new();
+            for name in ["bash", "delegate_pi", "read"] {
+                tools.register(Arc::new(MockTool {
+                    tool_name: name.to_string(),
+                    output: "ok".to_string(),
+                }));
+            }
+            tools
+        }
+        async fn offered(disable_bash: bool) -> Vec<String> {
+            let graph = Arc::new(GraphStore::open_memory().unwrap());
+            let config = AgentConfig {
+                disable_bash,
+                tool_gate_enabled: false,
+                ..Default::default()
+            };
+            let session = Session::new(graph, config).unwrap();
+            session.add_user_message("implement it").await.unwrap();
+            let provider = Arc::new(MockProvider::new(vec![text_response("done")]));
+            let bus = EventBus::new();
+            stream_and_record(&session, provider.clone(), &registry(), &bus)
+                .await
+                .unwrap();
+            provider.last_tool_names()
+        }
+
+        assert_eq!(offered(false).await, vec!["bash", "delegate_pi", "read"]);
+        assert_eq!(offered(true).await, vec!["read"]);
+    }
+
     #[tokio::test]
     async fn test_stream_and_record_session_token_cap_exceeded_on_second_turn() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
@@ -2466,6 +2602,129 @@ mod tests {
             assistant_nodes
                 .iter()
                 .any(|node| node.label() == Some("interaction_1_4_1"))
+        );
+    }
+
+    /// Tool that reports a sub-step through `ctx.event_sink` — the same path
+    /// long-running tools such as `delegate_pi` use.
+    struct SinkReportingTool;
+
+    #[async_trait::async_trait]
+    impl graphirm_tools::Tool for SinkReportingTool {
+        fn name(&self) -> &str {
+            "outer_tool"
+        }
+        fn description(&self) -> &str {
+            "Reports a sub-step via ToolContext.event_sink"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+            ctx: &ToolContext,
+        ) -> Result<graphirm_tools::ToolOutput, graphirm_tools::ToolError> {
+            let sink = ctx.event_sink.as_ref().expect("sink");
+            sink.tool_started(&ctx.interaction_id, "sub:1", "sub_tool");
+            sink.tool_finished(&ctx.interaction_id, false);
+            Ok(graphirm_tools::ToolOutput::success("done"))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_agent_loop_passes_event_sink_to_tools() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            pre_completion_verify: false,
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session
+            .add_user_message("Run the outer tool")
+            .await
+            .unwrap();
+
+        let provider = Arc::new(MockProvider::new(vec![
+            tool_call_response(vec![("outer_tool", "call_1", serde_json::json!({}))]),
+            text_response("Finished."),
+        ]));
+
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(SinkReportingTool));
+
+        let mut bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let token = CancellationToken::new();
+
+        run_agent_loop(&session, provider.clone(), &tools, &bus, &token)
+            .await
+            .unwrap();
+
+        // With the caller's bus gone, the only remaining senders would belong
+        // to a leaked sink or its worker. The channel must therefore report
+        // closed (`None`) once the buffered events are drained.
+        drop(bus);
+        let mut events = vec![];
+        while let Ok(e) = rx.try_recv() {
+            events.push(e);
+        }
+        let closed = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
+        assert!(
+            matches!(closed, Ok(None)),
+            "EventBusSink or its worker leaked past the turn: {closed:?}"
+        );
+
+        // The sub-step reported through the sink surfaces as a ToolStart on
+        // the same bus, alongside the loop's own ToolStart for the outer tool.
+        let tool_starts: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ToolStart {
+                    response_node_id,
+                    call_id,
+                    tool_name,
+                } => Some((call_id.as_str(), tool_name.as_str(), response_node_id)),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            tool_starts
+                .iter()
+                .any(|(id, name, _)| (*id, *name) == ("call_1", "outer_tool")),
+            "missing loop ToolStart: {tool_starts:?}"
+        );
+        let sink_node = tool_starts
+            .iter()
+            .find(|(id, name, _)| (*id, *name) == ("sub:1", "sub_tool"))
+            .map(|(_, _, node)| (*node).clone())
+            .unwrap_or_else(|| panic!("missing sink ToolStart: {tool_starts:?}"));
+
+        // One ToolEnd carries the sink's node (the tool's `interaction_id`);
+        // the other is the loop's own, pointing at the recorded `role: "tool"`
+        // Interaction for the outer call.
+        let tool_end_nodes: Vec<&NodeId> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ToolEnd { node_id, .. } => Some(node_id),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            tool_end_nodes.contains(&&sink_node),
+            "missing sink ToolEnd for {sink_node}: {tool_end_nodes:?}"
+        );
+        let loop_tool_end = tool_end_nodes.iter().any(|id| {
+            **id != sink_node
+                && matches!(
+                    graph.get_node(id).map(|n| n.node_type),
+                    Ok(NodeType::Interaction(d)) if d.role == "tool"
+                )
+        });
+        assert!(
+            loop_tool_end,
+            "missing loop ToolEnd on a role=tool node: {tool_end_nodes:?}"
         );
     }
 

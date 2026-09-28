@@ -31,6 +31,7 @@ description, JSON schema for parameters, and an async `execute` method. Tools ar
 | `bash_paths.rs` | tree-sitter-bash AST walker — extracts literal file paths from shell commands |
 | `impact.rs` | `ImpactProvider` trait, `ImpactBrief`, `RiskLevel`, `extract_target_paths` |
 | `error.rs` | `ToolError` enum |
+| `lib.rs` (`ToolEventSink`) | Optional sink on `ToolContext` — `tool_started` / `tool_finished` / `graph_changed` (sync, non-blocking) |
 
 **Destructive tools** (`bash`, `write`, `edit`, and any script plugin with `destructive = true`) block
 on the `HitlGate` when one is attached to the session. Non-destructive tools always run without confirmation.

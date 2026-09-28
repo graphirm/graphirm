@@ -38,8 +38,16 @@ source files inside the workspace.";
 /// Version tag recorded with every verdict so read-outs can group by prompt.
 pub const JUDGE_VERSION: &str = "v1";
 
+/// `hitl_judge.action` for calls the judge scored but nobody could gate: a
+/// delegated executor's (Pi's) own `bash` / `write` / `edit`. Distinct from
+/// `"paused"` / `"recorded"` / `"approved"` so read-outs can separate
+/// "scored, not gated" from the in-process auto-approve outcomes.
+pub const JUDGE_ACTION_OBSERVED: &str = "observed";
+
 /// Upper bound on the serialised arguments sent as state.
-const MAX_ARGS_CHARS: usize = 1500;
+/// Tool-argument JSON cap shared with `pi_delegate::graph` so the judge's
+/// input and the stored `metadata.arguments` never disagree.
+pub(crate) const MAX_ARGS_CHARS: usize = 1500;
 
 /// Jev's answer for one tool call.
 #[derive(Debug, Clone, PartialEq)]
@@ -72,6 +80,11 @@ impl DestructiveJudge {
 
     pub fn threshold(&self) -> f64 {
         self.threshold
+    }
+
+    /// Per-call deadline passed to the Decisions client.
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 
     /// State sent to Jev: the tool name and its arguments (as compact JSON,
@@ -198,26 +211,35 @@ fn resolve_decisions_config(
     })
 }
 
+/// Fake Decisions transports for judge tests, shared with `pi_delegate::tool`.
 #[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
+pub(crate) mod test_support {
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use async_trait::async_trait;
-    use graphirm_llm::DecisionsTransport;
+    use graphirm_llm::{DecisionsClient, DecisionsTransport, LlmError};
+    use serde_json::{Value, json};
 
-    use super::*;
+    use super::{DestructiveJudge, JUDGE_QUESTION_ID};
 
-    struct ReplyTransport {
+    /// Answers every request with the same reply and remembers the last body.
+    pub(crate) struct ReplyTransport {
         reply: Value,
         seen: Mutex<Option<Value>>,
     }
 
     impl ReplyTransport {
-        fn new(reply: Value) -> Arc<Self> {
+        pub(crate) fn new(reply: Value) -> Arc<Self> {
             Arc::new(Self {
                 reply,
                 seen: Mutex::new(None),
             })
+        }
+
+        /// The most recent request body, if any.
+        pub(crate) fn seen(&self) -> Option<Value> {
+            self.seen.lock().expect("lock").clone()
         }
     }
 
@@ -229,7 +251,8 @@ mod tests {
         }
     }
 
-    struct HangingTransport;
+    /// Never answers; drives the client timeout path.
+    pub(crate) struct HangingTransport;
 
     #[async_trait]
     impl DecisionsTransport for HangingTransport {
@@ -239,16 +262,44 @@ mod tests {
         }
     }
 
-    fn noul_reply(p: f64) -> Value {
+    /// Fails every request immediately.
+    pub(crate) struct FailingTransport;
+
+    #[async_trait]
+    impl DecisionsTransport for FailingTransport {
+        async fn post(&self, _body: &Value) -> Result<Value, LlmError> {
+            Err(LlmError::provider("judge down"))
+        }
+    }
+
+    /// A well-formed `noul` reply scoring `p`.
+    pub(crate) fn noul_reply(p: f64) -> Value {
         json!({"answers": {JUDGE_QUESTION_ID: {"type": "noul", "noul": p}}})
     }
 
-    fn judge_with(transport: Arc<dyn DecisionsTransport>, threshold: f64) -> DestructiveJudge {
-        DestructiveJudge::new(
+    /// A judge over `transport` with the given per-call timeout and threshold.
+    pub(crate) fn judge_with(
+        transport: Arc<dyn DecisionsTransport>,
+        timeout: Duration,
+        threshold: f64,
+    ) -> Arc<DestructiveJudge> {
+        Arc::new(DestructiveJudge::new(
             Arc::new(DecisionsClient::with_transport(transport)),
-            Duration::from_millis(200),
+            timeout,
             threshold,
-        )
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use graphirm_llm::DecisionsTransport;
+
+    use super::test_support::{HangingTransport, ReplyTransport, noul_reply};
+    use super::*;
+
+    fn judge_with(transport: Arc<dyn DecisionsTransport>, threshold: f64) -> Arc<DestructiveJudge> {
+        test_support::judge_with(transport, Duration::from_millis(200), threshold)
     }
 
     #[test]
@@ -285,7 +336,7 @@ mod tests {
         assert!(v.over_threshold);
         assert!((v.p_irreversible - 0.93).abs() < 1e-9);
         assert!((v.threshold - 0.8).abs() < 1e-9);
-        let body = transport.seen.lock().unwrap().clone().unwrap();
+        let body = transport.seen().expect("request body");
         assert_eq!(body["state"]["tool"], "bash");
         assert!(body["questions"][JUDGE_QUESTION_ID].is_object());
     }

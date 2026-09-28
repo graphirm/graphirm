@@ -37,7 +37,7 @@ async fn test_full_roundtrip_with_tool_calls() {
     // Turn 1: ask a question
     let messages = vec![LlmMessage::human("What's in this directory?")];
     let turn1 = provider
-        .complete(messages.clone(), &[tool.clone()], &config)
+        .complete(messages.clone(), std::slice::from_ref(&tool), &config)
         .await
         .unwrap();
     assert!(turn1.has_tool_calls());

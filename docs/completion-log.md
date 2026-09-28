@@ -1,5 +1,70 @@
 # Graphirm Development Progress Log
 
+## 2026-09-28: Track A — Pi as delegate executor enabled after A4 live check — COMPLETE ✅
+
+- Live check (temp config on `:3111`, worktree stayed disabled until this flip): happy path
+  session `0e59a770` created `hello.py` in 7.4 s; Pi `write`/`bash` nodes carry
+  `hitl_judge.action=observed`; abort killed pid in 1 s (`failure=cancelled`); missing binary
+  is a tool error with no Task and the turn continues. Findings in the design doc.
+- `[agent.pi] enabled = true` in `config/default.toml`. AGENTS.md / crate AGENTS.md note
+  `delegate_pi`, `pi_delegate/`, `ToolEventSink`.
+- Key files: `config/default.toml`, `AGENTS.md`, `crates/agent/AGENTS.md`,
+  `crates/tools/AGENTS.md`, `docs/plans/2026-09-28-pi-delegate-executor-design.md` (A4 findings)
+
+## 2026-09-28: Phase A3 — hitl_judge observe-only on Pi bash/write/edit — COMPLETE ✅
+
+- `hitl_judge` observe-only on Pi's `bash`/`write`/`edit`; `action = "observed"`; the metadata
+  contract (`version`, `p_irreversible`, `threshold`, `action`, `latency_ms` — exact key set, same
+  as the in-process gate) is tested; `read` is never judged; a hanging (200 ms) or erroring judge
+  is fail-soft (nodes created, no `hitl_judge` key, Task completes); `Judge: N calls ≥ T
+  (observed, not gated)` counts only over-threshold verdicts and is absent without a judge
+- No production change needed (A2.7 already met the contract; a mutation check confirmed the
+  tests catch judging `read`). Judge test transports moved to `hitl_judge::test_support`
+  (`ReplyTransport`, `HangingTransport`, `FailingTransport`, `noul_reply`, `judge_with`)
+- Key files: `crates/agent/src/hitl_judge.rs`, `crates/agent/src/pi_delegate/tool.rs`,
+  `docs/plans/2026-09-28-pi-delegate-executor.md` (A3.1 notes)
+
+## 2026-09-28: Phase A2 — Pi delegate executor: plumbing, parser, process wrapper, graph writes, tool — COMPLETE ✅
+
+- `delegate_pi` ships end to end behind `[agent.pi] enabled = false` (flipped only after the A4
+  live check): `PiConfig` + TOML section (A2.2/A2.3), JSONL parser `pi_delegate/events.rs` with a
+  recorded Pi 0.85.1 golden fixture (A2.1/A2.4), subprocess wrapper `process.rs` (spawn, JSONL
+  drain, process-group kill on cancel/timeout, `@`/oversize task via 0600 temp file) (A2.5),
+  graph writes `graph.rs` mirroring `spawn_subagent` (Task + Pi Agent + `role:"tool"` /
+  `role:"assistant"` nodes, `executor: "pi"`, abandonment `Drop` net) (A2.6)
+- A2.7: `PiDelegateTool` (`pi_delegate/tool.rs`) — `disable_bash` refusal, `--version` probe before
+  any graph write, `PiRun::begin` → `spawn_pi` → event loop → `PiRun::finish` on every path;
+  `ToolStart`/`ToolEnd`/`graph_changed` on the `ToolEventSink`; Pi's `bash`/`write`/`edit` scored
+  by `DestructiveJudge` observe-only (`hitl_judge{action:"observed"}`, `JUDGE_ACTION_OBSERVED`);
+  only a turn-ending assistant message (`stopReason != toolUse`) counts as the result
+- `register_pi_delegate` (async, validates config, probes once, registers regardless),
+  `apply_pi_delegate_system_notice` (idempotent, applied in `Session::new`/`restore` when enabled),
+  `stream_and_record` hides `delegate_pi` with `bash` under `disable_bash`; `serve.rs` loads config
+  before tools (`commands::load_agent_config`), `chat.rs` lifts `[agent.pi]` from the file
+- Tests: 16 fake-`pi` unit tests in `tool.rs`, workflow filter test,
+  `tests/pi_delegate_integration.rs` (MockProvider → `delegate_pi` → graph shape); whole agent
+  crate ≈ 6 s
+- Key files: `crates/agent/src/pi_delegate/{mod,events,process,graph,tool}.rs`,
+  `crates/agent/src/{hitl_judge,workflow,session,config,lib}.rs`, `src/commands/{mod,serve,chat}.rs`,
+  `crates/agent/tests/fixtures/pi/`, `crates/agent/tests/pi_delegate_integration.rs`
+
+## 2026-09-28: bash cancel leak fixed (Task A1.4) — COMPLETE ✅
+
+- `BashTool` held the child in a `tokio::spawn` and cancelled via `task.abort()`, which dropped the
+  future but left the shell (and anything it forked) running
+- Now holds the `Child` directly: `kill_on_drop(true)`, `process_group(0)` (unix), `stdin(null)`,
+  pgid captured at spawn, `select!` over a borrowing `wait_with_output` vs timeout vs
+  `signal.cancelled()`; on either (or a read error) `process::kill_group_and_reap` does
+  `libc::kill(-pgid, SIGKILL)` → `start_kill()` → reap under 5 s. Follow-up replaced the initial
+  `kill(1)` shell-out, which is absent from the `debian:bookworm-slim` runtime image
+- New `crates/tools/src/process.rs` (`kill_process_group`, `kill_group_and_reap`) — shared with
+  `delegate_pi` (A2.5); `libc` added to `graphirm-tools` under `[target.'cfg(unix)'.dependencies]`
+- Output/exit-code/error semantics unchanged; existing tests untouched
+- Tests: `cancel_kills_the_child_process`, `timeout_kills_the_child_process`,
+  `cancel_kills_the_shells_descendants`, `cancel_kills_grandchild_after_shell_exited`,
+  `bash_stdin_is_null`; `process::tests` (group kill + reap, ESRCH, no-op, pgid guard)
+- Key files: `crates/tools/src/bash.rs`, `crates/tools/src/process.rs`, `crates/tools/Cargo.toml`
+
 ## 2026-04-05: Per-session LLM token cap (`max_session_tokens`) — COMPLETE ✅
 
 - `AgentConfig.max_session_tokens`, `Session.llm_tokens_used` + `add_llm_completion_tokens`;

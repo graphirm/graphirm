@@ -1300,12 +1300,14 @@ in the graph. Then `web-app/` is redesigned chat-first / phone-first so the cont
 visible and correctable. Two tracks, A before B. Locked decisions and full brief in the Track A
 design doc.
 
-### Track A — Pi as delegate executor — L · P1
+### ✅ Track A — Pi as delegate executor — L · P1
 
 **Design:** `docs/plans/2026-09-28-pi-delegate-executor-design.md` (A0, approved 2026-09-28). **Plan:** `docs/plans/2026-09-28-pi-delegate-executor.md`.
-Phases: A1 `ToolEventSink` on `ToolContext` · A2 `delegate_pi` tool (subprocess, JSONL parser,
-graph writes, cancel, fake-`pi` offline tests) · A3 `hitl_judge` observe-only on Pi's
-`bash`/`write`/`edit` · A4 live check in whiteboard + TUI, then `enabled = true`.
+Phases: A1 `ToolEventSink` on `ToolContext` · ✅ A2 `delegate_pi` tool (subprocess, JSONL parser,
+graph writes, cancel, fake-`pi` offline tests) — done 2026-09-28 ·
+✅ A3 `hitl_judge` observe-only on Pi's `bash`/`write`/`edit` (metadata contract + fail-soft
+tests) — done 2026-09-28 · ✅ A4 live check + `enabled = true` — done 2026-09-28
+(`docs/plans/2026-09-28-pi-delegate-executor-design.md` A4 findings).
 
 **Key files:** `crates/tools/src/lib.rs`, `crates/agent/src/pi_delegate/`, `crates/agent/src/event_sink.rs`,
 `crates/agent/src/config.rs`, `config/default.toml`, `src/commands/{serve,chat}.rs`.
@@ -1322,7 +1324,32 @@ feedback seats (server), plan card.
 - `delegate` (in-process `SubagentTool`) is only registered by `Coordinator::run_primary` (tests);
   `routes.rs:628` and `chat.rs:37` pass the base registry to `run_agent_loop`, so the web-app and
   TUI cannot delegate today.
-- `bash.rs` cancels via `task.abort()` without `kill_on_drop` — the shell child survives an abort.
+- ✅ `bash.rs` used to cancel via `task.abort()` without `kill_on_drop`, so the shell child (and
+  its descendants) survived an abort. Fixed: own process group + `libc` group kill + reap via
+  `graphirm_tools::process`. Done 2026-09-28 (Task A1.4, `docs/plans/2026-09-28-pi-delegate-executor.md`).
+- `serve` does not handle SIGTERM — a hard `pkill -f 'graphirm serve'` leaves live sessions'
+  children detached (they now run in their own process groups) (S·P2).
+- `delete_session_subgraph` does not cascade through `DelegatesTo → Task → SpawnedBy → Agent`;
+  subagent (in-process and Pi) nodes are orphaned when a director session is deleted (S·P2).
+- ✅ `GET /api/sessions` after restart used to list subagent Agent nodes (in-process and Pi)
+  as sessions. `restore_sessions_from_graph` now skips Agents with an incoming `SpawnedBy`
+  edge. Done 2026-09-28.
+- `graphirm chat` (TUI) never loads `config/default.toml` — it runs on `AgentConfig::default()`
+  plus the CLI model; only `[agent.pi]` is lifted from the file (A2.7). Load the whole file like
+  `serve` does, once the prompt/judge/routing differences are reviewed (S·P2).
+- Re-run the `graphirm-eval` baseline: since A2.4 the HITL gate is always attached to headless
+  sessions (auto-approve path), so `ApprovedBy` edges, impact briefs and sequential destructive
+  calls now occur in eval runs; compare against the pre-A2 numbers before tuning anything (S·P2).
+- `PiRun::finish` write failure marks the Task `Failed{finish_failed}` even when the outcome was
+  `Completed` and the director already got the `Ok` summary; store `intended_status` alongside
+  so read-outs that count `Failed` tasks stay honest (S·P3).
+- `crates/agent` uses `tokio::io::AsyncBufReadExt` but relies on feature unification for
+  `io-util`; declare the feature explicitly in `crates/agent/Cargo.toml` (S·P3).
+- Web-app: `POST /api/sessions/{id}/auto-approve` updates the toggle but not the cached
+  sessions list, so re-selecting the session shows the pre-toggle value until refresh (S·P3).
+- `GET /api/graph/{session_id}/tasks` walks `Agent --Produces--> Task`, so a Pi (and
+  in-process) delegated Task linked only by `DelegatesTo` / `Interaction --Produces--> Task`
+  is missing from the whiteboard task list (S·P2). Surfaced by the A4 live check.
 
 ---
 

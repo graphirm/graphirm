@@ -67,6 +67,8 @@ export interface Session {
   created_at?: string;
   tokens_used?: number;
   max_session_tokens?: number | null;
+  /** Server-side auto-approve state for destructive tools (seeds the UI toggle). */
+  auto_approve?: boolean;
 }
 
 export interface SegmentPart {

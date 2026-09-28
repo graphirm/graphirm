@@ -125,9 +125,10 @@ don'ts"). `AGENTS.md` in the workspace still loads — that is independent of tr
   kill is needed because Pi's own `bash` spawns grandchildren that
   `start_kill()` on the node process would orphan.
 - **Timeout:** `timeout_seconds` (default 900) total wall-clock. Same kill path,
-  `ToolError::Timeout`, Task `Failed` (`failure = "timeout"`), summary of what was
-  recorded so far is still returned in the error text so the parent can reason
-  about partial work. No idle timeout in v1 (total covers a hung network call);
+  `ToolError::Timeout(secs)` (typed variant, no message slot), Task `Failed`
+  (`failure = "timeout"`), summary of what was recorded so far is stored in
+  `Task.metadata.failure_detail` so the parent can reason about partial work via
+  `graph_query`. No idle timeout in v1 (total covers a hung network call);
   revisit if real runs show long silent stretches.
 - **Exit:** wait for `agent_end` **or** EOF, then `child.wait()`. Non-zero exit
   with no `message_end` → tool error carrying the stderr tail. Non-zero exit *with*
@@ -153,7 +154,7 @@ Malformed JSON → skipped, warned, counted. `\r` stripped.
 | `agent_start`, `turn_start`, `turn_end`, `queue_update`, `compaction_*` | Counters only. |
 | `message_start` | Nothing. (Pi's text is not the director's text; do **not** emit `MessageStart/Delta` on the parent's stream — the web-app would render it as the assistant speaking.) |
 | `message_update` (`assistantMessageEvent.type == text_delta`) | Append to an in-memory buffer for the current assistant message. Not forwarded in v1 (see D3 follow-up). |
-| `message_end`, `message.role == assistant` | New `Interaction { role: "assistant", content: flattened text parts }`, `Pi Agent --Produces--> node`, `RespondsTo` chain among Pi's nodes; metadata `executor: "pi"`, `stop_reason`, `usage`. Remember as `last_assistant_text`. |
+| `message_end`, `message.role == assistant` | New `Interaction { role: "assistant", content: flattened text parts }`, `Pi Agent --Produces--> node`, `RespondsTo` chain among Pi's nodes; metadata `executor: "pi"`, `stop_reason`, `usage`. Remember as `last_assistant_text` **only when `stopReason != "toolUse"`** (pre-tool narration is recorded as a node but is not Pi's result). |
 | `message_end`, `role == user` / `toolResult` | Skip (prompt echo; tool results are recorded from `tool_execution_end`). |
 | `tool_execution_start {toolCallId, toolName, args}` | Emit `ToolStart { response_node_id: ctx.interaction_id, call_id: toolCallId, tool_name: toolName }` via the sink. If `toolName ∈ {bash, write, edit}` and a judge exists: spawn `judge(toolName, args)` (non-blocking, keyed by `toolCallId`). |
 | `tool_execution_update` | Ignore. |
@@ -166,7 +167,7 @@ Malformed JSON → skipped, warned, counted. `\r` stripped.
 
 ```json
 {
-  "node_type": { "Interaction": { "role": "tool", "content": "<result text, ≤ max_result_chars>" } },
+  "node_type": { "Interaction": { "role": "tool", "content": "<result text, ≤ 16 000 chars (MAX_TOOL_CONTENT_CHARS)>" } },
   "metadata": {
     "session_id": "<pi agent node id>",
     "parent_session_id": "<ctx.agent_id>",
@@ -180,6 +181,8 @@ Malformed JSON → skipped, warned, counted. `\r` stripped.
 }
 ```
 
+- `content` ≤ 16 000 chars (fixed `MAX_TOOL_CONTENT_CHARS`; `max_result_chars` bounds only
+  `Task.metadata.result`).
 - `tool_name` is Pi's real name (`bash`/`read`/`write`/`edit`/…) so the existing
   UI destructive highlight and the judge's instructions apply unchanged.
   `executor: "pi"` is the discriminator.
@@ -326,11 +329,11 @@ model = "deepseek/deepseek-v4-flash"  # passed as --model (Pi's own model string
 timeout_seconds = 900                 # total wall-clock per delegation; per-call override is capped here
 trust_project = false                 # false → --no-approve (ignore workspace .pi/ resources); true → --approve
 extra_args = ["--no-extensions", "--no-skills", "--no-prompt-templates"]  # appended verbatim; remove to load your Pi customisations
-max_result_chars = 16000              # truncation for tool-result content and Task result
+max_result_chars = 16000              # truncation for Pi's final message (Task.metadata.result); tool-node content is a fixed 16 000
 ```
 
 `[agent] default_auto_approve = true` is added in the same phase (Decision 17): used when
-`POST /api/sessions` omits `auto_approve`; the TUI reads the same value.
+`POST /api/sessions` omits `auto_approve`; server only; the TUI has no HITL gate today.
 
 `PiConfig` in `crates/agent/src/config.rs` with `#[serde(default)]` and a `Default`
 impl matching the values above; `AgentConfig.pi: Option<PiConfig>`. Provider key
@@ -339,12 +342,14 @@ handling: none — graphirm passes its environment through and never reads
 registration (`<binary> --version`, 5 s timeout) to record `pi_version` and warn
 early if missing; a missing binary at registration does **not** fail startup (the
 tool still registers so the failure is visible to the model as a tool error).
+Registration validates the config first: an empty `binary` or `model` logs a warning
+and skips registration; `timeout_seconds = 0` falls back to the default with a warning.
 
 ### D7. Failure modes
 
 | Failure | Detection | Result to parent (never a panic, never a stuck turn) |
 |---|---|---|
-| Pi not installed / not executable | `spawn()` → `ErrorKind::NotFound` / `PermissionDenied` | `ExecutionFailed("pi not found at '<binary>'; set [agent.pi].binary or install @earendil-works/pi-coding-agent")`. No Task node created. |
+| Pi not installed / not executable | `spawn()` → `ErrorKind::NotFound` / `PermissionDenied` | `ExecutionFailed("pi is not available: pi not found at '<binary>'")` (probe runs before `PiRun::begin`). No Task node created. |
 | Provider key missing / auth error | Pi exits non-zero, emits `error` event or stderr text, no `message_end` | `ExecutionFailed("pi exited <code> without a result: <stderr tail ≤ 1 KiB>")`. Task `Failed`, `failure = "exit"`. |
 | Non-zero exit *with* a final message | `exit_code != 0 && last_assistant_text.is_some()` | Success summary with `exit_code` noted; Task `Completed`, `exit_code` in metadata. |
 | Malformed JSONL line | `serde_json` error | Skip, `warn!` (first 3 per run, then count), `malformed_lines` in Task metadata. |
@@ -352,7 +357,7 @@ tool still registers so the failure is visible to the model as a tool error).
 | Line > 4 MiB | reader cap | Drop line, `warn!`, counted. |
 | Trust prompt | cannot happen: non-interactive modes never prompt; `--approve` added anyway | — |
 | `extension_ui_request` | event | `warn!`; continue; Pi's own timeout resolves it. |
-| Pi hangs (no output, no exit) | `timeout_seconds` deadline | Kill group; `ToolError::Timeout`; Task `Failed`, `failure = "timeout"`; partial summary in error text. |
+| Pi hangs (no output, no exit) | `timeout_seconds` deadline | Kill group; `ToolError::Timeout`; Task `Failed`, `failure = "timeout"`; partial summary in `Task.metadata.failure_detail`. |
 | Session aborted | `ctx.signal.cancelled()` | Kill group within 5 s; `ToolError::Cancelled`; Task `Failed`, `failure = "cancelled"`. |
 | Graph write fails mid-run | `GraphError` | `error!`, keep draining Pi (do not kill it for our own bug), count `graph_write_errors`; summary notes it. |
 | Judge unavailable / errors | `build_judge → None` / `judge() → Err` | No `hitl_judge` metadata; one `warn!` per run. |
@@ -469,7 +474,7 @@ means for this design.
 3. ~~Decision 13~~ **Answered 2026-09-28: yes, and auto-approve should be on by
    default.** Today `auto_approve` is a per-request flag on `POST /api/sessions`
    defaulting to `false`. Add `[agent] default_auto_approve = true` (used when the
-   request omits the flag; the TUI reads the same setting). The `hitl_judge` still
+   request omits the flag; server only; the TUI has no HITL gate today). The `hitl_judge` still
    adds a pause for graphirm's own calls scoring ≥ 0.8, so the safety net stays.
    Scheduled in A2 (config phase).
 4. ~~Pre-existing gaps~~ **Answered 2026-09-28: fix now.** Split by size:
@@ -489,5 +494,72 @@ means for this design.
 
 ## A4 findings
 
-_(to be filled after the live check: session id, whiteboard/TUI observations,
-abort timing, judge verdicts, anything that forces a change to the Decisions table)_
+Live check 2026-09-28 on this machine. Temp enable lived only in `/tmp/pi-live-cfg/config/default.toml`
+(`workspaces_root = /tmp/pi-live-ws`); the worktree `config/default.toml` stayed `enabled = false`
+until A4.2. Server: `graphirm serve --db /tmp/pi-live-graph.db --port 3111`,
+`GRAPHIRM_API_KEY=dev`, Pi 0.85.1 on PATH, OpenRouter `deepseek/deepseek-v4-flash`.
+`delegate_pi` registered at boot (`version=0.85.1`, `judge=true`).
+
+### Happy path (auto-approve ON)
+
+- Session `0e59a770-45f4-4b58-8dd6-2ca5df4e7bf9` (workspace `/tmp/pi-live-ws/pi-live`).
+- Prompt at 18:40:42Z; `delegate_pi` judged `p_irreversible=0.07 action=approved`; Pi spawned
+  immediately; exited 0 in **7.4 s**, 2 tool calls (`write`, `bash`).
+- Task `db6fc08f-00cf-47eb-ac75-2221baf88232` Completed; Pi Agent
+  `dd383cbc-368e-444d-9215-9830979f0e76` Completed. File `/tmp/pi-live-ws/pi-live/hello.py`
+  is `print("hi")`; `python3` prints `hi`.
+- Director verified with `ls`, then reported success. Tool result summary:
+  `Pi completed (exit 0, 7.4s) / Tool calls: 2 (0 errors) / Judge: 0 calls ≥ 0.8 (observed, not gated)`.
+- `hitl_judge` on Pi nodes: write `{action:observed, p:0.09, threshold:0.8, version:v1, latency_ms:471}`;
+  bash `{action:observed, p:0.04, latency_ms:292}`. Neither over threshold — matches the summary line.
+- Edges present: `delegates_to`, `spawned_by`, `produces`, `responds_to`, `approved_by`.
+- `GET /api/sessions` listed only the director session (the Pi Agent was **not** listed as a
+  session in this run).
+- Whiteboard at `http://localhost:3111/`: chat shows the Pi summary and verification; Auto-approve
+  ON. Graph canvas is sparse (nodes sit far apart / minimap-only until Fit View). Screenshots:
+  `/tmp/cursor/screenshots/page-2026-09-28T19-06-58-640Z.png`.
+- Tokens: 20 152.
+
+### Confirm card (auto-approve OFF)
+
+- Session `f10efe29-3c32-4f33-b8c3-f2588efefcf2`. Loop paused after the assistant `delegate_pi`
+  call; no INFO “awaiting” line. Gate key is the **LLM `tool_call_id`**, not a graph node id
+  (`workflow.rs` `gate_key = NodeId::from(call_id)` — pre-existing HITL).
+- `POST /api/graph/{sid}/node/call_wGlclDH4jdrge4zF28t1vuKW/action {"action":"approve"}` → 204;
+  Pi then wrote `confirm-card.txt` (`ok`); Task `f3117cc2-…` Completed; session completed in ~24 s.
+
+### Abort
+
+- Session `a39bca89-71f7-4581-87f6-e549dfea147b`. Pi pid `2558355` (own pgid) spawned at ~6 s;
+  abort 204; pid **gone at 1 s**. Log: `pi run cancelled; killing process group`.
+  Task `82218702-…` Failed, `failure = "cancelled"`. No leftover `pi` process.
+- First abort attempt (`7998e150`) fired before spawn (director still routing) — session Cancelled,
+  no Task. `pgrep -f 'pi --mode json'` is unsafe from a shell whose command line contains that
+  string (matches the wrapper). Use the logged pid.
+
+### Negative binary
+
+- Isolated server `:3112`, `binary = "/nonexistent"`. Boot warn:
+  `pi binary not found; delegate_pi registered but will fail at call time`.
+- Session `8ad573c0-…`: tool error `Execution failed: pi is not available: pi not found at '/nonexistent'`;
+  **0 Task nodes**; director fell back to `write` and created `a.txt`; session **completed**.
+  Turn continues as designed.
+
+### TUI
+
+- Not driven interactively (no usable TTY in this run). `src/commands/chat.rs` registers
+  `delegate_pi` the same way as `serve` (lifts `[agent.pi]`). Whiteboard + HTTP cover the
+  graph/chat surface.
+
+### Deviations — do **not** force a Decisions-table change
+
+1. **`GET /api/graph/{id}/tasks` is empty** for a Pi delegation. Handler walks
+   `Agent --Produces--> Task`; Pi’s Task is `Agent --DelegatesTo--> Task` and
+   `Interaction --Produces--> Task`. Whiteboard task list / T-filter therefore miss the
+   delegated Task. Backlog (S·P2).
+2. Confirm card is SSE-driven (gate id = tool call id). REST clients must read
+   `metadata.tool_calls[].id` on the assistant node. Pre-existing, not Pi-specific.
+3. Knowledge extraction warned `Local extraction backend requires the local-extraction feature`
+   (non-fatal, pre-existing).
+
+No locked decision reversed. A4.2 can flip `enabled = true`.

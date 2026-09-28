@@ -74,6 +74,18 @@ pub enum AgentEvent {
     },
 }
 
+/// Fan-out of `AgentEvent`s to every subscriber channel.
+///
+/// Cloning is cheap and shares the same underlying channels: a clone emits to
+/// the same subscribers as the original (subscriptions made on one clone after
+/// the split are *not* visible to the other).
+///
+/// A clone snapshots the subscriber list and holds a `Sender` for each of
+/// those channels, keeping them open: a subscriber's `recv()` will not return
+/// `None` until every clone has been dropped. A clone held by a long-lived
+/// task (e.g. an `EventBusSink` worker) therefore keeps the SSE relay alive
+/// until that task ends.
+#[derive(Clone)]
 pub struct EventBus {
     subscribers: Vec<mpsc::Sender<AgentEvent>>,
 }

@@ -27,8 +27,9 @@ max_iterations = 50
 parallel_tool_calls = true
 max_output_tokens = 4096
 timeout_seconds = 300
-# Public / shared servers: set `disable_bash = true` so the bash tool is refused
-# and the model is told not to use shell (see `AgentConfig::disable_bash`).
+# Public / shared servers: set `disable_bash = true` so bash AND `delegate_pi` are
+# refused and hidden (see `AgentConfig::disable_bash`). Required on app.graphirm.ai
+# before this file is deployed with `[agent.pi] enabled = true`.
 # disable_bash = true
 # When a session is linked to planning (`graph_query` link_session), file writes/edits
 # auto-add relates_to (planning → file) unless disabled:
@@ -193,6 +194,11 @@ read_loop_threshold = 3                # inject advisory after N reads of same f
 # budget_warning_thresholds = [0.7, 0.9]  # warn at these fractions of max_tokens (defaults shown)
 enforce_work_loop = true               # inject Plan→Build→Verify→Fix framework into system prompt
 
+# Sessions created via the HTTP API without an explicit `auto_approve` start with
+# auto-approve ON (destructive tools run without a confirm card). Set to false to
+# require per-call approval by default. The TUI has no HITL gate today.
+default_auto_approve = true
+
 # Two-tier model routing — used when [agent.adaptive_routing] strategy = "rules".
 # Both tiers use the same model for now (cost-neutral); rules still record model_tier
 # on turns for analysis. Use the same top-level provider (openrouter/...) for both.
@@ -254,6 +260,28 @@ preset = "balanced"   # cost_focused | quality_first | speed | balanced
 [agent.hitl_judge]
 enabled = true
 threshold = 0.8
+
+# Pi (`@earendil-works/pi-coding-agent`) as an external delegate executor.
+# When enabled, the director gets a destructive `delegate_pi(task)` tool that runs
+# `pi --mode json` in the session workspace; Pi's tool calls are recorded as graph
+# nodes and scored observe-only by the HITL judge. Pi reads its provider key from
+# its own environment (`~/.pi/agent/auth.json` or provider env vars) — graphirm
+# never reads or logs it. Enabled after the A4 live check (2026-09-28). This file
+# is also the spoke config (`workspaces_root` below): a public deploy must set
+# `disable_bash = true` so `delegate_pi` stays hidden. The spoke image has no `pi`
+# binary today; installing one later would otherwise go live with auto-approve.
+# Removing `--no-extensions` from extra_args loads user-level `~/.pi/agent/extensions`
+# (code that runs inside the Pi process) regardless of `trust_project`, which governs
+# project-level `.pi/` only.
+[agent.pi]
+enabled = true
+binary = "pi"                    # executable name or path; leading `~` expands to $HOME at spawn time, otherwise resolved via PATH when not absolute
+provider = "openrouter"
+model = "deepseek/deepseek-v4-flash"
+timeout_seconds = 900            # hard cap per delegation; also the ceiling for the per-call timeout_seconds tool argument
+trust_project = false            # false → --no-approve (project-level .pi/ only; see extra_args for user-level extensions)
+extra_args = ["--no-extensions", "--no-skills", "--no-prompt-templates"]
+max_result_chars = 16000
 
 # For A/B experiment (uncomment to enable):
 # [agent.adaptive_routing.experiment]

@@ -21,8 +21,9 @@ in-process shape, judges Pi's `bash/write/edit` arguments fail-soft, and returns
 Pi's final message as the tool result. Registered only when `[agent.pi].enabled`.
 
 **Tech stack:** Rust 2024 / MSRV 1.88, `tokio::process`, `serde_json`, existing
-`DestructiveJudge` + `DecisionsClient` (fake transport in tests), `libc::killpg`
-behind `cfg(unix)`, a shell-script fake `pi` for offline tests.
+`DestructiveJudge` + `DecisionsClient` (fake transport in tests),
+`graphirm_tools::process::kill_group_and_reap` (shared group-kill helper from A1.4;
+`libc` lives in `graphirm-tools` only), a shell-script fake `pi` for offline tests.
 
 **Key decisions** (full table in the design doc
 `docs/plans/2026-09-28-pi-delegate-executor-design.md`):
@@ -43,8 +44,9 @@ behind `cfg(unix)`, a shell-script fake `pi` for offline tests.
 **Risks / blockers:**
 - Real Pi JSONL may differ from `docs/json.md` in small ways (e.g. `message.content`
   shape). Task A2.1 records a real run first and the parser is written against it.
-- `libc::killpg` is unix-only; the plan gates it with `cfg(unix)` and falls back
-  to `start_kill()` elsewhere. CI is Linux.
+- The group SIGKILL inside `graphirm_tools::process::kill_group_and_reap` is
+  unix-only; the helper gates it with `cfg(unix)` and falls back to `start_kill()`
+  elsewhere. CI is Linux.
 - `ToolContext` literal sweep (Task A1.1) touches 20 sites; compile errors are the
   guide — do not hand-count.
 
@@ -57,9 +59,11 @@ behind `cfg(unix)`, a shell-script fake `pi` for offline tests.
 **Files:**
 - Modify: `crates/tools/src/lib.rs:44-65` (struct), add trait above it
 - Modify (add `event_sink: None`): `crates/tools/src/lib.rs:206`, `crates/tools/tests/integration.rs:47`,
-  `crates/tools/src/{bash,find,grep,edit,read_many,write,diff,read,ls}.rs` (`make_ctx_with_dir`),
   `crates/tools/src/script.rs:174`, `crates/agent/src/trace_analysis_tool.rs:97`,
-  `crates/agent/src/delegate.rs:229`, `crates/agent/src/workflow.rs:925` (set to `None` here for now; A1.3 wires it)
+  `crates/agent/src/delegate.rs:229`, `crates/agent/src/workflow.rs:925` (set to `None` here for now; A1.3 wires it).
+  Actual literal count is 6 — the per-tool `make_ctx_with_dir` helpers in
+  `crates/tools/src/{bash,find,grep,edit,read_many,write,diff,read,ls}.rs` reuse `make_test_context()`
+  and need no change.
 - Test: `crates/tools/src/lib.rs` (tests module)
 
 **Step 1: Write the failing test** (in `crates/tools/src/lib.rs` tests):
@@ -131,7 +135,7 @@ git add crates/tools crates/agent/src/{workflow,delegate,trace_analysis_tool}.rs
 git commit -m "tools: add ToolEventSink trait and ToolContext.event_sink (None everywhere)"
 ```
 
-- [ ] A1.1 done
+- [x] A1.1 done
 
 ### Task A1.2: `EventBusSink` adapter in `graphirm-agent`
 
@@ -209,6 +213,8 @@ impl ToolEventSink for EventBusSink {
 }
 ```
 
+Implementation note: GraphUpdate emission is serialised and coalesced through a single worker task fed by an unbounded channel, rather than a per-call `tokio::spawn` (preserves snapshot ordering and bounds task count); `graph_changed` is a sync `send`, so no runtime `Handle` is needed.
+
 `emit_graph_update_for` is the body of today's `emit_graph_update` with `session.graph`
 replaced by the `graph` parameter; keep `emit_graph_update(session, …)` as a one-line
 wrapper so the three existing call sites are untouched.
@@ -217,7 +223,7 @@ wrapper so the three existing call sites are untouched.
 
 **Step 5: Commit** — `feat(agent): EventBusSink bridges ToolEventSink to AgentEvent`
 
-- [ ] A1.2 done
+- [x] A1.2 done
 
 ### Task A1.3: Wire the sink into the agent loop
 
@@ -236,7 +242,7 @@ wrapper so the three existing call sites are untouched.
 **Steps:** failing test → wire → `cargo test -p graphirm-agent` → commit
 `feat(agent): pass EventBusSink to tools via ToolContext.event_sink`.
 
-- [ ] A1.3 done
+- [x] A1.3 done
 
 ### Task A1.4: `bash.rs` — kill the child on cancel/timeout (approved fix)
 
@@ -274,10 +280,10 @@ async fn cancel_kills_the_child_process() {
 
 **Step 3: Implement** — replace the `tokio::spawn(child.wait_with_output())` +
 `abort()` pattern with `cmd.kill_on_drop(true)` and a `select!` over
-`child.wait_with_output()` held directly; on timeout/cancel call
-`child.start_kill()` before returning. Because `wait_with_output` consumes the
-child, structure as: spawn → `let mut child`; `let stdout/stderr` readers →
-`tokio::select! { out = read_both => …, _ = sleep => { child.start_kill().ok(); return Err(Timeout) }, _ = cancelled => { child.start_kill().ok(); return Err(Cancelled) } }`.
+`child.wait_with_output()` held directly. As shipped: `process_group(0)` + `stdin(null)`,
+pgid captured via `child.id()` right after `spawn()`, and on timeout/cancel/read error
+`graphirm_tools::process::kill_group_and_reap(&mut child, pgid)` (libc group SIGKILL →
+`start_kill()` fallback → reap) — `start_kill()` alone orphans grandchildren.
 Keep output semantics identical (stdout + "stderr:\n…").
 
 **Step 4:** `cargo test -p graphirm-tools bash` → PASS; whole workspace green.
@@ -286,7 +292,7 @@ Keep output semantics identical (stdout + "stderr:\n…").
 Add a `## 2026-09-xx: bash cancel leak fixed` line to `docs/completion-log.md` and
 tick the item under "Pre-existing gaps" in `docs/backlog.md` in the same commit.
 
-- [ ] A1.4 done
+- [x] A1.4 done
 
 **Phase A1 checkpoint:** `cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo test --workspace` green. Report progress.
 
@@ -326,7 +332,7 @@ parser in A2.2 follows the recording.
 
 **Commit:** `test(agent): record scrubbed Pi --mode json fixture (hello-run)`
 
-- [ ] A2.1 done
+- [x] A2.1 done
 
 ### Task A2.2: `PiEvent` parser (pure)
 
@@ -472,7 +478,7 @@ fn str_field(v: &Value, k: &str) -> String { v.get(k).and_then(Value::as_str).un
 
 **Step 5: Commit** — `feat(agent): PiEvent parser for pi --mode json lines (fixture-driven)`
 
-- [ ] A2.2 done
+- [x] A2.2 done
 
 ### Task A2.3: `PiConfig` + `default_auto_approve` in config
 
@@ -548,7 +554,7 @@ pub struct PiConfig {
 
 **Step 5: Commit** — `feat(agent): [agent.pi] PiConfig and [agent] default_auto_approve`
 
-- [ ] A2.3 done
+- [x] A2.3 done
 
 ### Task A2.4: Server honours `default_auto_approve`
 
@@ -560,14 +566,15 @@ pub struct PiConfig {
 
 **Commit** — `feat(server): sessions default to auto-approve per [agent] default_auto_approve`
 
-- [ ] A2.4 done
+- [x] A2.4 done
 
 ### Task A2.5: Process wrapper — spawn, drain, kill, timeout
 
 **Files:**
 - Create: `crates/agent/src/pi_delegate/process.rs`
 - Create: `crates/agent/tests/fixtures/pi/fake_pi.sh` (executable; `chmod +x`, commit mode 755)
-- Modify: `crates/agent/Cargo.toml` — `[target.'cfg(unix)'.dependencies] libc = "0.2"`
+- Kill path reuses `graphirm_tools::process::{kill_process_group, kill_group_and_reap}` (A1.4) —
+  no new dependency in `graphirm-agent`
 
 **`fake_pi.sh`:**
 
@@ -654,15 +661,23 @@ its own test asserting the exact flag order from design D1 (`--no-approve` when
 `trust_project == false`, `--approve` when true, `extra_args` after `--model`, `--`
 before the task).
 
-Kill path (unix): `cmd.process_group(0)`; on cancel/timeout
-`unsafe { libc::killpg(child.id() as i32, libc::SIGKILL) }` then `child.wait()`
-under a 5 s `timeout`; non-unix: `child.start_kill()`. Env: `cmd.env("PI_SKIP_VERSION_CHECK", "1")`.
+Kill path: `cmd.process_group(0)` (unix) + `stdin(null)`; capture `let pgid = child.id();`
+right after `spawn()`; on cancel/timeout call
+`graphirm_tools::process::kill_group_and_reap(&mut child, pgid).await` (group SIGKILL →
+`start_kill()` fallback → reap under 5 s; no-op group kill on non-unix). Reuse it — do not
+add `libc` to `graphirm-agent`. Env: `cmd.env("PI_SKIP_VERSION_CHECK", "1")`.
 Task arg: if `task.len() > 64 * 1024` write to `temp_dir()/graphirm-pi-<uuid>.md`,
 pass `@<path>`, remove in a `defer`-style guard (a small `TempTask` struct with `Drop`).
+`binary`: expand a leading `~` to `$HOME` before spawning. Validate at registration
+(`register_pi_delegate`): empty `binary`/`model` → warn and skip registration;
+`timeout_seconds == 0` → warn and use the default 900.
 
 **Step 5: Commit** — `feat(agent): Pi subprocess wrapper — spawn, JSONL drain, group kill, timeout (fake pi tests)`
 
-- [ ] A2.5 done
+Implementation note: shipped the receiver+JoinHandle shape as `pub async fn spawn_pi(spec, cancel: CancellationToken) -> Result<PiRunHandle, PiProcessError>` (async only for the `tokio::fs` temp-file write of oversized tasks; spawn errors still surface from the await) with `PiRunHandle { events, done }` + `wait()`; dropping the handle aborts the driver, which group-kills Pi. `fake_pi.sh` takes knobs as `--fake-knob KEY=VALUE` pairs in `extra_args` (argv wins over env) so tests never `set_var` and stay parallel-safe. A dropped event receiver keeps stdout draining (discarding) rather than stopping, so Pi can never deadlock on a full pipe.
+Post-review (quality gate): `wait()` means "stop consuming" — it closes `events` first so an undrained channel can never stall Pi into a bogus `Timeout`. A task that is `> 64 KiB` **or starts with `@`** (Pi parses a leading `@` as a file path) goes through a `0600` temp file as `-- @<path> "Carry out the task described in the attached file."`. After Pi exits its pipes get `POST_EXIT_GRACE` (3 s, bounded by the remaining deadline) to close; a straggler holding them is group-killed and the run returns `Ok` with `pipes_lingered: true` and the exit code preserved. The group-kill guard is armed in `spawn_pi` (not the driver) so a handle dropped before the driver's first poll still kills the whole group. `GRAPHIRM_API_KEY` is removed from Pi's env; `spawn_pi` refuses a missing `cwd`.
+
+- [x] A2.5 done
 
 ### Task A2.6: Graph writes — Task, Pi Agent, tool nodes, result
 
@@ -693,11 +708,13 @@ pass `@<path>`, remove in a `defer`-style guard (a small `TempTask` struct with 
 **Step 3: Implement** a `PiRun` struct holding `graph`, `ctx` clones, `task_id`,
 `pi_agent_id`, `last_node: Option<NodeId>`, counters, `max_result_chars`. All
 graph calls inside `tokio::task::spawn_blocking` (the store is sync; never block
-the runtime — the existing `record_content_node` is the template).
+the runtime — the existing `record_content_node` is the template). Task/Agent
+metadata must NOT store `binary` (it is returned by `GET /api/sessions/{id}/graph`);
+store `provider`, `model`, `exit_code`, `pi_version` only.
 
 **Step 5: Commit** — `feat(agent): Pi delegation graph writes mirror spawn_subagent shape`
 
-- [ ] A2.6 done
+- [x] A2.6 done
 
 ### Task A2.7: `PiDelegateTool` — assemble, register, system-prompt notice
 
@@ -785,6 +802,7 @@ the tool definitions sent to the mock provider exclude both `bash` and `delegate
    - `Err(Timeout)` → `finish(Failed{"timeout"})`, `Err(ToolError::Timeout(secs))` with partial summary in the message.
    - `Err(NotFound|Spawn)` → `finish(Failed{"spawn"})` (Task already exists at this point — acceptable; it records the attempt) → `Err(ExecutionFailed(...))`. *Alternative:* probe `binary` with `--version` before `begin` so no Task is created when Pi is absent — do this; it matches the design's "no Task node created" for not-installed.
 7. Every `graph_changed` after the final `finish` so the Task status flips live.
+8. Never move `ctx.event_sink` into a detached task that outlives `execute`; the sink is closed at turn end and the SSE relay relies on all `EventBus` senders dropping — and `execute` MUST honour `ctx.signal` and enforce a timeout, otherwise the turn cannot end and the sink is never closed.
 
 `register_pi_delegate(registry, config)`: if `config.pi.enabled` → build
 `Option<Arc<DestructiveJudge>>` via `build_judge(config)`, probe `--version`
@@ -802,7 +820,39 @@ tools before claiming done. Prefer a clean git state or a branch.
 - `feat(cli): register delegate_pi in serve and chat when [agent.pi].enabled`
 - Governance: mark A2 in `docs/backlog.md`, entry in `docs/completion-log.md`.
 
-- [ ] A2.7 done
+**Implementation notes (2026-09-28):**
+- `PiDelegateTool` lives in `pi_delegate/tool.rs` (re-exported from `mod.rs`); `execute` is
+  split into `parse_args` → `probe_version` → `PiRun::begin` → `RunDriver` (event loop,
+  judge hand-off, summary, outcome mapping, `close` = `finish` + final `graph_changed`).
+- **Result = turn-ending message only.** Pi emits intermediate assistant messages with
+  `stopReason: "toolUse"` ("Let me check the directory…") before its tool calls. Treating
+  those as `last_assistant_text` made `FAKE_PI_NO_END` + nonzero exit look like a success.
+  Only a message whose `stopReason != "toolUse"` sets the result; every assistant message is
+  still recorded as a node.
+- Judge metadata reuses `hitl::JudgeOutcome::to_metadata()` with `pause: false, action:
+  JUDGE_ACTION_OBSERVED`, so the keys are identical to the in-process gate's; the await at
+  `tool_execution_end` is bounded by the new `DestructiveJudge::timeout()`; failures warn once
+  per run. Judges whose end event never arrives (run killed) are aborted.
+- `ToolError::Timeout(u64)` carries only seconds, so the "partial summary" for a timeout goes
+  to the Task's `failure_detail` (tool calls before the cut + last message) rather than the
+  tool error text.
+- `register_pi_delegate` is `async` (both callers are `async fn run`); no `block_in_place`.
+  A missing binary at registration is a warning, the tool is still registered.
+- `chat.rs` lifts only `[agent.pi]` from `config/default.toml` (the TUI has never loaded the
+  file; loading all of it would change its prompt/judge/routing — backlog item added).
+  `serve.rs` reorders config-before-tools via the new `commands::load_agent_config()`.
+- Summary text: `Pi completed (exit 0, 42.3s)` / `Pi finished with exit N (…s)` /
+  `Pi finished without an exit code (killed by a signal, …s)`, then `Tool calls: N (M errors)`,
+  `Judge: N calls ≥ T (observed, not gated)` (only when a judge is configured), `Result:` +
+  last message (≤ `max_result_chars`), `Warnings:` bullets (errors ≤ 10, retries,
+  pipes_lingered, malformed/oversized lines, unknown event types).
+- Extra tests beyond the plan's list: `context_paths_are_appended_to_the_task`,
+  `missing_or_empty_task_is_invalid_arguments`, `timeout_is_capped_by_config_and_marks_task_failed`,
+  `judge_verdicts_are_observed_not_gated`, `judge_failure_is_fail_soft`,
+  `register_skips_invalid_config`, `register_replaces_zero_timeout_with_default`,
+  `config_applies_notice_only_when_pi_enabled` (A3.1 can build on the judge ones).
+
+- [x] A2.7 done
 
 **Phase A2 checkpoint:** workspace fmt/clippy/test green; `config/default.toml` still `enabled = false`. Report progress.
 
@@ -831,7 +881,24 @@ metadata contract.
 **Commit** — `feat(agent): hitl_judge observe-only on Pi bash/write/edit (action=observed)`.
 Governance: A3 ticked in backlog, completion-log entry.
 
-- [ ] A3.1 done
+**Implementation notes (A3.1):**
+- No production change was needed: A2.7's `tool.rs` already met the contract. The four
+  tests passed on first run; a mutation check (judging every tool, not just
+  `is_destructive_tool`) made `judge_verdict_recorded_on_bash_write_edit_only` and
+  `summary_counts_over_threshold` fail, so the `read` exclusion is genuinely covered.
+- `hello-run.jsonl` has **no** `read` call (bash ×3, write ×1), so the tests build a
+  three-call fixture (`bash`, `write`, `read`) in a tempdir via `judge_fixture` and replay it
+  through `FAKE_PI_FIXTURE`; the `Judge:` count is therefore 2, not 4.
+- Transports live in `hitl_judge::test_support` (`#[cfg(test)] pub(crate)`): `ReplyTransport`
+  (+ `seen()`), `HangingTransport`, `FailingTransport`, `noul_reply`, `judge_with(transport,
+  timeout, threshold)`. A2.7's copies in `tool.rs` were deleted; its two judge tests were renamed
+  to the plan's names (`judge_verdicts_are_observed_not_gated` →
+  `judge_verdict_recorded_on_bash_write_edit_only`, `judge_failure_is_fail_soft` →
+  `judge_error_is_fail_soft`, which now covers both a hanging judge at 200 ms and an erroring one).
+- The "one `warn!` per run" is not asserted (no tracing capture helper in the crate); the tests
+  assert on the graph and summary only.
+
+- [x] A3.1 done
 
 ---
 
@@ -866,7 +933,7 @@ verify the file exists yourself." Observe:
 Record session ids, timings, screenshots (paths), and any deviation in the design
 doc's "A4 findings" section. Revert the temporary `enabled = true`.
 
-- [ ] A4.1 done (findings recorded)
+- [x] A4.1 done (findings recorded)
 
 ### Task A4.2: Enable
 
@@ -879,7 +946,7 @@ Also update `AGENTS.md` Key Conventions with one line: `delegate_pi` — Pi as
 external executor, `[agent.pi]`, observe-only; and `crates/agent/AGENTS.md` Key
 Components table (`pi_delegate/`, `event_sink.rs`); `crates/tools/AGENTS.md` (`ToolEventSink`).
 
-- [ ] A4.2 done
+- [x] A4.2 done
 
 ---
 

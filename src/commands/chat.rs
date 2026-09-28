@@ -19,10 +19,17 @@ pub async fn run(model: String, db_path: &Path) -> Result<(), GraphirmError> {
         db_path.to_str().unwrap_or("graph.db"),
     )?);
 
+    // The TUI runs on `AgentConfig::default()` (it has never read
+    // `config/default.toml`; see backlog). Only `[agent.pi]` is lifted from the
+    // file so `delegate_pi` can be enabled here without changing anything else.
     let config = graphirm_agent::AgentConfig {
         model: model_name.to_string(),
+        pi: super::load_agent_config().pi,
         ..graphirm_agent::AgentConfig::default()
     };
+    let mut registry = super::build_tool_registry();
+    graphirm_agent::register_pi_delegate(&mut registry, &config).await;
+    let tools = Arc::new(registry);
     let session = Arc::new(graphirm_agent::Session::new(graph.clone(), config)?);
 
     let mut event_bus = graphirm_agent::EventBus::new();
@@ -33,8 +40,6 @@ pub async fn run(model: String, db_path: &Path) -> Result<(), GraphirmError> {
     let app = graphirm_tui::app::App::new(event_rx, model_name.to_string());
 
     let (trigger_tx, mut trigger_rx) = mpsc::unbounded_channel::<()>();
-
-    let tools = Arc::new(super::build_tool_registry());
 
     let session_agent = session.clone();
     let event_bus_agent = event_bus.clone();

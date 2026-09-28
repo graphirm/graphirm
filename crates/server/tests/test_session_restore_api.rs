@@ -5,9 +5,9 @@ mod tests {
 
     use chrono::Utc;
 
-    use graphirm_agent::SessionStatus;
+    use graphirm_agent::{AgentConfig, SessionStatus};
     use graphirm_graph::{GraphNode, GraphStore, NodeId, NodeType, nodes::AgentData};
-    use graphirm_server::restore_sessions_from_graph;
+    use graphirm_server::{SessionId, build_restored_session_handles, restore_sessions_from_graph};
 
     #[tokio::test]
     async fn test_restore_sessions_from_graph_empty() {
@@ -153,6 +153,56 @@ mod tests {
             assert!(!metadata.name.is_empty());
             assert!(!metadata.model.is_empty());
             assert!(!metadata.created_at.to_string().is_empty());
+        }
+    }
+
+    fn restored_graph_with_one_agent(id: &str) -> Arc<GraphStore> {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        graph
+            .add_node(GraphNode {
+                id: NodeId(id.to_string()),
+                node_type: NodeType::Agent(AgentData {
+                    name: "restored".to_string(),
+                    model: "claude-sonnet-4".to_string(),
+                    status: "idle".to_string(),
+                    system_prompt: None,
+                }),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                metadata: serde_json::json!({}),
+            })
+            .unwrap();
+        graph
+    }
+
+    /// Restored sessions must honour `[agent] default_auto_approve` exactly like
+    /// freshly created ones, with a gate attached so the toggle endpoint works.
+    #[tokio::test]
+    async fn test_restored_session_handles_honour_default_auto_approve() {
+        for default_auto_approve in [true, false] {
+            let graph = restored_graph_with_one_agent("session-restore-aa");
+            let restored = restore_sessions_from_graph(&graph, None).await.unwrap();
+
+            let config = AgentConfig {
+                default_auto_approve,
+                ..AgentConfig::default()
+            };
+            let handles = build_restored_session_handles(&graph, &config, None, restored);
+            assert_eq!(handles.len(), 1);
+            let handle = &handles[&SessionId::from("session-restore-aa")];
+
+            assert_eq!(
+                handle.hitl.is_auto_approve(),
+                default_auto_approve,
+                "restored gate flag must equal default_auto_approve={default_auto_approve}"
+            );
+            assert!(handle.hitl.is_headless());
+            let gate = handle
+                .session
+                .hitl
+                .as_ref()
+                .expect("restored session must have a HitlGate attached");
+            assert!(Arc::ptr_eq(gate, &handle.hitl));
         }
     }
 }

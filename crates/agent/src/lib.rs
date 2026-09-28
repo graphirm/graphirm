@@ -8,12 +8,14 @@ pub mod delegate;
 pub mod error;
 pub mod escalation;
 pub mod event;
+pub mod event_sink;
 pub mod hitl;
 pub mod hitl_judge;
 pub mod impact;
 pub mod import;
 pub mod knowledge;
 pub mod multi;
+pub mod pi_delegate;
 pub mod router;
 pub mod session;
 pub mod strategy;
@@ -35,6 +37,7 @@ pub use coordinator::Coordinator;
 pub use delegate::SubagentTool;
 pub use error::AgentError;
 pub use event::{AgentEvent, EventBus};
+pub use event_sink::EventBusSink;
 pub use hitl::{HitlDecision, HitlGate, JudgeOutcome, is_destructive_tool};
 pub use hitl_judge::{DestructiveJudge, JudgeVerdict, build_judge};
 pub use import::{
@@ -45,6 +48,7 @@ pub use multi::{
     AgentRegistry, LlmFactory, SubagentHandle, collect_subagent_results, spawn_subagent,
     wait_for_dependencies, wait_for_subagents,
 };
+pub use pi_delegate::{PiDelegateTool, apply_pi_delegate_system_notice, register_pi_delegate};
 pub use router::{ModelRouter, ModelRoutingConfig, ModelTier, RoutingRule, TurnSignals};
 pub use session::{Session, SessionMetadata, SessionStatus};
 pub use strategy::{

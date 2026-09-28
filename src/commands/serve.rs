@@ -14,21 +14,12 @@ pub async fn run(db_path: &Path, host: String, port: u16) -> Result<(), Graphirm
     let graph = Arc::new(graphirm_graph::GraphStore::open(
         db_path.to_str().unwrap_or("graph.db"),
     )?);
-    let tools = Arc::new(super::build_tool_registry());
 
-    let config_path = std::path::Path::new("config/default.toml");
-    let agent_config = if config_path.exists() {
-        graphirm_agent::AgentConfig::from_file(config_path).unwrap_or_else(|e| {
-            tracing::warn!(
-                "Failed to load {}: {e}; using defaults",
-                config_path.display()
-            );
-            graphirm_agent::AgentConfig::default()
-        })
-    } else {
-        tracing::warn!("config/default.toml not found; using AgentConfig defaults");
-        graphirm_agent::AgentConfig::default()
-    };
+    // Config before tools: `delegate_pi` is only registered when `[agent.pi].enabled`.
+    let agent_config = super::load_agent_config();
+    let mut registry = super::build_tool_registry();
+    graphirm_agent::register_pi_delegate(&mut registry, &agent_config).await;
+    let tools = Arc::new(registry);
 
     let model_spec = std::env::var("GRAPHIRM_MODEL")
         .unwrap_or_else(|_| "openrouter/qwen/qwen3-coder:free".to_string());
