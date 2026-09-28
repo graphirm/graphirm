@@ -478,7 +478,7 @@ fn str_field(v: &Value, k: &str) -> String { v.get(k).and_then(Value::as_str).un
 
 **Step 5: Commit** — `feat(agent): PiEvent parser for pi --mode json lines (fixture-driven)`
 
-- [ ] A2.2 done
+- [x] A2.2 done
 
 ### Task A2.3: `PiConfig` + `default_auto_approve` in config
 

@@ -15,6 +15,7 @@ pub mod impact;
 pub mod import;
 pub mod knowledge;
 pub mod multi;
+pub mod pi_delegate;
 pub mod router;
 pub mod session;
 pub mod strategy;
