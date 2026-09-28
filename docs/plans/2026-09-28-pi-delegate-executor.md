@@ -713,7 +713,7 @@ store `provider`, `model`, `exit_code`, `pi_version` only.
 
 **Step 5: Commit** — `feat(agent): Pi delegation graph writes mirror spawn_subagent shape`
 
-- [ ] A2.6 done
+- [x] A2.6 done
 
 ### Task A2.7: `PiDelegateTool` — assemble, register, system-prompt notice
 

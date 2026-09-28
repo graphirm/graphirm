@@ -10,13 +10,19 @@
 //!   into a stream of [`PiEvent`]s, and kills the process group on cancel or
 //!   timeout ([`spawn_pi`], [`probe_version`], [`build_argv`]).
 //!
-//! Graph recording and the `delegate_pi` tool land in later tasks of
+//! - [`graph`] — writes one delegation to the graph in the same shape as an
+//!   in-process subagent: Task, Pi Agent, `role:"tool"` / `role:"assistant"`
+//!   Interaction nodes, and the final Task result ([`PiRun`]).
+//!
+//! The `delegate_pi` tool itself lands in a later task of
 //! `docs/plans/2026-09-28-pi-delegate-executor.md`.
 
 pub mod events;
+pub mod graph;
 pub mod process;
 
 pub use events::{MAX_ERROR_CHARS, PiEvent, flatten_content, flatten_result, parse_line};
+pub use graph::{PI_EXECUTOR, PI_TASK_TITLE, PiRun, PiRunFinish, PiToolCall};
 pub use process::{
     MAX_INLINE_TASK_BYTES, MAX_LINE_BYTES, PiProcessError, PiRunHandle, PiRunOutcome, PiSpawnSpec,
     STDERR_TAIL_BYTES, build_argv, expand_binary, probe_version, spawn_pi,
