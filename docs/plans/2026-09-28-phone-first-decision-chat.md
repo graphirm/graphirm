@@ -140,7 +140,7 @@ Implement by scanning for complete `{"type":...,"content":...}` objects with a s
 
 **Step 5: Commit** `feat(web): parse streaming segment JSON without showing the envelope`
 
-- [ ] B3 done
+- [x] B3 done
 
 ---
 

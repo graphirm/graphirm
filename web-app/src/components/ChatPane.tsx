@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { StepInput, StepRow } from '../chat/steps';
 import { buildSteps } from '../chat/steps';
+import { parseSegmentPrefix } from '../chat/segmentStream';
 import type { Message, PendingApproval } from '../types/graph';
 import { MarkdownBody } from './nodes/MarkdownBody';
 import { BlockView } from './BlockView';
@@ -156,6 +157,35 @@ function MessageBody({ message }: { message: Message }) {
   return <MarkdownBody content={cleanLegacyAssistantContent(message.content)} maxHeight={250} />;
 }
 
+function StreamingBody({ message }: { message: Message }) {
+  const parsed = parseSegmentPrefix(message.content);
+  const segments = parsed.segments.length > 0 ? parsed.segments : (message.segments ?? []);
+  const showPlaceholder =
+    segments.length === 0 && parsed.plainText === null && !parsed.showRecovery;
+
+  return (
+    <>
+      {segments.length > 0 && (
+        <div className={styles.segmentStack}>
+          {segments.map((seg, i) => (
+            <BlockView
+              key={`${message.id}-live-${i}`}
+              kicker={seg.type}
+              content={seg.content}
+              state={seg.state === 'streaming' ? 'streaming' : 'done'}
+            />
+          ))}
+        </div>
+      )}
+      {parsed.plainText !== null && (
+        <MarkdownBody content={cleanLegacyAssistantContent(parsed.plainText)} maxHeight={250} />
+      )}
+      {parsed.showRecovery && <div>Fixing the format…</div>}
+      {showPlaceholder && <MarkdownBody content="…" maxHeight={250} />}
+    </>
+  );
+}
+
 export function ChatPane({
   messages,
   streamingMessage = null,
@@ -228,10 +258,7 @@ export function ChatPane({
             className={[styles.message, styles.assistant ?? ''].filter(Boolean).join(' ')}
           >
             <div className={styles.roleLabel}>assistant</div>
-            <MarkdownBody
-              content={cleanLegacyAssistantContent(streamingMessage.content || '…')}
-              maxHeight={250}
-            />
+            <StreamingBody message={streamingMessage} />
           </div>
         )}
         {pendingApproval && (

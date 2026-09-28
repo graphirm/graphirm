@@ -9,6 +9,7 @@ import type {
   PendingApproval,
   Session,
 } from '../types/graph';
+import { parseSegmentPrefix } from '../chat/segmentStream';
 import { segmentPartsForInteraction } from '../utils/chatSegments';
 
 interface UseSessionReturn {
@@ -125,9 +126,21 @@ export function useSession(): UseSessionReturn {
         const payload = root?.data ?? (ev.data as { text?: string });
         const text = typeof payload?.text === 'string' ? payload.text : '';
         console.log(`[SSE] message_delta  t=${Date.now()}  len=${text.length}  text=${JSON.stringify(text.slice(0, 40))}`);
-        setStreamingMessage(prev =>
-          prev ? { ...prev, content: prev.content + text } : prev,
-        );
+        setStreamingMessage(prev => {
+          if (!prev) return prev;
+          const content = prev.content + text;
+          const parsed = parseSegmentPrefix(content);
+          const segments = parsed.segments.length > 0
+            ? parsed.segments.map(segment => ({
+                type: segment.type,
+                content: segment.content,
+                state: segment.state,
+              }))
+            : parsed.showRecovery
+              ? prev.segments
+              : undefined;
+          return { ...prev, content, segments };
+        });
       } else if (ev.event === 'message_end') {
         console.log(`[SSE] message_end    t=${Date.now()}`);
         setStreamingMessage(null);

@@ -75,6 +75,8 @@ export interface SegmentPart {
   type: ContentType;
   content: string;
   language?: string;
+  /** In-flight stream only. Persisted segments omit this and render as done. */
+  state?: 'done' | 'streaming';
 }
 
 /** One entry from an assistant Interaction's `metadata.tool_calls`. */
