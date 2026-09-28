@@ -57,9 +57,11 @@ behind `cfg(unix)`, a shell-script fake `pi` for offline tests.
 **Files:**
 - Modify: `crates/tools/src/lib.rs:44-65` (struct), add trait above it
 - Modify (add `event_sink: None`): `crates/tools/src/lib.rs:206`, `crates/tools/tests/integration.rs:47`,
-  `crates/tools/src/{bash,find,grep,edit,read_many,write,diff,read,ls}.rs` (`make_ctx_with_dir`),
   `crates/tools/src/script.rs:174`, `crates/agent/src/trace_analysis_tool.rs:97`,
-  `crates/agent/src/delegate.rs:229`, `crates/agent/src/workflow.rs:925` (set to `None` here for now; A1.3 wires it)
+  `crates/agent/src/delegate.rs:229`, `crates/agent/src/workflow.rs:925` (set to `None` here for now; A1.3 wires it).
+  Actual literal count is 6 — the per-tool `make_ctx_with_dir` helpers in
+  `crates/tools/src/{bash,find,grep,edit,read_many,write,diff,read,ls}.rs` reuse `make_test_context()`
+  and need no change.
 - Test: `crates/tools/src/lib.rs` (tests module)
 
 **Step 1: Write the failing test** (in `crates/tools/src/lib.rs` tests):
@@ -131,7 +133,7 @@ git add crates/tools crates/agent/src/{workflow,delegate,trace_analysis_tool}.rs
 git commit -m "tools: add ToolEventSink trait and ToolContext.event_sink (None everywhere)"
 ```
 
-- [ ] A1.1 done
+- [x] A1.1 done
 
 ### Task A1.2: `EventBusSink` adapter in `graphirm-agent`
 

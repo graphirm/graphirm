@@ -44,6 +44,8 @@ pub use retriever::{KnowledgeResult, KnowledgeRetriever};
 /// Lets a long-running tool report progress through the agent loop's event
 /// stream without depending on `graphirm-agent`. All methods are synchronous
 /// and must not block; implementations forward to a channel or `tokio::spawn`.
+/// May be called from a `spawn_blocking` thread; implementations must use
+/// `try_send`/unbounded channels or `Handle::spawn`, never a blocking send.
 pub trait ToolEventSink: Send + Sync {
     /// A sub-step began. `response_node_id` is the assistant Interaction that
     /// owns the current turn; `call_id` is unique within the run.
@@ -51,6 +53,8 @@ pub trait ToolEventSink: Send + Sync {
     /// A sub-step's result node was written.
     fn tool_finished(&self, node_id: &NodeId, is_error: bool);
     /// Nodes were inserted; `anchor` is the node the update is about.
+    /// `touched` lists the nodes created since the previous `graph_changed`
+    /// call; `anchor` may itself appear in `touched` when it is one of them.
     fn graph_changed(&self, anchor: &NodeId, touched: &[NodeId]);
 }
 
@@ -267,7 +271,15 @@ pub(crate) mod tests {
         s.tool_started(&ctx.interaction_id, "c1", "bash");
         s.tool_finished(&ctx.interaction_id, false);
         s.graph_changed(&ctx.interaction_id, &[]);
-        assert_eq!(sink.0.lock().unwrap().len(), 3);
+        let id = &ctx.interaction_id;
+        assert_eq!(
+            *sink.0.lock().unwrap(),
+            vec![
+                "start:c1:bash".to_string(),
+                format!("end:{id}:false"),
+                format!("graph:{id}:0"),
+            ]
+        );
     }
 
     #[test]
