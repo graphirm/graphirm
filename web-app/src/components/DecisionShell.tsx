@@ -64,6 +64,10 @@ export interface DecisionShellProps {
 export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }: DecisionShellProps) {
   const [tab, setTab] = useState<ChatTab>('chat');
   const [graphMounted, setGraphMounted] = useState(false);
+  /** Enabled flags keyed by session id, then step id. Lives above the tab switch. */
+  const [planEnabledBySession, setPlanEnabledBySession] = useState<
+    Record<string, Record<string, boolean>>
+  >({});
   const fitViewCb = useRef<(() => void) | null>(null);
   const cycleLayoutCb = useRef<(() => void) | null>(null);
   const graphRef = useRef(graph);
@@ -78,6 +82,18 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
     () => (layoutMode === 'chat' ? planStepsFromTasks(tasksFromGraph(graph.graphData)) : []),
     [layoutMode, graph.graphData],
   );
+  const planSessionId = session.currentSession?.id;
+  const planEnabledById = planSessionId ? (planEnabledBySession[planSessionId] ?? {}) : {};
+  const togglePlanStep = useCallback((stepId: string) => {
+    if (!planSessionId) return;
+    setPlanEnabledBySession((prev) => {
+      const current = prev[planSessionId] ?? {};
+      return {
+        ...prev,
+        [planSessionId]: { ...current, [stepId]: current[stepId] === false },
+      };
+    });
+  }, [planSessionId]);
 
   const handleFitViewRef = useCallback((cb: () => void) => {
     fitViewCb.current = cb;
@@ -120,7 +136,13 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
   }, []);
 
   const chatPane = (
-    <ChatPane {...chat} planSteps={planSteps} onPlanResume={session.onResume} />
+    <ChatPane
+      {...chat}
+      planSteps={planSteps}
+      planEnabledById={planEnabledById}
+      onTogglePlanStep={togglePlanStep}
+      onPlanResume={session.onResume}
+    />
   );
   const graphCanvas = (
     <GraphCanvas

@@ -1,15 +1,27 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { runSteerText, type PlanStep } from '../chat/planCard';
 import styles from '../styles/chat.module.css';
 
 export interface PlanCardProps {
   steps: PlanStep[];
+  /** Missing ids stay enabled. Owned by DecisionShell so tab changes do not reset it. */
+  enabledById: Record<string, boolean>;
+  onToggle: (id: string) => void;
   onResume: () => void | Promise<void>;
   onSend: (content: string) => void;
+  isThinking: boolean;
 }
 
-export function PlanCard({ steps, onResume, onSend }: PlanCardProps) {
-  const [enabledById, setEnabledById] = useState<Record<string, boolean>>({});
+export function PlanCard({
+  steps,
+  enabledById,
+  onToggle,
+  onResume,
+  onSend,
+  isThinking,
+}: PlanCardProps) {
+  const running = useRef(false);
+  const [locked, setLocked] = useState(false);
 
   if (steps.length === 0) return null;
 
@@ -18,17 +30,19 @@ export function PlanCard({ steps, onResume, onSend }: PlanCardProps) {
     enabled: enabledById[step.id] !== false,
   }));
   const enabledCount = withEnabled.filter((step) => step.enabled).length;
-
-  const toggle = (id: string) => {
-    setEnabledById((prev) => ({ ...prev, [id]: prev[id] === false }));
-  };
+  const runDisabled = enabledCount === 0 || locked || isThinking;
 
   const run = async () => {
-    if (enabledCount === 0) return;
+    if (running.current || isThinking || enabledCount === 0) return;
+    running.current = true;
+    setLocked(true);
     try {
       await onResume();
     } catch {
       return;
+    } finally {
+      running.current = false;
+      setLocked(false);
     }
     onSend(runSteerText(withEnabled));
   };
@@ -42,7 +56,7 @@ export function PlanCard({ steps, onResume, onSend }: PlanCardProps) {
               <input
                 type="checkbox"
                 checked={step.enabled}
-                onChange={() => toggle(step.id)}
+                onChange={() => onToggle(step.id)}
               />
               <span className={styles.planTitle}>{step.title}</span>
             </label>
@@ -59,7 +73,7 @@ export function PlanCard({ steps, onResume, onSend }: PlanCardProps) {
       <button
         type="button"
         className={styles.planRun}
-        disabled={enabledCount === 0}
+        disabled={runDisabled}
         onClick={() => {
           void run();
         }}

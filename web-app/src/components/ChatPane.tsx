@@ -39,6 +39,9 @@ interface ChatPaneProps {
   onToggleCollapse?: () => void;
   /** Open plan steps. The card renders above the composer when this list is non-empty. */
   planSteps?: PlanStep[];
+  /** Per-step enabled flags for the current session. A missing id is enabled. */
+  planEnabledById?: Record<string, boolean>;
+  onTogglePlanStep?: (stepId: string) => void;
   /** Session resume. The plan card awaits this, then sends steer text via `onSend`. */
   onPlanResume?: () => void | Promise<void>;
   /** Scoped steer targeting an outline row (server adds steer_context to prompt). */
@@ -219,6 +222,8 @@ export function ChatPane({
   onModify,
   onClearSteer,
   planSteps = [],
+  planEnabledById = {},
+  onTogglePlanStep,
   onPlanResume,
   chatCollapsed,
   onToggleCollapse,
@@ -332,8 +337,15 @@ export function ChatPane({
         </div>
       )}
 
-      {planSteps.length > 0 && onPlanResume && (
-        <PlanCard steps={planSteps} onResume={onPlanResume} onSend={onSend} />
+      {planSteps.length > 0 && onPlanResume && onTogglePlanStep && (
+        <PlanCard
+          steps={planSteps}
+          enabledById={planEnabledById}
+          onToggle={onTogglePlanStep}
+          onResume={onPlanResume}
+          onSend={onSend}
+          isThinking={isThinking}
+        />
       )}
 
       <div className={styles.inputBar}>
