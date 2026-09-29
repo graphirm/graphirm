@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { runSteerText, type PlanStep } from '../chat/planCard';
 import styles from '../styles/chat.module.css';
 
@@ -7,6 +7,11 @@ export interface PlanCardProps {
   /** Missing ids stay enabled. Owned by DecisionShell so tab changes do not reset it. */
   enabledById: Record<string, boolean>;
   onToggle: (id: string) => void;
+  sessionId: string | null;
+  /** True when this session's run is already in flight in DecisionShell. */
+  runLocked: boolean;
+  onLockRun: (sessionId: string) => void;
+  onUnlockRun: (sessionId: string) => void;
   onResume: () => void | Promise<void>;
   onSend: (content: string) => void;
   isThinking: boolean;
@@ -16,12 +21,16 @@ export function PlanCard({
   steps,
   enabledById,
   onToggle,
+  sessionId,
+  runLocked,
+  onLockRun,
+  onUnlockRun,
   onResume,
   onSend,
   isThinking,
 }: PlanCardProps) {
-  const running = useRef(false);
-  const [locked, setLocked] = useState(false);
+  /** Blocks a second click on this card before DecisionShell re-renders the lock. */
+  const runningSession = useRef<string | null>(null);
 
   if (steps.length === 0) return null;
 
@@ -30,21 +39,22 @@ export function PlanCard({
     enabled: enabledById[step.id] !== false,
   }));
   const enabledCount = withEnabled.filter((step) => step.enabled).length;
-  const runDisabled = enabledCount === 0 || locked || isThinking;
+  const runDisabled = enabledCount === 0 || runLocked || isThinking;
 
   const run = async () => {
-    if (running.current || isThinking || enabledCount === 0) return;
-    running.current = true;
-    setLocked(true);
+    const id = sessionId;
+    if (!id || runningSession.current === id || runLocked || isThinking || enabledCount === 0) return;
+    runningSession.current = id;
+    onLockRun(id);
     try {
       await onResume();
+      onSend(runSteerText(withEnabled));
     } catch {
       return;
     } finally {
-      running.current = false;
-      setLocked(false);
+      if (runningSession.current === id) runningSession.current = null;
+      onUnlockRun(id);
     }
-    onSend(runSteerText(withEnabled));
   };
 
   return (

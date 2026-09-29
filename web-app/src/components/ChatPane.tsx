@@ -42,6 +42,10 @@ interface ChatPaneProps {
   /** Per-step enabled flags for the current session. A missing id is enabled. */
   planEnabledById?: Record<string, boolean>;
   onTogglePlanStep?: (stepId: string) => void;
+  /** True while this session's plan run is in flight. Owned by DecisionShell. */
+  planRunLocked?: boolean;
+  onPlanRunLock?: (sessionId: string) => void;
+  onPlanRunUnlock?: (sessionId: string) => void;
   /** Session resume. The plan card awaits this, then sends steer text via `onSend`. */
   onPlanResume?: () => void | Promise<void>;
   /** Scoped steer targeting an outline row (server adds steer_context to prompt). */
@@ -224,6 +228,9 @@ export function ChatPane({
   planSteps = [],
   planEnabledById = {},
   onTogglePlanStep,
+  planRunLocked = false,
+  onPlanRunLock,
+  onPlanRunUnlock,
   onPlanResume,
   chatCollapsed,
   onToggleCollapse,
@@ -337,11 +344,15 @@ export function ChatPane({
         </div>
       )}
 
-      {planSteps.length > 0 && onPlanResume && onTogglePlanStep && (
+      {planSteps.length > 0 && onPlanResume && onTogglePlanStep && onPlanRunLock && onPlanRunUnlock && (
         <PlanCard
           steps={planSteps}
           enabledById={planEnabledById}
           onToggle={onTogglePlanStep}
+          sessionId={sessionId}
+          runLocked={planRunLocked}
+          onLockRun={onPlanRunLock}
+          onUnlockRun={onPlanRunUnlock}
           onResume={onPlanResume}
           onSend={onSend}
           isThinking={isThinking}

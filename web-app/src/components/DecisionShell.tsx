@@ -68,6 +68,8 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
   const [planEnabledBySession, setPlanEnabledBySession] = useState<
     Record<string, Record<string, boolean>>
   >({});
+  /** In-flight plan runs keyed by session id. Survives leaving the Chat tab. */
+  const [planRunBySession, setPlanRunBySession] = useState<Record<string, boolean>>({});
   const fitViewCb = useRef<(() => void) | null>(null);
   const cycleLayoutCb = useRef<(() => void) | null>(null);
   const graphRef = useRef(graph);
@@ -94,6 +96,13 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
       };
     });
   }, [planSessionId]);
+  const planRunLocked = planSessionId ? planRunBySession[planSessionId] === true : false;
+  const lockPlanRun = useCallback((sessionId: string) => {
+    setPlanRunBySession((prev) => ({ ...prev, [sessionId]: true }));
+  }, []);
+  const unlockPlanRun = useCallback((sessionId: string) => {
+    setPlanRunBySession((prev) => ({ ...prev, [sessionId]: false }));
+  }, []);
 
   const handleFitViewRef = useCallback((cb: () => void) => {
     fitViewCb.current = cb;
@@ -141,6 +150,9 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
       planSteps={planSteps}
       planEnabledById={planEnabledById}
       onTogglePlanStep={togglePlanStep}
+      planRunLocked={planRunLocked}
+      onPlanRunLock={lockPlanRun}
+      onPlanRunUnlock={unlockPlanRun}
       onPlanResume={session.onResume}
     />
   );
