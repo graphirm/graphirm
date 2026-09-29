@@ -599,17 +599,18 @@ pub async fn stream_and_record(
 
     let node_id = session.record_interaction(interaction_node).await?;
 
-    // Observe-only. A judge failure must not replace the token-cap error below.
-    crate::reply_judge::observe_assistant_reply(
-        session.graph.clone(),
-        &session.id.0,
-        &node_id,
-        &session.agent_config,
-        &response.text_content(),
-    )
-    .await;
-
     if over_cap {
+        // Segments never rewrite this node. Judge the raw text that stays stored.
+        // A judge failure must not replace the token-cap error below.
+        crate::reply_judge::observe_assistant_reply(
+            session.graph.clone(),
+            &session.id.0,
+            &node_id,
+            &session.agent_config,
+            &response.text_content(),
+        )
+        .await;
+
         let cap = cap.expect("over_cap implies cap is Some");
         info!(
             node_id = %node_id,
@@ -628,6 +629,9 @@ pub async fn stream_and_record(
     }
 
     let raw_text = response.text_content();
+    // Set when the segment stamp replaces the Interaction body. Otherwise Jev
+    // sees `raw_text`, which is what remains stored.
+    let mut stamped_reply: Option<String> = None;
 
     // Structured response segmentation — opt-in, non-fatal.
     // Only runs on final text turns (no tool calls).
@@ -784,6 +788,7 @@ pub async fn stream_and_record(
                         // Replace raw JSON envelope with readable concatenated segment text.
                         let clean_text =
                             crate::knowledge::segments::segment_display_text(&segments);
+                        let stamped_text = clean_text.clone();
                         let graph_clone = session.graph.clone();
                         let stamp_id = node_id.clone();
                         match tokio::task::spawn_blocking(move || {
@@ -796,7 +801,9 @@ pub async fn stream_and_record(
                         })
                         .await
                         {
-                            Ok(Ok(())) => {}
+                            Ok(Ok(())) => {
+                                stamped_reply = Some(stamped_text);
+                            }
                             Ok(Err(e)) => {
                                 tracing::warn!(error = %e, "Failed to stamp segmented metadata on interaction node (non-fatal)");
                             }
@@ -888,6 +895,17 @@ pub async fn stream_and_record(
             }
         }
     }
+
+    // Once, after the segment stamp (or its skip). Judge the body that remains.
+    let judged = stamped_reply.as_deref().unwrap_or(raw_text.as_str());
+    crate::reply_judge::observe_assistant_reply(
+        session.graph.clone(),
+        &session.id.0,
+        &node_id,
+        &session.agent_config,
+        judged,
+    )
+    .await;
 
     info!(node_id = %node_id, "Recorded assistant response");
 
