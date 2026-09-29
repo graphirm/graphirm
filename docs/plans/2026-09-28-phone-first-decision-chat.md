@@ -328,7 +328,7 @@ export function buildReviewItems(input: {
 
 **Step 4: Commit** `feat: record routing feedback without changing the router`
 
-- [ ] B8b done
+- [x] B8b done
 
 ---
 

@@ -188,6 +188,12 @@ export const api = {
       body: JSON.stringify({ original_content: originalContent }),
     }),
 
+  postRoutingFeedback: (interactionId: string, verdict: 'wrong' | 'keep'): Promise<void> =>
+    apiFetch(`/api/interactions/${interactionId}/routing-feedback`, {
+      method: 'POST',
+      body: JSON.stringify({ verdict }),
+    }),
+
   steerFromNode: (id: string, content: string, contextRoot: string): Promise<void> =>
     api.sendPrompt(id, content, { context_root: contextRoot }),
 

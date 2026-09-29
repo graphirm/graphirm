@@ -33,8 +33,9 @@ use crate::types::{
     CreateOutlineItemRequest, CreateSessionRequest, EditInteractionRequest, ExportQuery,
     GraphResponse, HealthResponse, NodeAction, NodeActionRequest, OutlineQuery,
     PatchGraphNodeRequest, PatchKnowledgeRequest, PatchTaskStatusRequest, PinnedKnowledgeQuery,
-    PromptRequest, RateTurnRequest, RenameSessionRequest, SessionId, SessionResponse,
-    SessionStatus, SseEvent, SseEventType, StrategyReport, SubgraphQuery, TraceAnalysisQuery,
+    PromptRequest, RateTurnRequest, RenameSessionRequest, RoutingFeedbackRequest, SessionId,
+    SessionResponse, SessionStatus, SseEvent, SseEventType, StrategyReport, SubgraphQuery,
+    TraceAnalysisQuery,
 };
 
 /// When [`AppState::memory_retriever`] is configured, embed the Knowledge node so semantic
@@ -181,6 +182,10 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/knowledge/pinned", get(list_pinned_knowledge))
         .route("/api/interactions/{id}/edit", patch(patch_interaction_edit))
+        .route(
+            "/api/interactions/{id}/routing-feedback",
+            post(post_routing_feedback),
+        )
         .route(
             "/api/sessions/{id}/turns/{turn_id}/rating",
             patch(rate_turn),
@@ -1369,6 +1374,54 @@ async fn patch_interaction_edit(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `POST /api/interactions/{id}/routing-feedback` — record `wrong` or `keep` on an Interaction.
+///
+/// Writes `metadata.routing_feedback` only. Does not call the model router.
+async fn post_routing_feedback(
+    State(state): State<AppState>,
+    Path(node_id): Path<String>,
+    Json(body): Json<RoutingFeedbackRequest>,
+) -> Result<StatusCode, ServerError> {
+    let verdict = match body.verdict.as_str() {
+        "wrong" | "keep" => body.verdict,
+        _ => {
+            return Err(ServerError::BadRequest(
+                "verdict must be \"wrong\" or \"keep\"".to_string(),
+            ));
+        }
+    };
+    let id = NodeId::from(node_id.as_str());
+    let graph = state.graph.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut node = graph.get_node(&id).map_err(|e| match e {
+            graphirm_graph::GraphError::NodeNotFound(msg) => ServerError::NotFound(msg),
+            other => ServerError::Graph(other),
+        })?;
+        if !matches!(node.node_type, NodeType::Interaction(_)) {
+            return Err(ServerError::BadRequest(format!(
+                "node {} is not an Interaction node",
+                id.0
+            )));
+        }
+        match node.metadata.as_object_mut() {
+            Some(map) => {
+                map.insert(
+                    "routing_feedback".to_string(),
+                    serde_json::Value::String(verdict),
+                );
+            }
+            None => {
+                node.metadata = serde_json::json!({ "routing_feedback": verdict });
+            }
+        }
+        graph.update_node(&id, node).map_err(ServerError::Graph)?;
+        Ok::<_, ServerError>(())
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))??;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// `POST /api/graph/{session_id}/annotate` — create a user annotation Knowledge node.
 ///
 /// Stores the node in the graph associated with the session's agent node via a `RelatesTo` edge.
@@ -1631,8 +1684,8 @@ fn build_routing_report(graph: &graphirm_graph::GraphStore) -> Vec<StrategyRepor
         Err(_) => return vec![],
     };
 
-    /// (turn_count, input_tokens, output_tokens, latency_ms, tool_errors, ratings)
-    type Bucket = (u32, u64, u64, u64, u32, Vec<f64>);
+    /// (turn_count, input_tokens, output_tokens, latency_ms, tool_errors, ratings, wrong, keep)
+    type Bucket = (u32, u64, u64, u64, u32, Vec<f64>, u32, u32);
     let mut groups: HashMap<String, Bucket> = HashMap::new();
 
     for node in &nodes {
@@ -1659,8 +1712,11 @@ fn build_routing_report(graph: &graphirm_graph::GraphStore) -> Vec<StrategyRepor
             .map(|e| e > 0)
             .unwrap_or(false);
         let rating = meta.get("user_rating").and_then(|v| v.as_f64());
+        let feedback = meta.get("routing_feedback").and_then(|v| v.as_str());
 
-        let entry = groups.entry(strategy).or_insert((0, 0, 0, 0, 0, vec![]));
+        let entry = groups
+            .entry(strategy)
+            .or_insert((0, 0, 0, 0, 0, vec![], 0, 0));
         entry.0 += 1;
         entry.1 += input;
         entry.2 += output;
@@ -1671,12 +1727,20 @@ fn build_routing_report(graph: &graphirm_graph::GraphStore) -> Vec<StrategyRepor
         if let Some(r) = rating {
             entry.5.push(r);
         }
+        match feedback {
+            Some("wrong") => entry.6 += 1,
+            Some("keep") => entry.7 += 1,
+            _ => {}
+        }
     }
 
     let mut reports: Vec<StrategyReport> = groups
         .into_iter()
         .map(
-            |(strategy_name, (count, input, output, latency, errors, ratings))| {
+            |(
+                strategy_name,
+                (count, input, output, latency, errors, ratings, wrong_count, keep_count),
+            )| {
                 let n = count as f64;
                 let avg_user_rating = if ratings.is_empty() {
                     None
@@ -1691,6 +1755,8 @@ fn build_routing_report(graph: &graphirm_graph::GraphStore) -> Vec<StrategyRepor
                     avg_latency_ms: latency as f64 / n,
                     error_rate: errors as f64 / n,
                     avg_user_rating,
+                    wrong_count,
+                    keep_count,
                 }
             },
         )
@@ -3378,6 +3444,165 @@ mod tests {
         let report: graphirm_agent::trace_analysis::TraceReport =
             serde_json::from_slice(&body).unwrap();
         assert_eq!(report.sessions_analyzed, 0);
+    }
+
+    fn interaction_node(metadata: serde_json::Value) -> GraphNode {
+        let mut node = GraphNode::new(NodeType::Interaction(graphirm_graph::InteractionData {
+            role: "assistant".into(),
+            content: "routed reply".into(),
+            token_count: None,
+        }));
+        node.metadata = metadata;
+        node
+    }
+
+    #[tokio::test]
+    async fn routing_feedback_records_wrong_on_interaction() {
+        let state = test_app_state();
+        let graph = state.graph.clone();
+        let id = graph
+            .add_node(interaction_node(serde_json::json!({
+                "routing_strategy": "jev_router"
+            })))
+            .unwrap();
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/interactions/{}/routing-feedback", id.0))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"verdict":"wrong"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let stored = graph.get_node(&id).unwrap();
+        assert_eq!(
+            stored
+                .metadata
+                .get("routing_feedback")
+                .and_then(|v| v.as_str()),
+            Some("wrong")
+        );
+    }
+
+    #[tokio::test]
+    async fn routing_feedback_unknown_verdict_returns_400() {
+        let state = test_app_state();
+        let graph = state.graph.clone();
+        let id = graph
+            .add_node(interaction_node(serde_json::json!({})))
+            .unwrap();
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/interactions/{}/routing-feedback", id.0))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"verdict":"maybe"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn routing_feedback_missing_node_returns_404() {
+        let app = create_router(test_app_state());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/interactions/missing-node/routing-feedback")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"verdict":"keep"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn routing_feedback_non_interaction_returns_400() {
+        let state = test_app_state();
+        let graph = state.graph.clone();
+        let id = graph
+            .add_node(GraphNode::new(NodeType::Knowledge(
+                graphirm_graph::KnowledgeData {
+                    entity: "note".into(),
+                    entity_type: "test".into(),
+                    summary: "not an interaction".into(),
+                    confidence: 1.0,
+                },
+            )))
+            .unwrap();
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/interactions/{}/routing-feedback", id.0))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"verdict":"keep"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn routing_feedback_counts_in_strategy_report() {
+        let graph = graphirm_graph::GraphStore::open_memory().unwrap();
+        graph
+            .add_node(interaction_node(serde_json::json!({
+                "routing_strategy": "jev_router",
+                "routing_feedback": "wrong"
+            })))
+            .unwrap();
+        graph
+            .add_node(interaction_node(serde_json::json!({
+                "routing_strategy": "jev_router",
+                "routing_feedback": "wrong"
+            })))
+            .unwrap();
+        graph
+            .add_node(interaction_node(serde_json::json!({
+                "routing_strategy": "jev_router",
+                "routing_feedback": "keep"
+            })))
+            .unwrap();
+        graph
+            .add_node(interaction_node(serde_json::json!({
+                "routing_strategy": "jev_router"
+            })))
+            .unwrap();
+        graph
+            .add_node(interaction_node(serde_json::json!({
+                "routing_feedback": "wrong"
+            })))
+            .unwrap();
+
+        let reports = build_routing_report(&graph);
+        assert_eq!(reports.len(), 1);
+        let report = &reports[0];
+        assert_eq!(report.strategy_name, "jev_router");
+        assert_eq!(report.turn_count, 4);
+        assert_eq!(report.wrong_count, 2);
+        assert_eq!(report.keep_count, 1);
     }
 }
 

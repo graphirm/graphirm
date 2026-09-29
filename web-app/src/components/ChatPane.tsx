@@ -390,7 +390,11 @@ export function ChatPane({
         </div>
       </div>
       {jevSheetMessage && (
-        <JevSheet reason={jevSheetMessage.routingReason} onClose={closeJevSheet} />
+        <JevSheet
+          interactionId={jevSheetMessage.id}
+          reason={jevSheetMessage.routingReason}
+          onClose={closeJevSheet}
+        />
       )}
     </div>
   );

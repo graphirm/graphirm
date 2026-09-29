@@ -438,6 +438,15 @@ pub struct RateTurnRequest {
     pub rating: u8,
 }
 
+/// `POST /api/interactions/{id}/routing-feedback` request body.
+///
+/// `verdict` is a free string so an unknown value is rejected by the handler
+/// as 400. Serde enum rejection would be 422.
+#[derive(Debug, Deserialize)]
+pub struct RoutingFeedbackRequest {
+    pub verdict: String,
+}
+
 /// Per-strategy aggregated statistics returned by `GET /api/routing/report`.
 #[derive(Debug, Serialize)]
 pub struct StrategyReport {
@@ -448,6 +457,8 @@ pub struct StrategyReport {
     pub avg_latency_ms: f64,
     pub error_rate: f64,
     pub avg_user_rating: Option<f64>,
+    pub wrong_count: u32,
+    pub keep_count: u32,
 }
 
 /// Query parameters for `GET /api/trace-analysis`.
@@ -745,6 +756,8 @@ mod tests {
             avg_latency_ms: 1200.0,
             error_rate: 0.1,
             avg_user_rating: Some(4.2),
+            wrong_count: 1,
+            keep_count: 2,
         };
         let json = serde_json::to_string(&r).unwrap();
         assert!(json.contains("experiment:prompt_router"));
