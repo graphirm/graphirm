@@ -99,6 +99,9 @@ export function useSession(): UseSessionReturn {
         refreshTimerRef.current = setTimeout(() => {
           refreshTimerRef.current = null;
           refresh(sessionId).catch(console.error);
+          api.listSessions().then(setSessions).catch((err) => {
+            console.error('Failed to refresh session list:', err);
+          });
         }, 500);
       } else if (ev.event === 'graph_update') {
         const root = ev.data as { data?: { nodes?: GraphNode[]; edges?: GraphEdge[] } };
@@ -226,6 +229,8 @@ export function useSession(): UseSessionReturn {
               }
             : undefined;
         await api.sendPrompt(session.id, content, opts);
+        const runningId = session.id;
+        setSessions(prev => prev.map(s => s.id === runningId ? { ...s, status: 'running' } : s));
         api.getMessages(session.id).then(setMessages).catch(console.error);
       } catch (err) {
         console.error('Failed to send prompt:', err);
