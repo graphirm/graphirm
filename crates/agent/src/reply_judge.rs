@@ -668,18 +668,22 @@ mod tests {
     fn build_reply_judge_without_key_is_none_and_timeout_follows_hitl() {
         assert!(build_reply_judge_with(&AgentConfig::default(), |_| None).is_none());
 
-        let mut with_hitl = AgentConfig::default();
-        with_hitl.hitl_judge = Some(HitlJudgeConfig {
-            enabled: false,
-            timeout_ms: 900,
+        let with_hitl = AgentConfig {
+            hitl_judge: Some(HitlJudgeConfig {
+                enabled: false,
+                timeout_ms: 900,
+                ..Default::default()
+            }),
+            adaptive_routing: Some(local_routing()),
             ..Default::default()
-        });
-        with_hitl.adaptive_routing = Some(local_routing());
+        };
         let judge = build_reply_judge_with(&with_hitl, |_| None).expect("local endpoint");
         assert_eq!(judge.timeout(), Duration::from_millis(900));
 
-        let mut no_hitl = AgentConfig::default();
-        no_hitl.adaptive_routing = Some(local_routing());
+        let no_hitl = AgentConfig {
+            adaptive_routing: Some(local_routing()),
+            ..Default::default()
+        };
         let judge = build_reply_judge_with(&no_hitl, |_| None).expect("local endpoint");
         assert_eq!(judge.timeout(), Duration::from_secs(8));
     }
