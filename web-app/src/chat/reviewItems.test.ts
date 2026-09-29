@@ -33,7 +33,7 @@ test('failed and token-capped sessions are failed, paused stays, completed and o
   ]);
 });
 
-test('pi tasks stay unless completed; non-pi tasks are omitted', () => {
+test('pending and running pi tasks stay; completed, failed, and non-pi tasks are omitted', () => {
   const items = buildReviewItems({
     pending: null,
     sessions: [],
@@ -47,7 +47,6 @@ test('pi tasks stay unless completed; non-pi tasks are omitted', () => {
   });
   assert.deepEqual(items, [
     { kind: 'pi', id: 't-run', label: 'Ship it' },
-    { kind: 'pi', id: 't-fail', label: 't-fail' },
     { kind: 'pi', id: 't-pend', label: 'Queued' },
   ]);
 });

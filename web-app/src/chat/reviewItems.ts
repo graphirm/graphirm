@@ -41,7 +41,7 @@ export function buildReviewItems(input: {
   }
 
   for (const task of input.tasks) {
-    if (task.executor !== 'pi' || task.status === 'completed') continue;
+    if (task.executor !== 'pi' || task.status === 'completed' || task.status === 'failed') continue;
     items.push({
       kind: 'pi',
       id: task.id,
