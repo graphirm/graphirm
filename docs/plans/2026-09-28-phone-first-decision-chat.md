@@ -271,7 +271,7 @@ export function buildReviewItems(input: {
 
 **Step 5: Commit** `feat(web): Review tab from sessions and the loaded graph`
 
-- [ ] B7 done
+- [x] B7 done
 
 ---
 

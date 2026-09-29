@@ -1,12 +1,32 @@
 import { useCallback, useRef, useState, type ComponentProps } from 'react';
 import styles from '../App.module.css';
 import type { LayoutMode } from '../layout/layoutMode';
+import type { GraphData } from '../types/graph';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { ChatPane } from './ChatPane';
 import { GraphCanvas } from './GraphCanvas';
+import { ReviewTab } from './ReviewTab';
 import { SessionBar } from './SessionBar';
 import { RulesTab } from './RulesTab';
 import { TabBar, type ChatTab } from './TabBar';
+
+/** Pi tasks already present on the loaded session graph. */
+function piTasksFromGraph(graphData: GraphData | null) {
+  if (!graphData) return [];
+  const tasks: { id: string; status?: string; executor: 'pi'; title?: string }[] = [];
+  for (const node of graphData.nodes) {
+    const nodeType = node.node_type;
+    if (nodeType.type !== 'Task') continue;
+    if (node.metadata.executor !== 'pi') continue;
+    tasks.push({
+      id: node.id,
+      status: nodeType.status,
+      executor: 'pi',
+      title: nodeType.title,
+    });
+  }
+  return tasks;
+}
 
 export interface DecisionShellProps {
   layoutMode: LayoutMode;
@@ -101,7 +121,14 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
           <div className={styles.column}>
             <div className={styles.columnBody}>
               {tab === 'chat' && chatPane}
-              {tab === 'review' && <p>Review</p>}
+              {tab === 'review' && (
+                <ReviewTab
+                  sessions={session.sessions}
+                  pendingApproval={chat.pendingApproval}
+                  tasks={piTasksFromGraph(graph.graphData)}
+                  onOpenChat={() => selectTab('chat')}
+                />
+              )}
               {tab === 'rules' && <RulesTab />}
               {graphMounted && (
                 <div
