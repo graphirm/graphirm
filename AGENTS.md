@@ -47,7 +47,7 @@ graphirm-vscode/            # VS Code / Cursor extension (TypeScript)
 | `crates/server/` | axum routes, SSE streaming, `AppState`, `SessionHandle`, SDK, static file serving |
 | `graphirm-eval/` | eval harness — drives agent via HTTP, checks task correctness |
 | `graphirm-vscode/` | VS Code/Cursor extension (TypeScript) |
-| `web-app/` | React + React Flow interactive whiteboard UI (Vite, TypeScript) |
+| `web-app/` | React phone-first decision chat (Chat / Review / Rules / Graph, 430px column). The React Flow whiteboard stays on the Graph tab and in the legacy two-pane layout (`localStorage` key `graphirm.layout`). Vite, TypeScript. |
 | `web/` | Vanilla JS browser UI (legacy fallback, still served if `web-app/dist/` not present) |
 | `config/default.toml` | default model, agent, knowledge, graph, TUI, server settings |
 | `experiments/` | optional ad-hoc probes (not workspace members unless listed); see `experiments/AGENTS.md` |
@@ -133,7 +133,7 @@ Graph database stored at `~/.graphirm/graph.db` by default. Override with `--db 
 
 Phases 0–55 are complete: graph store, LLM providers, tools, agent loop with
 model-tier routing (`strategy/`), multi-agent delegation, PageRank + recency
-context engine, compaction, TUI, HTTP server + React whiteboard UI, structured
+context engine, compaction, TUI, HTTP server + phone-first decision chat (whiteboard remains on the Graph tab and in the legacy layout), structured
 response segments with GLiNER2 fallback, cross-session memory (HNSW),
 planning/tasks, trace analysis, `fetch_url`. Full per-phase table with dates:
 `docs/completion-log.md` (bottom). Open work: `docs/backlog.md`.
