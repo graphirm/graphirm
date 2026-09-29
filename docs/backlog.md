@@ -1318,6 +1318,8 @@ A4 is done. **Design approved 2026-09-29:** `docs/plans/2026-09-28-phone-first-d
 segment parser, Jev chip + sheet, confirm card, Rules tab, Review tab, reply-judging + routing
 feedback seats (server), plan card.
 
+- Human-turn `pin_candidate` was left out of B8a.
+
 ### Pre-existing gaps surfaced by the A0 design read — S · P2
 
 - `delegate` (in-process `SubagentTool`) is only registered by `Coordinator::run_primary` (tests);

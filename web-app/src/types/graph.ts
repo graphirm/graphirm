@@ -1,6 +1,8 @@
 // TypeScript mirror of Rust NodeType / EdgeType / GraphNode / GraphEdge.
 // Keep in sync with crates/graph/src/nodes.rs and crates/graph/src/edges.rs.
 
+import type { ReplyScores } from '../chat/replyHints';
+
 export type NodeRole = 'user' | 'assistant' | 'tool' | 'system';
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type AgentStatus =
@@ -105,6 +107,12 @@ export interface Message {
   routingConfidence?: number;
   /** `metadata.routing_reason` on an assistant Interaction. */
   routingReason?: string;
+  /** `metadata.reply_judge` on an assistant Interaction. */
+  replyJudge?: {
+    version?: string;
+    scores?: ReplyScores;
+    latency_ms?: number;
+  };
   /** True when structured segments were persisted (`metadata.segmented`). */
   segmented?: boolean;
   /** Populated from graph Contains children when `segmented` (see `segmentPartsForInteraction`). */

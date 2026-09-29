@@ -599,6 +599,16 @@ pub async fn stream_and_record(
 
     let node_id = session.record_interaction(interaction_node).await?;
 
+    // Observe-only. A judge failure must not replace the token-cap error below.
+    crate::reply_judge::observe_assistant_reply(
+        session.graph.clone(),
+        &session.id.0,
+        &node_id,
+        &session.agent_config,
+        &response.text_content(),
+    )
+    .await;
+
     if over_cap {
         let cap = cap.expect("over_cap implies cap is Some");
         info!(

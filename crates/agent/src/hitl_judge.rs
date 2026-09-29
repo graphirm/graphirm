@@ -185,7 +185,7 @@ pub fn build_judge_with(
 }
 
 /// Same resolution as the JevRouter builder (kept in sync by the shared test below).
-fn resolve_decisions_config(
+pub(crate) fn resolve_decisions_config(
     jev: &JevRouterConfig,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Result<DecisionsConfig, String> {

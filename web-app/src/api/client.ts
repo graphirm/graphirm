@@ -1,3 +1,4 @@
+import type { ReplyScores } from '../chat/replyHints';
 import type { GraphData, GraphNode, Message, Session, ToolCall } from '../types/graph';
 import { getApiKey } from './apiKey';
 
@@ -44,6 +45,47 @@ function assistantMetaNumber(
   if (role !== 'assistant') return undefined;
   const raw = metadata?.[key];
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
+
+const REPLY_SCORE_KEYS = [
+  'move',
+  'claims_completion',
+  'cites_evidence',
+  'presents_decision',
+  'presents_as_options',
+] as const;
+
+function finiteNumber(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
+
+function assistantReplyJudge(
+  role: string,
+  metadata: Record<string, unknown> | undefined,
+): Message['replyJudge'] | undefined {
+  if (role !== 'assistant') return undefined;
+  const raw = metadata?.reply_judge;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const version = typeof obj.version === 'string' && obj.version.length > 0 ? obj.version : undefined;
+  const latencyMs = finiteNumber(obj.latency_ms);
+  const scoresRaw = obj.scores;
+  let scores: ReplyScores | undefined;
+  if (scoresRaw && typeof scoresRaw === 'object' && !Array.isArray(scoresRaw)) {
+    const rec = scoresRaw as Record<string, unknown>;
+    const picked: ReplyScores = {};
+    for (const key of REPLY_SCORE_KEYS) {
+      const value = finiteNumber(rec[key]);
+      if (value !== undefined) picked[key] = value;
+    }
+    if (Object.keys(picked).length > 0) scores = picked;
+  }
+  if (!version && latencyMs === undefined && !scores) return undefined;
+  return {
+    ...(version ? { version } : {}),
+    ...(scores ? { scores } : {}),
+    ...(latencyMs !== undefined ? { latency_ms: latencyMs } : {}),
+  };
 }
 
 function parseToolCalls(raw: unknown): ToolCall[] | undefined {
@@ -99,6 +141,7 @@ export const api = {
         const routingStrategy = assistantMetaString(nt.role, n.metadata, 'routing_strategy');
         const routingReason = assistantMetaString(nt.role, n.metadata, 'routing_reason');
         const routingConfidence = assistantMetaNumber(nt.role, n.metadata, 'routing_confidence');
+        const replyJudge = assistantReplyJudge(nt.role, n.metadata);
         return {
           id: n.id,
           role: nt.role,
@@ -112,6 +155,7 @@ export const api = {
           ...(routingStrategy ? { routingStrategy } : {}),
           ...(routingReason ? { routingReason } : {}),
           ...(routingConfidence !== undefined ? { routingConfidence } : {}),
+          ...(replyJudge ? { replyJudge } : {}),
         };
       });
   },

@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { StepInput, StepRow } from '../chat/steps';
 import { buildSteps } from '../chat/steps';
 import { formatJevChip } from '../chat/jevChip';
+import { replyHints } from '../chat/replyHints';
 import { parseSegmentPrefix } from '../chat/segmentStream';
 import type { Message, PendingApproval } from '../types/graph';
 import { MarkdownBody } from './nodes/MarkdownBody';
@@ -272,6 +273,10 @@ export function ChatPane({
             >
               <div className={styles.roleLabel}>{entry.message.role}</div>
               <MessageBody message={entry.message} />
+              {entry.message.role === 'assistant' &&
+                replyHints(entry.message.replyJudge?.scores).map((hint) => (
+                  <div key={hint} className={styles.replyHint}>{hint}</div>
+                ))}
               {label && (
                 <JevChip
                   label={label}

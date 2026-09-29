@@ -307,7 +307,7 @@ export function buildReviewItems(input: {
 
 **Commit** `feat(agent): observe-only reply judge on assistant turns`
 
-- [ ] B8a done
+- [x] B8a done
 
 ---
 
