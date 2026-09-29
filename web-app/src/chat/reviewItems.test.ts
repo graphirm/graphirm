@@ -51,6 +51,33 @@ test('pending and running pi tasks stay; completed, failed, and non-pi tasks are
   ]);
 });
 
+test('a pause gate is one paused row labeled with the session name, not the tool', () => {
+  const items = buildReviewItems({
+    pending: {
+      node_id: 'n-pause',
+      tool_name: 'pause',
+      is_pause: true,
+      session_name: 'Hold',
+    },
+    sessions: [{ id: 's-run', status: 'running', name: 'Hold' }],
+    tasks: [],
+  });
+  assert.deepEqual(items, [
+    { kind: 'paused', id: 'n-pause', label: 'Hold' },
+  ]);
+});
+
+test('a pause gate without a session name is labeled Paused', () => {
+  const items = buildReviewItems({
+    pending: { node_id: 'n-pause', tool_name: 'pause', is_pause: true, session_name: '' },
+    sessions: [],
+    tasks: [],
+  });
+  assert.deepEqual(items, [
+    { kind: 'paused', id: 'n-pause', label: 'Paused' },
+  ]);
+});
+
 test('order is approval, then sessions, then pi tasks', () => {
   const items = buildReviewItems({
     pending: { node_id: 'n1', tool_name: 'write' },

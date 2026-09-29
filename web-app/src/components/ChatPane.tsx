@@ -1,4 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
+import type { LiveDirector } from '../chat/liveSteps';
+import { toLiveStepRows } from '../chat/liveSteps';
 import type { PlanStep } from '../chat/planCard';
 import type { StepInput, StepRow } from '../chat/steps';
 import { buildSteps } from '../chat/steps';
@@ -24,6 +26,8 @@ interface ChatPaneProps {
   messages: Message[];
   /** In-flight assistant text from SSE message_delta (cleared on message_end). */
   streamingMessage?: Message | null;
+  /** Director tool calls still running. Stays up after `message_end` clears the stream. */
+  liveSteps?: readonly LiveDirector[];
   isThinking: boolean;
   pendingApproval: PendingApproval | null;
   sessionId: string | null;
@@ -46,8 +50,10 @@ interface ChatPaneProps {
   planRunLocked?: boolean;
   onPlanRunLock?: (sessionId: string) => void;
   onPlanRunUnlock?: (sessionId: string) => void;
-  /** Session resume. The plan card awaits this, then sends steer text via `onSend`. */
+  /** Session resume. Plan Run awaits this, then sends via `onPlanSend`. */
   onPlanResume?: () => void | Promise<void>;
+  /** Plain prompt send for plan Run. Does not attach or clear steer scope. */
+  onPlanSend?: (content: string) => void;
   /** Scoped steer targeting an outline row (server adds steer_context to prompt). */
   outlineSteer?: { outlineNodeId: string; interactionId: string } | null;
   onClearOutlineSteer?: () => void;
@@ -214,6 +220,7 @@ function StreamingBody({ message }: { message: Message }) {
 export function ChatPane({
   messages,
   streamingMessage = null,
+  liveSteps = [],
   isThinking,
   pendingApproval,
   sessionId,
@@ -232,6 +239,7 @@ export function ChatPane({
   onPlanRunLock,
   onPlanRunUnlock,
   onPlanResume,
+  onPlanSend,
   chatCollapsed,
   onToggleCollapse,
   outlineSteer = null,
@@ -253,6 +261,8 @@ export function ChatPane({
     [messages],
   );
   const entries = useMemo(() => chatEntries(messages), [messages]);
+  const liveStepRows = useMemo(() => toLiveStepRows(liveSteps), [liveSteps]);
+  const showConfirm = pendingApproval != null && !pendingApproval.is_pause;
 
   const handleSend = useCallback(() => {
     const trimmed = input.trim();
@@ -317,7 +327,8 @@ export function ChatPane({
             <StreamingBody message={streamingMessage} />
           </div>
         )}
-        {pendingApproval && (
+        {liveStepRows.length > 0 && <StepsRow key="live-steps" steps={liveStepRows} />}
+        {showConfirm && pendingApproval && (
           <HitlOverlay
             approval={pendingApproval}
             onApprove={onApprove}
@@ -344,7 +355,7 @@ export function ChatPane({
         </div>
       )}
 
-      {planSteps.length > 0 && onPlanResume && onTogglePlanStep && onPlanRunLock && onPlanRunUnlock && (
+      {planSteps.length > 0 && onPlanResume && onPlanSend && onTogglePlanStep && onPlanRunLock && onPlanRunUnlock && (
         <PlanCard
           steps={planSteps}
           enabledById={planEnabledById}
@@ -354,7 +365,7 @@ export function ChatPane({
           onLockRun={onPlanRunLock}
           onUnlockRun={onPlanRunUnlock}
           onResume={onPlanResume}
-          onSend={onSend}
+          onSend={onPlanSend}
           isThinking={isThinking}
         />
       )}

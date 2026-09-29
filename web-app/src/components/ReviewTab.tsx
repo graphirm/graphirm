@@ -3,7 +3,12 @@ import styles from './ReviewTab.module.css';
 
 export interface ReviewTabProps {
   sessions: { id: string; status?: string; name?: string }[];
-  pendingApproval: { node_id: string; tool_name: string } | null;
+  pendingApproval: {
+    node_id: string;
+    tool_name: string;
+    is_pause?: boolean;
+    session_id?: string;
+  } | null;
   tasks: { id: string; status?: string; executor?: string; title?: string }[];
   onOpenChat: () => void;
 }
@@ -16,8 +21,18 @@ const KIND_LABEL: Record<ReviewItem['kind'], string> = {
 };
 
 export function ReviewTab({ sessions, pendingApproval, tasks, onOpenChat }: ReviewTabProps) {
+  const sessionName = pendingApproval?.session_id
+    ? sessions.find((session) => session.id === pendingApproval.session_id)?.name
+    : undefined;
   const items = buildReviewItems({
-    pending: pendingApproval,
+    pending: pendingApproval
+      ? {
+          node_id: pendingApproval.node_id,
+          tool_name: pendingApproval.tool_name,
+          is_pause: pendingApproval.is_pause,
+          session_name: sessionName,
+        }
+      : null,
     sessions,
     tasks,
   });

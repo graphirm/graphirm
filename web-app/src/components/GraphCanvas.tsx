@@ -671,7 +671,7 @@ function GraphCanvasInner({
             isThinking={isThinking ?? false}
           />
         )}
-        {pendingApproval && onApprove && onReject && onModify && (
+        {pendingApproval && !pendingApproval.is_pause && onApprove && onReject && onModify && (
           <HitlOverlay
             approval={pendingApproval}
             onApprove={onApprove}

@@ -10,6 +10,7 @@ export function App() {
     messages,
     graphData,
     streamingMessage,
+    liveSteps,
     isThinking,
     pendingApproval,
     selectSession,
@@ -91,19 +92,23 @@ export function App() {
       chat={{
         messages,
         streamingMessage,
+        liveSteps,
         isThinking,
         pendingApproval,
         sessionId: currentSession?.id ?? null,
         steerContext,
         inputRef: chatInputRef,
         onSend: handleSendWithSteer,
+        onPlanSend: (content) => {
+          void sendPrompt(content);
+        },
         onAbort: abortSession,
         onApprove: approveAction,
         onReject: rejectAction,
         onModify: modifyAction,
         onClearSteer: () => setSteerContext(null),
-        chatCollapsed,
-        onToggleCollapse: () => setChatCollapsed(c => !c),
+        chatCollapsed: layoutMode === 'chat' ? false : chatCollapsed,
+        onToggleCollapse: layoutMode === 'chat' ? undefined : () => setChatCollapsed(c => !c),
         outlineSteer,
         onClearOutlineSteer: () => setOutlineSteer(null),
         onOutlineSteer: handleOutlineSteer,
@@ -114,7 +119,7 @@ export function App() {
         selectedNodeId,
         onNodeSelect: handleNodeSelect,
         onSteerFromNode: handleSteerFromNode,
-        chatCollapsed,
+        chatCollapsed: layoutMode === 'chat' ? false : chatCollapsed,
         onSend: (content, contextRoot) => {
           if (contextRoot !== undefined && contextRoot !== '') {
             sendPrompt(content, contextRoot);

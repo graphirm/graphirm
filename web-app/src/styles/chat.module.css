@@ -502,10 +502,26 @@
 
 .stepItem {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
   font-size: var(--text-sm);
   line-height: var(--line-height);
+}
+
+.stepNestedList {
+  flex-basis: 100%;
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stepNested {
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
 }
 
 .stepTitle {

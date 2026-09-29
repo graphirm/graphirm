@@ -8,15 +8,30 @@ function preferredLabel(value: string | undefined, id: string): string {
   return value ? value : id;
 }
 
-/** Attention rows: one pending approval, then flagged sessions, then open Pi tasks. */
+function pauseLabel(sessionName: string | undefined): string {
+  return sessionName ? sessionName : 'Paused';
+}
+
+/** Attention rows: one pending gate, then flagged sessions, then open Pi tasks. */
 export function buildReviewItems(input: {
-  pending: { node_id: string; tool_name: string } | null;
+  pending: {
+    node_id: string;
+    tool_name: string;
+    is_pause?: boolean;
+    session_name?: string;
+  } | null;
   sessions: { id: string; status?: string; name?: string }[];
   tasks: { id: string; status?: string; executor?: string; title?: string }[];
 }): ReviewItem[] {
   const items: ReviewItem[] = [];
 
-  if (input.pending) {
+  if (input.pending?.is_pause) {
+    items.push({
+      kind: 'paused',
+      id: input.pending.node_id,
+      label: pauseLabel(input.pending.session_name),
+    });
+  } else if (input.pending) {
     items.push({
       kind: 'approval',
       id: input.pending.node_id,

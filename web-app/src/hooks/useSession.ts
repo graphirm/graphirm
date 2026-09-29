@@ -9,6 +9,12 @@ import type {
   PendingApproval,
   Session,
 } from '../types/graph';
+import {
+  applyLiveToolStart,
+  closeLiveDirectors,
+  dropCoveredLiveDirectors,
+  type LiveDirector,
+} from '../chat/liveSteps';
 import { parseSegmentPrefix } from '../chat/segmentStream';
 import { segmentPartsForInteraction } from '../utils/chatSegments';
 
@@ -18,6 +24,7 @@ interface UseSessionReturn {
   messages: Message[];
   graphData: GraphData | null;
   streamingMessage: Message | null;
+  liveSteps: LiveDirector[];
   isThinking: boolean;
   pendingApproval: PendingApproval | null;
   selectSession: (id: string) => Promise<void>;
@@ -44,6 +51,7 @@ export function useSession(): UseSessionReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [streamingMessage, setStreamingMessage] = useState<Message | null>(null);
+  const [liveSteps, setLiveSteps] = useState<LiveDirector[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [autoApprove, setAutoApprove] = useState(false);
@@ -74,18 +82,29 @@ export function useSession(): UseSessionReturn {
     });
   }, []);
 
-  const refresh = useCallback(async (sessionId: string) => {
+  const commitMessages = useCallback((next: Message[]) => {
+    setMessages(next);
+    const covered = new Set<string>();
+    for (const message of next) {
+      if (message.role === 'tool' && message.toolCallId) covered.add(message.toolCallId);
+    }
+    setLiveSteps((prev) => dropCoveredLiveDirectors(prev, covered));
+  }, []);
+
+  const refresh = useCallback(async (sessionId: string): Promise<boolean> => {
     try {
       const [newMessages, newGraph] = await Promise.all([
         api.getMessages(sessionId),
         api.getGraph(sessionId),
       ]);
-      setMessages(newMessages);
+      commitMessages(newMessages);
       setGraphData(newGraph);
+      return true;
     } catch (err) {
       console.error('Failed to refresh session data:', err);
+      return false;
     }
-  }, []);
+  }, [commitMessages]);
 
   const subscribeSse = useCallback((sessionId: string) => {
     sseRef.current?.unsubscribe();
@@ -96,9 +115,12 @@ export function useSession(): UseSessionReturn {
         setIsThinking(false);
         setStreamingMessage(null);
         if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+        const clearLive = ev.event === 'agent_end';
         refreshTimerRef.current = setTimeout(() => {
           refreshTimerRef.current = null;
-          refresh(sessionId).catch(console.error);
+          refresh(sessionId).then((reloaded) => {
+            if (clearLive && reloaded) setLiveSteps([]);
+          }).catch(console.error);
           api.listSessions().then(setSessions).catch((err) => {
             console.error('Failed to refresh session list:', err);
           });
@@ -147,7 +169,16 @@ export function useSession(): UseSessionReturn {
       } else if (ev.event === 'message_end') {
         console.log(`[SSE] message_end    t=${Date.now()}`);
         setStreamingMessage(null);
-        api.getMessages(sessionId).then(setMessages).catch(console.error);
+        setLiveSteps((prev) => closeLiveDirectors(prev));
+        api.getMessages(sessionId).then(commitMessages).catch(console.error);
+      } else if (ev.event === 'tool_start') {
+        const root = ev.data as { data?: { call_id?: string; tool_name?: string } };
+        const payload = root?.data ?? (ev.data as { call_id?: string; tool_name?: string });
+        const callId = typeof payload?.call_id === 'string' ? payload.call_id : '';
+        const toolName = typeof payload?.tool_name === 'string' ? payload.tool_name : '';
+        if (callId && toolName) {
+          setLiveSteps((prev) => applyLiveToolStart(prev, { callId, toolName }));
+        }
       } else if (ev.event === 'awaiting_approval') {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         const payload = ev.data?.data ?? ev.data;
@@ -156,7 +187,7 @@ export function useSession(): UseSessionReturn {
     });
     client.subscribe(sessionId);
     sseRef.current = client;
-  }, [refresh, patchGraphData]);
+  }, [refresh, patchGraphData, commitMessages]);
 
   const selectSession = useCallback(async (id: string) => {
     const session = sessions.find(s => s.id === id) ?? { id } as Session;
@@ -164,6 +195,7 @@ export function useSession(): UseSessionReturn {
     if (typeof session.auto_approve === 'boolean') setAutoApprove(session.auto_approve);
     setPendingApproval(null);
     setStreamingMessage(null);
+    setLiveSteps([]);
     setIsThinking(false);
     await refresh(id);
     subscribeSse(id);
@@ -202,6 +234,7 @@ export function useSession(): UseSessionReturn {
     setGraphData(null);
     setPendingApproval(null);
     setStreamingMessage(null);
+    setLiveSteps([]);
     setIsThinking(false);
     subscribeSse(session.id);
     return session;
@@ -231,13 +264,13 @@ export function useSession(): UseSessionReturn {
         await api.sendPrompt(session.id, content, opts);
         const runningId = session.id;
         setSessions(prev => prev.map(s => s.id === runningId ? { ...s, status: 'running' } : s));
-        api.getMessages(session.id).then(setMessages).catch(console.error);
+        api.getMessages(session.id).then(commitMessages).catch(console.error);
       } catch (err) {
         console.error('Failed to send prompt:', err);
         setIsThinking(false);
       }
     },
-    [createSession],
+    [createSession, commitMessages],
   );
 
   const abortSession = useCallback(async () => {
@@ -314,6 +347,7 @@ export function useSession(): UseSessionReturn {
     messages: messagesWithSegments,
     graphData,
     streamingMessage,
+    liveSteps,
     isThinking,
     pendingApproval,
     selectSession,

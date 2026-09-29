@@ -130,6 +130,7 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
       chat.inputRef?.current?.focus();
     },
     onToggleChatCollapsed: () => {
+      if (layoutModeRef.current === 'chat') return;
       chat.onToggleCollapse?.();
     },
   });
