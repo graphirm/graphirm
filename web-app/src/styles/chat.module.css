@@ -20,6 +20,7 @@
 .chatPane.collapsed .thinkingBar,
 .chatPane.collapsed .inputBar,
 .chatPane.collapsed .outlinePanel,
+.chatPane.collapsed .planCard,
 .chatPane.collapsed .jevSheetLayer {
   display: none !important;
 }
@@ -193,6 +194,85 @@
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
+}
+
+.planCard {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-top: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.planList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.planRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.planLabel {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+
+.planTitle {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.planNote {
+  margin: 0;
+  padding-left: 22px;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.planMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding-left: 22px;
+}
+
+.planRisky {
+  font-size: var(--text-xs);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.planExecutor {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.planRun {
+  align-self: stretch;
+}
+
+.planRun:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .inputBar {

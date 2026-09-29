@@ -1,5 +1,6 @@
-import { useCallback, useRef, useState, type ComponentProps } from 'react';
+import { useCallback, useMemo, useRef, useState, type ComponentProps } from 'react';
 import styles from '../App.module.css';
+import { planStepsFromTasks } from '../chat/planCard';
 import type { LayoutMode } from '../layout/layoutMode';
 import type { GraphData } from '../types/graph';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -9,6 +10,30 @@ import { ReviewTab } from './ReviewTab';
 import { SessionBar } from './SessionBar';
 import { RulesTab } from './RulesTab';
 import { TabBar, type ChatTab } from './TabBar';
+
+/** Task nodes on the loaded session graph. Description is the plan note. */
+function tasksFromGraph(graphData: GraphData | null) {
+  if (!graphData) return [];
+  const tasks: {
+    id: string;
+    title?: string;
+    status?: string;
+    metadata?: Record<string, unknown>;
+    note?: string;
+  }[] = [];
+  for (const node of graphData.nodes) {
+    const nodeType = node.node_type;
+    if (nodeType.type !== 'Task') continue;
+    tasks.push({
+      id: node.id,
+      title: nodeType.title,
+      status: nodeType.status,
+      note: nodeType.description,
+      metadata: node.metadata,
+    });
+  }
+  return tasks;
+}
 
 /** Pi tasks already present on the loaded session graph. */
 function piTasksFromGraph(graphData: GraphData | null) {
@@ -49,6 +74,10 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
   tabRef.current = tab;
 
   const graphHotkeys = layoutMode === 'legacy' || tab === 'graph';
+  const planSteps = useMemo(
+    () => (layoutMode === 'chat' ? planStepsFromTasks(tasksFromGraph(graph.graphData)) : []),
+    [layoutMode, graph.graphData],
+  );
 
   const handleFitViewRef = useCallback((cb: () => void) => {
     fitViewCb.current = cb;
@@ -90,7 +119,9 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
     graphRef.current.onSteerFromNode(nodeId);
   }, []);
 
-  const chatPane = <ChatPane {...chat} />;
+  const chatPane = (
+    <ChatPane {...chat} planSteps={planSteps} onPlanResume={session.onResume} />
+  );
   const graphCanvas = (
     <GraphCanvas
       {...graph}

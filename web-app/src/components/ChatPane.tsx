@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
+import type { PlanStep } from '../chat/planCard';
 import type { StepInput, StepRow } from '../chat/steps';
 import { buildSteps } from '../chat/steps';
 import { formatJevChip } from '../chat/jevChip';
@@ -12,6 +13,7 @@ import { StepsRow } from './StepsRow';
 import { cleanLegacyAssistantContent } from '../utils/chatSegments';
 import { HitlOverlay } from './HitlOverlay';
 import { OutlinePanel } from './OutlinePanel';
+import { PlanCard } from './PlanCard';
 import styles from '../styles/chat.module.css';
 
 interface SteerContext {
@@ -35,6 +37,10 @@ interface ChatPaneProps {
   onClearSteer: () => void;
   chatCollapsed?: boolean;
   onToggleCollapse?: () => void;
+  /** Open plan steps. The card renders above the composer when this list is non-empty. */
+  planSteps?: PlanStep[];
+  /** Session resume. The plan card awaits this, then sends steer text via `onSend`. */
+  onPlanResume?: () => void | Promise<void>;
   /** Scoped steer targeting an outline row (server adds steer_context to prompt). */
   outlineSteer?: { outlineNodeId: string; interactionId: string } | null;
   onClearOutlineSteer?: () => void;
@@ -212,6 +218,8 @@ export function ChatPane({
   onReject,
   onModify,
   onClearSteer,
+  planSteps = [],
+  onPlanResume,
   chatCollapsed,
   onToggleCollapse,
   outlineSteer = null,
@@ -322,6 +330,10 @@ export function ChatPane({
           <span className={styles.thinkingDot} />
           Agent is thinking…
         </div>
+      )}
+
+      {planSteps.length > 0 && onPlanResume && (
+        <PlanCard steps={planSteps} onResume={onPlanResume} onSend={onSend} />
       )}
 
       <div className={styles.inputBar}>

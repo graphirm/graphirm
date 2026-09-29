@@ -360,7 +360,7 @@ export function planStepsFromTasks(tasks: { id: string; title?: string; status?:
 
 **Step 5: Commit** `feat(web): plan card resumes with the enabled step titles`
 
-- [ ] B9 done
+- [x] B9 done
 
 ---
 
