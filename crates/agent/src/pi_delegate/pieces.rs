@@ -9,9 +9,11 @@ use pulldown_cmark::{Event, Options, Parser, TagEnd};
 pub const MAX_SEGMENT_CHARS: usize = 16_000;
 
 /// Bump when block boundaries or heading rules change.
+/// The cursor-subset snapshot test fails until this matches the new boundaries hash.
 pub const PIECE_PARSER_VERSION: &str = "1";
 
 /// Bump when the baseline kind rules change.
+/// The cursor-subset snapshot test fails until this matches the new kinds hash.
 pub const PIECE_BASELINE_VERSION: &str = "1";
 
 /// A heading lead-in is one line no longer than this.
@@ -662,6 +664,7 @@ fn ranges_tile(text: &str, pieces: &[Piece]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::Digest;
 
     fn piece(start: usize, end: usize) -> Piece {
         Piece {
@@ -1144,6 +1147,91 @@ Should I apply the patch?
         }
         let text = parts.join("\n");
         if text.is_empty() { None } else { Some(text) }
+    }
+
+    #[test]
+    fn cursor_subset_snapshot_locks_parser_and_baseline_versions() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pieces");
+        let raw = std::fs::read_to_string(dir.join("cursor-subset.jsonl")).expect("cursor subset");
+        let snapshot: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("cursor-subset.snapshot.json")).expect("snapshot"),
+        )
+        .expect("snapshot json");
+        let mut boundaries = String::new();
+        let mut kinds = String::new();
+        let mut count = 0usize;
+        for line in raw.lines() {
+            if line.is_empty() {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_str(line).expect("subset line");
+            let text = value
+                .get("text")
+                .and_then(|text| text.as_str())
+                .expect("subset text");
+            let got = structure_segment(text, false);
+            count += 1;
+            boundaries.push_str(&format!("parsed={} tiled={}\n", got.parsed, got.tiled));
+            for piece in &got.pieces {
+                let heading = piece.heading.as_deref().unwrap_or("");
+                boundaries.push_str(&format!(
+                    "{}\t{}\t{}\t{}\n",
+                    piece.start,
+                    piece.end,
+                    heading.len(),
+                    heading
+                ));
+                kinds.push_str(piece.kind.as_label());
+                kinds.push('\n');
+            }
+            boundaries.push('\n');
+            kinds.push('\n');
+        }
+        let expected_texts = snapshot["texts"].as_u64().expect("texts") as usize;
+        assert_eq!(
+            count, expected_texts,
+            "cursor subset has {count} texts and the snapshot lists {expected_texts}"
+        );
+        let boundary_hash = hex_sha256(&boundaries);
+        let kind_hash = hex_sha256(&kinds);
+        let parser_version = snapshot["parser_version"].as_str().expect("parser_version");
+        let baseline_version = snapshot["baseline_version"]
+            .as_str()
+            .expect("baseline_version");
+        assert_eq!(
+            parser_version, PIECE_PARSER_VERSION,
+            "snapshot parser_version is {parser_version} and PIECE_PARSER_VERSION is {PIECE_PARSER_VERSION}. Set them to the same value."
+        );
+        assert_eq!(
+            baseline_version, PIECE_BASELINE_VERSION,
+            "snapshot baseline_version is {baseline_version} and PIECE_BASELINE_VERSION is {PIECE_BASELINE_VERSION}. Set them to the same value."
+        );
+        let mut problems = Vec::new();
+        if snapshot["boundaries_sha256"].as_str() != Some(boundary_hash.as_str()) {
+            problems.push(format!(
+                "block boundaries or headings no longer match the snapshot. Set boundaries_sha256 to {boundary_hash} in tests/fixtures/pieces/cursor-subset.snapshot.json. Bump PIECE_PARSER_VERSION (now {PIECE_PARSER_VERSION}) and the snapshot parser_version if the parser rules changed."
+            ));
+        }
+        if snapshot["kinds_sha256"].as_str() != Some(kind_hash.as_str()) {
+            problems.push(format!(
+                "baseline kinds no longer match the snapshot. Set kinds_sha256 to {kind_hash} in tests/fixtures/pieces/cursor-subset.snapshot.json. Bump PIECE_BASELINE_VERSION (now {PIECE_BASELINE_VERSION}) and the snapshot baseline_version if the kind rules changed."
+            ));
+        }
+        assert!(
+            problems.is_empty(),
+            "cursor subset snapshot is stale:\n{}",
+            problems.join("\n")
+        );
+    }
+
+    fn hex_sha256(text: &str) -> String {
+        let digest = sha2::Sha256::digest(text.as_bytes());
+        let mut hex = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            hex.push(char::from(b"0123456789abcdef"[usize::from(byte >> 4)]));
+            hex.push(char::from(b"0123456789abcdef"[usize::from(byte & 0xf)]));
+        }
+        hex
     }
 
     #[test]

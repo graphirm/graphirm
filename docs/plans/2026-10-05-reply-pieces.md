@@ -27,6 +27,8 @@ Parser, splitter, baseline labeler, coverage check, Cursor tiling test, Pi JSONL
 
 A row in `piece-labels.jsonl` stores the run file, the segment index, a SHA-256 of the segment text, `parser_version`, `baseline_version`, and each piece's byte range. It does not store piece order. `graphirm label-pieces` skips a segment already in that file, so `quit` can resume. `graphirm score-pieces` matches on the byte range, reports single-piece replies apart from replies with several pieces, and prints a confusion matrix.
 
+`PIECE_PARSER_VERSION` and `PIECE_BASELINE_VERSION` are locked by a snapshot over a hand-checked fixture, `tests/fixtures/pieces/cursor-subset.jsonl`. A boundary or kind change fails that test until the matching version and the snapshot hashes are updated together. Editing the fixture moves the hashes and does not by itself require a version bump.
+
 ## Still open
 
 1. Hand-label about 100 real Pi replies from `~/.graphirm/pi-runs`, using `docs/guides/reply-piece-labels.md` and `graphirm label-pieces` with no `--show-baseline`. Use varied tasks so lists, fences, and questions appear. Then run `graphirm score-pieces`.

@@ -21,7 +21,7 @@ Single source of truth for planned work. Completed items are recorded in `docs/c
 
 Split a finished Pi reply into pieces by shape, without using the question. The parser owns the text. A labeler only names the shape. Plan: `docs/plans/2026-10-05-reply-pieces.md`.
 
-Milestone 1 (parser, splitter, baseline labeler, capped Pi JSONL recording, blind labeling command, range-keyed labels, scorer) is on `feat/reply-pieces`. Still open: the 100-reply hand-labeled set, a grammar-constrained labeler that has to beat the baseline, and cross-turn edges. Guide: `docs/guides/reply-piece-labels.md`.
+Milestone 1 (parser, splitter, baseline labeler, capped Pi JSONL recording, blind labeling command, range-keyed labels, scorer, version snapshot) is on `feat/reply-pieces`. Still open: the 100-reply hand-labeled set, a grammar-constrained labeler that has to beat the baseline, and cross-turn edges. Guide: `docs/guides/reply-piece-labels.md`.
 
 ---
 

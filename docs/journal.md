@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-05 — The piece-version snapshot is a hand-checked fixture
+
+**Context:** A hash-prefix sample of local Cursor transcripts was committed as `cursor-subset.jsonl`. That is a random sample of session text, not a scrub. Gitleaks found no keys. The replies still contained private code, paths, and project detail. The commit had not been pushed.
+**Decision:** Replace the file with 35 hand-written replies: lists, fences, headings, tables, a quote, trailing questions, and seven texts over the 16,000-character cap. Regenerate the snapshot hashes. Leave `PIECE_PARSER_VERSION` and `PIECE_BASELINE_VERSION` at `"1"`, because the rules did not change. Drop the unpushed commit that contained the raw sample so it is not on the branch.
+**Alternatives:** Scrub all 135 in place. Keep the raw file and rely on the scanner.
+**Consequences:** A rule change still fails the snapshot test until the matching version and the snapshot hashes are updated together. A wording edit of the fixture moves the hashes and does not by itself require a version bump.
+**Refs:** `crates/agent/tests/fixtures/pieces/README.md`.
+
 ## 2026-10-05 — Labels are keyed by byte range, not piece number
 
 **Context:** A later splitter change renumbers pieces. A label that says "piece 3 is a caveat" would then point at a different block. Labeling 100 replies also will not finish in one sitting.
