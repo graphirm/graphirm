@@ -21,6 +21,7 @@
 
 pub mod events;
 pub mod graph;
+pub mod pieces;
 pub mod process;
 pub mod tool;
 

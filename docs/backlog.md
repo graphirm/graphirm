@@ -15,6 +15,16 @@ Single source of truth for planned work. Completed items are recorded in `docs/c
 
 ---
 
+## Reply pieces
+
+### Reply-piece parser — P2 · M
+
+Split a finished Pi reply into pieces by shape, without using the question. The parser owns the text. A labeler only names the shape. Plan: `docs/plans/2026-10-05-reply-pieces.md`.
+
+Milestone 1 (parser, splitter, baseline labeler, Pi JSONL recording) is on `feat/reply-pieces`. Still open: the 100-reply hand-labeled set, a grammar-constrained labeler that has to beat the baseline, and cross-turn edges.
+
+---
+
 ## Security & Public Readiness
 
 Prerequisites before `app.graphirm.ai` or any public Graphirm instance is open to untrusted users.

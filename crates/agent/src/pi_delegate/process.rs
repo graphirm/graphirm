@@ -403,7 +403,7 @@ async fn drive(
         cancel,
     } = run;
     let child = &mut child;
-    let capture = Arc::new(Capture::default());
+    let capture = Arc::new(Capture::new());
     let mut stdout_task = AbortOnDrop(tokio::spawn(drain_stdout(
         stdout,
         events_tx,
@@ -536,6 +536,56 @@ impl<T> Drop for AbortOnDrop<T> {
     }
 }
 
+/// Where a Pi `--mode json` run is copied, if recording is on.
+///
+/// `GRAPHIRM_PI_RUNS_DIR=off` or an empty value disables recording. A path
+/// overrides the default. With no variable, production runs record under
+/// `$HOME/.graphirm/pi-runs`. Tests do not record unless the variable is set,
+/// so the suite does not write into the home directory.
+pub(super) fn resolve_pi_runs_dir(
+    env_value: Option<&str>,
+    home: Option<&Path>,
+    record_by_default: bool,
+) -> Option<PathBuf> {
+    match env_value {
+        Some("") | Some("off") => None,
+        Some(path) => Some(PathBuf::from(path)),
+        None if record_by_default => home.map(|dir| dir.join(".graphirm/pi-runs")),
+        None => None,
+    }
+}
+
+fn open_pi_run_record() -> Option<std::fs::File> {
+    let dir = resolve_pi_runs_dir(
+        std::env::var("GRAPHIRM_PI_RUNS_DIR").ok().as_deref(),
+        std::env::var_os("HOME").as_deref().map(Path::new),
+        !cfg!(test),
+    )?;
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(dir = %dir.display(), %error, "pi run record directory was not created");
+        return None;
+    }
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!("{millis}-{}.jsonl", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&path)
+    {
+        Ok(file) => {
+            tracing::info!(path = %path.display(), "recording pi run");
+            Some(file)
+        }
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "pi run record was not opened");
+            None
+        }
+    }
+}
+
 /// Counters and stderr tail shared between the reader tasks and the driver,
 /// so partial results survive a reader that has to be aborted (straggler
 /// holding the pipe after Pi exited).
@@ -544,9 +594,33 @@ struct Capture {
     malformed: AtomicU32,
     oversized: AtomicU32,
     stderr_tail: std::sync::Mutex<Vec<u8>>,
+    /// Raw stdout of this run, when recording is enabled. `None` after a write
+    /// failure so a full disk cannot stall Pi.
+    record: std::sync::Mutex<Option<std::fs::File>>,
 }
 
 impl Capture {
+    fn new() -> Self {
+        Self {
+            record: std::sync::Mutex::new(open_pi_run_record()),
+            ..Self::default()
+        }
+    }
+
+    fn record_stdout_line(&self, line: &[u8]) {
+        let mut slot = self
+            .record
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(file) = slot.as_mut() else {
+            return;
+        };
+        if std::io::Write::write_all(file, line).is_err() {
+            tracing::warn!("pi run record write failed; recording stopped");
+            *slot = None;
+        }
+    }
+
     fn stderr_tail(&self) -> String {
         let tail = self
             .stderr_tail
@@ -646,6 +720,7 @@ async fn drain_stdout(
                 tracing::warn!(cap = MAX_LINE_BYTES, "pi stdout line exceeded cap; skipped");
             }
             Ok(LineRead::Line) => {
+                capture.record_stdout_line(&buf);
                 let line = String::from_utf8_lossy(&buf);
                 match parse_line(&line) {
                     Ok(PiEvent::Ignored) => {}
@@ -751,6 +826,38 @@ impl Drop for TempTask {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pi_runs_dir_follows_the_env_override() {
+        let home = Path::new("/home/user");
+        assert_eq!(
+            resolve_pi_runs_dir(None, Some(home), true),
+            Some(home.join(".graphirm/pi-runs"))
+        );
+        assert_eq!(resolve_pi_runs_dir(None, Some(home), false), None);
+        assert_eq!(resolve_pi_runs_dir(Some("off"), Some(home), true), None);
+        assert_eq!(resolve_pi_runs_dir(Some(""), Some(home), true), None);
+        assert_eq!(
+            resolve_pi_runs_dir(Some("/tmp/pi-runs"), Some(home), false),
+            Some(PathBuf::from("/tmp/pi-runs"))
+        );
+    }
+
+    #[test]
+    fn record_stdout_line_appends_the_raw_line() {
+        let dir = std::env::temp_dir().join(format!("graphirm-pi-record-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("run.jsonl");
+        let file = std::fs::File::create(&path).unwrap();
+        let capture = Capture {
+            record: std::sync::Mutex::new(Some(file)),
+            ..Capture::default()
+        };
+        capture.record_stdout_line(b"{\"type\":\"session\"}\n");
+        let got = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(got, "{\"type\":\"session\"}\n");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     const FAKE_PI: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pi/fake_pi.sh");
 
