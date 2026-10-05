@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-05 — Pi recordings are capped, and the first labels are blind
+
+**Context:** Raw Pi stdout keeps thinking, tool arguments, and file contents. It is written on every production run. The baseline labeler will be scored against hand labels, and a suggested kind is easy to accept.
+**Decision:** `~/.graphirm/pi-runs` stays at or below 256 MiB by deleting the oldest `*.jsonl` files. One run stops copying at 32 MiB. `graphirm label-pieces` does not show the baseline kind unless `--show-baseline` is passed. The kind definitions live in `docs/guides/reply-piece-labels.md`.
+**Alternatives:** Leave the directory uncapped until the labeled set exists. Pre-fill the baseline kind and ask the person to correct it.
+**Consequences:** A long run's tail is missing from the recording after 32 MiB. The first score is only as good as the blind labels.
+**Refs:** `docs/plans/2026-10-05-reply-pieces.md`, `docs/guides/reply-piece-labels.md`.
+
 ## 2026-10-05 — The parser owns the reply text
 
 **Context:** A finished Pi reply should become ordered pieces (statement, options, steps, instructions, example, caveat, code, question) without using the question. A 0.6B structure model was tried as a schema filler and copied schema words instead of the reply.

@@ -105,6 +105,21 @@ enum Commands {
         dry_run: bool,
     },
 
+    /// Label final Pi replies by shape. Kinds are typed in; the baseline is hidden.
+    ///
+    /// `path` is one Pi JSONL recording or a directory of them (`~/.graphirm/pi-runs`).
+    /// Finished replies are appended to `--out` (default: `piece-labels.jsonl`).
+    LabelPieces {
+        /// A `*.jsonl` recording, or a directory of them
+        path: PathBuf,
+        /// Where to append labels
+        #[arg(short, long, default_value = "piece-labels.jsonl")]
+        out: PathBuf,
+        /// Show the baseline kind under each piece. Leave this off for the first pass.
+        #[arg(long)]
+        show_baseline: bool,
+    },
+
     /// Run GLiNER2 over a corpus JSONL with candidate labels and output a statistics report.
     #[cfg(feature = "local-extraction")]
     LabelExplore {
@@ -285,6 +300,13 @@ async fn main() -> Result<(), GraphirmError> {
                 .with_env_filter("warn")
                 .init();
             commands::import::run(path, dry_run, &db_path)?;
+        }
+        Commands::LabelPieces {
+            path,
+            out,
+            show_baseline,
+        } => {
+            commands::label_pieces::run(path, out, show_baseline)?;
         }
         #[cfg(feature = "local-extraction")]
         Commands::LabelExplore {

@@ -536,6 +536,14 @@ impl<T> Drop for AbortOnDrop<T> {
     }
 }
 
+/// The run directory keeps at most this many bytes of `*.jsonl`. Older files
+/// are deleted to make room.
+pub(super) const MAX_PI_RUNS_DIR_BYTES: u64 = 256 * 1024 * 1024;
+
+/// One run stops being copied once its file reaches this size. The bytes
+/// already written stay on disk.
+pub(super) const MAX_PI_RUN_FILE_BYTES: u64 = 32 * 1024 * 1024;
+
 /// Where a Pi `--mode json` run is copied, if recording is on.
 ///
 /// `GRAPHIRM_PI_RUNS_DIR=off` or an empty value disables recording. A path
@@ -555,7 +563,41 @@ pub(super) fn resolve_pi_runs_dir(
     }
 }
 
-fn open_pi_run_record() -> Option<std::fs::File> {
+struct RunRecord {
+    file: std::fs::File,
+    written: u64,
+}
+
+/// Delete oldest `*.jsonl` files until `dir` holds at most `max_bytes`.
+pub(super) fn prune_pi_runs(dir: &Path, max_bytes: u64) -> std::io::Result<()> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let meta = entry.metadata()?;
+        if !meta.is_file() {
+            continue;
+        }
+        let modified = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        files.push((modified, meta.len(), path));
+    }
+    files.sort_by_key(|(modified, _, _)| *modified);
+    let mut total: u64 = files.iter().map(|(_, len, _)| *len).sum();
+    while total > max_bytes {
+        let Some((_, len, path)) = files.first() else {
+            break;
+        };
+        std::fs::remove_file(path)?;
+        total = total.saturating_sub(*len);
+        files.remove(0);
+    }
+    Ok(())
+}
+
+fn open_pi_run_record() -> Option<RunRecord> {
     let dir = resolve_pi_runs_dir(
         std::env::var("GRAPHIRM_PI_RUNS_DIR").ok().as_deref(),
         std::env::var_os("HOME").as_deref().map(Path::new),
@@ -564,6 +606,9 @@ fn open_pi_run_record() -> Option<std::fs::File> {
     if let Err(error) = std::fs::create_dir_all(&dir) {
         tracing::warn!(dir = %dir.display(), %error, "pi run record directory was not created");
         return None;
+    }
+    if let Err(error) = prune_pi_runs(&dir, MAX_PI_RUNS_DIR_BYTES) {
+        tracing::warn!(dir = %dir.display(), %error, "pi run record directory was not pruned");
     }
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -577,7 +622,7 @@ fn open_pi_run_record() -> Option<std::fs::File> {
     {
         Ok(file) => {
             tracing::info!(path = %path.display(), "recording pi run");
-            Some(file)
+            Some(RunRecord { file, written: 0 })
         }
         Err(error) => {
             tracing::warn!(path = %path.display(), %error, "pi run record was not opened");
@@ -595,8 +640,8 @@ struct Capture {
     oversized: AtomicU32,
     stderr_tail: std::sync::Mutex<Vec<u8>>,
     /// Raw stdout of this run, when recording is enabled. `None` after a write
-    /// failure so a full disk cannot stall Pi.
-    record: std::sync::Mutex<Option<std::fs::File>>,
+    /// failure or the per-file cap, so recording cannot stall Pi.
+    record: std::sync::Mutex<Option<RunRecord>>,
 }
 
 impl Capture {
@@ -612,13 +657,21 @@ impl Capture {
             .record
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(file) = slot.as_mut() else {
+        let Some(record) = slot.as_mut() else {
             return;
         };
-        if std::io::Write::write_all(file, line).is_err() {
+        let next = record.written.saturating_add(line.len() as u64);
+        if next > MAX_PI_RUN_FILE_BYTES {
+            tracing::warn!("pi run record reached the file cap; recording stopped");
+            *slot = None;
+            return;
+        }
+        if std::io::Write::write_all(&mut record.file, line).is_err() {
             tracing::warn!("pi run record write failed; recording stopped");
             *slot = None;
+            return;
         }
+        record.written = next;
     }
 
     fn stderr_tail(&self) -> String {
@@ -850,12 +903,52 @@ mod tests {
         let path = dir.join("run.jsonl");
         let file = std::fs::File::create(&path).unwrap();
         let capture = Capture {
-            record: std::sync::Mutex::new(Some(file)),
+            record: std::sync::Mutex::new(Some(RunRecord { file, written: 0 })),
             ..Capture::default()
         };
         capture.record_stdout_line(b"{\"type\":\"session\"}\n");
         let got = std::fs::read_to_string(&path).unwrap();
         assert_eq!(got, "{\"type\":\"session\"}\n");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn record_stops_at_the_file_cap_and_keeps_what_was_written() {
+        let dir = std::env::temp_dir().join(format!("graphirm-pi-cap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("run.jsonl");
+        let file = std::fs::File::create(&path).unwrap();
+        let capture = Capture {
+            record: std::sync::Mutex::new(Some(RunRecord {
+                file,
+                written: MAX_PI_RUN_FILE_BYTES - 1,
+            })),
+            ..Capture::default()
+        };
+        capture.record_stdout_line(b"ab");
+        assert_eq!(std::fs::read(&path).unwrap(), b"");
+        capture.record_stdout_line(b"z");
+        assert_eq!(std::fs::read(&path).unwrap(), b"");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn prune_drops_the_oldest_jsonl_until_the_directory_fits() {
+        let dir = std::env::temp_dir().join(format!("graphirm-pi-prune-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join("old.jsonl");
+        let new = dir.join("new.jsonl");
+        let mut old_file = std::fs::File::create(&old).unwrap();
+        std::io::Write::write_all(&mut old_file, &[b'a'; 10]).unwrap();
+        old_file
+            .set_modified(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap();
+        std::fs::write(&new, [b'b'; 10]).unwrap();
+        std::fs::write(dir.join("notes.txt"), "keep").unwrap();
+        prune_pi_runs(&dir, 10).unwrap();
+        assert!(!old.exists());
+        assert_eq!(std::fs::read(&new).unwrap(), [b'b'; 10]);
+        assert_eq!(std::fs::read(dir.join("notes.txt")).unwrap(), b"keep");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

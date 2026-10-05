@@ -185,6 +185,16 @@ port = 3000
 
 ---
 
+## Pi run recordings
+
+When `delegate_pi` runs, Graphirm copies Pi's raw `--mode json` stdout to `~/.graphirm/pi-runs/*.jsonl`. Override the directory with `GRAPHIRM_PI_RUNS_DIR`, or set it to `off` to disable recording.
+
+Those files are not the graph. The graph stores assistant text with thinking and tool-call parts removed. A recording keeps the whole stream: thinking, tool names and arguments, and file contents the run read. Treat the directory as private.
+
+The directory is capped at 256 MiB. Older `*.jsonl` files are deleted to make room. A single run stops being copied once its file reaches 32 MiB; the bytes already written stay. Nothing else in that directory is deleted.
+
+---
+
 ## Knowledge extraction
 
 Post-turn entity extraction supports three backends:

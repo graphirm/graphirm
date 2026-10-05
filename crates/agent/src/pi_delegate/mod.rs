@@ -21,12 +21,14 @@
 
 pub mod events;
 pub mod graph;
+pub mod label;
 pub mod pieces;
 pub mod process;
 pub mod tool;
 
 pub use events::{MAX_ERROR_CHARS, PiEvent, flatten_content, flatten_result, parse_line};
 pub use graph::{FAILURE_ABANDONED, PI_EXECUTOR, PI_TASK_TITLE, PiRun, PiRunFinish, PiToolCall};
+pub use label::{LabeledReply, final_reply_texts, load_final_replies, run_label_session};
 pub use process::{
     MAX_INLINE_TASK_BYTES, MAX_LINE_BYTES, PiProcessError, PiRunHandle, PiRunOutcome, PiSpawnSpec,
     STDERR_TAIL_BYTES, build_argv, expand_binary, probe_version, spawn_pi,

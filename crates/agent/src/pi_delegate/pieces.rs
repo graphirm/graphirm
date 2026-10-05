@@ -23,6 +23,35 @@ pub enum PieceKind {
     Question,
 }
 
+impl PieceKind {
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::Statement => "statement",
+            Self::Options => "options",
+            Self::Steps => "steps",
+            Self::Instructions => "instructions",
+            Self::Example => "example",
+            Self::Caveat => "caveat",
+            Self::Code => "code",
+            Self::Question => "question",
+        }
+    }
+
+    pub fn from_label(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "statement" => Some(Self::Statement),
+            "options" => Some(Self::Options),
+            "steps" => Some(Self::Steps),
+            "instructions" => Some(Self::Instructions),
+            "example" => Some(Self::Example),
+            "caveat" => Some(Self::Caveat),
+            "code" => Some(Self::Code),
+            "question" => Some(Self::Question),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PieceItem {
     /// 1-based position within the piece. Distinct from [`Piece::order`].
@@ -68,8 +97,13 @@ pub fn structure_segment(text: &str, narration: bool) -> StructuredSegment {
     attach_headings(&mut blocks, text);
     let mut blocks = split_questions(blocks, text);
     label_blocks(&mut blocks, text, narration);
-    let tiled = ranges_tile(text, &blocks);
-    if !tiled {
+    commit_blocks(text, blocks)
+}
+
+/// Keep `blocks` when they tile `text`. Otherwise the segment is one statement
+/// covering the whole text, with `tiled` false.
+fn commit_blocks(text: &str, mut blocks: Vec<Piece>) -> StructuredSegment {
+    if !ranges_tile(text, &blocks) {
         return StructuredSegment {
             pieces: vec![whole_statement(text)],
             tiled: false,
@@ -623,6 +657,62 @@ fn ranges_tile(text: &str, pieces: &[Piece]) -> bool {
 mod tests {
     use super::*;
 
+    fn piece(start: usize, end: usize) -> Piece {
+        Piece {
+            order: 0,
+            kind: PieceKind::Statement,
+            heading: None,
+            items: Vec::new(),
+            start,
+            end,
+        }
+    }
+
+    #[test]
+    fn a_whitespace_gap_still_tiles() {
+        let text = "Hello.\n\nWorld.";
+        let blocks = vec![piece(0, 6), piece(8, text.len())];
+        assert!(ranges_tile(text, &blocks));
+    }
+
+    #[test]
+    fn dropping_one_character_falls_back_to_one_statement() {
+        let text = "Hello.\n\nWorld.";
+        let blocks = vec![piece(0, 5), piece(8, text.len())];
+        let got = commit_blocks(text, blocks);
+        assert!(!got.tiled);
+        assert_eq!(got.pieces.len(), 1);
+        assert_eq!(got.pieces[0].kind, PieceKind::Statement);
+        assert_eq!(got.pieces[0].start, 0);
+        assert_eq!(got.pieces[0].end, text.len());
+        assert!(got.parsed);
+    }
+
+    #[test]
+    fn shifting_an_offset_by_one_byte_falls_back_to_one_statement() {
+        let text = "Hello.\n\nWorld.";
+        let blocks = vec![piece(0, 6), piece(9, text.len())];
+        let got = commit_blocks(text, blocks);
+        assert!(!got.tiled);
+        assert_eq!(got.pieces.len(), 1);
+        assert_eq!(got.pieces[0].kind, PieceKind::Statement);
+        assert_eq!(got.pieces[0].end, text.len());
+    }
+
+    #[test]
+    fn a_one_byte_shift_inside_a_character_falls_back_to_one_statement() {
+        let text = "Ship 🚀 it.";
+        let rocket = text.find('🚀').unwrap();
+        let blocks = vec![
+            piece(0, rocket + 1),
+            piece(rocket + '🚀'.len_utf8(), text.len()),
+        ];
+        let got = commit_blocks(text, blocks);
+        assert!(!got.tiled);
+        assert_eq!(got.pieces.len(), 1);
+        assert_eq!(got.pieces[0].end, text.len());
+    }
+
     fn kinds(text: &str, narration: bool) -> Vec<PieceKind> {
         structure_segment(text, narration)
             .pieces
@@ -920,6 +1010,7 @@ Should I apply the patch?
             "cursor projects dir had no parent transcripts"
         );
         let mut checked = 0usize;
+        let mut over_cap = 0usize;
         let mut failures: Vec<String> = Vec::new();
         for path in &files {
             let Ok(raw) = std::fs::read_to_string(path) else {
@@ -935,11 +1026,15 @@ Should I apply the patch?
                 if text.trim().is_empty() {
                     continue;
                 }
+                checked += 1;
+                if text.chars().count() > MAX_SEGMENT_CHARS {
+                    over_cap += 1;
+                    continue;
+                }
                 let mut blocks = parse_blocks(&text);
                 attach_headings(&mut blocks, &text);
                 let mut blocks = split_questions(blocks, &text);
                 label_blocks(&mut blocks, &text, false);
-                checked += 1;
                 if !ranges_tile(&text, &blocks) {
                     failures.push(format!(
                         "{}:{} {}",
@@ -957,6 +1052,7 @@ Should I apply the patch?
             }
         }
         assert!(checked > 0, "no assistant text in cursor transcripts");
+        eprintln!("cursor assistant texts {checked}, over the 16000-character cap {over_cap}");
         assert!(
             failures.is_empty(),
             "untiled segments ({} checked): {}",

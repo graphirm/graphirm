@@ -25,6 +25,6 @@ Parser, splitter, baseline labeler, coverage check, Cursor tiling test, Pi JSONL
 
 ## Still open
 
-1. Hand-label about 100 real Pi replies from `~/.graphirm/pi-runs`. Score block coverage, kind match, and heading match. A person labels them, not the model.
+1. Hand-label about 100 real Pi replies from `~/.graphirm/pi-runs`, using `docs/guides/reply-piece-labels.md` and `graphirm label-pieces` with no `--show-baseline`. Score block coverage, kind match, and heading match.
 2. A grammar-constrained llama.cpp labeler that only returns one kind per block and has to beat the baseline. The OpenRouter client cannot force a schema.
 3. Cross-turn edges. Same-turn adjacency is not `applies_to`. Positional candidates start only after the labeled set holds up.

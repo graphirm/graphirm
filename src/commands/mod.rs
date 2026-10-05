@@ -5,6 +5,7 @@ pub mod gliner;
 pub mod graph;
 pub mod import;
 pub mod knowledge;
+pub mod label_pieces;
 pub mod model;
 pub mod serve;
 pub mod trace_analysis;
