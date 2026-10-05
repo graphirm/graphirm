@@ -16,7 +16,7 @@
 - A trailing question run is split by scanning back from the final `?` to punctuation followed by a space or a newline. Abbreviations are `e.g.`, `i.e.`, `etc.`, and `vs.`. `?` inside inline code or a URL does not count.
 - Over 16,000 Unicode scalar values, the segment is one statement and the parser is not called.
 - `order` numbers pieces. Item `position` numbers lines inside a piece.
-- Cursor transcripts are read from `~/.cursor` by the tiling test and are not committed.
+- The live Cursor tiling check is `#[ignore]`. `cargo test` skips it. A missing `~/.cursor/projects` does not fail, including under `--ignored`. Transcripts stay out of the repo.
 - Every production Pi run appends its stdout to `~/.graphirm/pi-runs`. `GRAPHIRM_PI_RUNS_DIR=off` disables it.
 
 ## Milestone 1 — done

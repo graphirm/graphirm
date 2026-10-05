@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-05 — The Cursor tiling check is ignored unless asked for
+
+**Context:** The tiling stress test reads live transcripts from `~/.cursor/projects`. A silent pass looks like the check ran. An empty directory used to fail, which is a reason to commit transcripts so CI can see them.
+**Decision:** Mark `cursor_transcripts_tile_when_present` with `#[ignore]`. A missing home directory, a missing projects directory, or no assistant text returns without failing. Untiled text still fails when the test is run with `--ignored` and transcripts are present.
+**Alternatives:** Keep the early return and let cargo report a pass. Gate it on an environment variable inside the default test run.
+**Consequences:** CI does not need Cursor transcripts. The local command is `cargo test -p graphirm-agent --lib cursor_transcripts_tile_when_present -- --ignored --nocapture`.
+**Refs:** `crates/agent/src/pi_delegate/pieces.rs`.
+
 ## 2026-10-05 — The piece-version snapshot is a hand-checked fixture
 
 **Context:** A hash-prefix sample of local Cursor transcripts was committed as `cursor-subset.jsonl`. That is a random sample of session text, not a scrub. Gitleaks found no keys. The replies still contained private code, paths, and project detail. The commit had not been pushed.
