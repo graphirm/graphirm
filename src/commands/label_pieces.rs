@@ -4,20 +4,29 @@ use std::fs::OpenOptions;
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
 
-use graphirm_agent::pi_delegate::{LabeledReply, load_final_replies};
-use serde_json::json;
+use graphirm_agent::pi_delegate::{label_line, load_final_segments, segments_still_to_label};
 
 use crate::error::GraphirmError;
 
 pub fn run(path: PathBuf, out: PathBuf, show_baseline: bool) -> Result<(), GraphirmError> {
-    let replies = load_final_replies(&path).map_err(|error| {
+    let segments = load_final_segments(&path).map_err(|error| {
         GraphirmError::Config(format!("cannot read {}: {error}", path.display()))
     })?;
-    if replies.is_empty() {
+    if segments.is_empty() {
         return Err(GraphirmError::Config(format!(
             "no final replies in {}",
             path.display()
         )));
+    }
+    let existing = std::fs::read_to_string(&out).unwrap_or_default();
+    let pending = segments_still_to_label(&segments, &existing);
+    if pending.is_empty() {
+        println!(
+            "all {} final replies are already in {}",
+            segments.len(),
+            out.display()
+        );
+        return Ok(());
     }
     let mut file = OpenOptions::new()
         .create(true)
@@ -27,8 +36,9 @@ pub fn run(path: PathBuf, out: PathBuf, show_baseline: bool) -> Result<(), Graph
             GraphirmError::Config(format!("cannot open {}: {error}", out.display()))
         })?;
     println!(
-        "{} final replies. Labels append to {}. Type quit to stop.",
-        replies.len(),
+        "{} final replies, {} still to label. Labels append to {}. Type quit to stop.",
+        segments.len(),
+        pending.len(),
         out.display()
     );
     if show_baseline {
@@ -38,31 +48,17 @@ pub fn run(path: PathBuf, out: PathBuf, show_baseline: bool) -> Result<(), Graph
     let mut input = BufReader::new(stdin.lock());
     let mut output = std::io::stdout().lock();
     let labeled = graphirm_agent::pi_delegate::run_label_session(
-        &replies,
+        &pending,
         show_baseline,
         &mut input,
         &mut output,
     )
     .map_err(|error| GraphirmError::Config(format!("label session: {error}")))?;
     for reply in &labeled {
-        writeln!(file, "{}", label_row(&path, reply)).map_err(|error| {
+        writeln!(file, "{}", label_line(reply)).map_err(|error| {
             GraphirmError::Config(format!("cannot write {}: {error}", out.display()))
         })?;
     }
     println!("labeled {} replies into {}", labeled.len(), out.display());
     Ok(())
-}
-
-fn label_row(source: &std::path::Path, reply: &LabeledReply) -> String {
-    json!({
-        "source": source.display().to_string(),
-        "reply_index": reply.reply_index,
-        "pieces": reply.pieces.iter().map(|piece| json!({
-            "order": piece.order,
-            "start": piece.start,
-            "end": piece.end,
-            "kind": piece.kind.as_label(),
-        })).collect::<Vec<_>>(),
-    })
-    .to_string()
 }

@@ -8,6 +8,12 @@ use pulldown_cmark::{Event, Options, Parser, TagEnd};
 /// Unicode scalar values. Matches the Pi interaction body cap.
 pub const MAX_SEGMENT_CHARS: usize = 16_000;
 
+/// Bump when block boundaries or heading rules change.
+pub const PIECE_PARSER_VERSION: &str = "1";
+
+/// Bump when the baseline kind rules change.
+pub const PIECE_BASELINE_VERSION: &str = "1";
+
 /// A heading lead-in is one line no longer than this.
 pub const MAX_HEADING_CHARS: usize = 80;
 

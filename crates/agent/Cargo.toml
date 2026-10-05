@@ -31,6 +31,7 @@ hf-hub = { version = "0.5", default-features = false, features = ["tokio", "nati
 # Unicode features kept (default) — word-boundary regex uses \w which requires unicode support.
 regex = { version = "1", optional = true }
 pulldown-cmark = "0.13"
+sha2 = "0.10"
 
 [features]
 # Enable the local ONNX extraction backend (GLiNER2). Requires glibc >= 2.38 for

@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-05 — Labels are keyed by byte range, not piece number
+
+**Context:** A later splitter change renumbers pieces. A label that says "piece 3 is a caveat" would then point at a different block. Labeling 100 replies also will not finish in one sitting.
+**Decision:** Each label row stores the run file, the segment index, a SHA-256 of the segment text, `parser_version`, `baseline_version`, and each piece's start and end. `graphirm label-pieces` skips a row already in `piece-labels.jsonl`. `graphirm score-pieces` matches on the byte range, counts a moved range separately from a kind error, and reports single-piece replies apart from replies with several pieces.
+**Alternatives:** Key the file by piece order. Pre-fill the baseline and correct it.
+**Consequences:** Bump `PIECE_PARSER_VERSION` when boundaries change and `PIECE_BASELINE_VERSION` when the kind rules change. A segment whose text hash no longer matches is not scored as a kind error.
+**Refs:** `docs/guides/reply-piece-labels.md`.
+
 ## 2026-10-05 — Pi recordings are capped, and the first labels are blind
 
 **Context:** Raw Pi stdout keeps thinking, tool arguments, and file contents. It is written on every production run. The baseline labeler will be scored against hand labels, and a suggested kind is easy to accept.

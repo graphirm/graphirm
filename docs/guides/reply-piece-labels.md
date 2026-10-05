@@ -71,7 +71,15 @@ Near-miss: "Let me know if you want me to push it." has no question mark. Label 
 graphirm label-pieces ~/.graphirm/pi-runs
 ```
 
-Type one kind name per piece: `statement`, `options`, `steps`, `instructions`, `example`, `caveat`, `code`, or `question`. Type `quit` to stop. Finished replies are appended to `piece-labels.jsonl`.
+Type one kind name per piece: `statement`, `options`, `steps`, `instructions`, `example`, `caveat`, `code`, or `question`. Type `quit` to stop. Finished replies are appended to `piece-labels.jsonl`. The next run reads that file and skips a reply that is already there. A reply you quit in the middle of is asked again.
+
+Each row stores the run file, the segment index inside that file, a SHA-256 of the segment text, the parser version, the baseline version, and each piece's byte range. It does not store "piece 3". After a parser change, the scorer can tell which ranges still match and which blocks moved.
+
+```bash
+graphirm score-pieces piece-labels.jsonl
+```
+
+The score is split into single-piece replies and replies with several pieces. A single statement such as "The file content is: `hi`" does not carry the several-piece score. Use Pi on varied tasks so lists, fences, and questions are in the set.
 
 The first pass does not show a suggested kind. Do not pass `--show-baseline` until a blind portion is done. Accepting a suggestion makes the baseline look better than it is.
 

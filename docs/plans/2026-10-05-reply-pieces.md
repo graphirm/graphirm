@@ -23,8 +23,12 @@
 
 Parser, splitter, baseline labeler, coverage check, Cursor tiling test, Pi JSONL recording.
 
+## Label rows and scorer — done
+
+A row in `piece-labels.jsonl` stores the run file, the segment index, a SHA-256 of the segment text, `parser_version`, `baseline_version`, and each piece's byte range. It does not store piece order. `graphirm label-pieces` skips a segment already in that file, so `quit` can resume. `graphirm score-pieces` matches on the byte range, reports single-piece replies apart from replies with several pieces, and prints a confusion matrix.
+
 ## Still open
 
-1. Hand-label about 100 real Pi replies from `~/.graphirm/pi-runs`, using `docs/guides/reply-piece-labels.md` and `graphirm label-pieces` with no `--show-baseline`. Score block coverage, kind match, and heading match.
+1. Hand-label about 100 real Pi replies from `~/.graphirm/pi-runs`, using `docs/guides/reply-piece-labels.md` and `graphirm label-pieces` with no `--show-baseline`. Use varied tasks so lists, fences, and questions appear. Then run `graphirm score-pieces`.
 2. A grammar-constrained llama.cpp labeler that only returns one kind per block and has to beat the baseline. The OpenRouter client cannot force a schema.
 3. Cross-turn edges. Same-turn adjacency is not `applies_to`. Positional candidates start only after the labeled set holds up.

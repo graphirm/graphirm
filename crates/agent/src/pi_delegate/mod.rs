@@ -24,15 +24,20 @@ pub mod graph;
 pub mod label;
 pub mod pieces;
 pub mod process;
+pub mod score;
 pub mod tool;
 
 pub use events::{MAX_ERROR_CHARS, PiEvent, flatten_content, flatten_result, parse_line};
 pub use graph::{FAILURE_ABANDONED, PI_EXECUTOR, PI_TASK_TITLE, PiRun, PiRunFinish, PiToolCall};
-pub use label::{LabeledReply, final_reply_texts, load_final_replies, run_label_session};
+pub use label::{
+    FinalSegment, LabeledReply, StoredLabel, final_reply_texts, label_line, load_final_segments,
+    parse_stored_label, run_label_session, segment_text_hash, segments_still_to_label,
+};
 pub use process::{
     MAX_INLINE_TASK_BYTES, MAX_LINE_BYTES, PiProcessError, PiRunHandle, PiRunOutcome, PiSpawnSpec,
     STDERR_TAIL_BYTES, build_argv, expand_binary, probe_version, spawn_pi,
 };
+pub use score::{ScoreReport, format_score, score_label_file, score_text};
 pub use tool::{
     PI_DELEGATE_TOOL_NAME, PiDelegateTool, apply_pi_delegate_system_notice, register_pi_delegate,
 };

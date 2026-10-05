@@ -120,6 +120,12 @@ enum Commands {
         show_baseline: bool,
     },
 
+    /// Score a piece-label file against the current parser and baseline.
+    ScorePieces {
+        /// `piece-labels.jsonl` from `graphirm label-pieces`
+        labels: PathBuf,
+    },
+
     /// Run GLiNER2 over a corpus JSONL with candidate labels and output a statistics report.
     #[cfg(feature = "local-extraction")]
     LabelExplore {
@@ -307,6 +313,9 @@ async fn main() -> Result<(), GraphirmError> {
             show_baseline,
         } => {
             commands::label_pieces::run(path, out, show_baseline)?;
+        }
+        Commands::ScorePieces { labels } => {
+            commands::score_pieces::run(labels)?;
         }
         #[cfg(feature = "local-extraction")]
         Commands::LabelExplore {
