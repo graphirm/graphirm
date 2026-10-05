@@ -1004,10 +1004,12 @@ Should I apply the patch?
     #[ignore = "reads ~/.cursor/projects; local only, run with --ignored"]
     fn cursor_transcripts_tile_when_present() {
         let Some(root) = cursor_projects_dir() else {
+            skip_no_transcripts();
             return;
         };
         let mut files = Vec::new();
         let Ok(entries) = std::fs::read_dir(&root) else {
+            skip_no_transcripts();
             return;
         };
         for project in entries.flatten() {
@@ -1024,6 +1026,7 @@ Should I apply the patch?
             }
         }
         if files.is_empty() {
+            skip_no_transcripts();
             return;
         }
         let mut checked = 0usize;
@@ -1069,6 +1072,7 @@ Should I apply the patch?
             }
         }
         if checked == 0 {
+            skip_no_transcripts();
             return;
         }
         eprintln!("cursor assistant texts {checked}, over the 16000-character cap {over_cap}");
@@ -1078,6 +1082,10 @@ Should I apply the patch?
             checked,
             failures.join(", ")
         );
+    }
+
+    fn skip_no_transcripts() {
+        eprintln!("skipped: no transcripts found");
     }
 
     fn cursor_projects_dir() -> Option<std::path::PathBuf> {
