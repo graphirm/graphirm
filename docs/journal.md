@@ -22,8 +22,6 @@ Entry template:
 
 ---
 
----
-
 ## 2026-10-05 — The parser owns the reply text
 
 **Context:** A finished Pi reply should become ordered pieces (statement, options, steps, instructions, example, caveat, code, question) without using the question. A 0.6B structure model was tried as a schema filler and copied schema words instead of the reply.
