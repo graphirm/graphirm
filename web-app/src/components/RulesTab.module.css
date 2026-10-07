@@ -1,12 +1,14 @@
 .root {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 24px;
   min-height: 0;
+  min-width: 0;
   overflow: auto;
-  padding: var(--space-3);
-  color: var(--fg);
-  font-size: 13px;
+  padding: 16px 16px 24px;
+  color: var(--col-fg, var(--fg));
+  font-size: 1rem;
+  line-height: 1.55;
 }
 
 .form,
@@ -15,80 +17,134 @@
 .edit {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 8px;
   min-width: 0;
 }
 
 .field {
-  gap: var(--space-1);
-  font-size: var(--text-sm);
-  color: var(--fg-muted);
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--col-dim, var(--fg-muted));
 }
 
 .field input,
 .field textarea,
 .edit textarea {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   box-sizing: border-box;
-  background: var(--surface-3);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 6px 8px;
-  font-family: inherit;
-  font-size: 13px;
+  background: var(--col-inset, var(--surface-3));
+  color: var(--col-fg, var(--fg));
+  border: 1px solid var(--col-line, var(--border));
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.45;
+}
+
+.field input,
+.form > button {
+  min-height: 44px;
 }
 
 .field textarea,
 .edit textarea {
-  min-height: 72px;
+  min-height: 96px;
   resize: vertical;
 }
 
 .field input:focus,
 .field textarea:focus,
-.edit textarea:focus {
-  outline: none;
-  border-color: var(--accent);
+.edit textarea:focus,
+.root button:focus-visible {
+  outline: 2px solid var(--col-accent, var(--accent));
+  outline-offset: 2px;
+}
+
+.form > button {
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 8px;
+  background: var(--col-accent, var(--accent));
+  color: var(--col-ink, var(--accent-fg));
+}
+
+.form > button:disabled,
+.actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .error {
   margin: 0;
   color: var(--danger);
-  font-size: 12px;
+  font-size: 1rem;
+  line-height: 1.5;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 36ch;
+}
+
+.emptyTitle {
   margin: 0;
-  color: var(--fg-muted);
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.emptyBody {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.55;
+  color: var(--col-dim, var(--fg-muted));
 }
 
 .truncated {
   margin: 0;
   color: var(--warning);
-  font-size: 12px;
+  font-size: 1rem;
+  line-height: 1.5;
 }
 
 .list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 16px;
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
 .row {
-  padding: var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--card-radius);
-  background: var(--surface-1);
+  padding: 12px 14px;
+  border: 1px solid var(--col-line, var(--border));
+  border-radius: 8px;
+  background: var(--col-inset, var(--surface-1));
 }
 
 .name {
-  font-size: var(--text-sm);
-  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--col-accent, var(--fg-muted));
+  overflow-wrap: anywhere;
 }
 
 .summary {
@@ -100,5 +156,13 @@
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
+  gap: 8px;
+}
+
+.actions button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 14px;
+  font-size: 1rem;
+  border-radius: 8px;
 }

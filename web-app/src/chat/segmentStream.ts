@@ -2,6 +2,9 @@ export interface ParsedSegment {
   type: string;
   content: string;
   state: 'done' | 'streaming';
+  n?: number;
+  title?: string;
+  items?: string[];
 }
 
 export interface SegmentPrefixParse {
@@ -32,9 +35,9 @@ type ValueSkip =
   | { status: 'invalid' };
 
 type ObjectRead =
-  | { status: 'complete'; type: string; content: string; end: number }
-  | { status: 'partial'; type: string; content: string; started: boolean }
-  | { status: 'invalid'; type: string; content: string; started: boolean };
+  | { status: 'complete'; type: string; content: string; end: number; n?: number; title?: string; items?: string[] }
+  | { status: 'partial'; type: string; content: string; started: boolean; n?: number; title?: string; items?: string[] }
+  | { status: 'invalid'; type: string; content: string; started: boolean; n?: number; title?: string; items?: string[] };
 
 function waiting(): SegmentPrefixParse {
   return { segments: [], showRecovery: false, plainText: null };
@@ -200,16 +203,42 @@ function readObject(buffer: string, index: number): ObjectRead {
   }
 }
 
-function segmentsFromValue(value: unknown): Array<{ type: string; content: string }> | null {
+function blockFromRecord(record: unknown): Omit<ParsedSegment, 'state'> | null {
+  if (typeof record !== 'object' || record === null) return null;
+  const row = record as { type?: unknown; content?: unknown; n?: unknown; title?: unknown; items?: unknown };
+  if (typeof row.type !== 'string' || row.type.length === 0) return null;
+  const items = Array.isArray(row.items)
+    ? row.items.filter((item): item is string => typeof item === 'string')
+    : [];
+  const hasContent = typeof row.content === 'string';
+  if (!hasContent && items.length === 0) return null;
+  const title = typeof row.title === 'string' ? row.title : undefined;
+  const n = typeof row.n === 'number' ? row.n : undefined;
+  let content = typeof row.content === 'string' ? row.content : '';
+  if (items.length > 0) {
+    const lines: string[] = [];
+    if (title) lines.push(title);
+    items.forEach((item, index) => lines.push(`${index + 1}. ${item}`));
+    content = lines.join('\n');
+  }
+  return {
+    type: row.type,
+    content,
+    ...(n != null ? { n } : {}),
+    ...(title ? { title } : {}),
+    ...(items.length > 0 ? { items } : {}),
+  };
+}
+
+function segmentsFromValue(value: unknown): Array<Omit<ParsedSegment, 'state'>> | null {
   if (typeof value !== 'object' || value === null || !('segments' in value)) return null;
   const segments = (value as { segments?: unknown }).segments;
   if (!Array.isArray(segments)) return null;
-  const parsed: Array<{ type: string; content: string }> = [];
+  const parsed: Array<Omit<ParsedSegment, 'state'>> = [];
   for (const item of segments) {
-    if (typeof item !== 'object' || item === null) return null;
-    const record = item as { type?: unknown; content?: unknown };
-    if (typeof record.type !== 'string' || typeof record.content !== 'string') return null;
-    parsed.push({ type: record.type, content: record.content });
+    const block = blockFromRecord(item);
+    if (!block) return null;
+    parsed.push(block);
   }
   return parsed;
 }
@@ -303,7 +332,20 @@ export function parseSegmentPrefix(buffer: string): SegmentPrefixParse {
     // The envelope is still open when the buffer ends on this object's brace,
     // so the latest block stays streaming until a later token confirms it.
     const state = after >= buffer.length ? 'streaming' : 'done';
-    segments.push({ type: object.type, content: object.content, state });
+    let block: Omit<ParsedSegment, 'state'> | null = null;
+    try {
+      block = blockFromRecord(JSON.parse(buffer.slice(i, object.end)) as unknown);
+    } catch {
+      block = null;
+    }
+    segments.push({
+      type: block?.type || object.type,
+      content: block?.content || object.content,
+      ...(block?.n != null ? { n: block.n } : {}),
+      ...(block?.title ? { title: block.title } : {}),
+      ...(block?.items && block.items.length > 0 ? { items: block.items } : {}),
+      state,
+    });
     if (after >= buffer.length) return withSegments(segments, false);
     i = object.end;
   }

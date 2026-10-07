@@ -33,28 +33,49 @@
   color: var(--fg);
 }
 
+.app[data-layout="chat"] {
+  background: #111315;
+}
+
 .columnSlot {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
+  align-items: center;
   overflow: hidden;
+  background: #111315;
 }
 
 .column {
-  width: 100%;
-  max-width: 430px;
-  margin: 0 auto;
-  min-height: 100%;
+  /* Locked phone column. Page and column share #111315 so desktop is not a phone on a different app. */
+  --col-bg: #111315;
+  --col-raised: oklch(0.22 0.008 80);
+  --col-inset: oklch(0.17 0.006 80);
+  --col-fg: oklch(0.94 0.012 85);
+  --col-dim: oklch(0.74 0.02 80);
+  --col-line: oklch(0.34 0.012 80);
+  --col-accent: #f2b84b;
+  --col-ink: oklch(0.28 0.04 80);
+  --col-danger: oklch(0.68 0.13 25);
+  width: min(100%, 430px);
+  margin-inline: auto;
+  min-width: 0;
+  min-height: 0;
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--col-bg);
+  color: var(--col-fg);
 }
 
 .columnBody {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -77,9 +98,16 @@
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+.column .tabBar {
+  border-top-color: var(--col-line);
+  background: var(--col-bg);
+  padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+
 .tab,
 .tabActive {
   flex: 1;
+  min-width: 0;
   background: transparent;
   color: var(--fg-muted);
   border: none;
@@ -88,9 +116,54 @@
   font-size: 12px;
 }
 
+.column .tab,
+.column .tabActive {
+  min-height: 44px;
+  padding: 10px 4px;
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--col-dim);
+}
+
 .tabActive {
   color: var(--fg);
   box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.column .tabActive {
+  color: var(--col-fg);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--col-accent);
+}
+
+.column .tab:hover,
+.column .tabActive:hover,
+.column .layoutSwitch:hover {
+  opacity: 1;
+  color: var(--col-fg);
+}
+
+.column .tab:focus-visible,
+.column .tabActive:focus-visible,
+.column .layoutSwitch:focus-visible {
+  outline: 2px solid var(--col-accent);
+  outline-offset: -2px;
+}
+
+.column .layoutSwitch {
+  align-self: stretch;
+  flex-shrink: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 8px 16px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--col-dim);
 }
 
 /* Keep the canvas in the tree after the first Graph visit; hide it on other tabs. */

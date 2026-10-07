@@ -39,7 +39,15 @@ export function ReviewTab({ sessions, pendingApproval, tasks, onOpenChat }: Revi
 
   return (
     <div className={styles.root}>
-      {items.length === 0 ? <p className={styles.empty}>Nothing to review.</p> : null}
+      {items.length === 0 ? (
+        <div className={styles.empty}>
+          <p className={styles.kicker}>Review</p>
+          <p className={styles.emptyTitle}>Nothing needs you.</p>
+          <p className={styles.emptyBody}>
+            Approvals, failed or paused sessions, and running Pi work show up here.
+          </p>
+        </div>
+      ) : null}
       <ul className={styles.list}>
         {items.map((item) => {
           const body = (

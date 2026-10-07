@@ -95,12 +95,17 @@ body {
   color: var(--fg);
   font-family: var(--font-sans);
   font-size: var(--text-base);
+  /* 100vh is the large viewport and hides the tab bar under mobile browser chrome. */
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
+  overflow-wrap: break-word;
 }
 
 #root {
   height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }

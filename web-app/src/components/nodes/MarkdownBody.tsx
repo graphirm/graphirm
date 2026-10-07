@@ -19,9 +19,11 @@ marked.setOptions({
 interface MarkdownBodyProps {
   content: string;
   maxHeight?: number;
+  /** Graph cards clip. The phone column lets the thread scroll instead. */
+  bounded?: boolean;
 }
 
-export function MarkdownBody({ content, maxHeight = 400 }: MarkdownBodyProps) {
+export function MarkdownBody({ content, maxHeight = 400, bounded = true }: MarkdownBodyProps) {
   const html = useMemo(() => {
     try {
       return marked.parse(content) as string;
@@ -33,13 +35,17 @@ export function MarkdownBody({ content, maxHeight = 400 }: MarkdownBodyProps) {
   return (
     <div
       className="markdown-body"
-      style={{
-        maxHeight,
-        overflowY: 'auto',
-        fontSize: 12,
-        lineHeight: 1.6,
-        color: 'var(--fg)',
-      }}
+      style={
+        bounded
+          ? {
+              maxHeight,
+              overflowY: 'auto',
+              fontSize: 12,
+              lineHeight: 1.6,
+              color: 'var(--fg)',
+            }
+          : undefined
+      }
       // eslint-disable-next-line react/no-danger
       dangerouslySetInnerHTML={{ __html: html }}
     />

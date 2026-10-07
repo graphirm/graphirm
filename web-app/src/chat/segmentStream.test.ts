@@ -60,6 +60,23 @@ test('a closed segment stays done while the next object is streaming', () => {
   ]);
 });
 
+test('numbered items become a block with a title', () => {
+  const result = parseSegmentPrefix(
+    '{"segments":[{"n":1,"type":"answer","title":"Produce","items":["Bananas","Apples"]}]}',
+  );
+  assert.equal(result.showRecovery, false);
+  assert.deepEqual(result.segments, [
+    {
+      type: 'answer',
+      content: 'Produce\n1. Bananas\n2. Apples',
+      n: 1,
+      title: 'Produce',
+      items: ['Bananas', 'Apples'],
+      state: 'done',
+    },
+  ]);
+});
+
 test('a buffer that starts with a brace is not returned as plainText', () => {
   const samples = [
     '{',

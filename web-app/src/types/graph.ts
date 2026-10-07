@@ -77,6 +77,10 @@ export interface SegmentPart {
   type: ContentType;
   content: string;
   language?: string;
+  /** 1-based block number from the numbered-segment contract. */
+  n?: number;
+  title?: string;
+  items?: string[];
   /** In-flight stream only. Persisted segments omit this and render as done. */
   state?: 'done' | 'streaming';
 }

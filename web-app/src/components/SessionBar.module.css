@@ -49,3 +49,152 @@
   width: 160px;
   outline: none;
 }
+
+.btn11 {
+  font-size: 11px;
+}
+
+.btnExport {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.formName {
+  font-size: 12px;
+  width: 150px;
+  padding: 2px 6px;
+}
+
+.formWorkspace {
+  font-size: 12px;
+  width: 130px;
+  padding: 2px 6px;
+}
+
+.autoOn,
+.autoOff {
+  font-size: 11px;
+  border-radius: 3px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.autoOn {
+  background: #16a34a;
+  color: #fff;
+  border: 1px solid #16a34a;
+}
+
+.autoOff {
+  background: #3c3c3c;
+  color: #d4d4d4;
+  border: 1px solid #555;
+}
+
+:global([data-shell="column"]) .header {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 0;
+  min-width: 0;
+  border-bottom-color: var(--col-line);
+  background: transparent;
+}
+
+:global([data-shell="column"]) .logo {
+  flex: 0 0 auto;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+  color: var(--col-fg);
+}
+
+:global([data-shell="column"]) .controls {
+  display: contents;
+}
+
+:global([data-shell="column"]) .sessionName {
+  flex: 1 1 auto;
+  max-width: min(100%, 16rem);
+  min-width: 0;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+  font-size: 1rem;
+  color: var(--col-dim);
+}
+
+:global([data-shell="column"]) .controls select,
+:global([data-shell="column"]) .renameInput,
+:global([data-shell="column"]) .formName,
+:global([data-shell="column"]) .formWorkspace {
+  flex: 1 1 100%;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  font-size: 16px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--col-line);
+  background: var(--col-inset);
+  color: var(--col-fg);
+}
+
+:global([data-shell="column"]) .controls button {
+  min-height: 44px;
+  min-width: 44px;
+  font-size: 16px;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+:global([data-shell="column"]) .controls button:hover {
+  opacity: 1;
+}
+
+:global([data-shell="column"]) .controls > button:not(:global(.secondary)):not(.autoOn):not(.autoOff) {
+  background: var(--col-accent);
+  color: var(--col-ink);
+  border: none;
+}
+
+:global([data-shell="column"]) .controls button:global(.secondary) {
+  background: transparent;
+  color: var(--col-fg);
+  border: 1px solid var(--col-line);
+}
+
+:global([data-shell="column"]) .autoOn,
+:global([data-shell="column"]) .autoOff {
+  font-size: 16px;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+:global([data-shell="column"]) .autoOn {
+  background: transparent;
+  color: var(--col-accent);
+  border: 1px solid var(--col-accent);
+}
+
+:global([data-shell="column"]) .autoOff {
+  background: transparent;
+  color: var(--col-dim);
+  border: 1px solid var(--col-line);
+}
+
+:global([data-shell="column"]) .controls button:focus-visible,
+:global([data-shell="column"]) .controls select:focus-visible,
+:global([data-shell="column"]) .renameInput:focus-visible,
+:global([data-shell="column"]) .formName:focus-visible,
+:global([data-shell="column"]) .formWorkspace:focus-visible {
+  outline: 2px solid var(--col-accent);
+  outline-offset: 2px;
+}

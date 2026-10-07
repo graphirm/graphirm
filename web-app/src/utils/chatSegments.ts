@@ -59,10 +59,21 @@ export function segmentPartsForInteraction(
     const n = graph.nodes.find(node => node.id === e.target);
     if (!n || n.node_type.type !== 'Content') continue;
     const ct = n.node_type;
+    const meta = n.metadata as {
+      segment_n?: unknown;
+      segment_title?: unknown;
+      segment_items?: unknown;
+    };
+    const items = Array.isArray(meta.segment_items)
+      ? meta.segment_items.filter((item): item is string => typeof item === 'string')
+      : undefined;
     parts.push({
       type: ct.content_type,
       content: ct.body ?? '',
       language: ct.language,
+      n: typeof meta.segment_n === 'number' ? meta.segment_n : undefined,
+      title: typeof meta.segment_title === 'string' ? meta.segment_title : undefined,
+      items: items && items.length > 0 ? items : undefined,
     });
   }
   return parts.length > 0 ? parts : undefined;

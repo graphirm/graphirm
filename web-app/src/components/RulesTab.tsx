@@ -131,7 +131,12 @@ export function RulesTab() {
         </button>
       </form>
       {error && <p className={styles.error}>{error}</p>}
-      {loaded && items.length === 0 ? <p className={styles.empty}>No pinned rules.</p> : null}
+      {loaded && items.length === 0 ? (
+        <div className={styles.empty}>
+          <p className={styles.emptyTitle}>No pinned rules.</p>
+          <p className={styles.emptyBody}>A pinned rule stays in the briefing for every session.</p>
+        </div>
+      ) : null}
       {items.length === PIN_LIMIT ? (
         <p className={styles.truncated}>
           Showing 200 pinned rules. Newer pins are not in this list.

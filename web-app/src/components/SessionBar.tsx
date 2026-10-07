@@ -109,6 +109,7 @@ export function SessionBar({
         {showForm ? (
           <>
             <input
+              className={styles.formName}
               autoFocus
               placeholder="Session name (optional)"
               value={sessionName}
@@ -117,9 +118,9 @@ export function SessionBar({
                 if (e.key === 'Enter') handleCreate();
                 if (e.key === 'Escape') handleCancel();
               }}
-              style={{ fontSize: 12, width: 150, padding: '2px 6px' }}
             />
             <input
+              className={styles.formWorkspace}
               placeholder="Workspace (optional)"
               value={workspaceName}
               onChange={e => setWorkspaceName(e.target.value)}
@@ -127,10 +128,9 @@ export function SessionBar({
                 if (e.key === 'Enter') handleCreate();
                 if (e.key === 'Escape') handleCancel();
               }}
-              style={{ fontSize: 12, width: 130, padding: '2px 6px' }}
             />
             <button onClick={handleCreate}>Create</button>
-            <button className="secondary" onClick={handleCancel} style={{ fontSize: 11 }}>Cancel</button>
+            <button className={`secondary ${styles.btn11}`} onClick={handleCancel}>Cancel</button>
           </>
         ) : (
           <button onClick={() => setShowForm(true)}>+ New</button>
@@ -138,8 +138,7 @@ export function SessionBar({
         {currentSession && (
           <>
             <button
-              className="secondary"
-              style={{ fontSize: 11, padding: '2px 8px' }}
+              className={`secondary ${styles.btnExport}`}
               onClick={() =>
                 window.open(`/api/sessions/${currentSession.id}/export?format=markdown`, '_blank')
               }
@@ -147,19 +146,11 @@ export function SessionBar({
             >
               ↓ Export
             </button>
-            <button className="secondary" onClick={onPause} style={{ fontSize: 11 }}>Pause</button>
-            <button className="secondary" onClick={onResume} style={{ fontSize: 11 }}>Resume</button>
+            <button className={`secondary ${styles.btn11}`} onClick={onPause}>Pause</button>
+            <button className={`secondary ${styles.btn11}`} onClick={onResume}>Resume</button>
             <button
+              className={autoApprove ? styles.autoOn : styles.autoOff}
               onClick={onToggleAutoApprove}
-              style={{
-                fontSize: 11,
-                background: autoApprove ? '#16a34a' : '#3c3c3c',
-                color: autoApprove ? '#fff' : '#d4d4d4',
-                border: `1px solid ${autoApprove ? '#16a34a' : '#555'}`,
-                borderRadius: 3,
-                padding: '2px 8px',
-                cursor: 'pointer',
-              }}
               title={autoApprove ? 'Auto-approve ON — all tool calls run without confirmation' : 'Auto-approve OFF — destructive tools require confirmation'}
             >
               {autoApprove ? 'Auto-approve ON' : 'Auto-approve'}

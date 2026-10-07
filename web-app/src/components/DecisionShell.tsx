@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState, type ComponentProps } from 'rea
 import styles from '../App.module.css';
 import { planStepsFromTasks } from '../chat/planCard';
 import type { LayoutMode } from '../layout/layoutMode';
+import { ShellChromeProvider } from '../layout/shellChrome';
 import type { GraphData } from '../types/graph';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { ChatPane } from './ChatPane';
@@ -167,49 +168,59 @@ export function DecisionShell({ layoutMode, onLayoutMode, session, chat, graph }
     />
   );
 
+  const layoutSwitch = (
+    <button
+      type="button"
+      className={styles.layoutSwitch}
+      onClick={() => onLayoutMode(layoutMode === 'chat' ? 'legacy' : 'chat')}
+    >
+      Layout: chat | legacy
+    </button>
+  );
+
   return (
-    <div className={styles.app}>
-      <SessionBar {...session} />
-      <button
-        type="button"
-        className={styles.layoutSwitch}
-        onClick={() => onLayoutMode(layoutMode === 'chat' ? 'legacy' : 'chat')}
-      >
-        Layout: chat | legacy
-      </button>
-      {layoutMode === 'legacy' ? (
-        <div className={styles.main}>
-          {chatPane}
-          {graphCanvas}
-        </div>
-      ) : (
-        <div className={styles.columnSlot}>
-          <div className={styles.column}>
-            <div className={styles.columnBody}>
-              {tab === 'chat' && chatPane}
-              {tab === 'review' && (
-                <ReviewTab
-                  sessions={session.sessions}
-                  pendingApproval={chat.pendingApproval}
-                  tasks={piTasksFromGraph(graph.graphData)}
-                  onOpenChat={() => selectTab('chat')}
-                />
-              )}
-              {tab === 'rules' && <RulesTab />}
-              {graphMounted && (
-                <div
-                  className={styles.graphKeepAlive}
-                  hidden={tab !== 'graph'}
-                  inert={tab !== 'graph'}
-                >
-                  {graphCanvas}
-                </div>
-              )}
+    <ShellChromeProvider mode={layoutMode === 'chat' ? 'column' : 'legacy'}>
+      <div className={styles.app} data-layout={layoutMode}>
+        {layoutMode === 'legacy' ? (
+          <>
+            <SessionBar {...session} />
+            {layoutSwitch}
+            <div className={styles.main}>
+              {chatPane}
+              {graphCanvas}
             </div>
-            <TabBar active={tab} onChange={selectTab} />
+          </>
+        ) : (
+          <div className={styles.columnSlot}>
+            <div className={styles.column} data-shell="column">
+              <SessionBar {...session} />
+              {layoutSwitch}
+              <div className={styles.columnBody}>
+                {tab === 'chat' && chatPane}
+                {tab === 'review' && (
+                  <ReviewTab
+                    sessions={session.sessions}
+                    pendingApproval={chat.pendingApproval}
+                    tasks={piTasksFromGraph(graph.graphData)}
+                    onOpenChat={() => selectTab('chat')}
+                  />
+                )}
+                {tab === 'rules' && <RulesTab />}
+                {graphMounted && (
+                  <div
+                    className={styles.graphKeepAlive}
+                    hidden={tab !== 'graph'}
+                    inert={tab !== 'graph'}
+                  >
+                    {graphCanvas}
+                  </div>
+                )}
+              </div>
+              <TabBar active={tab} onChange={selectTab} />
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </ShellChromeProvider>
   );
 }

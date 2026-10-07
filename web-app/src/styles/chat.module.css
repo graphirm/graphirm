@@ -473,6 +473,16 @@
   line-height: var(--line-height);
 }
 
+.blockTitle {
+  margin-bottom: 4px;
+  font-weight: 650;
+}
+
+.blockList {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
 /* Collapsed tool-call row for a turn */
 .steps {
   border-left: 3px solid var(--node-content);
@@ -609,4 +619,550 @@
   color: var(--fg-muted);
   opacity: 0.7;
   cursor: not-allowed;
+}
+
+.emptyThread {
+  display: none;
+}
+
+.steerBanner,
+.outlineBanner {
+  font-size: 11px;
+  border-radius: 3px;
+  padding: 3px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.steerBanner {
+  color: var(--node-interaction);
+  background: #1a3a5c;
+}
+
+.outlineBanner {
+  color: var(--accent);
+  background: var(--surface-2);
+}
+
+.steerDismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.recovery {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinkingDot,
+  .blockCursor {
+    animation: none;
+  }
+}
+
+/* Phone column. Legacy two-pane keeps the rules above. */
+:global([data-shell="column"]) .chatPane {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  border-right: none;
+  background: transparent;
+  color: var(--col-fg);
+}
+
+:global([data-shell="column"]) .messages {
+  padding: 16px 16px 24px;
+  gap: 16px;
+  min-width: 0;
+  background: transparent;
+}
+
+:global([data-shell="column"]) .emptyThread {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 36ch;
+  padding: 32px 0 8px;
+}
+
+:global([data-shell="column"]) .emptyKicker {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--col-accent);
+}
+
+:global([data-shell="column"]) .emptyTitle {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--col-fg);
+}
+
+:global([data-shell="column"]) .emptyBody {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.55;
+  color: var(--col-dim);
+}
+
+:global([data-shell="column"]) .message {
+  min-width: 0;
+  max-width: 100%;
+  padding: 12px 14px;
+  border-left: none;
+  font-size: 1rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+:global([data-shell="column"]) .message.user {
+  background: var(--col-accent);
+  color: var(--col-ink);
+  border-radius: 14px 14px 4px 14px;
+  max-width: min(100%, 36ch);
+}
+
+:global([data-shell="column"]) .message.assistant {
+  align-self: stretch;
+  background: transparent;
+  color: var(--col-fg);
+  padding: 0;
+  border-radius: 0;
+}
+
+:global([data-shell="column"]) .message.assistant:not(:has(.block)) {
+  background: var(--col-raised);
+  padding: 12px 14px;
+  border-radius: 4px 14px 14px 14px;
+}
+
+:global([data-shell="column"]) .message.tool {
+  background: var(--col-inset);
+  color: var(--col-dim);
+  border-left: none;
+  font-size: 0.875rem;
+  overflow-x: auto;
+}
+
+:global([data-shell="column"]) .roleLabel {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  margin-bottom: 8px;
+}
+
+:global([data-shell="column"]) .message.user .roleLabel {
+  color: var(--col-ink);
+  opacity: 0.72;
+}
+
+:global([data-shell="column"]) .message.assistant .roleLabel {
+  color: var(--col-accent);
+  opacity: 1;
+}
+
+:global([data-shell="column"]) .message.tool .roleLabel {
+  color: var(--col-dim);
+}
+
+:global([data-shell="column"]) .replyHint {
+  margin-top: 8px;
+  font-size: 1rem;
+  line-height: 1.55;
+  color: var(--col-dim);
+}
+
+:global([data-shell="column"]) .segmentStack {
+  gap: 12px;
+}
+
+:global([data-shell="column"]) .block {
+  padding: 12px 14px;
+  border: 1px solid var(--col-line);
+  border-left: 1px solid var(--col-line);
+  border-radius: 8px;
+  background: var(--col-inset);
+}
+
+:global([data-shell="column"]) .blockKicker {
+  margin-bottom: 8px;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  color: var(--col-accent);
+}
+
+:global([data-shell="column"]) .blockCheck {
+  color: var(--col-accent);
+}
+
+:global([data-shell="column"]) .blockCursor {
+  background: var(--col-accent);
+}
+
+:global([data-shell="column"]) .blockBody {
+  font-size: 1rem;
+  line-height: 1.55;
+}
+
+:global([data-shell="column"]) .blockTitle {
+  margin-bottom: 8px;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+:global([data-shell="column"]) .segmentPre {
+  max-width: 100%;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+:global([data-shell="column"]) .steps {
+  border: 1px solid var(--col-line);
+  border-left: 1px solid var(--col-line);
+  background: var(--col-inset);
+  border-radius: 8px;
+  padding: 4px 14px;
+}
+
+:global([data-shell="column"]) .stepsSummary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--col-accent);
+  font-size: 0.75rem;
+}
+
+:global([data-shell="column"]) .stepDetail {
+  flex: 1 1 8rem;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+}
+
+:global([data-shell="column"]) .stepTitle {
+  font-size: 0.875rem;
+}
+
+:global([data-shell="column"]) .jevChip {
+  min-height: 44px;
+  max-width: 100%;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border-color: var(--col-line);
+  background: transparent;
+  color: var(--col-dim);
+  font-size: 0.75rem;
+  white-space: normal;
+  text-align: left;
+}
+
+:global([data-shell="column"]) .jevChip:hover {
+  color: var(--col-fg);
+  border-color: var(--col-accent);
+  opacity: 1;
+}
+
+:global([data-shell="column"]) .jevSheet {
+  border-color: var(--col-line);
+  border-radius: 12px 12px 0 0;
+  background: var(--col-raised);
+  color: var(--col-fg);
+  padding: 16px;
+}
+
+:global([data-shell="column"]) .jevSheetReason {
+  font-size: 1rem;
+  line-height: 1.55;
+}
+
+:global([data-shell="column"]) .jevSheetActions button {
+  flex: 1 1 7rem;
+  min-height: 44px;
+  font-size: 1rem;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--col-fg);
+  border: 1px solid var(--col-line);
+}
+
+:global([data-shell="column"]) .inputBar {
+  padding: 12px 16px 16px;
+  gap: 8px;
+  background: transparent;
+  border-top-color: var(--col-line);
+}
+
+:global([data-shell="column"]) .inputBar textarea {
+  min-height: 44px;
+  font-size: 16px;
+  line-height: 1.45;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border-color: var(--col-line);
+  background: var(--col-inset);
+  color: var(--col-fg);
+}
+
+:global([data-shell="column"]) .inputBar textarea:focus {
+  border-color: var(--col-accent);
+  outline: none;
+}
+
+:global([data-shell="column"]) .inputActions button {
+  flex: 1;
+  min-height: 44px;
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--col-accent);
+  color: var(--col-ink);
+}
+
+:global([data-shell="column"]) .inputActions button:disabled {
+  background: var(--col-raised);
+  color: var(--col-dim);
+  opacity: 1;
+}
+
+:global([data-shell="column"]) .inputActions button:global(.danger) {
+  background: var(--col-danger);
+  color: oklch(0.97 0.01 25);
+}
+
+:global([data-shell="column"]) .steerBanner,
+:global([data-shell="column"]) .outlineBanner {
+  min-height: 44px;
+  font-size: 1rem;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--col-inset);
+  color: var(--col-fg);
+}
+
+:global([data-shell="column"]) .steerDismiss {
+  min-width: 44px;
+  min-height: 44px;
+  font-size: 1rem;
+}
+
+:global([data-shell="column"]) .thinkingBar {
+  min-height: 44px;
+  padding: 8px 16px;
+  background: transparent;
+  border-top-color: var(--col-line);
+  color: var(--col-accent);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+:global([data-shell="column"]) .thinkingDot {
+  background: var(--col-accent);
+}
+
+:global([data-shell="column"]) .hitlCard {
+  margin: 8px 0 0;
+  padding: 16px;
+  border: 1px solid color-mix(in oklch, var(--col-accent) 55%, var(--col-line));
+  border-radius: 10px;
+  background: var(--col-raised);
+  min-width: 0;
+}
+
+:global([data-shell="column"]) .hitlCard::before {
+  content: "Confirm";
+  display: block;
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--col-accent);
+}
+
+:global([data-shell="column"]) .hitlHeader {
+  margin-bottom: 12px;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--col-fg);
+}
+
+:global([data-shell="column"]) .hitlArgs {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:global([data-shell="column"]) .hitlArgs pre {
+  max-width: 100%;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--col-fg);
+  background: var(--col-inset);
+}
+
+:global([data-shell="column"]) .hitlNote,
+:global([data-shell="column"]) .hitlScore {
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--col-dim);
+}
+
+:global([data-shell="column"]) .hitlTextarea {
+  font-size: 16px;
+  min-height: 88px;
+  padding: 12px;
+  border-radius: 8px;
+  border-color: var(--col-line);
+  background: var(--col-inset);
+  color: var(--col-fg);
+}
+
+:global([data-shell="column"]) .hitlActions button {
+  flex: 1 1 7rem;
+  min-height: 44px;
+  font-size: 1rem;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+:global([data-shell="column"]) .hitlApprove {
+  background: var(--col-accent) !important;
+  color: var(--col-ink) !important;
+}
+
+:global([data-shell="column"]) .hitlReject {
+  background: var(--col-danger) !important;
+  color: oklch(0.97 0.01 25) !important;
+}
+
+:global([data-shell="column"]) .hitlModify,
+:global([data-shell="column"]) .hitlActions button:global(.secondary) {
+  background: transparent !important;
+  color: var(--col-fg) !important;
+  border: 1px solid var(--col-line);
+}
+
+:global([data-shell="column"]) .planCard {
+  gap: 12px;
+  padding: 16px;
+  background: transparent;
+  border-top-color: var(--col-line);
+}
+
+:global([data-shell="column"]) .planLabel {
+  min-height: 44px;
+  align-items: center;
+  font-size: 1rem;
+}
+
+:global([data-shell="column"]) .planLabel input {
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: var(--col-accent);
+  flex-shrink: 0;
+}
+
+:global([data-shell="column"]) .planNote {
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--col-dim);
+}
+
+:global([data-shell="column"]) .planRun {
+  min-height: 44px;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 8px;
+  background: var(--col-accent);
+  color: var(--col-ink);
+}
+
+:global([data-shell="column"]) .planRun:disabled {
+  background: var(--col-raised);
+  color: var(--col-dim);
+  opacity: 1;
+}
+
+:global([data-shell="column"]) .outlineSteerBtn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 12px;
+  font-size: 1rem;
+}
+
+:global([data-shell="column"]) .recovery {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--col-accent);
+}
+
+:global([data-shell="column"]) :global(.markdown-body) {
+  font-size: 1rem;
+  line-height: 1.55;
+  color: inherit;
+}
+
+:global([data-shell="column"]) :global(.markdown-body) h1,
+:global([data-shell="column"]) :global(.markdown-body) h2,
+:global([data-shell="column"]) :global(.markdown-body) h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 16px 0 8px;
+}
+
+:global([data-shell="column"]) :global(.markdown-body) p {
+  margin: 8px 0;
+}
+
+:global([data-shell="column"]) :global(.markdown-body) pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+:global([data-shell="column"]) :global(.markdown-body) code {
+  font-size: 0.875rem;
+}
+
+:global([data-shell="column"]) :global(.markdown-body) blockquote {
+  border: none;
+  padding-left: 0;
+  margin: 12px 0;
+  color: var(--col-dim);
+}
+
+:global([data-shell="column"]) .chatPane button:focus-visible,
+:global([data-shell="column"]) .chatPane textarea:focus-visible {
+  outline: 2px solid var(--col-accent);
+  outline-offset: 2px;
 }

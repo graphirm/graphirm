@@ -9,6 +9,7 @@ import { replyHints } from '../chat/replyHints';
 import { parseSegmentPrefix } from '../chat/segmentStream';
 import type { Message, PendingApproval } from '../types/graph';
 import { MarkdownBody } from './nodes/MarkdownBody';
+import { useColumnChrome } from '../layout/shellChrome';
 import { BlockView } from './BlockView';
 import { JevChip, JevSheet } from './JevChip';
 import { StepsRow } from './StepsRow';
@@ -168,8 +169,9 @@ function jevLabel(message: Message): string | null {
 }
 
 function MessageBody({ message }: { message: Message }) {
+  const column = useColumnChrome();
   if (message.role === 'user') {
-    return <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{message.content}</div>;
+    return <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.content}</div>;
   }
   if (message.segments && message.segments.length > 0) {
     return (
@@ -180,15 +182,25 @@ function MessageBody({ message }: { message: Message }) {
             kicker={seg.type}
             content={seg.content}
             state="done"
+            n={seg.n}
+            title={seg.title}
+            items={seg.items}
           />
         ))}
       </div>
     );
   }
-  return <MarkdownBody content={cleanLegacyAssistantContent(message.content)} maxHeight={250} />;
+  return (
+    <MarkdownBody
+      content={cleanLegacyAssistantContent(message.content)}
+      maxHeight={250}
+      bounded={!column}
+    />
+  );
 }
 
 function StreamingBody({ message }: { message: Message }) {
+  const column = useColumnChrome();
   const parsed = parseSegmentPrefix(message.content);
   const segments = parsed.segments.length > 0 ? parsed.segments : (message.segments ?? []);
   const showPlaceholder =
@@ -204,15 +216,22 @@ function StreamingBody({ message }: { message: Message }) {
               kicker={seg.type}
               content={seg.content}
               state={seg.state === 'streaming' ? 'streaming' : 'done'}
+              n={seg.n}
+              title={seg.title}
+              items={seg.items}
             />
           ))}
         </div>
       )}
       {parsed.plainText !== null && (
-        <MarkdownBody content={cleanLegacyAssistantContent(parsed.plainText)} maxHeight={250} />
+        <MarkdownBody
+          content={cleanLegacyAssistantContent(parsed.plainText)}
+          maxHeight={250}
+          bounded={!column}
+        />
       )}
-      {parsed.showRecovery && <div>Fixing the format…</div>}
-      {showPlaceholder && <MarkdownBody content="…" maxHeight={250} />}
+      {parsed.showRecovery && <div className={styles.recovery}>Fixing the format…</div>}
+      {showPlaceholder && <MarkdownBody content="…" maxHeight={250} bounded={!column} />}
     </>
   );
 }
@@ -291,6 +310,15 @@ export function ChatPane({
         </button>
       )}
       <div className={styles.messages}>
+        {entries.length === 0 && !streamingMessage && (
+          <div className={styles.emptyThread}>
+            <p className={styles.emptyKicker}>Chat</p>
+            <p className={styles.emptyTitle}>No messages yet.</p>
+            <p className={styles.emptyBody}>
+              Send a prompt. Replies arrive as typed blocks. Destructive tools pause on a confirm card.
+            </p>
+          </div>
+        )}
         {entries.map(entry => {
           if (entry.kind === 'steps') {
             return <StepsRow key={`steps-${entry.id}`} steps={entry.steps} />;
@@ -372,42 +400,17 @@ export function ChatPane({
 
       <div className={styles.inputBar}>
         {steerContext && (
-          <div style={{
-            fontSize: 11,
-            color: 'var(--node-interaction)',
-            background: '#1a3a5c',
-            borderRadius: 3,
-            padding: '3px 8px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}>
+          <div className={styles.steerBanner}>
             <span>↩ Steering from node <code>{steerContext.nodeId.slice(0, 8)}</code></span>
-            <button
-              onClick={onClearSteer}
-              style={{ background: 'none', border: 'none', color: 'inherit', fontSize: 12, cursor: 'pointer', padding: '0 4px' }}
-            >
+            <button type="button" className={styles.steerDismiss} onClick={onClearSteer}>
               ✕
             </button>
           </div>
         )}
         {outlineSteer && onClearOutlineSteer && (
-          <div style={{
-            fontSize: 11,
-            color: 'var(--accent)',
-            background: 'var(--surface-2)',
-            borderRadius: 3,
-            padding: '3px 8px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}>
+          <div className={styles.outlineBanner}>
             <span>Outline steer: <code>{outlineSteer.outlineNodeId.slice(0, 8)}</code></span>
-            <button
-              type="button"
-              onClick={onClearOutlineSteer}
-              style={{ background: 'none', border: 'none', color: 'inherit', fontSize: 12, cursor: 'pointer', padding: '0 4px' }}
-            >
+            <button type="button" className={styles.steerDismiss} onClick={onClearOutlineSteer}>
               ✕
             </button>
           </div>

@@ -3,5 +3,14 @@ import { BlockView } from './BlockView';
 
 /** Persisted segments are closed. Look lives on `BlockView`. */
 export function SegmentCard({ segment }: { segment: SegmentPart }) {
-  return <BlockView kicker={segment.type} content={segment.content} state="done" />;
+  return (
+    <BlockView
+      kicker={segment.type}
+      content={segment.content}
+      state="done"
+      n={segment.n}
+      title={segment.title}
+      items={segment.items}
+    />
+  );
 }
