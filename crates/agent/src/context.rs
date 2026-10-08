@@ -2,14 +2,14 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use serde::Deserialize;
 
 #[cfg(test)]
-use chrono::Duration;
-#[cfg(test)]
-use graphirm_graph::{AgentData, ContentData, GraphEdge, InteractionData, KnowledgeData, TaskData};
-use graphirm_graph::{Direction, EdgeType, GraphNode, GraphStore, NodeId, NodeType};
+use graphirm_graph::{AgentData, ContentData, KnowledgeData, TaskData};
+use graphirm_graph::{
+    Direction, EdgeType, GraphEdge, GraphNode, GraphStore, InteractionData, NodeId, NodeType,
+};
 use graphirm_llm::LlmMessage;
 
 use crate::context_stats::ContextStats;
@@ -208,15 +208,8 @@ pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
                     .metadata
                     .get("tool_call_id")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| {
-                        tracing::warn!(
-                            node_id = %node.id,
-                            "tool-result Interaction node is missing tool_call_id in metadata; \
-                             emitting empty id which may cause provider API rejection"
-                        );
-                        String::new()
-                    });
+                    .unwrap_or("")
+                    .to_string();
                 let is_error = node
                     .metadata
                     .get("is_error")
@@ -688,10 +681,9 @@ pub fn build_context_with_stats(
     all_nodes.extend(conv_older);
     all_nodes.extend(recent_chrono);
 
-    let messages: Vec<LlmMessage> = all_nodes
-        .iter()
-        .filter_map(|n| node_to_message_filtered(n, graph, config.segment_filter.as_deref()))
-        .collect();
+    append_pending_approval_results(graph, &agent_id, &thread, &mut all_nodes)?;
+
+    let messages = assemble_paired_messages(&all_nodes, graph, config.segment_filter.as_deref());
 
     let total_tokens = system_tokens + guaranteed_tokens + selected_tokens;
 
@@ -703,6 +695,297 @@ pub fn build_context_with_stats(
         },
         stats,
     ))
+}
+
+/// When the newest interaction is an assistant tool call with no recorded result,
+/// append one tool-result node per missing id. A restored session otherwise
+/// drops the call, and the model never sees that approval is still open.
+fn append_pending_approval_results(
+    graph: &GraphStore,
+    agent_id: &NodeId,
+    thread: &[GraphNode],
+    all_nodes: &mut Vec<GraphNode>,
+) -> Result<(), AgentError> {
+    let Some(leaf) = thread.first() else {
+        return Ok(());
+    };
+    let NodeType::Interaction(data) = &leaf.node_type else {
+        return Ok(());
+    };
+    if data.role != "assistant" {
+        return Ok(());
+    }
+    let Some(calls) = leaf
+        .metadata
+        .get("tool_calls")
+        .and_then(|value| value.as_array())
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let answered: std::collections::HashSet<String> = thread
+        .iter()
+        .filter_map(|node| {
+            let NodeType::Interaction(data) = &node.node_type else {
+                return None;
+            };
+            if data.role != "tool" {
+                return None;
+            }
+            node.metadata
+                .get("tool_call_id")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .collect();
+
+    let mut previous = leaf.id.clone();
+    for (offset, call) in calls.iter().enumerate() {
+        let Some(id) = call.get("id").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if id.is_empty() || answered.contains(id) {
+            continue;
+        }
+        let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "tool".to_string(),
+            content: "awaiting approval".to_string(),
+            token_count: None,
+        }));
+        node.created_at += Duration::milliseconds(offset as i64);
+        node.updated_at = node.created_at;
+        node.metadata = serde_json::json!({
+            "tool_call_id": id,
+            "tool_name": call.get("name").and_then(|value| value.as_str()).unwrap_or(""),
+            "is_error": true,
+            "pending_approval": true,
+        });
+        let node_id = node.id.clone();
+        graph
+            .add_node(node.clone())
+            .map_err(|e| AgentError::Context(e.to_string()))?;
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id.clone(),
+                node_id.clone(),
+            ))
+            .map_err(|e| AgentError::Context(e.to_string()))?;
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                node_id,
+                previous.clone(),
+            ))
+            .map_err(|e| AgentError::Context(e.to_string()))?;
+        previous = node.id.clone();
+        all_nodes.push(node);
+    }
+    Ok(())
+}
+
+/// Convert assembled nodes, then drop tool results and tool calls that do not
+/// form a contiguous run: one assistant message, then the result messages whose
+/// ids equal that assistant's tool-call ids.
+///
+/// Each drop is logged once, with the graph node id. `LlmMessage` has no node id,
+/// so this runs before the messages leave the nodes behind.
+fn assemble_paired_messages(
+    nodes: &[GraphNode],
+    graph: &GraphStore,
+    segment_filter: Option<&[String]>,
+) -> Vec<LlmMessage> {
+    use graphirm_llm::Role;
+
+    let mut paired: Vec<(NodeId, LlmMessage)> = nodes
+        .iter()
+        .filter_map(|node| {
+            node_to_message_filtered(node, graph, segment_filter)
+                .map(|message| (node.id.clone(), message))
+        })
+        .collect();
+
+    pull_results_ahead_of_interruptions(&mut paired);
+
+    let mut drop_message = vec![false; paired.len()];
+    let mut index = 0;
+    while index < paired.len() {
+        let has_calls =
+            paired[index].1.role == Role::Assistant && !tool_call_ids(&paired[index].1).is_empty();
+        if has_calls {
+            let assistant = index;
+            let run_start = index + 1;
+            let mut run_end = run_start;
+            while run_end < paired.len() && paired[run_end].1.role == Role::ToolResult {
+                run_end += 1;
+            }
+            let call_ids = tool_call_ids(&paired[assistant].1);
+            let matched =
+                retain_matching_results(&paired, &mut drop_message, run_start, run_end, &call_ids);
+            let node_id = paired[assistant].0.clone();
+            drop_unmatched_tool_calls(&node_id, &mut paired[assistant].1, &matched);
+            if assistant_message_empty(&paired[assistant].1) {
+                tracing::warn!(
+                    node_id = %node_id,
+                    "dropping assistant message left empty after unpaired tool calls were removed"
+                );
+                drop_message[assistant] = true;
+            }
+            index = run_end;
+            continue;
+        }
+        if paired[index].1.role == Role::ToolResult {
+            tracing::warn!(
+                node_id = %paired[index].0,
+                tool_call_id = tool_result_id(&paired[index].1).unwrap_or(""),
+                "dropping tool result that does not pair with a tool call"
+            );
+            drop_message[index] = true;
+        }
+        index += 1;
+    }
+
+    paired
+        .into_iter()
+        .enumerate()
+        .filter(|(slot, _)| !drop_message[*slot])
+        .map(|(_, (_, message))| message)
+        .collect()
+}
+
+/// A user steer recorded between an assistant call and its results is moved
+/// to after that result run, so the run stays contiguous.
+fn pull_results_ahead_of_interruptions(paired: &mut Vec<(NodeId, LlmMessage)>) {
+    use graphirm_llm::Role;
+
+    let mut index = 0;
+    while index < paired.len() {
+        if paired[index].1.role != Role::Assistant {
+            index += 1;
+            continue;
+        }
+        let call_ids = tool_call_ids(&paired[index].1);
+        if call_ids.is_empty() {
+            index += 1;
+            continue;
+        }
+        let mut cursor = index + 1;
+        while cursor < paired.len() && paired[cursor].1.role == Role::ToolResult {
+            cursor += 1;
+        }
+        let contiguous_end = cursor;
+        let mut seen: std::collections::HashSet<String> = paired[index + 1..contiguous_end]
+            .iter()
+            .filter_map(|(_, message)| tool_result_id(message).map(str::to_string))
+            .filter(|id| call_ids.contains(id))
+            .collect();
+        if seen.len() == call_ids.len() {
+            index = contiguous_end;
+            continue;
+        }
+
+        let mut pulled = Vec::new();
+        let mut deferred = Vec::new();
+        while cursor < paired.len() && paired[cursor].1.role != Role::Assistant {
+            if paired[cursor].1.role == Role::ToolResult {
+                let id = tool_result_id(&paired[cursor].1).unwrap_or("").to_string();
+                if !id.is_empty() && call_ids.contains(&id) && !seen.contains(&id) {
+                    seen.insert(id);
+                    pulled.push(paired[cursor].clone());
+                    cursor += 1;
+                    if seen.len() == call_ids.len() {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+            deferred.push(paired[cursor].clone());
+            cursor += 1;
+        }
+        if pulled.is_empty() {
+            index += 1;
+            continue;
+        }
+
+        let mut rebuilt = Vec::with_capacity(paired.len());
+        rebuilt.extend(paired[..index + 1].iter().cloned());
+        rebuilt.extend(paired[index + 1..contiguous_end].iter().cloned());
+        rebuilt.extend(pulled.iter().cloned());
+        rebuilt.extend(deferred);
+        rebuilt.extend(paired[cursor..].iter().cloned());
+        let resume = index + 1 + (contiguous_end - (index + 1)) + pulled.len();
+        *paired = rebuilt;
+        index = resume;
+    }
+}
+
+fn tool_call_ids(message: &LlmMessage) -> std::collections::HashSet<String> {
+    message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            graphirm_llm::ContentPart::ToolCall { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn retain_matching_results(
+    paired: &[(NodeId, LlmMessage)],
+    drop_message: &mut [bool],
+    run_start: usize,
+    run_end: usize,
+    call_ids: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    let mut matched = std::collections::HashSet::new();
+    for slot in run_start..run_end {
+        let result_id = tool_result_id(&paired[slot].1).unwrap_or("").to_string();
+        if result_id.is_empty() || !call_ids.contains(&result_id) {
+            tracing::warn!(
+                node_id = %paired[slot].0,
+                tool_call_id = %result_id,
+                "dropping tool result that does not pair with a tool call"
+            );
+            drop_message[slot] = true;
+        } else {
+            matched.insert(result_id);
+        }
+    }
+    matched
+}
+
+fn tool_result_id(message: &LlmMessage) -> Option<&str> {
+    message.content.iter().find_map(|part| match part {
+        graphirm_llm::ContentPart::ToolResult { id, .. } => Some(id.as_str()),
+        _ => None,
+    })
+}
+
+fn drop_unmatched_tool_calls(
+    node_id: &NodeId,
+    message: &mut LlmMessage,
+    matched: &std::collections::HashSet<String>,
+) {
+    message.content.retain(|part| match part {
+        graphirm_llm::ContentPart::ToolCall { id, .. } if !matched.contains(id) => {
+            tracing::warn!(
+                node_id = %node_id,
+                tool_call_id = %id,
+                "dropping tool call with no matching result"
+            );
+            false
+        }
+        _ => true,
+    });
+}
+
+fn assistant_message_empty(message: &LlmMessage) -> bool {
+    !message.content.iter().any(|part| match part {
+        graphirm_llm::ContentPart::Text { text } => !text.trim().is_empty(),
+        graphirm_llm::ContentPart::ToolCall { .. } => true,
+        graphirm_llm::ContentPart::ToolResult { .. } => true,
+    })
 }
 
 /// Build a scoped LLM message context for a subagent.
@@ -1246,6 +1529,438 @@ mod tests {
             matches!(part, graphirm_llm::ContentPart::Text { text } if text.contains("Message 19"))
         });
         assert!(has_msg_19, "Last message should contain 'Message 19'");
+    }
+
+    /// T1. The reserved tail starts on a tool result whose call sits just
+    /// outside the tail and does not fit the remaining budget.
+    #[test]
+    fn t1_tail_boundary_drops_orphaned_tool_result() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let call_body = "word ".repeat(400);
+        let nodes: Vec<(&str, String, serde_json::Value)> = vec![
+            ("user", "ask read".to_string(), serde_json::json!({})),
+            (
+                "assistant",
+                call_body,
+                serde_json::json!({"tool_calls": [{"id": "call_1", "name": "read", "arguments": {}}]}),
+            ),
+            (
+                "tool",
+                "result body".to_string(),
+                serde_json::json!({"tool_call_id": "call_1"}),
+            ),
+            ("assistant", "tail a".to_string(), serde_json::json!({})),
+            ("user", "tail b".to_string(), serde_json::json!({})),
+            ("assistant", "tail c".to_string(), serde_json::json!({})),
+        ];
+
+        let mut prev_id: Option<NodeId> = None;
+        for (i, (role, content, metadata)) in nodes.into_iter().enumerate() {
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: role.to_string(),
+                content,
+                token_count: None,
+            }));
+            node.metadata = metadata;
+            node.created_at = Utc::now() - Duration::minutes((10 - i) as i64);
+            node.updated_at = node.created_at;
+            let node_id = node.id.clone();
+            graph.add_node(node).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    node_id.clone(),
+                ))
+                .unwrap();
+            if let Some(pid) = &prev_id {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        node_id.clone(),
+                        pid.clone(),
+                    ))
+                    .unwrap();
+            }
+            prev_id = Some(node_id);
+        }
+
+        let config = ContextConfig {
+            max_tokens: 40,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            ..ContextConfig::default()
+        };
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        assert_tool_pairing(&window.messages);
+    }
+
+    /// T2. A tool result with an empty id is not sent.
+    #[test]
+    fn t2_empty_tool_call_id_is_dropped() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let nodes: Vec<(&str, String, serde_json::Value)> = vec![
+            (
+                "assistant",
+                "calling".to_string(),
+                serde_json::json!({"tool_calls": [{"id": "call_1", "name": "read", "arguments": {}}]}),
+            ),
+            (
+                "tool",
+                "result body".to_string(),
+                serde_json::json!({"tool_call_id": ""}),
+            ),
+            ("user", "tail b".to_string(), serde_json::json!({})),
+            ("assistant", "tail c".to_string(), serde_json::json!({})),
+        ];
+        link_chain(&graph, &agent_id, nodes);
+
+        let config = ContextConfig {
+            max_tokens: 500,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            ..ContextConfig::default()
+        };
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        let has_empty_result = window.messages.iter().any(|message| {
+            message.content.iter().any(|part| {
+                matches!(part, graphirm_llm::ContentPart::ToolResult { id, .. } if id.is_empty())
+            })
+        });
+        assert!(
+            !has_empty_result,
+            "empty tool_call_id result must be dropped"
+        );
+        assert_tool_pairing(&window.messages);
+    }
+
+    /// T3. An older tool call that fits, whose result does not, leaves no unmatched call.
+    #[test]
+    fn t3_kept_call_with_dropped_result_has_no_unmatched_tool_use() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let result_body = "word ".repeat(400);
+        let nodes: Vec<(&str, String, serde_json::Value)> = vec![
+            ("user", "go".to_string(), serde_json::json!({})),
+            (
+                "assistant",
+                "see file".to_string(),
+                serde_json::json!({"tool_calls": [{"id": "call_1", "name": "read", "arguments": {}}]}),
+            ),
+            (
+                "tool",
+                result_body,
+                serde_json::json!({"tool_call_id": "call_1"}),
+            ),
+            ("user", "n1".to_string(), serde_json::json!({})),
+            ("assistant", "n2".to_string(), serde_json::json!({})),
+            ("user", "n3".to_string(), serde_json::json!({})),
+            ("assistant", "n4".to_string(), serde_json::json!({})),
+        ];
+        link_chain(&graph, &agent_id, nodes);
+
+        let config = ContextConfig {
+            max_tokens: 40,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            ..ContextConfig::default()
+        };
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        assert_tool_pairing(&window.messages);
+    }
+
+    /// An intact parallel run stays together. A check that only looks at the
+    /// message directly before each result would drop the second and third.
+    #[test]
+    fn intact_parallel_run_keeps_every_result_with_its_call() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let nodes: Vec<(&str, String, serde_json::Value)> = vec![
+            (
+                "assistant",
+                "calling".to_string(),
+                serde_json::json!({
+                    "tool_calls": [
+                        {"id": "call_1", "name": "read", "arguments": {}},
+                        {"id": "call_2", "name": "read", "arguments": {}},
+                        {"id": "call_3", "name": "read", "arguments": {}}
+                    ]
+                }),
+            ),
+            (
+                "tool",
+                "one".to_string(),
+                serde_json::json!({"tool_call_id": "call_1"}),
+            ),
+            (
+                "tool",
+                "two".to_string(),
+                serde_json::json!({"tool_call_id": "call_2"}),
+            ),
+            (
+                "tool",
+                "three".to_string(),
+                serde_json::json!({"tool_call_id": "call_3"}),
+            ),
+        ];
+        link_chain(&graph, &agent_id, nodes);
+
+        let config = ContextConfig {
+            max_tokens: 500,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            ..ContextConfig::default()
+        };
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        assert_tool_pairing(&window.messages);
+        let result_ids: Vec<&str> = window
+            .messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                graphirm_llm::ContentPart::ToolResult { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(result_ids, ["call_1", "call_2", "call_3"]);
+    }
+
+    #[test]
+    fn pending_approval_records_a_tool_result() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+        link_chain(
+            &graph,
+            &agent_id,
+            vec![(
+                "assistant",
+                "calling".to_string(),
+                serde_json::json!({
+                    "tool_calls": [{"id": "call_1", "name": "bash", "arguments": {}}]
+                }),
+            )],
+        );
+
+        let config = ContextConfig {
+            max_tokens: 500,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            ..ContextConfig::default()
+        };
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        assert_tool_pairing(&window.messages);
+        assert!(window.messages.iter().any(|message| {
+            message.content.iter().any(|part| {
+                matches!(
+                    part,
+                    graphirm_llm::ContentPart::ToolResult { id, content, .. }
+                        if id == "call_1" && content == "awaiting approval"
+                )
+            })
+        }));
+
+        let again = build_context(&graph, &agent_id, &config).unwrap();
+        assert_tool_pairing(&again.messages);
+        let awaiting = graph
+            .neighbors(&agent_id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap()
+            .into_iter()
+            .filter(|node| {
+                node.metadata
+                    .get("tool_call_id")
+                    .and_then(|value| value.as_str())
+                    == Some("call_1")
+                    && node
+                        .metadata
+                        .get("pending_approval")
+                        .and_then(|value| value.as_bool())
+                        == Some(true)
+            })
+            .count();
+        assert_eq!(
+            awaiting, 1,
+            "a second context build must not record another result"
+        );
+    }
+
+    #[test]
+    fn steer_between_call_and_result_is_placed_after_the_run() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+        link_chain(
+            &graph,
+            &agent_id,
+            vec![
+                (
+                    "assistant",
+                    "calling".to_string(),
+                    serde_json::json!({
+                        "tool_calls": [{"id": "call_1", "name": "read", "arguments": {}}]
+                    }),
+                ),
+                ("user", "steer this".to_string(), serde_json::json!({})),
+                (
+                    "tool",
+                    "file body".to_string(),
+                    serde_json::json!({"tool_call_id": "call_1"}),
+                ),
+            ],
+        );
+
+        let config = ContextConfig {
+            max_tokens: 500,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            ..ContextConfig::default()
+        };
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        assert_tool_pairing(&window.messages);
+        let sketch: Vec<String> = window
+            .messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .map(|part| match part {
+                graphirm_llm::ContentPart::ToolCall { id, .. } => format!("call:{id}"),
+                graphirm_llm::ContentPart::ToolResult { id, .. } => format!("result:{id}"),
+                graphirm_llm::ContentPart::Text { text } => text.clone(),
+            })
+            .collect();
+        assert_eq!(
+            sketch,
+            vec![
+                "calling".to_string(),
+                "call:call_1".to_string(),
+                "result:call_1".to_string(),
+                "steer this".to_string(),
+            ]
+        );
+    }
+
+    fn link_chain(
+        graph: &GraphStore,
+        agent_id: &NodeId,
+        nodes: Vec<(&str, String, serde_json::Value)>,
+    ) {
+        let mut prev_id: Option<NodeId> = None;
+        for (i, (role, content, metadata)) in nodes.into_iter().enumerate() {
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: role.to_string(),
+                content,
+                token_count: None,
+            }));
+            node.metadata = metadata;
+            node.created_at = Utc::now() - Duration::minutes((20 - i) as i64);
+            node.updated_at = node.created_at;
+            let node_id = node.id.clone();
+            graph.add_node(node).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    node_id.clone(),
+                ))
+                .unwrap();
+            if let Some(pid) = &prev_id {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        node_id.clone(),
+                        pid.clone(),
+                    ))
+                    .unwrap();
+            }
+            prev_id = Some(node_id);
+        }
+    }
+
+    fn assert_tool_pairing(messages: &[graphirm_llm::LlmMessage]) {
+        use graphirm_llm::{ContentPart, Role};
+
+        let mut i = 0;
+        while i < messages.len() {
+            if messages[i].role == Role::ToolResult {
+                panic!("tool result at message {i} does not follow its assistant call");
+            }
+            if messages[i].role != Role::Assistant {
+                i += 1;
+                continue;
+            }
+            let call_ids: Vec<&str> = messages[i]
+                .content
+                .iter()
+                .filter_map(|part| match part {
+                    ContentPart::ToolCall { id, .. } => Some(id.as_str()),
+                    _ => None,
+                })
+                .collect();
+            if call_ids.is_empty() {
+                i += 1;
+                continue;
+            }
+            let mut result_ids: Vec<&str> = Vec::new();
+            let mut j = i + 1;
+            while j < messages.len() && messages[j].role == Role::ToolResult {
+                for part in &messages[j].content {
+                    if let ContentPart::ToolResult { id, .. } = part {
+                        result_ids.push(id.as_str());
+                    }
+                }
+                j += 1;
+            }
+            assert_eq!(
+                call_ids, result_ids,
+                "tool call ids {call_ids:?} do not match the following result ids {result_ids:?}"
+            );
+            i = j;
+        }
     }
 
     #[test]

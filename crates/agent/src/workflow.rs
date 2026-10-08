@@ -1317,6 +1317,31 @@ async fn run_tool_calls(
                         tracing::error!("Failed to record tool rejection for call {call_id}: {e}");
                     }
                 }
+
+                let mut tool_metadata = serde_json::Map::new();
+                tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(call_id));
+                tool_metadata.insert("tool_name".to_string(), serde_json::json!(name));
+                tool_metadata.insert("is_error".to_string(), serde_json::json!(true));
+                let mut tool_node = GraphNode::new(NodeType::Interaction(InteractionData {
+                    role: "tool".to_string(),
+                    content: format!("rejected by user: {reason}"),
+                    token_count: None,
+                }));
+                tool_node.metadata = serde_json::Value::Object(tool_metadata);
+                match session.record_interaction(tool_node).await {
+                    Ok(result_node_id) => {
+                        events.emit(AgentEvent::ToolEnd {
+                            node_id: result_node_id.clone(),
+                            is_error: true,
+                        });
+                        node_ids.push(result_node_id);
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to record rejection tool result for call {call_id}: {e}"
+                        );
+                    }
+                }
             }
         }
     }
@@ -3149,6 +3174,22 @@ mod tests {
             rejection_node.metadata.get("session_id"),
             Some(&serde_json::json!(session.id.to_string()))
         );
+
+        let produced = graph
+            .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap();
+        let rejection_result = produced.iter().find(|node| {
+            matches!(&node.node_type, NodeType::Interaction(data) if data.role == "tool")
+                && node
+                    .metadata
+                    .get("tool_call_id")
+                    .and_then(|value| value.as_str())
+                    == Some("call_w1")
+        });
+        let Some(NodeType::Interaction(data)) = rejection_result.map(|node| &node.node_type) else {
+            panic!("rejection must record a tool result for call_w1");
+        };
+        assert_eq!(data.content, "rejected by user: no bash");
     }
 
     #[tokio::test]
