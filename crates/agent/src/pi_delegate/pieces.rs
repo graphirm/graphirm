@@ -662,8 +662,231 @@ fn ranges_tile(text: &str, pieces: &[Piece]) -> bool {
 }
 
 /// Cut one HTML index page into pieces. `Err` when the page is not that index.
-pub fn cut_html_index(_text: &str) -> Result<Vec<Piece>, ()> {
-    Err(())
+///
+/// A part counts only when an index link, the target id, and a single kind-word
+/// class all match. `start` and `end` are UTF-8 byte offsets of the part element.
+#[allow(clippy::result_unit_err)]
+pub fn cut_html_index(text: &str) -> Result<Vec<Piece>, ()> {
+    let doc = scraper::Html::parse_fragment(text);
+    let index = html_by_id(&doc, "index")?;
+    let mut pieces = Vec::new();
+    for anchor in index.descendants() {
+        let Some(el) = scraper::ElementRef::wrap(anchor) else {
+            continue;
+        };
+        if el.value().name() != "a" {
+            continue;
+        }
+        let href = el.value().attr("href").ok_or(())?;
+        let id = href
+            .strip_prefix('#')
+            .filter(|id| !id.is_empty())
+            .ok_or(())?;
+        let (kind, heading) = split_kind_heading(&el.text().collect::<String>()).ok_or(())?;
+        let part = html_by_id(&doc, id)?;
+        if !class_is_kind(part.value().attr("class").unwrap_or(""), kind) {
+            return Err(());
+        }
+        let (start, end) = element_span(text, id).ok_or(())?;
+        let items = part_items(part, text, start)?;
+        let order = u32::try_from(pieces.len() + 1).map_err(|_| ())?;
+        pieces.push(Piece {
+            order,
+            kind,
+            heading,
+            items,
+            start,
+            end,
+        });
+    }
+    if pieces.is_empty() {
+        return Err(());
+    }
+    Ok(pieces)
+}
+
+fn html_by_id<'a>(doc: &'a scraper::Html, id: &str) -> Result<scraper::ElementRef<'a>, ()> {
+    doc.root_element()
+        .descendants()
+        .filter_map(scraper::ElementRef::wrap)
+        .find(|el| el.value().attr("id") == Some(id))
+        .ok_or(())
+}
+
+fn split_kind_heading(raw: &str) -> Option<(PieceKind, Option<String>)> {
+    let text = raw.trim();
+    let rest = text.strip_prefix('[')?;
+    let (kind_raw, after) = rest.split_once(']')?;
+    if kind_raw.contains('[') {
+        return None;
+    }
+    let kind = PieceKind::from_label(kind_raw)?;
+    let heading = after.trim();
+    let heading = if heading.is_empty() {
+        None
+    } else {
+        Some(heading.to_string())
+    };
+    Some((kind, heading))
+}
+
+fn class_is_kind(class: &str, kind: PieceKind) -> bool {
+    let mut tokens = class.split_whitespace();
+    tokens.next() == Some(kind.as_label()) && tokens.next().is_none()
+}
+
+fn part_items(
+    part: scraper::ElementRef<'_>,
+    text: &str,
+    part_start: usize,
+) -> Result<Vec<PieceItem>, ()> {
+    let mut items = Vec::new();
+    for node in part.descendants() {
+        let Some(el) = scraper::ElementRef::wrap(node) else {
+            continue;
+        };
+        let name = el.value().name();
+        if !is_item_tag(name) || has_item_ancestor(el) || li_inside_index(el) {
+            continue;
+        }
+        let raw: String = el.text().collect();
+        let body = if name == "pre" {
+            raw
+        } else {
+            raw.trim().to_string()
+        };
+        if name != "pre" && body.is_empty() {
+            continue;
+        }
+        let position = u32::try_from(items.len() + 1).map_err(|_| ())?;
+        let (start, end) =
+            item_span(text, part_start, position as usize).unwrap_or((part_start, part_start));
+        items.push(PieceItem {
+            position,
+            text: body,
+            start,
+            end,
+        });
+    }
+    Ok(items)
+}
+
+fn is_item_tag(name: &str) -> bool {
+    matches!(name, "p" | "li" | "pre")
+}
+
+fn has_item_ancestor(el: scraper::ElementRef<'_>) -> bool {
+    el.ancestors().any(|node| {
+        scraper::ElementRef::wrap(node).is_some_and(|anc| is_item_tag(anc.value().name()))
+    })
+}
+
+fn li_inside_index(el: scraper::ElementRef<'_>) -> bool {
+    if el.value().name() != "li" {
+        return false;
+    }
+    el.ancestors().any(|node| {
+        scraper::ElementRef::wrap(node).and_then(|anc| anc.value().attr("id")) == Some("index")
+    })
+}
+
+fn element_span(text: &str, id: &str) -> Option<(usize, usize)> {
+    let attr_at = [format!("id=\"{id}\""), format!("id='{id}'")]
+        .into_iter()
+        .filter_map(|needle| text.find(&needle))
+        .min()?;
+    let start = text[..attr_at].rfind('<')?;
+    let tag = tag_name(&text[start..])?;
+    let end = start + matching_close(&text[start..], tag)?;
+    Some((start, end))
+}
+
+fn item_span(text: &str, part_start: usize, nth: usize) -> Option<(usize, usize)> {
+    let mut seen = 0usize;
+    let mut i = part_start;
+    let bytes = text.as_bytes();
+    while i < text.len() {
+        if bytes[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        if text[i..].starts_with("<!--") {
+            i = text[i..]
+                .find("-->")
+                .map(|n| i + n + 3)
+                .unwrap_or(text.len());
+            continue;
+        }
+        let is_close = text[i + 1..].starts_with('/');
+        if is_close {
+            let gt = text[i..].find('>')?;
+            i += gt + 1;
+            continue;
+        }
+        let name = tag_name(&text[i..])?;
+        let gt = text[i..].find('>')?;
+        let self_close = text[i..i + gt].ends_with('/');
+        if is_item_tag(name) && !self_close {
+            seen += 1;
+            let close_rel = matching_close(&text[i..], name)?;
+            if seen == nth {
+                return Some((i, i + close_rel));
+            }
+            i += close_rel;
+            continue;
+        }
+        i += gt + 1;
+    }
+    None
+}
+
+fn tag_name(at_tag: &str) -> Option<&str> {
+    let rest = at_tag
+        .strip_prefix('<')?
+        .strip_prefix('/')
+        .unwrap_or(at_tag.strip_prefix('<')?);
+    let end = rest
+        .find(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
+        .unwrap_or(rest.len());
+    let name = &rest[..end];
+    if name.is_empty() { None } else { Some(name) }
+}
+
+fn matching_close(html: &str, tag: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut i = 0usize;
+    while i < html.len() {
+        if !html[i..].starts_with('<') {
+            i += 1;
+            continue;
+        }
+        if html[i..].starts_with("<!--") {
+            i = html[i..]
+                .find("-->")
+                .map(|n| i + n + 3)
+                .unwrap_or(html.len());
+            continue;
+        }
+        let is_close = html[i + 1..].starts_with('/');
+        let name = tag_name(&html[i..])?;
+        let gt = html[i..].find('>')?;
+        if name.eq_ignore_ascii_case(tag) {
+            if is_close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + gt + 1);
+                }
+            } else if html[i..i + gt].ends_with('/') {
+                if depth == 0 {
+                    return Some(i + gt + 1);
+                }
+            } else {
+                depth += 1;
+            }
+        }
+        i += gt + 1;
+    }
+    None
 }
 
 #[cfg(test)]
