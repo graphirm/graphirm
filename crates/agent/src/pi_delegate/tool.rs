@@ -36,6 +36,7 @@ use tokio::task::JoinHandle;
 
 use super::events::{MAX_ERROR_CHARS, PiEvent, flatten_result};
 use super::graph::{PiRun, PiRunFinish, PiToolCall, truncate_within};
+use super::pieces::cut_html_index;
 use super::process::{
     PiProcessError, PiRunHandle, PiRunOutcome, PiSpawnSpec, probe_version, spawn_pi,
 };
@@ -45,6 +46,14 @@ use crate::hitl_judge::{DestructiveJudge, JUDGE_ACTION_OBSERVED, JudgeVerdict, b
 
 /// Registered tool name.
 pub const PI_DELEGATE_TOOL_NAME: &str = "delegate_pi";
+
+/// Appended to the task before spawn. Pi is asked for one HTML index page.
+/// The cutter accepts that page and refuses anything else.
+const HTML_PIECE_INDEX_CONTRACT: &str = "\n\n\
+Reply with only HTML. No markdown.\n\
+Start with <div id=\"index\">. Each entry is one link to a part. The link text is the kind in brackets, then the heading, like [statement] Overview. Point href at that part's id. The order of the links is the order of the parts.\n\
+Each part is a div. Its id matches the link. Its class is the kind word alone, for example class=\"statement\". Put each line of the part in a p or an li. Put a block of code in pre and code.\n\
+statement is something to know. options is something to choose. steps is something to follow in order. instructions is directions. example is a sample. caveat is a warning. code is code. question is a question. Put the kind on the part and on its index entry.\n";
 
 /// At most this many `Warnings:` bullets in the tool result.
 const MAX_SUMMARY_WARNINGS: usize = 10;
@@ -265,7 +274,8 @@ impl Tool for PiDelegateTool {
                     .to_string(),
             ));
         }
-        let parsed = self.parse_args(&args)?;
+        let mut parsed = self.parse_args(&args)?;
+        parsed.task.push_str(HTML_PIECE_INDEX_CONTRACT);
         // Deliberately probed on every call (not only at registration): this is
         // what guarantees an uninstalled or broken Pi never creates a Task
         // node. Cost is one `pi --version` (typically ~100 ms, capped at 5 s)
@@ -284,7 +294,7 @@ impl Tool for PiDelegateTool {
         )
         .await
         .map_err(|e| ToolError::ExecutionFailed(format!("recording Pi delegation: {e}")))?;
-        let driver = RunDriver::new(self, ctx, run);
+        let driver = RunDriver::new(self, ctx, run, parsed.task.clone(), parsed.timeout);
         driver.notify_run_changed();
 
         let spec = PiSpawnSpec {
@@ -333,10 +343,19 @@ struct RunDriver<'a> {
     stats: RunStats,
     pending: HashMap<String, PendingCall>,
     judge_warned: bool,
+    task: String,
+    timeout: Duration,
+    html_retried: bool,
 }
 
 impl<'a> RunDriver<'a> {
-    fn new(tool: &'a PiDelegateTool, ctx: &'a ToolContext, run: PiRun) -> Self {
+    fn new(
+        tool: &'a PiDelegateTool,
+        ctx: &'a ToolContext,
+        run: PiRun,
+        task: String,
+        timeout: Duration,
+    ) -> Self {
         Self {
             tool,
             ctx,
@@ -346,6 +365,9 @@ impl<'a> RunDriver<'a> {
             stats: RunStats::default(),
             pending: HashMap::new(),
             judge_warned: false,
+            task,
+            timeout,
+            html_retried: false,
         }
     }
 
@@ -364,13 +386,43 @@ impl<'a> RunDriver<'a> {
     }
 
     /// Drain every event, then await the process outcome and finish.
-    async fn consume(mut self, mut handle: PiRunHandle) -> Result<ToolOutput, ToolError> {
+    /// A turn-ending reply that is not an HTML index is spawned once more.
+    async fn consume(mut self, handle: PiRunHandle) -> Result<ToolOutput, ToolError> {
+        let result = self.drive(handle).await;
+        let result = if self.should_retry_html(&result) {
+            self.html_retried = true;
+            let spec = PiSpawnSpec {
+                config: &self.tool.config,
+                cwd: &self.ctx.working_dir,
+                task: &self.task,
+                timeout: self.timeout,
+            };
+            match spawn_pi(spec, self.ctx.signal.clone()).await {
+                Ok(handle) => self.drive(handle).await,
+                Err(e) => return self.finish(Err(e)).await,
+            }
+        } else {
+            result
+        };
+        self.abort_pending_judges();
+        self.finish(result).await
+    }
+
+    async fn drive(&mut self, mut handle: PiRunHandle) -> Result<PiRunOutcome, PiProcessError> {
         while let Some(event) = handle.events.recv().await {
             self.on_event(event).await;
         }
-        let result = handle.wait().await;
-        self.abort_pending_judges();
-        self.finish(result).await
+        handle.wait().await
+    }
+
+    fn should_retry_html(&self, result: &Result<PiRunOutcome, PiProcessError>) -> bool {
+        if self.html_retried || result.is_err() {
+            return false;
+        }
+        match &self.stats.last_text {
+            Some(text) => cut_html_index(text).is_err(),
+            None => false,
+        }
     }
 
     async fn on_event(&mut self, event: PiEvent) {
@@ -548,9 +600,10 @@ impl<'a> RunDriver<'a> {
         if text.trim().is_empty() {
             return;
         }
+        let turn_ending = stop_reason.as_deref() != Some(STOP_REASON_TOOL_USE);
         if let Err(e) = self
             .run
-            .record_assistant_message(&text, stop_reason.as_deref(), usage.as_ref())
+            .record_assistant_message(&text, stop_reason.as_deref(), usage.as_ref(), turn_ending)
             .await
         {
             self.graph_write_failed("assistant message", e);
@@ -781,7 +834,7 @@ mod tests {
 
     use graphirm_graph::edges::EdgeType;
     use graphirm_graph::nodes::{
-        AgentData, GraphNode, InteractionData, NodeId, NodeType, TaskData, TaskStatus,
+        AgentData, ContentData, GraphNode, InteractionData, NodeId, NodeType, TaskData, TaskStatus,
     };
     use graphirm_graph::{Direction, GraphStore};
     use graphirm_llm::DecisionsTransport;
@@ -971,7 +1024,7 @@ mod tests {
             out.content
         );
         assert!(
-            out.content.contains("Result:\nThe file content is: `hi`"),
+            out.content.contains("The file content is: `hi`"),
             "{}",
             out.content
         );
@@ -984,9 +1037,15 @@ mod tests {
 
         let (task, meta) = task_data(&ctx.graph, &task_id);
         assert_eq!(task.status, TaskStatus::Completed);
-        assert_eq!(task.description, "make hello.txt");
+        assert_eq!(
+            task.description,
+            format!("make hello.txt{HTML_PIECE_INDEX_CONTRACT}")
+        );
         assert_eq!(meta["executor"], PI_EXECUTOR);
-        assert_eq!(meta["result"], "The file content is: `hi`");
+        assert_eq!(
+            meta["result"],
+            r##"<div id="index"><a href="#part1">[statement] Result</a></div><div id="part1" class="statement"><p>The file content is: `hi`</p></div>"##
+        );
         assert_eq!(meta["exit_code"], 0);
         assert_eq!(meta["tool_calls"], 4);
         assert!(meta.get("failure").is_none());
@@ -1050,11 +1109,158 @@ mod tests {
         .await
         .expect("ok");
 
-        let expected = "fix it\n\nRelevant files:\n- src/a.rs\n- src/b.rs";
+        let expected =
+            format!("fix it\n\nRelevant files:\n- src/a.rs\n- src/b.rs{HTML_PIECE_INDEX_CONTRACT}");
         let argv = std::fs::read_to_string(&argv_file).expect("argv");
         assert!(argv.ends_with(&format!("{expected}\n")), "{argv}");
         let (task, _) = task_data(&ctx.graph, &delegated_tasks(&ctx)[0].id);
         assert_eq!(task.description, expected);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pi_task_includes_html_index_contract() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let argv_file = dir.path().join("argv.txt");
+        let (ctx, _) = make_ctx(dir.path());
+        let cfg = fake_config(&[("FAKE_PI_ARGV", &argv_file.display().to_string())]);
+        let tool = PiDelegateTool::new(cfg, None);
+
+        tool.execute(json!({"task": "fix the parser"}), &ctx)
+            .await
+            .expect("ok");
+
+        let argv = std::fs::read_to_string(&argv_file).expect("argv");
+        let task_at = argv.find("fix the parser").expect("original task");
+        let contract_at = argv.find("id=\"index\"").expect("index contract");
+        assert!(task_at < contract_at, "{argv}");
+        assert!(argv.contains("[statement]"), "{argv}");
+        assert!(argv.contains("kind word alone"), "{argv}");
+        assert!(argv.contains("p or an li"), "{argv}");
+        assert!(argv.contains("pre and code"), "{argv}");
+    }
+
+    fn assistant_fixture(text: &str) -> String {
+        let body = serde_json::to_string(text).expect("json");
+        format!(
+            "{{\"type\":\"session\",\"id\":\"s\",\"cwd\":\"/w\"}}\n\
+             {{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":{body}}}],\"stopReason\":\"stop\"}}}}\n\
+             {{\"type\":\"agent_end\",\"willRetry\":false}}\n"
+        )
+    }
+
+    fn reply_parts<'a>(graph: &GraphStore, message: &'a GraphNode) -> Vec<GraphNode> {
+        graph
+            .neighbors(&message.id, Some(EdgeType::Contains), Direction::Outgoing)
+            .expect("contains")
+            .into_iter()
+            .filter(|n| {
+                matches!(
+                    &n.node_type,
+                    NodeType::Content(ContentData { content_type, .. }) if content_type == "reply_part"
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn retries_a_failed_html_cut_once() {
+        let page = r##"<div id="index"><a href="#part1">[statement] Overview</a></div><div id="part1" class="statement"><p>One sentence.</p></div>"##;
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let bad = dir.path().join("bad.jsonl");
+        let good = dir.path().join("good.jsonl");
+        let also_bad = dir.path().join("also-bad.jsonl");
+        std::fs::write(&bad, assistant_fixture("not html")).expect("bad");
+        std::fs::write(&good, assistant_fixture(page)).expect("good");
+        std::fs::write(&also_bad, assistant_fixture("still not html")).expect("also bad");
+
+        let seq = dir.path().join("seq.txt");
+        let log = dir.path().join("spawns.txt");
+        std::fs::write(&seq, format!("{}\n{}\n", bad.display(), good.display())).expect("seq");
+        let (ctx, _) = make_ctx(dir.path());
+        let tool = PiDelegateTool::new(
+            fake_config(&[
+                ("FAKE_PI_FIXTURE_SEQ", &seq.display().to_string()),
+                ("FAKE_PI_SPAWN_LOG", &log.display().to_string()),
+                ("FAKE_PI_DELAY_MS", "0"),
+            ]),
+            None,
+        );
+        tool.execute(json!({"task": "answer"}), &ctx)
+            .await
+            .expect("ok");
+
+        let spawns = std::fs::read_to_string(&log).expect("log");
+        assert_eq!(spawns.lines().count(), 2, "{spawns}");
+        let assistants = assistant_messages(&ctx);
+        assert_eq!(assistants.len(), 2);
+        let plain = assistants
+            .iter()
+            .find(|n| interaction_content(n) == "not html")
+            .expect("failed cut kept");
+        let cut = assistants
+            .iter()
+            .find(|n| interaction_content(n) == page)
+            .expect("second message");
+        assert!(reply_parts(&ctx.graph, plain).is_empty());
+        assert_eq!(reply_parts(&ctx.graph, cut).len(), 1);
+
+        let seq = dir.path().join("seq-fail.txt");
+        let log = dir.path().join("spawns-fail.txt");
+        std::fs::write(
+            &seq,
+            format!(
+                "{}\n{}\n{}\n",
+                bad.display(),
+                also_bad.display(),
+                good.display()
+            ),
+        )
+        .expect("seq");
+        let (ctx, _) = make_ctx(dir.path());
+        let tool = PiDelegateTool::new(
+            fake_config(&[
+                ("FAKE_PI_FIXTURE_SEQ", &seq.display().to_string()),
+                ("FAKE_PI_SPAWN_LOG", &log.display().to_string()),
+                ("FAKE_PI_DELAY_MS", "0"),
+            ]),
+            None,
+        );
+        tool.execute(json!({"task": "answer"}), &ctx)
+            .await
+            .expect("ok");
+        let spawns = std::fs::read_to_string(&log).expect("log");
+        assert_eq!(spawns.lines().count(), 2, "{spawns}");
+        let assistants = assistant_messages(&ctx);
+        assert_eq!(assistants.len(), 2);
+        assert!(
+            assistants
+                .iter()
+                .any(|n| interaction_content(n) == "not html")
+        );
+        let second = assistants
+            .iter()
+            .find(|n| interaction_content(n) == "still not html")
+            .expect("second failure kept");
+        assert!(
+            assistants
+                .iter()
+                .all(|n| reply_parts(&ctx.graph, n).is_empty())
+        );
+        assert!(reply_parts(&ctx.graph, second).is_empty());
+    }
+
+    fn interaction_content(node: &GraphNode) -> &str {
+        match &node.node_type {
+            NodeType::Interaction(data) => data.content.as_str(),
+            other => panic!("expected Interaction, got {}", other.type_name()),
+        }
+    }
+
+    fn assistant_messages(ctx: &ToolContext) -> Vec<GraphNode> {
+        pi_nodes(&ctx.graph, &delegated_tasks(ctx)[0].id)
+            .into_iter()
+            .filter(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "assistant"))
+            .collect()
     }
 
     #[tokio::test]
@@ -1150,7 +1356,7 @@ mod tests {
             "{}",
             out.content
         );
-        assert!(out.content.contains("Result:\nThe file content is: `hi`"));
+        assert!(out.content.contains("The file content is: `hi`"));
         let (task, meta) = task_data(&ctx.graph, &delegated_tasks(&ctx)[0].id);
         assert_eq!(task.status, TaskStatus::Completed);
         assert_eq!(meta["exit_code"], 1);
@@ -1245,9 +1451,10 @@ mod tests {
                 .to_string(),
             );
         }
+        let page = r##"<div id="index"><a href="#part1">[statement] Result</a></div><div id="part1" class="statement"><p>done</p></div>"##;
         lines.push(
             json!({"type": "message_end", "message": {"role": "assistant",
-                   "content": [{"type": "text", "text": "done"}], "stopReason": "stop"}})
+                   "content": [{"type": "text", "text": page}], "stopReason": "stop"}})
             .to_string(),
         );
         lines.push(r#"{"type":"agent_end","willRetry":false}"#.to_string());

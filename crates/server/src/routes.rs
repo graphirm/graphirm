@@ -1761,7 +1761,7 @@ fn build_routing_report(graph: &graphirm_graph::GraphStore) -> Vec<StrategyRepor
             },
         )
         .collect();
-    reports.sort_by(|a, b| b.turn_count.cmp(&a.turn_count));
+    reports.sort_by_key(|a| std::cmp::Reverse(a.turn_count));
     reports
 }
 

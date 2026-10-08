@@ -104,7 +104,10 @@ async fn agent_loop_delegates_to_pi_and_records_the_run() {
         other => panic!("expected Task, got {}", other.type_name()),
     }
     assert_eq!(task.metadata["executor"], "pi");
-    assert_eq!(task.metadata["result"], "The file content is: `hi`");
+    assert_eq!(
+        task.metadata["result"],
+        r##"<div id="index"><a href="#part1">[statement] Result</a></div><div id="part1" class="statement"><p>The file content is: `hi`</p></div>"##
+    );
     assert_eq!(task.metadata["exit_code"], 0);
     assert_eq!(task.metadata["tool_calls"], 4);
     assert!(task.metadata.get("binary").is_none());
