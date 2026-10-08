@@ -307,7 +307,7 @@ pub fn build_trace_report(graph: &GraphStore, max_sessions: usize) -> TraceRepor
     };
 
     let mut agents_sorted = agents;
-    agents_sorted.sort_by(|(a, _), (b, _)| b.created_at.cmp(&a.created_at));
+    agents_sorted.sort_by_key(|(a, _)| std::cmp::Reverse(a.created_at));
     agents_sorted.truncate(max_sessions);
 
     let mut per_session: Vec<SessionSummary> = Vec::new();
@@ -383,7 +383,7 @@ pub fn build_trace_report(graph: &GraphStore, max_sessions: usize) -> TraceRepor
             }
         })
         .collect();
-    patterns.sort_by(|a, b| b.occurrences.cmp(&a.occurrences));
+    patterns.sort_by_key(|a| std::cmp::Reverse(a.occurrences));
 
     let suggestions = generate_suggestions(&patterns);
 

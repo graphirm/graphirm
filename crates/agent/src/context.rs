@@ -405,7 +405,7 @@ pub fn find_current_turn(
         .filter(|n| matches!(n.node_type, NodeType::Interaction(_)))
         .collect();
 
-    interactions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    interactions.sort_by_key(|a| std::cmp::Reverse(a.created_at));
     Ok(interactions.into_iter().next())
 }
 
@@ -453,10 +453,8 @@ fn collect_context_nodes(
                         NodeType::Content(_) => {
                             context_nodes.push(neighbor);
                         }
-                        NodeType::Knowledge(_) => {
-                            if !neighbor.is_dismissed() {
-                                context_nodes.push(neighbor);
-                            }
+                        NodeType::Knowledge(_) if !neighbor.is_dismissed() => {
+                            context_nodes.push(neighbor);
                         }
                         _ => {}
                     }
@@ -667,8 +665,8 @@ pub fn build_context_with_stats(
         .into_iter()
         .partition(|n| matches!(n.node_type, NodeType::Interaction(_)));
 
-    conv_older.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-    ctx_nodes.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    conv_older.sort_by_key(|a| a.created_at);
+    ctx_nodes.sort_by_key(|a| a.created_at);
 
     let stats = compute_context_stats(&ctx_nodes, config, graph, &agent_id.0)?;
 
