@@ -22,6 +22,22 @@ Entry template:
 
 ---
 
+## 2026-10-08 — Piece records are nodes under the reply
+
+**Context:** The HTML-index plan stored the cut as a `pieces` array on the assistant Interaction. A list inside one node cannot take an edge. The split exists so a person can accept, drop, or connect one part.
+**Decision:** A clean cut creates Content nodes. `content_type` is `reply_part` or `reply_line`. The assistant message `Contains` each part. Each part `Contains` its lines. No new node type and no new edge type. A failed cut creates none of these nodes.
+**Alternatives:** Metadata on the assistant message lost, because the graph cannot point at one entry. A sixth node type lost for now. Content already carries a `content_type` and a body.
+**Consequences:** The plan `docs/plans/2026-10-08-html-piece-index.md` Task 4 writes the subgraph, not metadata. Same-turn neighbors still do not get `applies_to`. A later reply that names an earlier part gets its own nodes. The mention stays in the text.
+**Refs:** `docs/plans/2026-10-08-html-piece-index.md`.
+
+## 2026-10-08 — An HTML index is how a Pi reply becomes pieces
+
+**Context:** Asking the model again for an outline, then once per heading, copied or dropped the reply and cost a call per heading. A single HTML page with an index of links cut cleanly: every link found its part, and the kind was the class on that part.
+**Decision:** Graphirm asks Pi for that page, cuts it locally, and stores the records beside the reply. The cutter accepts a part only when the link, the id, and one of the eight kind words match. A failed cut is retried once. The reply text stays either way. Markdown replies keep `structure_segment`.
+**Alternatives:** Outline-then-expand lost. Forcing the body with a provider JSON schema lost earlier (empty arrays, wrong kinds). A separate kind labeler stays optional and is not on the cut path.
+**Consequences:** The kind on the record is the kind Pi wrote. Context selection, compaction, memory ranking, and knowledge extraction do not change. Plan: `docs/plans/2026-10-08-html-piece-index.md`.
+**Refs:** `pi_groceries.py` cutter, `docs/plans/2026-10-05-reply-pieces.md`.
+
 ## 2026-10-05 — The Cursor tiling check is ignored unless asked for
 
 **Context:** The tiling stress test reads live transcripts from `~/.cursor/projects`. A silent pass looks like the check ran. An empty directory used to fail, which is a reason to commit transcripts so CI can see them.

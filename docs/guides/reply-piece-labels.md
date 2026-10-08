@@ -84,3 +84,7 @@ The score is split into single-piece replies and replies with several pieces. A 
 The first pass does not show a suggested kind. Do not pass `--show-baseline` until a blind portion is done. Accepting a suggestion makes the baseline look better than it is.
 
 Recordings start only after the server is built from `feat/reply-pieces`. The files in `~/.graphirm/pi-runs` contain thinking, tool arguments, and file contents. They are not committed.
+
+## HTML index
+
+A reply Pi writes as an HTML index is cut by `cut_html_index`, not by `structure_segment`. The kind on each part is the class Pi wrote. The class is one of the eight kind words and nothing else. A markdown reply stays on `structure_segment`.

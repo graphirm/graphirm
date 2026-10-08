@@ -17,9 +17,13 @@ Single source of truth for planned work. Completed items are recorded in `docs/c
 
 ## Reply pieces
 
+### HTML piece index — P2 · M
+
+Ask Pi for one HTML page with an index of links, then cut that page into Content nodes under the reply: the message contains each part, and each part contains its lines. A part counts only when the link, the id, and a kind word match. One retry, then the reply stays and no piece nodes are created. A later reply that names an earlier part gets its own nodes; a test records that the mention stays in the text and no part-to-part edge is written. Plan: `docs/plans/2026-10-08-html-piece-index.md`.
+
 ### Reply-piece parser — P2 · M
 
-Split a finished Pi reply into pieces by shape, without using the question. The parser owns the text. A labeler only names the shape. Plan: `docs/plans/2026-10-05-reply-pieces.md`.
+Split a finished Pi reply into pieces by shape, without using the question. The parser owns the text. A labeler only names the shape. Plan: `docs/plans/2026-10-05-reply-pieces.md`. The HTML index above is the path for a reply Pi writes in that page. This item stays for markdown replies and for the hand-labeled set.
 
 Milestone 1 (parser, splitter, baseline labeler, capped Pi JSONL recording, blind labeling command, range-keyed labels, scorer, version snapshot) is on `feat/reply-pieces`. Still open: the 100-reply hand-labeled set, a grammar-constrained labeler that has to beat the baseline, and cross-turn edges. Guide: `docs/guides/reply-piece-labels.md`.
 

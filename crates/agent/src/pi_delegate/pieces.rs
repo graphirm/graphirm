@@ -963,6 +963,14 @@ mod tests {
     }
 
     #[test]
+    fn cut_html_index_leaves_structure_segment_unchanged() {
+        let text = "Spark reads the file, shuffles, then writes.";
+        let before = structure_segment(text, false);
+        assert!(cut_html_index(text).is_err());
+        assert_eq!(structure_segment(text, false), before);
+    }
+
+    #[test]
     fn a_whitespace_gap_still_tiles() {
         let text = "Hello.\n\nWorld.";
         let blocks = vec![piece(0, 6), piece(8, text.len())];
