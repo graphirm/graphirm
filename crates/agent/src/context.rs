@@ -6,9 +6,9 @@ use chrono::{Duration, Utc};
 use serde::Deserialize;
 
 #[cfg(test)]
-use graphirm_graph::{AgentData, ContentData, KnowledgeData, TaskData};
+use graphirm_graph::{AgentData, ContentData, GraphEdge, KnowledgeData, TaskData};
 use graphirm_graph::{
-    Direction, EdgeType, GraphEdge, GraphNode, GraphStore, InteractionData, NodeId, NodeType,
+    Direction, EdgeType, GraphNode, GraphStore, InteractionData, NodeId, NodeType,
 };
 use graphirm_llm::LlmMessage;
 
@@ -72,8 +72,17 @@ pub struct ContextConfig {
     pub max_tokens: usize,
     #[serde(default = "default_system_prompt")]
     pub system_prompt: String,
+    /// How many recent context units stay in the window ahead of the scored fill.
+    /// A unit is one interaction, or one tool exchange: the assistant that has
+    /// tool calls, plus every later result whose id matches. The count is not a
+    /// raw node count, so the tail cannot start on a result whose call is outside it.
     #[serde(default = "default_guaranteed_recent_turns")]
     pub guaranteed_recent_turns: usize,
+    /// Largest share of `max_tokens` the reserved tail may use.
+    /// The newest unit is still kept whole when it alone exceeds this share,
+    /// including when it exceeds the whole budget.
+    #[serde(default = "default_tail_max_fraction")]
+    pub tail_max_fraction: f64,
     #[serde(default = "default_max_content_nodes")]
     pub max_content_nodes: usize,
     #[serde(default = "default_recency_decay")]
@@ -104,6 +113,9 @@ fn default_system_prompt() -> String {
 fn default_guaranteed_recent_turns() -> usize {
     4
 }
+fn default_tail_max_fraction() -> f64 {
+    0.5
+}
 fn default_max_content_nodes() -> usize {
     20
 }
@@ -123,6 +135,7 @@ impl Default for ContextConfig {
             max_tokens: 128_000,
             system_prompt: "You are a helpful coding assistant.".to_string(),
             guaranteed_recent_turns: 4,
+            tail_max_fraction: 0.5,
             max_content_nodes: 20,
             recency_decay: 0.1,
             edge_weights: EdgeWeights::default(),
@@ -534,7 +547,7 @@ fn compute_context_stats(
 /// Algorithm:
 /// 1. Find current turn (latest Interaction linked to agent)
 /// 2. Walk conversation thread backward via RespondsTo edges
-/// 3. Reserve the N most recent turns as guaranteed
+/// 3. Reserve the N most recent units as guaranteed, capped by `tail_max_fraction`
 /// 4. Collect Content/Knowledge nodes reachable from the conversation
 /// 5. Compute PageRank and BFS distances for scoring
 /// 6. Score all non-guaranteed candidates
@@ -590,10 +603,25 @@ pub fn build_context_with_stats(
         .filter(|n| !is_compacted(n))
         .collect();
 
-    // Split into guaranteed recent and older messages
-    let guaranteed_count = config.guaranteed_recent_turns.min(thread.len());
-    let guaranteed_recent: Vec<GraphNode> = thread[..guaranteed_count].to_vec();
-    let older_conversation: Vec<GraphNode> = thread[guaranteed_count..].to_vec();
+    // Group the thread into units, then reserve the newest units that fit the tail cap.
+    // `guaranteed_recent` is chronological (oldest reserved unit first).
+    let chrono: Vec<GraphNode> = thread.iter().rev().cloned().collect();
+    let units = group_interaction_units(&chrono);
+    let in_tail = tail_unit_indexes(
+        &units,
+        config.guaranteed_recent_turns,
+        config.max_tokens,
+        config.tail_max_fraction,
+    );
+    let mut guaranteed_recent: Vec<GraphNode> = Vec::new();
+    let mut older_conversation: Vec<GraphNode> = Vec::new();
+    for (index, unit) in units.into_iter().enumerate() {
+        if in_tail[index] {
+            guaranteed_recent.extend(unit);
+        } else {
+            older_conversation.extend(unit);
+        }
+    }
 
     // Token accounting
     let guaranteed_tokens: usize = guaranteed_recent.iter().map(estimate_tokens).sum();
@@ -670,9 +698,7 @@ pub fn build_context_with_stats(
 
     let stats = compute_context_stats(&ctx_nodes, config, graph, &agent_id.0)?;
 
-    // guaranteed_recent is newest-first from conversation_thread, reverse for chronological
-    let mut recent_chrono: Vec<GraphNode> = guaranteed_recent;
-    recent_chrono.reverse();
+    let recent_chrono = guaranteed_recent;
 
     // Layout: [content/knowledge context] [older conversation] [guaranteed recent conversation]
     let mut all_nodes: Vec<GraphNode> = ctx_nodes;
@@ -1095,11 +1121,12 @@ pub fn build_subagent_context(
     Ok(messages)
 }
 
-/// Select the highest-scored nodes that fit within a token budget.
-/// Greedy approach: sort by score descending, take nodes until budget exhausted.
-/// Skips individual nodes that don't fit, continues to try smaller ones.
-pub fn fit_to_budget(mut scored: Vec<ScoredNode>, budget: usize) -> Vec<ScoredNode> {
-    scored.sort_by(|a, b| {
+/// Select the highest-scored units that fit within a token budget.
+/// A unit is one node, or one tool exchange. Score is the max of its members.
+/// Cost is the sum of their token estimates. A unit is kept or dropped whole.
+pub fn fit_to_budget(scored: Vec<ScoredNode>, budget: usize) -> Vec<ScoredNode> {
+    let mut units = group_scored_units(&scored);
+    units.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -1108,14 +1135,168 @@ pub fn fit_to_budget(mut scored: Vec<ScoredNode>, budget: usize) -> Vec<ScoredNo
     let mut selected = Vec::new();
     let mut remaining = budget;
 
-    for node in scored {
-        if node.token_estimate <= remaining {
-            remaining -= node.token_estimate;
-            selected.push(node);
+    for unit in units {
+        if unit.cost <= remaining {
+            remaining -= unit.cost;
+            for index in unit.indexes {
+                selected.push(scored[index].clone());
+            }
         }
     }
 
+    selected.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     selected
+}
+
+struct ScoredUnit {
+    indexes: Vec<usize>,
+    score: f64,
+    cost: usize,
+}
+
+fn group_scored_units(scored: &[ScoredNode]) -> Vec<ScoredUnit> {
+    let mut seen = vec![false; scored.len()];
+    let mut units = Vec::new();
+    for (index, item) in scored.iter().enumerate() {
+        let call_ids = tool_call_ids_of(&item.node);
+        if call_ids.is_empty() {
+            continue;
+        }
+        let mut indexes = vec![index];
+        seen[index] = true;
+        for (other_index, other) in scored.iter().enumerate() {
+            if seen[other_index] {
+                continue;
+            }
+            let Some(id) = result_call_id(&other.node) else {
+                continue;
+            };
+            if call_ids.iter().any(|call| call == id) {
+                indexes.push(other_index);
+                seen[other_index] = true;
+            }
+        }
+        let score = indexes
+            .iter()
+            .map(|&slot| scored[slot].score)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let cost = indexes
+            .iter()
+            .map(|&slot| scored[slot].token_estimate)
+            .sum();
+        units.push(ScoredUnit {
+            indexes,
+            score,
+            cost,
+        });
+    }
+    for (index, item) in scored.iter().enumerate() {
+        if seen[index] {
+            continue;
+        }
+        units.push(ScoredUnit {
+            indexes: vec![index],
+            score: item.score,
+            cost: item.token_estimate,
+        });
+    }
+    units
+}
+
+/// Group a chronological interaction thread into context units.
+/// Tool results are pulled onto the assistant whose call ids match, so a unit
+/// never starts on a result.
+pub(crate) fn group_interaction_units(chrono: &[GraphNode]) -> Vec<Vec<GraphNode>> {
+    let mut claimed = vec![false; chrono.len()];
+    let mut units = Vec::new();
+    for index in 0..chrono.len() {
+        if claimed[index] {
+            continue;
+        }
+        let call_ids = tool_call_ids_of(&chrono[index]);
+        if call_ids.is_empty() {
+            claimed[index] = true;
+            units.push(vec![chrono[index].clone()]);
+            continue;
+        }
+        let mut members = vec![chrono[index].clone()];
+        claimed[index] = true;
+        for later in (index + 1)..chrono.len() {
+            if claimed[later] {
+                continue;
+            }
+            let Some(id) = result_call_id(&chrono[later]) else {
+                continue;
+            };
+            if call_ids.iter().any(|call| call == id) {
+                members.push(chrono[later].clone());
+                claimed[later] = true;
+            }
+        }
+        units.push(members);
+    }
+    units
+}
+
+/// Newest units that the tail may reserve. The newest unit is always included.
+/// Further units are added while the count is under `guaranteed_recent_turns`
+/// and the token sum stays within `tail_max_fraction` of `max_tokens`.
+pub(crate) fn tail_unit_indexes(
+    units: &[Vec<GraphNode>],
+    guaranteed_recent_turns: usize,
+    max_tokens: usize,
+    tail_max_fraction: f64,
+) -> Vec<bool> {
+    let cap = (max_tokens as f64 * tail_max_fraction) as usize;
+    let mut in_tail = vec![false; units.len()];
+    let mut cost = 0usize;
+    for (taken, index) in (0..units.len()).rev().enumerate() {
+        if taken >= guaranteed_recent_turns {
+            break;
+        }
+        let unit_cost: usize = units[index].iter().map(estimate_tokens).sum();
+        if taken > 0 && cost.saturating_add(unit_cost) > cap {
+            break;
+        }
+        in_tail[index] = true;
+        cost = cost.saturating_add(unit_cost);
+    }
+    in_tail
+}
+
+fn tool_call_ids_of(node: &GraphNode) -> Vec<String> {
+    node.metadata
+        .get("tool_calls")
+        .and_then(|value| value.as_array())
+        .map(|calls| {
+            calls
+                .iter()
+                .filter_map(|call| {
+                    call.get("id")
+                        .and_then(|id| id.as_str())
+                        .filter(|id| !id.is_empty())
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn result_call_id(node: &GraphNode) -> Option<&str> {
+    let NodeType::Interaction(data) = &node.node_type else {
+        return None;
+    };
+    if data.role != "tool" {
+        return None;
+    }
+    node.metadata
+        .get("tool_call_id")
+        .and_then(|value| value.as_str())
+        .filter(|id| !id.is_empty())
 }
 
 const W_RECENCY: f64 = 0.3;
@@ -1297,6 +1478,7 @@ mod tests {
         let config = ContextConfig::default();
         assert_eq!(config.max_tokens, 128_000);
         assert_eq!(config.guaranteed_recent_turns, 4);
+        assert!((config.tail_max_fraction - 0.5).abs() < f64::EPSILON);
         assert_eq!(config.max_content_nodes, 20);
         assert!((config.recency_decay - 0.1).abs() < f64::EPSILON);
         assert!(!config.enable_compaction);
@@ -1335,6 +1517,7 @@ mod tests {
         assert_eq!(config.max_tokens, 64_000);
         assert_eq!(config.system_prompt, "You are a Rust expert.");
         assert_eq!(config.guaranteed_recent_turns, 6);
+        assert!((config.tail_max_fraction - 0.5).abs() < f64::EPSILON);
         assert_eq!(config.max_content_nodes, 10);
         assert!((config.recency_decay - 0.05).abs() < f64::EPSILON);
         assert!(config.enable_compaction);
@@ -1727,6 +1910,184 @@ mod tests {
         };
         let window = build_context(&graph, &agent_id, &config).unwrap();
         assert_tool_pairing(&window.messages);
+    }
+
+    /// T4. T1's chain under unit grouping. The exchange is fully in or fully
+    /// out, and the tail does not reserve a result that pairing then drops.
+    #[test]
+    fn t4_exchange_is_atomic_when_tail_would_start_on_a_result() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let call_body = "word ".repeat(400);
+        let nodes: Vec<(&str, String, serde_json::Value)> = vec![
+            ("user", "ask read".to_string(), serde_json::json!({})),
+            (
+                "assistant",
+                call_body,
+                serde_json::json!({"tool_calls": [{"id": "call_1", "name": "read", "arguments": {}}]}),
+            ),
+            (
+                "tool",
+                "result body".to_string(),
+                serde_json::json!({"tool_call_id": "call_1"}),
+            ),
+            ("assistant", "tail a".to_string(), serde_json::json!({})),
+            ("user", "tail b".to_string(), serde_json::json!({})),
+            ("assistant", "tail c".to_string(), serde_json::json!({})),
+        ];
+        link_chain(&graph, &agent_id, nodes);
+
+        let config = ContextConfig {
+            max_tokens: 40,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            ..ContextConfig::default()
+        };
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        assert_tool_pairing(&window.messages);
+
+        let call_present = window.messages.iter().any(|message| {
+            message.content.iter().any(|part| {
+                matches!(part, graphirm_llm::ContentPart::ToolCall { id, .. } if id == "call_1")
+            })
+        });
+        let result_present = window.messages.iter().any(|message| {
+            message.content.iter().any(|part| {
+                matches!(part, graphirm_llm::ContentPart::ToolResult { id, .. } if id == "call_1")
+            })
+        });
+        assert_eq!(
+            call_present, result_present,
+            "tool exchange must be fully in or fully out"
+        );
+        assert_eq!(
+            window.total_tokens,
+            visible_token_estimate(&window),
+            "tail reserved a node that pairing then dropped"
+        );
+    }
+
+    /// T5. Three parallel results stay with the assistant that called them,
+    /// including when the exchange is larger than the knapsack budget.
+    #[test]
+    fn t5_parallel_results_stay_with_their_call() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let nodes: Vec<(&str, String, serde_json::Value)> = vec![
+            (
+                "assistant",
+                "calling".to_string(),
+                serde_json::json!({
+                    "tool_calls": [
+                        {"id": "call_1", "name": "read", "arguments": {}},
+                        {"id": "call_2", "name": "read", "arguments": {}},
+                        {"id": "call_3", "name": "read", "arguments": {}}
+                    ]
+                }),
+            ),
+            (
+                "tool",
+                "one".to_string(),
+                serde_json::json!({"tool_call_id": "call_1"}),
+            ),
+            (
+                "tool",
+                "word ".repeat(400),
+                serde_json::json!({"tool_call_id": "call_2"}),
+            ),
+            (
+                "tool",
+                "three".to_string(),
+                serde_json::json!({"tool_call_id": "call_3"}),
+            ),
+        ];
+        link_chain(&graph, &agent_id, nodes);
+
+        let config = ContextConfig {
+            max_tokens: 40,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 2,
+            ..ContextConfig::default()
+        };
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        assert_tool_pairing(&window.messages);
+        let result_ids: Vec<&str> = window
+            .messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                graphirm_llm::ContentPart::ToolResult { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(result_ids, ["call_1", "call_2", "call_3"]);
+    }
+
+    /// T6. Four huge tail units leave at least half the budget for everything
+    /// else. The newest unit is kept whole when it still fits the budget.
+    #[test]
+    fn t6_tail_fraction_leaves_half_the_budget() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let huge = |label: &str| format!("{label} {}", "word ".repeat(299));
+        let nodes: Vec<(&str, String, serde_json::Value)> = vec![
+            (
+                "user",
+                "marker-node word ".repeat(25).to_string(),
+                serde_json::json!({}),
+            ),
+            ("user", huge("huge-one"), serde_json::json!({})),
+            ("user", huge("huge-two"), serde_json::json!({})),
+            ("user", huge("huge-three"), serde_json::json!({})),
+            ("user", huge("huge-four"), serde_json::json!({})),
+        ];
+        link_chain(&graph, &agent_id, nodes);
+
+        let config = ContextConfig {
+            max_tokens: 1000,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            ..ContextConfig::default()
+        };
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        let text = message_text(&window);
+        assert!(text.contains("huge-four"), "newest unit stays in the tail");
+        assert!(
+            text.contains("marker-node"),
+            "at least half the budget must remain for the rest"
+        );
+        let huge_kept = ["huge-one", "huge-two", "huge-three", "huge-four"]
+            .iter()
+            .filter(|label| text.contains(*label))
+            .count();
+        assert!(
+            huge_kept < 4,
+            "tail took every huge unit and left nothing for the rest, kept {huge_kept}"
+        );
     }
 
     /// An intact parallel run stays together. A check that only looks at the
@@ -2225,6 +2586,46 @@ mod tests {
                 "steer this".to_string(),
             ]
         );
+    }
+
+    fn message_text(window: &ContextWindow) -> String {
+        window
+            .messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                graphirm_llm::ContentPart::ToolResult { content, .. } => Some(content.as_str()),
+                graphirm_llm::ContentPart::ToolCall { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn visible_token_estimate(window: &ContextWindow) -> usize {
+        let system_text = window
+            .system
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut tokens = estimate_tokens_str(&system_text);
+        for message in &window.messages {
+            for part in &message.content {
+                match part {
+                    graphirm_llm::ContentPart::Text { text }
+                    | graphirm_llm::ContentPart::ToolResult { content: text, .. } => {
+                        tokens += estimate_tokens_str(text);
+                    }
+                    graphirm_llm::ContentPart::ToolCall { .. } => {}
+                }
+            }
+        }
+        tokens
     }
 
     fn link_chain(
