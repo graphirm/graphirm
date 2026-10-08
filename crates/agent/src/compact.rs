@@ -166,9 +166,10 @@ pub fn is_compacted(node: &GraphNode) -> bool {
 
 /// Select nodes for compaction when context exceeds `threshold_ratio` of `max_tokens`.
 ///
-/// Returns node IDs of older conversation messages (excluding the most recent
-/// `guaranteed_recent_turns`) that should be compacted. Returns empty Vec if
-/// compaction is not needed.
+/// `guaranteed_recent_turns` counts context units, the same way `build_context`
+/// does. A tool exchange is one unit: it is compacted entirely or not at all.
+/// `tail_max_fraction` is the same cap the context tail uses. Returns empty
+/// when compaction is not needed.
 pub fn select_nodes_for_compaction(
     graph: &GraphStore,
     agent_id: &NodeId,
@@ -176,29 +177,41 @@ pub fn select_nodes_for_compaction(
     threshold_ratio: f64,
     guaranteed_recent_turns: usize,
     min_nodes_to_compact: usize,
+    tail_max_fraction: f64,
 ) -> Result<Vec<NodeId>, AgentError> {
-    use crate::context::{estimate_tokens, find_current_turn};
-    // Get the leaf turn node
+    use crate::context::{
+        estimate_tokens, find_current_turn, group_interaction_units, tail_unit_indexes,
+    };
     let current_turn = match find_current_turn(graph, agent_id)? {
         Some(n) => n,
         None => return Ok(vec![]),
     };
-    // Walk back through conversation thread (newest-first)
     let thread = graph
         .conversation_thread(&current_turn.id)
         .map_err(AgentError::Graph)?;
-    // Filter out already-compacted
-    let candidates: Vec<&graphirm_graph::GraphNode> =
-        thread.iter().filter(|n| !is_compacted(n)).collect();
-    // Estimate total tokens
-    let total_tokens: usize = candidates.iter().map(|n| estimate_tokens(n)).sum();
+    let mut candidates: Vec<graphirm_graph::GraphNode> = thread
+        .into_iter()
+        .filter(|node| !is_compacted(node))
+        .collect();
+    let total_tokens: usize = candidates.iter().map(estimate_tokens).sum();
     let threshold = (max_tokens as f64 * threshold_ratio) as usize;
     if total_tokens < threshold {
         return Ok(vec![]);
     }
-    // Skip the `guaranteed_recent_turns` newest nodes
-    let skip = guaranteed_recent_turns.min(candidates.len());
-    let eligible: Vec<NodeId> = candidates[skip..].iter().map(|n| n.id.clone()).collect();
+    candidates.reverse();
+    let units = group_interaction_units(&candidates);
+    let in_tail = tail_unit_indexes(
+        &units,
+        guaranteed_recent_turns,
+        max_tokens,
+        tail_max_fraction,
+    );
+    let eligible: Vec<NodeId> = units
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !in_tail[*index])
+        .flat_map(|(_, unit)| unit.iter().map(|node| node.id.clone()))
+        .collect();
     if eligible.len() < min_nodes_to_compact {
         return Ok(vec![]);
     }
@@ -369,6 +382,7 @@ mod tests {
             0.80,    // threshold_ratio
             2,       // guaranteed_recent_turns
             2,       // min_nodes_to_compact
+            0.5,
         )
         .unwrap();
         assert!(nodes.is_empty(), "Should return empty when below threshold");
@@ -432,6 +446,7 @@ mod tests {
             0.80, // threshold_ratio
             2,    // guaranteed_recent_turns
             2,    // min_nodes_to_compact
+            0.5,
         )
         .unwrap();
         // Should select oldest 6 nodes (10 - 2 guaranteed = 8 eligible, but only need 2+)
@@ -498,6 +513,7 @@ mod tests {
             0.80, // threshold_ratio
             2,    // guaranteed_recent_turns
             2,    // min_nodes_to_compact
+            0.5,
         )
         .unwrap();
         // Should NOT include compacted nodes (0, 1, 2)
@@ -562,11 +578,94 @@ mod tests {
             0.80, // threshold_ratio
             3,    // guaranteed_recent_turns (leaves only 2 eligible)
             4,    // min_nodes_to_compact (more than eligible)
+            0.5,
         )
         .unwrap();
         assert!(
             nodes.is_empty(),
             "Should return empty when too few eligible nodes"
+        );
+    }
+
+    /// T7. A tool exchange that straddles the old node tail is compacted whole
+    /// or not at all.
+    #[test]
+    fn t7_compaction_keeps_a_tool_exchange_whole() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test-agent".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("You are helpful.".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let mut prev_id: Option<NodeId> = None;
+        let mut link = |role: &str, content: String, metadata: serde_json::Value| -> NodeId {
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: role.to_string(),
+                content,
+                token_count: None,
+            }));
+            node.metadata = metadata;
+            node.created_at = Utc::now() - Duration::minutes(20);
+            node.updated_at = node.created_at;
+            let node_id = node.id.clone();
+            graph.add_node(node).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    node_id.clone(),
+                ))
+                .unwrap();
+            if let Some(pid) = &prev_id {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        node_id.clone(),
+                        pid.clone(),
+                    ))
+                    .unwrap();
+            }
+            prev_id = Some(node_id.clone());
+            node_id
+        };
+
+        for i in 0..4 {
+            link(
+                "user",
+                format!("older-{i} {}", "word ".repeat(20)),
+                serde_json::json!({}),
+            );
+        }
+        let call_id = link(
+            "assistant",
+            "calling".to_string(),
+            serde_json::json!({"tool_calls": [{"id": "call_1", "name": "read", "arguments": {}}]}),
+        );
+        let result_id = link(
+            "tool",
+            "result body".to_string(),
+            serde_json::json!({"tool_call_id": "call_1"}),
+        );
+
+        let nodes = select_nodes_for_compaction(
+            &graph, &agent_id, 100, // max_tokens, threshold 80
+            0.80, 1, // one recent unit: the exchange, not the result alone
+            2, 0.5,
+        )
+        .unwrap();
+        assert!(
+            !nodes.is_empty(),
+            "older messages are over the threshold and should compact"
+        );
+        let call_in = nodes.iter().any(|id| id == &call_id);
+        let result_in = nodes.iter().any(|id| id == &result_id);
+        assert_eq!(
+            call_in, result_in,
+            "tool exchange must be compacted whole or not at all"
         );
     }
 }

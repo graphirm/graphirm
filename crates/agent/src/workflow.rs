@@ -151,6 +151,7 @@ pub async fn stream_and_record(
     let max_tok = context_config.max_tokens;
     let compaction_threshold = context_config.compaction_threshold;
     let guaranteed_recent = context_config.guaranteed_recent_turns;
+    let tail_fraction = context_config.tail_max_fraction;
 
     let (window, mut context_stats) = tokio::task::spawn_blocking(move || {
         crate::context::build_context_with_stats(&graph_ref, &session_id_ref, &context_config)
@@ -171,6 +172,7 @@ pub async fn stream_and_record(
                 compaction_threshold,
                 guaranteed_recent,
                 2,
+                tail_fraction,
             )
         })
         .await;
