@@ -221,7 +221,7 @@ impl MemoryRetriever {
         .map_err(|e| AgentError::Join(e.to_string()))?;
 
         let mut results = Vec::with_capacity(fetched.len());
-        for (result, (_, score)) in fetched.into_iter().zip(scored.into_iter()) {
+        for (result, (_, score)) in fetched.into_iter().zip(scored) {
             match result {
                 Ok(node) => results.push((node, score)),
                 Err(e) => {

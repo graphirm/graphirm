@@ -233,7 +233,7 @@ pub fn build_lessons_summary(store: &GraphStore, limit: usize) -> Option<String>
     lesson_nodes.append(&mut convention_nodes);
 
     // Sort by created_at descending — `GraphNode.created_at` is `DateTime<Utc>` (Ord)
-    lesson_nodes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    lesson_nodes.sort_by_key(|a| std::cmp::Reverse(a.created_at));
 
     // Truncate to limit
     lesson_nodes.truncate(limit);
