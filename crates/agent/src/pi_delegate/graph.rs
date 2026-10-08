@@ -1368,4 +1368,105 @@ mod tests {
             .await
             .expect("finish");
     }
+
+    #[tokio::test]
+    async fn second_reply_names_a_part_of_the_first() {
+        let ctx = make_ctx();
+        let mut run = begin(&ctx, 4000).await;
+        let g = &ctx.graph;
+        let first_html = r##"<div id="index"><a href="#deploy">[steps] Deploy</a></div>
+<div id="deploy" class="steps"><ul><li>Build</li><li>Ship</li></ul></div>"##;
+        let second_html = r##"<div id="index"><a href="#use">[statement] Follow-up</a></div>
+<div id="use" class="statement"><p>Use step 2 of Deploy from the previous reply.</p></div>"##;
+        let first = run
+            .record_assistant_message(first_html, Some("stop"), None, true)
+            .await
+            .expect("first");
+        let second = run
+            .record_assistant_message(second_html, Some("stop"), None, true)
+            .await
+            .expect("second");
+
+        let first_ids = contains_tree(g, &first);
+        let second_ids = contains_tree(g, &second);
+        assert!(first_ids.is_disjoint(&second_ids));
+
+        let mut crossing = Vec::new();
+        for id in &second_ids {
+            for edge in g.edges_for_node(id).expect("edges") {
+                if second_ids.contains(&edge.source) && first_ids.contains(&edge.target) {
+                    crossing.push(edge);
+                }
+            }
+        }
+        assert_eq!(crossing.len(), 1, "{crossing:?}");
+        assert_eq!(crossing[0].edge_type, EdgeType::RespondsTo);
+        assert_eq!(crossing[0].source, second);
+        assert_eq!(crossing[0].target, first);
+
+        let second_lines = line_bodies(g, &second_ids);
+        assert!(
+            second_lines
+                .iter()
+                .any(|body| body.contains("Deploy") && body.contains("step 2")),
+            "{second_lines:?}"
+        );
+        let ship = g
+            .get_node(
+                &first_ids
+                    .iter()
+                    .find(|id| line_body(g, id).as_deref() == Some("Ship"))
+                    .expect("Ship line"),
+            )
+            .expect("ship");
+        assert!(
+            crossing.iter().all(|edge| edge.target != ship.id),
+            "the words do not select the Ship node"
+        );
+
+        for id in first_ids.union(&second_ids) {
+            for edge in g.edges_for_node(id).expect("edges") {
+                let name = edge.edge_type.as_str();
+                assert!(
+                    !matches!(
+                        name,
+                        "applies_to" | "answered_by" | "executed_by" | "skipped" | "implements"
+                    ),
+                    "{name}"
+                );
+            }
+        }
+
+        run.finish(PiRunFinish::completed("", Some(0)))
+            .await
+            .expect("finish");
+    }
+
+    fn contains_tree(graph: &GraphStore, root: &NodeId) -> std::collections::HashSet<NodeId> {
+        let mut ids = std::collections::HashSet::new();
+        let mut stack = vec![root.clone()];
+        while let Some(id) = stack.pop() {
+            if !ids.insert(id.clone()) {
+                continue;
+            }
+            for child in out(graph, &id, EdgeType::Contains) {
+                stack.push(child.id);
+            }
+        }
+        ids
+    }
+
+    fn line_bodies(graph: &GraphStore, ids: &std::collections::HashSet<NodeId>) -> Vec<String> {
+        ids.iter().filter_map(|id| line_body(graph, id)).collect()
+    }
+
+    fn line_body(graph: &GraphStore, id: &NodeId) -> Option<String> {
+        let node = graph.get_node(id).expect("node");
+        match node.node_type {
+            NodeType::Content(ContentData {
+                content_type, body, ..
+            }) if content_type == "reply_line" => Some(body),
+            _ => None,
+        }
+    }
 }
