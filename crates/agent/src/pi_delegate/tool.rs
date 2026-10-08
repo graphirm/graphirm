@@ -51,9 +51,12 @@ pub const PI_DELEGATE_TOOL_NAME: &str = "delegate_pi";
 /// The cutter accepts that page and refuses anything else.
 const HTML_PIECE_INDEX_CONTRACT: &str = "\n\n\
 Reply with only HTML. No markdown.\n\
-Start with <div id=\"index\">. Each entry is one link to a part. The link text is the kind in brackets, then the heading, like [statement] Overview. Point href at that part's id. The order of the links is the order of the parts.\n\
-Each part is a div. Its id matches the link. Its class is the kind word alone, for example class=\"statement\". Put each line of the part in a p or an li. Put a block of code in pre and code.\n\
-statement is something to know. options is something to choose. steps is something to follow in order. instructions is directions. example is a sample. caveat is a warning. code is code. question is a question. Put the kind on the part and on its index entry.\n";
+Start with <nav id=\"index\"> holding one <ul>. Each entry is one <li> with one link. Point href at that part's id. The order of the links is the order of the parts.\n\
+Number every index entry and every line with three parts, like 1.0.0. The first number is the part, starting at 1, in index order. The second number stays 0. The third number is 0 on the index entry and 1, 2, 3 on the lines inside that part, in order. Use ul, not ol. The number is already in the text.\n\
+The link text is the number, then the kind in brackets, then the heading, like 1.0.0 [statement] Overview. Each line of a part starts with its number, like 1.0.1 One fact.\n\
+Each part is a <section>. Its id matches the link. Its class is the kind word alone, for example class=\"statement\". Its first element is an <h2> with the same number and heading as the link, without the brackets, like 1.0.0 Overview. The link is the heading. When the h2 disagrees, keep the link.\n\
+A statement, an instruction, or a question is one <p> per line. A caveat is the same, with class caveat. Options are one <ul> of <li>. Steps are one <ul> of <li>. An example wraps its <p> lines in a <figure>. A path, a command, or an identifier inside a line is <code>. A code part is a pre element whose data-n is the line number, with code inside it. The number is that data-n attribute, not text inside the code.\n\
+statement is something to know. options is something to choose. steps is something to follow in order. instructions is directions. example is a sample. caveat is a warning. code is code. question is a question.\n";
 
 /// At most this many `Warnings:` bullets in the tool result.
 const MAX_SUMMARY_WARNINGS: usize = 10;
@@ -1044,7 +1047,7 @@ mod tests {
         assert_eq!(meta["executor"], PI_EXECUTOR);
         assert_eq!(
             meta["result"],
-            r##"<div id="index"><a href="#part1">[statement] Result</a></div><div id="part1" class="statement"><p>The file content is: `hi`</p></div>"##
+            r##"<nav id="index"><ul><li><a href="#part1">1.0.0 [statement] Result</a></li></ul></nav><section id="part1" class="statement"><h2>1.0.0 Result</h2><p>1.0.1 The file content is: `hi`</p></section>"##
         );
         assert_eq!(meta["exit_code"], 0);
         assert_eq!(meta["tool_calls"], 4);
@@ -1133,10 +1136,30 @@ mod tests {
         let task_at = argv.find("fix the parser").expect("original task");
         let contract_at = argv.find("id=\"index\"").expect("index contract");
         assert!(task_at < contract_at, "{argv}");
-        assert!(argv.contains("[statement]"), "{argv}");
-        assert!(argv.contains("kind word alone"), "{argv}");
-        assert!(argv.contains("p or an li"), "{argv}");
-        assert!(argv.contains("pre and code"), "{argv}");
+        assert!(argv.contains("1.0.0 [statement] Overview"), "{argv}");
+        assert!(argv.contains("1.0.1 One fact"), "{argv}");
+        assert!(argv.contains("Use ul, not ol"), "{argv}");
+        assert!(argv.contains("data-n"), "{argv}");
+    }
+
+    #[test]
+    fn html_index_contract_matches_the_rule_file() {
+        let rule = include_str!("../../../../.cursor/rules/html-part-index.mdc").replace('`', "");
+        let rule = normalize_ws(&rule);
+        for line in HTML_PIECE_INDEX_CONTRACT.lines() {
+            let line = normalize_ws(line);
+            if line.is_empty() {
+                continue;
+            }
+            assert!(
+                rule.contains(&line),
+                "rule file is missing a contract line: {line}"
+            );
+        }
+    }
+
+    fn normalize_ws(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
     fn assistant_fixture(text: &str) -> String {
@@ -1164,7 +1187,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn retries_a_failed_html_cut_once() {
-        let page = r##"<div id="index"><a href="#part1">[statement] Overview</a></div><div id="part1" class="statement"><p>One sentence.</p></div>"##;
+        let page = r##"<nav id="index"><ul><li><a href="#part1">1.0.0 [statement] Overview</a></li></ul></nav><section id="part1" class="statement"><h2>1.0.0 Overview</h2><p>1.0.1 One sentence.</p></section>"##;
         let dir = tempfile::TempDir::new().expect("tempdir");
         let bad = dir.path().join("bad.jsonl");
         let good = dir.path().join("good.jsonl");
@@ -1451,7 +1474,7 @@ mod tests {
                 .to_string(),
             );
         }
-        let page = r##"<div id="index"><a href="#part1">[statement] Result</a></div><div id="part1" class="statement"><p>done</p></div>"##;
+        let page = r##"<nav id="index"><ul><li><a href="#part1">1.0.0 [statement] Result</a></li></ul></nav><section id="part1" class="statement"><h2>1.0.0 Result</h2><p>1.0.1 done</p></section>"##;
         lines.push(
             json!({"type": "message_end", "message": {"role": "assistant",
                    "content": [{"type": "text", "text": page}], "stopReason": "stop"}})

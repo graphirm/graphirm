@@ -22,6 +22,22 @@ Entry template:
 
 ---
 
+## 2026-10-08 — HTML index shape 2 is nav, section, and h2
+
+**Context:** A `div` index read as a wall of tags. `ol` would paint a second number on top of `1.0.0`. A number inside `pre` is copied with the code. An `aside` is announced as complementary, which listeners skip, and a caveat is often the part that matters. The Cursor rule and the Pi contract had already drifted once.
+**Decision:** Shape 2 asks for `nav` and `ul`, a `section` per part, and an `h2` that repeats the link's number and heading. The link is the heading. A missing or different `h2` logs a warning and the cut keeps the link. Lists are `ul` because the number is already in the text. A code block stores the number in `data-n`. A caveat is a `section` with class `caveat`, not an `aside`. An example wraps its lines in `figure`. `HTML_INDEX_SHAPE_VERSION` is `"2"`, stamped on each `reply_part`. A test fails when a contract line is absent from `.cursor/rules/html-part-index.mdc`. The hand-labeled markdown set stays on `structure_segment` and does not take HTML rows.
+**Alternatives:** `list-style: none` on `ol` lost because this page has no stylesheet. `role="note"` lost because the class is already the kind. Generating the rule from the Rust string lost to a containment test, which allows the rule a chat-only paragraph and an example.
+**Consequences:** Shape 1 pages still cut when their lines are numbered `p` or `li` text. A `pre` without `data-n` does not. A set that later mixes both shapes has to store the shape version on the row.
+**Refs:** `.cursor/rules/html-part-index.mdc`, `HTML_PIECE_INDEX_CONTRACT`, `cut_html_index`.
+
+## 2026-10-08 — Piece numbers are N.0.0
+
+**Context:** The chat rule numbers every index entry and every line. Pi was still asked for `[kind] Heading` with no numbers, so a page that followed the rule failed the cut.
+**Decision:** The delegate contract asks for `N.0.0 [kind] Heading` and `N.0.M` on each line. The cutter requires that shape, checks `N` against part order and `M` against line position, and stores the words after the number. A page without numbers is a failed cut.
+**Alternatives:** Accept both shapes. That keeps old pages working and lets Pi skip the numbers.
+**Consequences:** Recorded runs and tests that embed an HTML index need the numbers. `order` and `position` stay the stored identity.
+**Refs:** `.cursor/rules/html-part-index.mdc`, `cut_html_index`.
+
 ## 2026-10-08 — Piece records are nodes under the reply
 
 **Context:** The HTML-index plan stored the cut as a `pieces` array on the assistant Interaction. A list inside one node cannot take an edge. The split exists so a person can accept, drop, or connect one part.
@@ -37,6 +53,70 @@ Entry template:
 **Alternatives:** Outline-then-expand lost. Forcing the body with a provider JSON schema lost earlier (empty arrays, wrong kinds). A separate kind labeler stays optional and is not on the cut path.
 **Consequences:** The kind on the record is the kind Pi wrote. Context selection, compaction, memory ranking, and knowledge extraction do not change. Plan: `docs/plans/2026-10-08-html-piece-index.md`.
 **Refs:** `pi_groceries.py` cutter, `docs/plans/2026-10-05-reply-pieces.md`.
+
+## 2026-10-07 — A Pi reply is the source, piece records are the target
+
+**Context:** A plain grocery request to Pi returned normal markdown. Forcing that reply into `{name, quantity}` JSON was rejected.
+**Decision:** The source is the reply as Pi wrote it. The target is one record per block: `order`, `kind`, `heading`, `items`. The words stay in the source. The grocery lists are `statement`.
+**Alternatives:** Ask Pi to emit the target. Put a grocery schema in the prompt and reject anything else.
+**Consequences:** The next check is source in, target out, on that grocery reply. The target is not a rewrite of the shopping list.
+**Refs:** `pi_groceries.py`.
+
+## 2026-10-07 — Qwen 7B does not beat the piece baseline
+
+**Context:** The same 27 replies and the same eight-word grammar were run through `Qwen2.5-7B-Instruct` Q4_K_M on local llama.cpp. The 1.5B model had matched 46 of 192 kinds on several-piece replies.
+**Decision:** This model is not the labeler either. It matched 50 of 192. The baseline matches 119 of 192. No output was rejected. It never said `options`.
+**Alternatives:** Treat the move from 46 to 50 as progress and try a larger model next.
+**Consequences:** Size from 1.5B to 7B did not fix kind naming. The parser stays.
+**Refs:** `feat/piece-kind-labeler`, `~/.graphirm/piece-labels.jsonl`.
+
+## 2026-10-07 — Qwen 1.5B does not beat the piece baseline
+
+**Context:** llama.cpp b11461 and `Qwen2.5-1.5B-Instruct` Q4_K_M labeled the 27 Pi replies through a grammar that allows only the eight kind words.
+**Decision:** This model is not the labeler. On several-piece replies it matched 46 of 192 kinds. The baseline matches 119 of 192. No output was rejected.
+**Alternatives:** Count the five `options` hits as success. The baseline scores zero there.
+**Consequences:** The next measurement is a larger model under the same grammar. The parser stays.
+**Refs:** `feat/piece-kind-labeler`, `~/.graphirm/piece-labels.jsonl`.
+
+## 2026-10-07 — The kind labeler returns one grammar word
+
+**Context:** The parser already cuts a reply. The baseline names kinds with a few string rules and misses options, examples, and most warnings. A Pi agent asked for a kind would explain and edit files. OpenRouter cannot force the reply to be one of the eight words.
+**Decision:** On `feat/piece-kind-labeler`, `kind_label` builds a prompt from the piece alone and a llama.cpp grammar whose only outputs are the eight kind words. `parse_kind_label` rejects a sentence, a capital letter, or a second word. `score_predicted` compares those words with the labeled ranges. A live `llama-cli` run has not been made.
+**Alternatives:** Ask Pi for the kind. Send the user's question in the prompt. Fall back to the baseline when the model writes a sentence.
+**Consequences:** The labeler has not yet been shown to beat the baseline.
+**Refs:** `crates/agent/src/pi_delegate/kind_label.rs`.
+
+## 2026-10-07 — One piece has one kind, cut by function
+
+**Context:** The kind list is eight words. A labeler that may return two kinds for one block has no clear failure. Sentence boundaries are the easy wrong cut: an options list can sit inside one sentence, and a description of a process ("Spark reads the file, shuffles, then writes") looks like steps.
+**Decision:** One piece, one kind. If a block seems to be two kinds, split it. Cut by function, not by sentence. How something works stays a statement. What the reader does is steps. The Spark sentence is a labeler test case, not a new kind. Caveat severity (`warning`, `caution`, `note`) and one `applies_to` link wait until a caveat is used to allow or block an action. An expected result waits until a verifier exists, and it is a sub-part of steps.
+**Alternatives:** A second kind on the same piece. A process kind. Three caveat kinds. An expected-result kind.
+**Consequences:** The labeler returns one of the eight words. A piece it cannot name is a bad cut. The guide's steps near-miss includes the Spark sentence.
+**Refs:** `docs/guides/reply-piece-labels.md`, `docs/plans/2026-10-05-reply-pieces.md`.
+
+## 2026-10-07 — Evidence rules wait with the decision message
+
+**Context:** A proposal put one speech act, STE wording, a glossary, and evidence tags on every reply. The piece score had already shown that one label on a whole reply collapses a statement, steps, a caveat, and a question into one blob, and that an imperative rewrite turns an options list into a fake procedure.
+**Decision:** Piece kinds stay a closed list in code. The glossary holds project terms only. STE defines what a step, a statement, and a caveat look like, and does not rewrite the model's words. The next build is the parser's kind labeler. A decision-message envelope waits until such a message exists. When it does, these rules apply: one act on a piece or on that message; evidence tagged per claim; certainty taken from that tag; `assumed` cannot authorize an irreversible action; `refuse` and `failure` carry a reason; only a result no model produced can write `observed` (a test, a file read, a shell command), and a model-produced result is `reported` with the tool named as the source; model confidence may only add caution, and the check runs regardless. `observed` is what the tool returned. "The test passed" is `observed`. "The bug is fixed" is `inferred`. A named source on `reported` returns with the envelope, or `reported` is `assumed` under another name.
+**Alternatives:** One act and STE imperatives on the whole reply. Treat any shell or test result as `observed`, including a command that calls a model. Let a classifier probability skip a check when it is high. Build the envelope before the kind labeler.
+**Consequences:** Jev keeps the two seats it already has, cheap-or-smart and an added pause on a destructive command. It does not take context selection, compaction, knowledge extraction, or requirement verification.
+**Refs:** `docs/guides/reply-piece-labels.md`, `docs/plans/2026-10-05-reply-pieces.md`.
+
+## 2026-10-06 — Smart tier is GLM 5.3
+
+**Context:** The smart tier was pinned to `z-ai/glm-5.2`. Z.ai has since released GLM 5.3, which OpenRouter describes as the newer model in that line. `~z-ai/glm-latest` currently redirects to GLM 5.3. GLM 5.3 Flash and GLM 5.3 Prime are separate variants.
+**Decision:** Smart is the pinned slug `openrouter/z-ai/glm-5.3` in both the main config and the server checkout. Cheap stays on DeepSeek V4 Flash.
+**Alternatives:** Stay on 5.2. Use `~z-ai/glm-latest`, which would move again without a config edit. Use 5.3 Prime, the faster variant, or 5.3 Flash.
+**Consequences:** A smart turn costs GLM 5.3 rates. The running server keeps its old smart model until restart.
+**Refs:** `config/default.toml` `[agent.routing]`.
+
+## 2026-10-06 — Default model is DeepSeek V4 Flash
+
+**Context:** Pi replies in the piece experiment were `deepseek/deepseek-v4-flash`. The director still loaded `deepseek/deepseek-v3.2` from `[model]`, `[agent].model`, `GRAPHIRM_MODEL`, and the server checkout's routing tiers.
+**Decision:** Those settings use `deepseek/deepseek-v4-flash`. The cheap tier that already tracks `~deepseek/deepseek-v4-flash-latest` stays. Smart was still GLM 5.2 here; the next entry moves it to 5.3. This reverses the 2026-09-29 choice to leave the default on v3.2.
+**Alternatives:** Leave the director on v3.2 and only pin Pi. Use the moving `~deepseek/deepseek-v4-flash-latest` alias for the default too.
+**Consequences:** A running server keeps v3.2 until it is restarted. Routed turns on the main checkout still follow the cheap and smart lists.
+**Refs:** `config/default.toml`, `GRAPHIRM_MODEL`.
 
 ## 2026-10-05 — The Cursor tiling check is ignored unless asked for
 
@@ -77,6 +157,62 @@ Entry template:
 **Alternatives:** Asking the answering model to emit the pieces while it writes. Asking Osmosis to fill a nested pieces schema. Parsing inside a Pi TypeScript extension. Storing same-turn adjacency as `applies_to`.
 **Consequences:** Cross-turn edges (`answered_by`, `executed_by`, `implements`) wait until about 100 real Pi replies are hand-labeled and the baseline has a score. The grammar-constrained labeler has to beat that score. `adjacent_to` is not stored yet.
 **Refs:** `docs/plans/2026-10-05-reply-pieces.md`.
+
+## 2026-09-30 — Numbered blocks are the segment contract
+
+**Context:** Marker splits only cut where the model wrote `<<<type>>>`. A grocery list came back as one answer plus one caveat, with the headings still inside the answer.
+**Decision:** The prompt asks for `{"segments":[{"n","type","title","items"}]}` and nothing else. The parser stores one block per element. The chat prints `n` and numbers `items`. If the reply is markdown headings and lists instead, the same blocks are built in code. Markers stay a fallback when neither path yields blocks.
+**Alternatives:** An API JSON schema would force the shape and still allow one block. A second model can miss the same cut.
+**Consequences:** A list with no headings and no `items` array is still one block. The OpenRouter client still does not send `response_format`.
+**Refs:** `parse_structured_segments` and `parse_markdown_sections` in `crates/agent/src/knowledge/segments.rs`.
+
+## 2026-09-30 — Segment markers can split a reply in code
+
+**Context:** Valid segment JSON with one `answer` still shows as one block. An API schema would force the shape and still allow that one block.
+**Decision:** The question now asks for `<<<type>>>` markers, including a new `<<<answer>>>` before each heading or list section. Two or more known markers are split in code and stored as segments, ahead of a single JSON segment. One marker, or none, leaves the old JSON path in place. The system prompt still describes JSON and mentions markers as an alternative.
+**Alternatives:** Retrying the model does not change the schema. A trained splitter needs labeled cuts we do not have.
+**Consequences:** The model still has to write the markers. A grocery list with no markers stays one block.
+**Refs:** `parse_marked_segments` in `crates/agent/src/knowledge/segments.rs`.
+
+## 2026-09-30 — Segment JSON is also requested on the user question
+
+**Context:** Structured segments are requested only in the system prompt. DeepSeek V4 Flash answered "list of groceries" with markdown. The parser stored that text. GLiNER2 labels spans; it does not emit the segment JSON, and this debug server does not run it.
+**Decision:** When `structured_output` is on, append a one-line JSON request to the latest user message in the LLM context, after the tool gate has read the original text. The graph message is unchanged.
+**Alternatives:** API `response_format` would force JSON, but the OpenRouter client does not send one. A second model rewrite has the same failure mode.
+**Consequences:** A turn can still ignore the request. The chat will not show the suffix.
+**Refs:** `crates/agent/src/knowledge/segments.rs` `append_segment_json_request`.
+
+## 2026-09-29 — No automatic "continue the implementation" nudge
+
+**Context:** After any `write` or `edit`, a text-only reply was treated as unfinished work. The loop stored "Continue with the implementation. What is the next step?" as a user message, up to twice, then the verification checklist. The system prompt said the same thing: never stop with text while work remains.
+**Decision:** Delete that nudge and the `max_continuations` knob. Delete the Continuity section of the system prompt. A text-only reply after a write ends the loop, unless `pre_completion_verify` still injects its checklist once.
+**Alternatives:** Hiding the nudge in the chat would still spend a model turn. Gating it on a real "unfinished" check needs a signal we do not have.
+**Consequences:** The director can stop after editing. The verification checklist is unchanged.
+**Refs:** `crates/agent/src/workflow.rs`, `config/default.toml`.
+
+## 2026-09-29 — Cheap and smart are different OpenRouter models
+
+**Context:** Both routing tiers were `deepseek/deepseek-v3.2`, so the chip's tier did not change which model answered. A greeting on turn 1 is forced to smart.
+**Decision:** Cheap is OpenRouter `~deepseek/deepseek-v4-flash-latest` (the alias that tracks the newest DeepSeek V4 Flash). Smart is `z-ai/glm-5.2`. The default `[model]` / `[agent].model` stay on v3.2; routed turns use the tier list. Pi stays on the pinned `deepseek/deepseek-v4-flash`.
+**Alternatives:** Pinning `deepseek/deepseek-v4-flash` would freeze the cheap tier on one checkpoint. `~deepseek/deepseek-flash-latest` is a different alias, not the V4 Flash family.
+**Consequences:** A smart turn now costs GLM 5.2 rates and can behave differently from cheap. The running server must be restarted to load the toml.
+**Refs:** `config/default.toml` `[agent.routing]`.
+
+## 2026-09-29 — PageRank sums dangling rank once per pass
+
+**Context:** A one-word chat turn timed out at 300s with no assistant node. Context build calls `GraphStore::pagerank` on the whole graph. 1,853 of 5,695 nodes have no outgoing edge, and each of those walked every node on each of 100 iterations (`HashMap` updates, debug binary). The model was never called. The turn timeout logged the failure and left that thread running.
+**Decision:** Keep the same scores. Sum the dangling mass once per iteration and add `damping * sum / n` to every node. Neighbor lists are built once into dense slots.
+**Alternatives:** Fewer iterations or skipping PageRank would change which context nodes are selected. Caching scores across turns would go stale on every write. Cancelling the blocking thread does not fix the next turn.
+**Consequences:** A debug `serve` can build context on this graph in well under a second. The formula matches the old one, including parallel edges (each edge stays a separate outgoing slot).
+**Refs:** `crates/graph/src/store.rs` `pagerank`, test `pagerank_dangling_nodes_stay_fast`.
+
+## 2026-09-29 — Public lock-down is an env var, not the committed toml
+
+**Context:** `app.graphirm.ai` loads `config/default.toml` from the image. That file now has `[agent.pi] enabled = true`, and `disable_bash` stays commented so local dev still has a shell. A Coolify rebuild would otherwise offer `bash` and `delegate_pi` on the public server, and the image has no `pi` binary.
+**Decision:** `GRAPHIRM_DISABLE_BASH=true` (also `1` or `yes`) forces `disable_bash` after the toml is read. Unset leaves the file alone. The spoke sets the variable in Coolify; the committed flag stays off.
+**Alternatives:** Uncommenting `disable_bash` in `default.toml` would lock local dev too. A second toml copied only in the image would drift from the file Coolify builds.
+**Consequences:** A redeploy is safe only when the Coolify env is set before the new container starts. The variable does not change routing, context, or Pi itself.
+**Refs:** `src/commands/mod.rs`, `config/default.toml`.
 
 ## 2026-09-29 — Phone-first chat design approved as written
 

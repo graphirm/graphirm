@@ -16,6 +16,11 @@ pub const PIECE_PARSER_VERSION: &str = "1";
 /// The cursor-subset snapshot test fails until this matches the new kinds hash.
 pub const PIECE_BASELINE_VERSION: &str = "1";
 
+/// HTML index contract generation.
+/// `1` was a `div` index and put the line number inside `pre`.
+/// `2` is `nav`, `section`, `h2`, `ul`, and `data-n` on `pre`.
+pub const HTML_INDEX_SHAPE_VERSION: &str = "2";
+
 /// A heading lead-in is one line no longer than this.
 pub const MAX_HEADING_CHARS: usize = 80;
 
@@ -664,7 +669,10 @@ fn ranges_tile(text: &str, pieces: &[Piece]) -> bool {
 /// Cut one HTML index page into pieces. `Err` when the page is not that index.
 ///
 /// A part counts only when an index link, the target id, and a single kind-word
-/// class all match. `start` and `end` are UTF-8 byte offsets of the part element.
+/// class all match. The link is `N.0.0 [kind] Heading` and each `p` or `li`
+/// starts `N.0.M`. A `pre` carries that number in `data-n`, not in the code.
+/// The link is the heading. A missing or different `h2` is logged and ignored.
+/// `start` and `end` are UTF-8 byte offsets of the part element.
 #[allow(clippy::result_unit_err)]
 pub fn cut_html_index(text: &str) -> Result<Vec<Piece>, ()> {
     let doc = scraper::Html::parse_fragment(text);
@@ -682,14 +690,18 @@ pub fn cut_html_index(text: &str) -> Result<Vec<Piece>, ()> {
             .strip_prefix('#')
             .filter(|id| !id.is_empty())
             .ok_or(())?;
-        let (kind, heading) = split_kind_heading(&el.text().collect::<String>()).ok_or(())?;
+        let (major, kind, heading) = split_kind_heading(&el.text().collect::<String>()).ok_or(())?;
+        let order = u32::try_from(pieces.len() + 1).map_err(|_| ())?;
+        if major != order {
+            return Err(());
+        }
         let part = html_by_id(&doc, id)?;
         if !class_is_kind(part.value().attr("class").unwrap_or(""), kind) {
             return Err(());
         }
+        warn_if_h2_disagrees(part, order, heading.as_deref());
         let (start, end) = element_span(text, id).ok_or(())?;
-        let items = part_items(part, text, start)?;
-        let order = u32::try_from(pieces.len() + 1).map_err(|_| ())?;
+        let items = part_items(part, text, start, order)?;
         pieces.push(Piece {
             order,
             kind,
@@ -713,9 +725,14 @@ fn html_by_id<'a>(doc: &'a scraper::Html, id: &str) -> Result<scraper::ElementRe
         .ok_or(())
 }
 
-fn split_kind_heading(raw: &str) -> Option<(PieceKind, Option<String>)> {
+fn split_kind_heading(raw: &str) -> Option<(u32, PieceKind, Option<String>)> {
     let text = raw.trim();
-    let rest = text.strip_prefix('[')?;
+    let (num, rest) = text.split_once(char::is_whitespace)?;
+    let (major, minor, patch) = parse_outline(num)?;
+    if minor != 0 || patch != 0 {
+        return None;
+    }
+    let rest = rest.trim_start().strip_prefix('[')?;
     let (kind_raw, after) = rest.split_once(']')?;
     if kind_raw.contains('[') {
         return None;
@@ -727,7 +744,48 @@ fn split_kind_heading(raw: &str) -> Option<(PieceKind, Option<String>)> {
     } else {
         Some(heading.to_string())
     };
-    Some((kind, heading))
+    Some((major, kind, heading))
+}
+
+/// `1.0.2` is major 1, minor 0, patch 2. Anything else is refused.
+fn parse_outline(raw: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = raw.split('.');
+    let major: u32 = parts.next()?.parse().ok()?;
+    let minor: u32 = parts.next()?.parse().ok()?;
+    let patch: u32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+fn expected_h2(order: u32, heading: Option<&str>) -> String {
+    match heading.map(str::trim).filter(|h| !h.is_empty()) {
+        Some(heading) => format!("{order}.0.0 {heading}"),
+        None => format!("{order}.0.0"),
+    }
+}
+
+/// `true` when the part has no `h2`, or the `h2` text is not `N.0.0 Heading`.
+fn h2_disagrees(found: Option<&str>, order: u32, heading: Option<&str>) -> bool {
+    let expected = expected_h2(order, heading);
+    !matches!(found.map(str::trim), Some(text) if text == expected)
+}
+
+fn warn_if_h2_disagrees(part: scraper::ElementRef<'_>, order: u32, heading: Option<&str>) {
+    let found = part
+        .descendants()
+        .filter_map(scraper::ElementRef::wrap)
+        .find(|el| el.value().name() == "h2")
+        .map(|el| el.text().collect::<String>());
+    if h2_disagrees(found.as_deref(), order, heading) {
+        tracing::warn!(
+            order,
+            expected = %expected_h2(order, heading),
+            found = found.as_deref().unwrap_or(""),
+            "html index h2 does not match the link; the link is the heading"
+        );
+    }
 }
 
 fn class_is_kind(class: &str, kind: PieceKind) -> bool {
@@ -739,6 +797,7 @@ fn part_items(
     part: scraper::ElementRef<'_>,
     text: &str,
     part_start: usize,
+    order: u32,
 ) -> Result<Vec<PieceItem>, ()> {
     let mut items = Vec::new();
     for node in part.descendants() {
@@ -750,15 +809,23 @@ fn part_items(
             continue;
         }
         let raw: String = el.text().collect();
-        let body = if name == "pre" {
-            raw
-        } else {
-            raw.trim().to_string()
-        };
-        if name != "pre" && body.is_empty() {
+        if name != "pre" && raw.trim().is_empty() {
             continue;
         }
         let position = u32::try_from(items.len() + 1).map_err(|_| ())?;
+        let body = if name == "pre" {
+            let expected = format!("{order}.0.{position}");
+            if el.value().attr("data-n") != Some(expected.as_str()) {
+                return Err(());
+            }
+            raw.trim().to_string()
+        } else {
+            let body = strip_line_number(raw.trim(), order, position)?;
+            if body.is_empty() {
+                return Err(());
+            }
+            body
+        };
         let (start, end) =
             item_span(text, part_start, position as usize).unwrap_or((part_start, part_start));
         items.push(PieceItem {
@@ -769,6 +836,17 @@ fn part_items(
         });
     }
     Ok(items)
+}
+
+/// Drops a leading `N.0.M` and the one space or newline after it.
+fn strip_line_number(body: &str, order: u32, position: u32) -> Result<String, ()> {
+    let prefix = format!("{order}.0.{position}");
+    let rest = body.trim_start().strip_prefix(&prefix).ok_or(())?;
+    let rest = rest
+        .strip_prefix(' ')
+        .or_else(|| rest.strip_prefix('\n'))
+        .ok_or(())?;
+    Ok(rest.trim().to_string())
 }
 
 fn is_item_tag(name: &str) -> bool {
@@ -906,9 +984,30 @@ mod tests {
     }
 
     #[test]
-    fn html_index_cuts_a_linked_part() {
-        let html = r##"<div id="index"><a href="#part1">[statement] Overview</a></div>
+    fn html_index_requires_outline_numbers() {
+        let html = r##"<div id="index"><a href="#part1">1.0.0 [statement] Overview</a></div>
+<div id="part1" class="statement"><p>1.0.1 One sentence.</p></div>"##;
+        let pieces = cut_html_index(html).expect("cut");
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0].order, 1);
+        assert_eq!(pieces[0].kind, PieceKind::Statement);
+        assert_eq!(pieces[0].heading.as_deref(), Some("Overview"));
+        assert_eq!(pieces[0].items[0].text, "One sentence.");
+        assert_eq!(pieces[0].items[0].position, 1);
+
+        let bare = r##"<div id="index"><a href="#part1">[statement] Overview</a></div>
 <div id="part1" class="statement"><p>One sentence.</p></div>"##;
+        assert!(cut_html_index(bare).is_err());
+
+        let swapped = r##"<div id="index"><a href="#part1">2.0.0 [statement] Overview</a></div>
+<div id="part1" class="statement"><p>2.0.1 One sentence.</p></div>"##;
+        assert!(cut_html_index(swapped).is_err());
+    }
+
+    #[test]
+    fn html_index_cuts_a_linked_part() {
+        let html = r##"<div id="index"><a href="#part1">1.0.0 [statement] Overview</a></div>
+<div id="part1" class="statement"><p>1.0.1 One sentence.</p></div>"##;
         let pieces = cut_html_index(html).expect("cut");
         assert_eq!(pieces.len(), 1);
         assert_eq!(pieces[0].kind, PieceKind::Statement);
@@ -919,32 +1018,90 @@ mod tests {
 
     #[test]
     fn html_index_keeps_pre_code_as_one_item() {
-        let html = r##"<div id="index"><a href="#c">[code] Sample</a></div><div id="c" class="code"><pre><code>let x = 1;</code></pre></div>"##;
+        let html = r##"<nav id="index"><ul><li><a href="#c">1.0.0 [code] Sample</a></li></ul></nav>
+<section id="c" class="code"><h2>1.0.0 Sample</h2><pre data-n="1.0.1"><code>let x = 1;</code></pre></section>"##;
         let pieces = cut_html_index(html).expect("cut");
         assert_eq!(pieces.len(), 1);
         assert_eq!(pieces[0].kind, PieceKind::Code);
         assert_eq!(pieces[0].items.len(), 1);
         assert_eq!(pieces[0].items[0].text, "let x = 1;");
+        assert!(!pieces[0].items[0].text.contains("1.0.1"));
         assert_eq!(pieces[0].items[0].position, 1);
     }
 
     #[test]
+    fn html_index_refuses_a_number_inside_code() {
+        let html = r##"<nav id="index"><ul><li><a href="#c">1.0.0 [code] Sample</a></li></ul></nav>
+<section id="c" class="code"><h2>1.0.0 Sample</h2><pre><code>1.0.1 let x = 1;</code></pre></section>"##;
+        assert!(cut_html_index(html).is_err());
+    }
+
+    #[test]
+    fn html_index_keeps_the_link_when_the_h2_disagrees() {
+        let html = r##"<nav id="index"><ul><li><a href="#part1">1.0.0 [statement] Overview</a></li></ul></nav>
+<section id="part1" class="statement"><h2>9.9.9 Other</h2><p>1.0.1 One sentence.</p></section>"##;
+        let pieces = cut_html_index(html).expect("cut");
+        assert_eq!(pieces[0].heading.as_deref(), Some("Overview"));
+        assert!(h2_disagrees(Some("9.9.9 Other"), 1, Some("Overview")));
+        assert!(!h2_disagrees(Some("1.0.0 Overview"), 1, Some("Overview")));
+        assert!(h2_disagrees(None, 1, Some("Overview")));
+    }
+
+    #[test]
+    fn html_index_cuts_each_kind() {
+        let html = r##"<nav id="index"><ul>
+<li><a href="#s">1.0.0 [statement] Overview</a></li>
+<li><a href="#o">2.0.0 [options] Pick one</a></li>
+<li><a href="#t">3.0.0 [steps] Run it</a></li>
+<li><a href="#i">4.0.0 [instructions] How</a></li>
+<li><a href="#e">5.0.0 [example] Sample</a></li>
+<li><a href="#v">6.0.0 [caveat] Limit</a></li>
+<li><a href="#c">7.0.0 [code] Patch</a></li>
+<li><a href="#q">8.0.0 [question] Ask</a></li>
+</ul></nav>
+<section id="s" class="statement"><h2>1.0.0 Overview</h2><p>1.0.1 One fact.</p></section>
+<section id="o" class="options"><h2>2.0.0 Pick one</h2><ul><li>2.0.1 Use the cache</li><li>2.0.2 Skip the cache</li></ul></section>
+<section id="t" class="steps"><h2>3.0.0 Run it</h2><ul><li>3.0.1 Build</li><li>3.0.2 Ship</li></ul></section>
+<section id="i" class="instructions"><h2>4.0.0 How</h2><p>4.0.1 Pass the token in the header.</p></section>
+<section id="e" class="example"><h2>5.0.0 Sample</h2><figure><p>5.0.1 A request looks like <code>GET /health</code>.</p></figure></section>
+<section id="v" class="caveat"><h2>6.0.0 Limit</h2><p>6.0.1 This drops old tokens.</p></section>
+<section id="c" class="code"><h2>7.0.0 Patch</h2><pre data-n="7.0.1"><code>let x = 1;</code></pre></section>
+<section id="q" class="question"><h2>8.0.0 Ask</h2><p>8.0.1 Should I apply the patch?</p></section>"##;
+        let pieces = cut_html_index(html).expect("cut");
+        assert_eq!(pieces.len(), 8);
+        assert_eq!(pieces[0].items[0].text, "One fact.");
+        assert_eq!(pieces[1].kind, PieceKind::Options);
+        assert_eq!(pieces[1].items[1].text, "Skip the cache");
+        assert_eq!(pieces[2].kind, PieceKind::Steps);
+        assert_eq!(pieces[2].items[0].text, "Build");
+        assert_eq!(pieces[3].kind, PieceKind::Instructions);
+        assert_eq!(pieces[4].kind, PieceKind::Example);
+        assert_eq!(pieces[4].items[0].text, "A request looks like GET /health.");
+        assert_eq!(pieces[5].kind, PieceKind::Caveat);
+        assert_eq!(pieces[5].items[0].text, "This drops old tokens.");
+        assert_eq!(pieces[6].kind, PieceKind::Code);
+        assert_eq!(pieces[6].items[0].text, "let x = 1;");
+        assert_eq!(pieces[7].kind, PieceKind::Question);
+        assert_eq!(pieces[7].items[0].text, "Should I apply the patch?");
+    }
+
+    #[test]
     fn html_index_rejects_a_dangling_href() {
-        let html = r##"<div id="index"><a href="#missing">[statement] Gone</a></div>"##;
+        let html = r##"<div id="index"><a href="#missing">1.0.0 [statement] Gone</a></div>"##;
         assert!(cut_html_index(html).is_err());
     }
 
     #[test]
     fn html_index_rejects_a_prefixed_kind_class() {
-        let html = r##"<div id="index"><a href="#part1">[statement] Overview</a></div>
-<div id="part1" class="kind-statement"><p>One sentence.</p></div>"##;
+        let html = r##"<div id="index"><a href="#part1">1.0.0 [statement] Overview</a></div>
+<div id="part1" class="kind-statement"><p>1.0.1 One sentence.</p></div>"##;
         assert!(cut_html_index(html).is_err());
     }
 
     #[test]
     fn html_index_items_are_part_lines_not_index_entries() {
-        let html = r##"<div id="index"><ul><li><a href="#part1">[steps] Deploy</a></li></ul></div>
-<div id="part1" class="steps"><ul><li>Build</li><li>Ship</li></ul></div>"##;
+        let html = r##"<div id="index"><ul><li><a href="#part1">1.0.0 [steps] Deploy</a></li></ul></div>
+<div id="part1" class="steps"><ul><li>1.0.1 Build</li><li>1.0.2 Ship</li></ul></div>"##;
         let pieces = cut_html_index(html).expect("cut");
         assert_eq!(pieces.len(), 1);
         assert_eq!(pieces[0].kind, PieceKind::Steps);

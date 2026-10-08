@@ -106,7 +106,7 @@ async fn agent_loop_delegates_to_pi_and_records_the_run() {
     assert_eq!(task.metadata["executor"], "pi");
     assert_eq!(
         task.metadata["result"],
-        r##"<div id="index"><a href="#part1">[statement] Result</a></div><div id="part1" class="statement"><p>The file content is: `hi`</p></div>"##
+        r##"<nav id="index"><ul><li><a href="#part1">1.0.0 [statement] Result</a></li></ul></nav><section id="part1" class="statement"><h2>1.0.0 Result</h2><p>1.0.1 The file content is: `hi`</p></section>"##
     );
     assert_eq!(task.metadata["exit_code"], 0);
     assert_eq!(task.metadata["tool_calls"], 4);

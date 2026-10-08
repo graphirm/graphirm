@@ -16,6 +16,9 @@
 - A trailing question run is split by scanning back from the final `?` to punctuation followed by a space or a newline. Abbreviations are `e.g.`, `i.e.`, `etc.`, and `vs.`. `?` inside inline code or a URL does not count.
 - Over 16,000 Unicode scalar values, the segment is one statement and the parser is not called.
 - `order` numbers pieces. Item `position` numbers lines inside a piece.
+- One piece has one kind. Two kinds on one piece means the cut was wrong: split the piece. The labeler returns one word, and a piece it cannot name is a failed cut.
+- Cut by function, not by sentence. A list of alternatives inside one sentence is one options piece. Several sentences of explanation can be one statement.
+- How something works is a statement. What the reader does is steps. "Spark reads the file, shuffles, then writes" is a statement in the labeler's test set. It is not a new kind.
 - The live Cursor tiling check is `#[ignore]`. `cargo test` skips it. A missing `~/.cursor/projects` does not fail, including under `--ignored`. Transcripts stay out of the repo.
 - Every production Pi run appends its stdout to `~/.graphirm/pi-runs`. `GRAPHIRM_PI_RUNS_DIR=off` disables it.
 
@@ -31,6 +34,12 @@ A row in `piece-labels.jsonl` stores the run file, the segment index, a SHA-256 
 
 ## Still open
 
-1. Hand-label about 100 real Pi replies from `~/.graphirm/pi-runs`, using `docs/guides/reply-piece-labels.md` and `graphirm label-pieces` with no `--show-baseline`. Use varied tasks so lists, fences, and questions appear. Then run `graphirm score-pieces`.
-2. A grammar-constrained llama.cpp labeler that only returns one kind per block and has to beat the baseline. The OpenRouter client cannot force a schema.
+1. Hand-label about 100 real Pi replies from `~/.graphirm/pi-runs`, using `docs/guides/reply-piece-labels.md` and `graphirm label-pieces` with no `--show-baseline`. Use varied tasks so lists, fences, and questions appear. Then run `graphirm score-pieces`. Those rows are markdown replies. An HTML index page is shape 2 and is not mixed into that file.
+2. A grammar-constrained llama.cpp labeler that only returns one kind per block and has to beat the baseline. The grammar, the prompt, and `score_predicted` are in `crates/agent/src/pi_delegate/kind_label.rs` on `feat/piece-kind-labeler`. A live `llama-cli` run against the labeled replies is still required. The OpenRouter client cannot force a schema.
 3. Cross-turn edges. Same-turn adjacency is not `applies_to`. Positional candidates start only after the labeled set holds up.
+
+## Later, not in the kind list
+
+When a caveat is used to allow or block an action, add a severity attribute on the caveat kind. Do not add kinds. `warning` is data loss or an irreversible action, `caution` breaks something that can be fixed, and `note` is the rest. `warning` is the irreversible-action case. The caveat also gets one link, `applies_to`, pointing at the piece it guards. A warning sits with the step it guards.
+
+When a verifier exists, a steps piece may carry the result the reader should see if the procedure worked. That is a sub-part of steps, checked against `source_text` and the test output. It is not a new kind.

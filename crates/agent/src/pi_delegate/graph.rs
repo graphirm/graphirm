@@ -49,7 +49,7 @@ use graphirm_graph::nodes::{
 use graphirm_tools::ToolContext;
 use serde_json::{Map, Value, json};
 
-use super::pieces::{Piece, PieceItem, cut_html_index};
+use super::pieces::{HTML_INDEX_SHAPE_VERSION, Piece, PieceItem, cut_html_index};
 use crate::error::AgentError;
 use crate::hitl_judge::MAX_ARGS_CHARS;
 
@@ -648,6 +648,7 @@ fn part_node(text: &str, piece: &Piece) -> GraphNode {
         "id": element_id(slice).unwrap_or_default(),
         "kind": piece.kind.as_label(),
         "heading": piece.heading,
+        "shape_version": HTML_INDEX_SHAPE_VERSION,
         "start": piece.start,
         "end": piece.end,
     });
@@ -1302,8 +1303,8 @@ mod tests {
         let ctx = make_ctx();
         let mut run = begin(&ctx, 4000).await;
         let g = &ctx.graph;
-        let html = r##"<div id="index"><a href="#part1">[statement] Overview</a></div>
-<div id="part1" class="statement"><p>One sentence.</p></div>"##;
+        let html = r##"<nav id="index"><ul><li><a href="#part1">1.0.0 [statement] Overview</a></li></ul></nav>
+<section id="part1" class="statement"><h2>1.0.0 Overview</h2><p>1.0.1 One sentence.</p></section>"##;
 
         let msg = run
             .record_assistant_message(html, Some("stop"), None, true)
@@ -1330,7 +1331,8 @@ mod tests {
         assert_eq!(part.metadata["heading"], "Overview");
         let start = part.metadata["start"].as_u64().expect("start") as usize;
         let end = part.metadata["end"].as_u64().expect("end") as usize;
-        assert!(html[start..end].starts_with("<div id=\"part1\""));
+        assert!(html[start..end].starts_with("<section id=\"part1\""));
+        assert_eq!(part.metadata["shape_version"], json!("2"));
 
         let lines = out(g, &part.id, EdgeType::Contains);
         assert_eq!(lines.len(), 1);
@@ -1346,7 +1348,7 @@ mod tests {
         assert_eq!(line.metadata["position"], json!(1));
         let line_start = line.metadata["start"].as_u64().expect("start") as usize;
         let line_end = line.metadata["end"].as_u64().expect("end") as usize;
-        assert_eq!(&html[line_start..line_end], "<p>One sentence.</p>");
+        assert_eq!(&html[line_start..line_end], "<p>1.0.1 One sentence.</p>");
 
         let markdown = "# Hello\n\nA paragraph.\n";
         let plain = run
@@ -1374,10 +1376,10 @@ mod tests {
         let ctx = make_ctx();
         let mut run = begin(&ctx, 4000).await;
         let g = &ctx.graph;
-        let first_html = r##"<div id="index"><a href="#deploy">[steps] Deploy</a></div>
-<div id="deploy" class="steps"><ul><li>Build</li><li>Ship</li></ul></div>"##;
-        let second_html = r##"<div id="index"><a href="#use">[statement] Follow-up</a></div>
-<div id="use" class="statement"><p>Use step 2 of Deploy from the previous reply.</p></div>"##;
+        let first_html = r##"<nav id="index"><ul><li><a href="#deploy">1.0.0 [steps] Deploy</a></li></ul></nav>
+<section id="deploy" class="steps"><h2>1.0.0 Deploy</h2><ul><li>1.0.1 Build</li><li>1.0.2 Ship</li></ul></section>"##;
+        let second_html = r##"<nav id="index"><ul><li><a href="#use">1.0.0 [statement] Follow-up</a></li></ul></nav>
+<section id="use" class="statement"><h2>1.0.0 Follow-up</h2><p>1.0.1 Use step 2 of Deploy from the previous reply.</p></section>"##;
         let first = run
             .record_assistant_message(first_html, Some("stop"), None, true)
             .await

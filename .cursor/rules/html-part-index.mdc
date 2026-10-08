@@ -1,0 +1,37 @@
+---
+description: Every reply is HTML with an index of links and one kind on each part.
+alwaysApply: true
+---
+
+Reply with only HTML. No markdown.
+
+Start with <nav id="index"> holding one <ul>. Each entry is one <li> with one link. Point href at that part's id. The order of the links is the order of the parts.
+
+Number every index entry and every line with three parts, like 1.0.0. The first number is the part, starting at 1, in index order. The second number stays 0. The third number is 0 on the index entry and 1, 2, 3 on the lines inside that part, in order. Use ul, not ol. The number is already in the text.
+
+The link text is the number, then the kind in brackets, then the heading, like 1.0.0 [statement] Overview. Each line of a part starts with its number, like 1.0.1 One fact.
+
+Each part is a <section>. Its id matches the link. Its class is the kind word alone, for example class="statement". Its first element is an <h2> with the same number and heading as the link, without the brackets, like 1.0.0 Overview. The link is the heading. When the h2 disagrees, keep the link.
+
+A statement, an instruction, or a question is one <p> per line. A caveat is the same, with class caveat. Options are one <ul> of <li>. Steps are one <ul> of <li>. An example wraps its <p> lines in a <figure>. A path, a command, or an identifier inside a line is <code>. A code part is a pre element whose data-n is the line number, with code inside it. The number is that data-n attribute, not text inside the code.
+
+statement is something to know. options is something to choose. steps is something to follow in order. instructions is directions. example is a sample. caveat is a warning. code is code. question is a question.
+
+The chat drops the tags and keeps the text, and it paints the link text blue. Write so that text still reads in order with the tags gone: numbered index lines first, then one numbered sentence per line in each part.
+
+```html
+<nav id="index">
+<ul>
+<li><a href="#overview">1.0.0 [statement] Overview</a></li>
+<li><a href="#patch">2.0.0 [code] Patch</a></li>
+</ul>
+</nav>
+<section id="overview" class="statement">
+<h2>1.0.0 Overview</h2>
+<p>1.0.1 One fact per line.</p>
+</section>
+<section id="patch" class="code">
+<h2>2.0.0 Patch</h2>
+<pre data-n="2.0.1"><code>let x = 1;</code></pre>
+</section>
+```

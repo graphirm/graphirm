@@ -4,6 +4,14 @@ A final Pi reply is split into pieces. You name the shape of each piece. You do 
 
 Label final replies only. Narration before a tool call is out of this set.
 
+## Cuts
+
+One piece has one kind. If a piece seems to be two kinds, the parser cut it wrong. Split it. Do not give it two labels. A piece the labeler cannot name with one word is a failed cut, not a fuzzy choice.
+
+Cut by function, not by sentence. "Plain text, or `nb`, or `jrnl`" is one options piece inside one sentence. A three-sentence explanation can be one statement.
+
+How something works is a statement. What the reader does is steps. "Spark reads the file, shuffles, then writes" is a statement. It is in the labeler's test set because the likely mistake is to call it steps. It is not a new kind.
+
 ## Kinds
 
 **statement** — A claim or a fact, with no list of choices and no warning.
@@ -25,6 +33,8 @@ Near-miss: "1. Stop the process. 2. Start it again." is steps. The order is the 
 > 2. Start it again with the same env.
 
 Near-miss: "Use X / Use Y" is options, even though each line is an imperative.
+
+Near-miss: "Spark reads the file, shuffles, then writes" is a statement. It says how the process works. The reader is not being told to do those things.
 
 **instructions** — Directions for how to do something, written as prose or as a list of directions, where the reader is being told how to act but the lines are not a sequence of commands and not a menu of choices.
 
@@ -87,4 +97,6 @@ Recordings start only after the server is built from `feat/reply-pieces`. The fi
 
 ## HTML index
 
-A reply Pi writes as an HTML index is cut by `cut_html_index`, not by `structure_segment`. The kind on each part is the class Pi wrote. The class is one of the eight kind words and nothing else. A markdown reply stays on `structure_segment`.
+A reply Pi writes as an HTML index is cut by `cut_html_index`, not by `structure_segment`. The kind on each part is the class Pi wrote. The class is one of the eight kind words and nothing else. Each index entry is numbered `N.0.0` and each line `N.0.M`. The cutter checks those numbers against part order and line position, then stores the words after the number. A code block carries `N.0.M` in `data-n`, not in the code text. The link is the heading. A missing or different `h2` is logged, and the link still wins.
+
+This page is shape 2 (`nav`, `section`, `h2`, `ul`, `data-n`). The hand-labeled set of about 100 replies is markdown only, scored with `structure_segment`. An HTML index reply is not a row in that file. A later set that holds both shapes labels each row with its shape version.
