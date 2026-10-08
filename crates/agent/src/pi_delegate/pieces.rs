@@ -661,6 +661,11 @@ fn ranges_tile(text: &str, pieces: &[Piece]) -> bool {
     true
 }
 
+/// Cut one HTML index page into pieces. `Err` when the page is not that index.
+pub fn cut_html_index(_text: &str) -> Result<Vec<Piece>, ()> {
+    Err(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,6 +680,63 @@ mod tests {
             start,
             end,
         }
+    }
+
+    #[test]
+    fn html_index_cuts_a_linked_part() {
+        let html = r##"<div id="index"><a href="#part1">[statement] Overview</a></div>
+<div id="part1" class="statement"><p>One sentence.</p></div>"##;
+        let pieces = cut_html_index(html).expect("cut");
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0].kind, PieceKind::Statement);
+        assert_eq!(pieces[0].heading.as_deref(), Some("Overview"));
+        assert_eq!(pieces[0].items[0].text, "One sentence.");
+        assert_eq!(pieces[0].items[0].position, 1);
+    }
+
+    #[test]
+    fn html_index_keeps_pre_code_as_one_item() {
+        let html = r##"<div id="index"><a href="#c">[code] Sample</a></div><div id="c" class="code"><pre><code>let x = 1;</code></pre></div>"##;
+        let pieces = cut_html_index(html).expect("cut");
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0].kind, PieceKind::Code);
+        assert_eq!(pieces[0].items.len(), 1);
+        assert_eq!(pieces[0].items[0].text, "let x = 1;");
+        assert_eq!(pieces[0].items[0].position, 1);
+    }
+
+    #[test]
+    fn html_index_rejects_a_dangling_href() {
+        let html = r##"<div id="index"><a href="#missing">[statement] Gone</a></div>"##;
+        assert!(cut_html_index(html).is_err());
+    }
+
+    #[test]
+    fn html_index_rejects_a_prefixed_kind_class() {
+        let html = r##"<div id="index"><a href="#part1">[statement] Overview</a></div>
+<div id="part1" class="kind-statement"><p>One sentence.</p></div>"##;
+        assert!(cut_html_index(html).is_err());
+    }
+
+    #[test]
+    fn html_index_items_are_part_lines_not_index_entries() {
+        let html = r##"<div id="index"><ul><li><a href="#part1">[steps] Deploy</a></li></ul></div>
+<div id="part1" class="steps"><ul><li>Build</li><li>Ship</li></ul></div>"##;
+        let pieces = cut_html_index(html).expect("cut");
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0].kind, PieceKind::Steps);
+        assert_eq!(pieces[0].heading.as_deref(), Some("Deploy"));
+        assert_eq!(pieces[0].items.len(), 2);
+        assert_eq!(pieces[0].items[0].text, "Build");
+        assert_eq!(pieces[0].items[0].position, 1);
+        assert_eq!(pieces[0].items[1].text, "Ship");
+        assert_eq!(pieces[0].items[1].position, 2);
+    }
+
+    #[test]
+    fn html_index_rejects_markdown_without_an_index() {
+        let markdown = "# Hello\n\nA paragraph.\n";
+        assert!(cut_html_index(markdown).is_err());
     }
 
     #[test]
