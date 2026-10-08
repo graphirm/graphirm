@@ -679,7 +679,7 @@ pub fn build_context_with_stats(
     all_nodes.extend(conv_older);
     all_nodes.extend(recent_chrono);
 
-    append_pending_approval_results(graph, &agent_id, &thread, &mut all_nodes)?;
+    append_pending_approval_results(&thread, &mut all_nodes);
 
     let all_nodes = omit_stale_pending_placeholders(&all_nodes);
     let messages = assemble_paired_messages(&all_nodes, graph, config.segment_filter.as_deref());
@@ -697,22 +697,18 @@ pub fn build_context_with_stats(
 }
 
 /// When the newest interaction is an assistant tool call with no recorded result,
-/// append one tool-result node per missing id. A restored session otherwise
-/// drops the call, and the model never sees that approval is still open.
-fn append_pending_approval_results(
-    graph: &GraphStore,
-    agent_id: &NodeId,
-    thread: &[GraphNode],
-    all_nodes: &mut Vec<GraphNode>,
-) -> Result<(), AgentError> {
+/// append one tool-result node per missing id to the payload copy only.
+/// A restored session otherwise drops the call, and the model never sees that
+/// approval is still open. The placeholder is not stored.
+fn append_pending_approval_results(thread: &[GraphNode], all_nodes: &mut Vec<GraphNode>) {
     let Some(leaf) = thread.first() else {
-        return Ok(());
+        return;
     };
     let NodeType::Interaction(data) = &leaf.node_type else {
-        return Ok(());
+        return;
     };
     if data.role != "assistant" {
-        return Ok(());
+        return;
     }
     let Some(calls) = leaf
         .metadata
@@ -720,7 +716,7 @@ fn append_pending_approval_results(
         .and_then(|value| value.as_array())
         .cloned()
     else {
-        return Ok(());
+        return;
     };
     let answered: std::collections::HashSet<String> = thread
         .iter()
@@ -738,7 +734,6 @@ fn append_pending_approval_results(
         })
         .collect();
 
-    let mut previous = leaf.id.clone();
     for (offset, call) in calls.iter().enumerate() {
         let Some(id) = call.get("id").and_then(|value| value.as_str()) else {
             continue;
@@ -759,28 +754,8 @@ fn append_pending_approval_results(
             "is_error": true,
             "pending_approval": true,
         });
-        let node_id = node.id.clone();
-        graph
-            .add_node(node.clone())
-            .map_err(|e| AgentError::Context(e.to_string()))?;
-        graph
-            .add_edge(GraphEdge::new(
-                EdgeType::Produces,
-                agent_id.clone(),
-                node_id.clone(),
-            ))
-            .map_err(|e| AgentError::Context(e.to_string()))?;
-        graph
-            .add_edge(GraphEdge::new(
-                EdgeType::RespondsTo,
-                node_id,
-                previous.clone(),
-            ))
-            .map_err(|e| AgentError::Context(e.to_string()))?;
-        previous = node.id.clone();
         all_nodes.push(node);
     }
-    Ok(())
 }
 
 /// A pending-approval placeholder shares its call id with the real result once
@@ -1861,26 +1836,125 @@ mod tests {
 
         let again = build_context(&graph, &agent_id, &config).unwrap();
         assert_tool_pairing(&again.messages);
-        let awaiting = graph
+        assert!(again.messages.iter().any(|message| {
+            message.content.iter().any(|part| {
+                matches!(
+                    part,
+                    graphirm_llm::ContentPart::ToolResult { id, content, .. }
+                        if id == "call_1" && content == "awaiting approval"
+                )
+            })
+        }));
+        assert_eq!(
+            pending_approval_count(&graph, &agent_id, "call_1"),
+            0,
+            "awaiting approval stays in the payload copy and is not stored"
+        );
+    }
+
+    #[test]
+    fn pending_call_that_is_later_approved_sends_the_real_result_once() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+        link_chain(
+            &graph,
+            &agent_id,
+            vec![(
+                "assistant",
+                "calling".to_string(),
+                serde_json::json!({
+                    "tool_calls": [{"id": "call_1", "name": "read", "arguments": {"path": "/tmp/notes.txt"}}]
+                }),
+            )],
+        );
+        let config = ContextConfig {
+            max_tokens: 500,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            ..ContextConfig::default()
+        };
+        let pending = build_context(&graph, &agent_id, &config).unwrap();
+        assert_tool_pairing(&pending.messages);
+        assert_eq!(tool_result_contents(&pending), vec!["awaiting approval"]);
+        assert_eq!(pending_approval_count(&graph, &agent_id, "call_1"), 0);
+
+        let assistant_id = graph
             .neighbors(&agent_id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap()
+            .into_iter()
+            .find(|node| {
+                matches!(&node.node_type, NodeType::Interaction(data) if data.role == "assistant")
+            })
+            .unwrap()
+            .id;
+        let mut result = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "tool".to_string(),
+            content: "file body".to_string(),
+            token_count: None,
+        }));
+        result.metadata = serde_json::json!({
+            "tool_call_id": "call_1",
+            "tool_name": "read"
+        });
+        let result_id = result.id.clone();
+        graph.add_node(result).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id.clone(),
+                result_id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                result_id,
+                assistant_id,
+            ))
+            .unwrap();
+
+        let approved = build_context(&graph, &agent_id, &config).unwrap();
+        assert_tool_pairing(&approved.messages);
+        assert_eq!(tool_result_contents(&approved), vec!["file body"]);
+        assert_eq!(pending_approval_count(&graph, &agent_id, "call_1"), 0);
+    }
+
+    fn pending_approval_count(graph: &GraphStore, agent_id: &NodeId, call_id: &str) -> usize {
+        graph
+            .neighbors(agent_id, Some(EdgeType::Produces), Direction::Outgoing)
             .unwrap()
             .into_iter()
             .filter(|node| {
                 node.metadata
                     .get("tool_call_id")
                     .and_then(|value| value.as_str())
-                    == Some("call_1")
+                    == Some(call_id)
                     && node
                         .metadata
                         .get("pending_approval")
                         .and_then(|value| value.as_bool())
                         == Some(true)
             })
-            .count();
-        assert_eq!(
-            awaiting, 1,
-            "a second context build must not record another result"
-        );
+            .count()
+    }
+
+    fn tool_result_contents(window: &ContextWindow) -> Vec<&str> {
+        window
+            .messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                graphirm_llm::ContentPart::ToolResult { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]

@@ -53,7 +53,7 @@ Drop:
 - a result whose `tool_call_id` is empty
 - a result whose id is not in the assistant message that owns the run
 - a tool-call part with no result in the run
-- an `awaiting approval` placeholder when a real result with the same id is in the assembled nodes. The placeholder node stays in the graph.
+- an `awaiting approval` placeholder is payload-only. It is not stored. When a real result with the same id is already in the assembled nodes, the placeholder is left out of the payload too.
 
 If an assistant message then has no text and no tool-call parts, drop the message.
 

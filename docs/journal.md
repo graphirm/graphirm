@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-08 — The approval placeholder is payload-only
+
+**Context:** Writing `awaiting approval` into the graph left a second result with the same `tool_call_id` once the real result was recorded.
+**Decision:** The placeholder is appended to the messages for that build and is not stored. A placeholder already in the graph is still dropped from the payload when the real result is present.
+**Alternatives:** Keep the stored placeholder and delete it on approval. That needs a write on the approve path and still races a context build in between.
+**Consequences:** A still-pending call shows `awaiting approval` on every build until a real result exists. The graph has no `pending_approval` node from this path.
+**Refs:** `append_pending_approval_results`, `docs/plans/2026-10-08-tool-pair-atomicity.md`.
+
 ## 2026-10-08 — Two indexes is a failed cut
 
 **Context:** A chat reply closed every tag and still wrote a `div` index and a `nav` index, both `id="index"`. The cutter kept the first. The rule file on `8ec1d18` already asked only for the nav. This chat's prompt still held the older div wording, so the reply wrote both.
