@@ -672,10 +672,14 @@ fn ranges_tile(text: &str, pieces: &[Piece]) -> bool {
 /// class all match. The link is `N.0.0 [kind] Heading` and each `p` or `li`
 /// starts `N.0.M`. A `pre` carries that number in `data-n`, not in the code.
 /// The link is the heading. A missing or different `h2` is logged and ignored.
+/// Two elements with `id="index"` are a failed cut.
 /// `start` and `end` are UTF-8 byte offsets of the part element.
 #[allow(clippy::result_unit_err)]
 pub fn cut_html_index(text: &str) -> Result<Vec<Piece>, ()> {
     let doc = scraper::Html::parse_fragment(text);
+    if count_id(&doc, "index") != 1 {
+        return Err(());
+    }
     let index = html_by_id(&doc, "index")?;
     let mut pieces = Vec::new();
     for anchor in index.descendants() {
@@ -715,6 +719,14 @@ pub fn cut_html_index(text: &str) -> Result<Vec<Piece>, ()> {
         return Err(());
     }
     Ok(pieces)
+}
+
+fn count_id(doc: &scraper::Html, id: &str) -> usize {
+    doc.root_element()
+        .descendants()
+        .filter_map(scraper::ElementRef::wrap)
+        .filter(|el| el.value().attr("id") == Some(id))
+        .count()
 }
 
 fn html_by_id<'a>(doc: &'a scraper::Html, id: &str) -> Result<scraper::ElementRef<'a>, ()> {
@@ -1083,6 +1095,32 @@ mod tests {
         assert_eq!(pieces[6].items[0].text, "let x = 1;");
         assert_eq!(pieces[7].kind, PieceKind::Question);
         assert_eq!(pieces[7].items[0].text, "Should I apply the patch?");
+    }
+
+    #[test]
+    fn html_index_rejects_two_indexes() {
+        let html = r##"<div id="index">
+<p><a href="#shipped">1.0.0 [statement] Main now has shape 2</a></p>
+<p><a href="#left">2.0.0 [caveat] What stayed local</a></p>
+</div>
+<nav id="index">
+<ul>
+<li><a href="#shipped">1.0.0 [statement] Main now has shape 2</a></li>
+<li><a href="#left">2.0.0 [caveat] What stayed local</a></li>
+</ul>
+</nav>
+<section id="shipped" class="statement">
+<h2>1.0.0 Main now has shape 2</h2>
+<p>1.0.1 The commit is 8ec1d18, feat: ask Pi for HTML index shape 2.</p>
+<p>1.0.2 origin/main had moved. The merge kept the shape 2 journal entry and the clippy async-trait note, then pushed ca25b89.</p>
+<p>1.0.3 Local main matches origin/main.</p>
+</section>
+<section id="left" class="caveat">
+<h2>2.0.0 What stayed local</h2>
+<p>2.0.1 Unrelated edits are still uncommitted: segments, the graph store, workflow, config, and the backlog draft.</p>
+<p>2.0.2 The backlog sentence about nav and data-n is in that uncommitted backlog file, so it is not on origin yet.</p>
+</section>"##;
+        assert!(cut_html_index(html).is_err());
     }
 
     #[test]

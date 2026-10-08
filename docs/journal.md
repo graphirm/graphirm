@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-08 — Two indexes is a failed cut
+
+**Context:** A chat reply closed every tag and still wrote a `div` index and a `nav` index, both `id="index"`. The cutter kept the first. The rule file on `8ec1d18` already asked only for the nav. This chat's prompt still held the older div wording, so the reply wrote both.
+**Decision:** `cut_html_index` fails when the page has any count of `id="index"` other than one. The rule and the Pi contract say there is one index and it is that nav. A test fails if either text contains a div index or "each part is a div". The doubled page is a fixture.
+**Alternatives:** Reject every div index, including a page that has only the old shape. That page still cuts when it has one index.
+**Consequences:** Cursor chat replies are not passed through the cutter. The sentence in the rule is what stops the next chat reply. Pi replies with two indexes no longer become piece nodes.
+**Refs:** `cut_html_index`, `.cursor/rules/html-part-index.mdc`.
+
 ## 2026-10-08 — HTML index shape 2 is nav, section, and h2
 
 **Context:** A `div` index read as a wall of tags. `ol` would paint a second number on top of `1.0.0`. A number inside `pre` is copied with the code. An `aside` is announced as complementary, which listeners skip, and a caveat is often the part that matters. The Cursor rule and the Pi contract had already drifted once.
