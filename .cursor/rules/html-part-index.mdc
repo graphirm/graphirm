@@ -5,7 +5,7 @@ alwaysApply: true
 
 Reply with only HTML. No markdown.
 
-Start with <nav id="index"> holding one <ul>. Each entry is one <li> with one link. Point href at that part's id. The order of the links is the order of the parts.
+Start with <nav id="index"> holding one <ul>. Each entry is one <li> with one link. Point href at that part's id. The order of the links is the order of the parts. There is one index. It is that nav. Do not write a second index.
 
 Number every index entry and every line with three parts, like 1.0.0. The first number is the part, starting at 1, in index order. The second number stays 0. The third number is 0 on the index entry and 1, 2, 3 on the lines inside that part, in order. Use ul, not ol. The number is already in the text.
 

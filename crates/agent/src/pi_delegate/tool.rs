@@ -51,7 +51,7 @@ pub const PI_DELEGATE_TOOL_NAME: &str = "delegate_pi";
 /// The cutter accepts that page and refuses anything else.
 const HTML_PIECE_INDEX_CONTRACT: &str = "\n\n\
 Reply with only HTML. No markdown.\n\
-Start with <nav id=\"index\"> holding one <ul>. Each entry is one <li> with one link. Point href at that part's id. The order of the links is the order of the parts.\n\
+Start with <nav id=\"index\"> holding one <ul>. Each entry is one <li> with one link. Point href at that part's id. The order of the links is the order of the parts. There is one index. It is that nav. Do not write a second index.\n\
 Number every index entry and every line with three parts, like 1.0.0. The first number is the part, starting at 1, in index order. The second number stays 0. The third number is 0 on the index entry and 1, 2, 3 on the lines inside that part, in order. Use ul, not ol. The number is already in the text.\n\
 The link text is the number, then the kind in brackets, then the heading, like 1.0.0 [statement] Overview. Each line of a part starts with its number, like 1.0.1 One fact.\n\
 Each part is a <section>. Its id matches the link. Its class is the kind word alone, for example class=\"statement\". Its first element is an <h2> with the same number and heading as the link, without the brackets, like 1.0.0 Overview. The link is the heading. When the h2 disagrees, keep the link.\n\
@@ -1160,6 +1160,22 @@ mod tests {
 
     fn normalize_ws(text: &str) -> String {
         text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    #[test]
+    fn html_index_contract_does_not_teach_a_div_index() {
+        let rule = include_str!("../../../../.cursor/rules/html-part-index.mdc").replace('`', "");
+        for text in [rule.as_str(), HTML_PIECE_INDEX_CONTRACT] {
+            assert!(
+                !text.contains("<div id=\"index\">") && !text.contains("<div id='index'>"),
+                "shape 1 index wording is still present"
+            );
+            let lower = text.to_ascii_lowercase();
+            assert!(
+                !lower.contains("each part is a div"),
+                "shape 1 part wording is still present"
+            );
+        }
     }
 
     fn assistant_fixture(text: &str) -> String {
