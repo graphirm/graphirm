@@ -22,6 +22,20 @@ Entry template:
 
 ---
 
+## 2026-10-08 — async-trait 0.1.92 so clippy 1.99 can build
+
+**Context:** CI runs `cargo clippy --all-targets --all-features -- -D warnings` on stable. Clippy 1.99 flags `double_must_use` on every `#[async_trait]` method because 0.1.89 stamps a bare `#[must_use]` on a future that is already must-use. Local clippy 1.93 did not have that lint, so the branch went green here and red on the pull request.
+
+**Decision:** Bump `async-trait` from 0.1.89 to 0.1.92. That release stops emitting the attribute. The `Cargo.toml` constraint stays `0.1`.
+
+**Alternatives:** `#[allow(clippy::double_must_use)]` on each trait. That papers over the macro in every crate that uses it, and the next trait added would fail CI again.
+
+**Consequences:** The lockfile pulls `syn` 3 for the macro. MSRV stays 1.88 (`async-trait` 0.1.92 asks for 1.71).
+
+**Refs:** https://github.com/graphirm/graphirm/pull/1
+
+---
+
 ## 2026-10-08 — Piece records are nodes under the reply
 
 **Context:** The HTML-index plan stored the cut as a `pieces` array on the assistant Interaction. A list inside one node cannot take an edge. The split exists so a person can accept, drop, or connect one part.
