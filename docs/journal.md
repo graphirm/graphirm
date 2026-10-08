@@ -30,6 +30,14 @@ Entry template:
 **Consequences:** Cursor chat replies are not passed through the cutter. The sentence in the rule is what stops the next chat reply. Pi replies with two indexes no longer become piece nodes.
 **Refs:** `cut_html_index`, `.cursor/rules/html-part-index.mdc`.
 
+## 2026-10-08 — Drop the approval placeholder once the real result exists
+
+**Context:** A pending tool call is given an `awaiting approval` result so the model still sees the call. That node stays on the `RespondsTo` chain. When approval lands, the real result is recorded with the same `tool_call_id`, and both results were sent.
+**Decision:** If a non-placeholder result with that id is in the assembled nodes, drop the `pending_approval` node from the payload and log its id. The graph node stays.
+**Alternatives:** Delete the placeholder from the graph when the real result is written. That loses the record that approval was open. Keeping both and hoping providers dedupe lost because a repeated id is a rejected request.
+**Consequences:** A still-pending call keeps the placeholder. A call that has since returned keeps the real result only.
+**Refs:** `omit_stale_pending_placeholders`, `docs/plans/2026-10-08-tool-pair-atomicity.md`.
+
 ## 2026-10-08 — HTML index shape 2 is nav, section, and h2
 
 **Context:** A `div` index read as a wall of tags. `ol` would paint a second number on top of `1.0.0`. A number inside `pre` is copied with the code. An `aside` is announced as complementary, which listeners skip, and a caveat is often the part that matters. The Cursor rule and the Pi contract had already drifted once.

@@ -681,6 +681,7 @@ pub fn build_context_with_stats(
 
     append_pending_approval_results(graph, &agent_id, &thread, &mut all_nodes)?;
 
+    let all_nodes = omit_stale_pending_placeholders(&all_nodes);
     let messages = assemble_paired_messages(&all_nodes, graph, config.segment_filter.as_deref());
 
     let total_tokens = system_tokens + guaranteed_tokens + selected_tokens;
@@ -780,6 +781,66 @@ fn append_pending_approval_results(
         all_nodes.push(node);
     }
     Ok(())
+}
+
+/// A pending-approval placeholder shares its call id with the real result once
+/// approval lands. Keep the real result and drop the placeholder so the
+/// provider sees that id once.
+fn omit_stale_pending_placeholders(nodes: &[GraphNode]) -> Vec<GraphNode> {
+    let real_ids: std::collections::HashSet<String> = nodes
+        .iter()
+        .filter_map(|node| {
+            if is_pending_placeholder(node) {
+                return None;
+            }
+            tool_call_id_meta(node)
+        })
+        .collect();
+    nodes
+        .iter()
+        .filter(|node| {
+            if !is_pending_placeholder(node) {
+                return true;
+            }
+            let id = tool_call_id_meta(node).unwrap_or_default();
+            if real_ids.contains(&id) {
+                tracing::warn!(
+                    node_id = %node.id,
+                    tool_call_id = %id,
+                    "dropping awaiting-approval placeholder because the real result is present"
+                );
+                return false;
+            }
+            true
+        })
+        .cloned()
+        .collect()
+}
+
+fn is_pending_placeholder(node: &GraphNode) -> bool {
+    let NodeType::Interaction(data) = &node.node_type else {
+        return false;
+    };
+    data.role == "tool"
+        && node
+            .metadata
+            .get("pending_approval")
+            .and_then(|value| value.as_bool())
+            == Some(true)
+}
+
+fn tool_call_id_meta(node: &GraphNode) -> Option<String> {
+    let NodeType::Interaction(data) = &node.node_type else {
+        return None;
+    };
+    if data.role != "tool" {
+        return None;
+    }
+    node.metadata
+        .get("tool_call_id")
+        .and_then(|value| value.as_str())
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
 }
 
 /// Convert assembled nodes, then drop tool results and tool calls that do not
@@ -1820,6 +1881,216 @@ mod tests {
             awaiting, 1,
             "a second context build must not record another result"
         );
+    }
+
+    #[test]
+    fn pending_placeholder_is_dropped_when_the_real_result_arrives() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+        link_chain(
+            &graph,
+            &agent_id,
+            vec![
+                ("user", "Read the notes".to_string(), serde_json::json!({})),
+                (
+                    "assistant",
+                    "calling".to_string(),
+                    serde_json::json!({
+                        "tool_calls": [{"id": "call_1", "name": "read", "arguments": {"path": "/tmp/notes.txt"}}]
+                    }),
+                ),
+                (
+                    "tool",
+                    "awaiting approval".to_string(),
+                    serde_json::json!({
+                        "tool_call_id": "call_1",
+                        "tool_name": "read",
+                        "is_error": true,
+                        "pending_approval": true
+                    }),
+                ),
+                (
+                    "tool",
+                    "file body".to_string(),
+                    serde_json::json!({
+                        "tool_call_id": "call_1",
+                        "tool_name": "read"
+                    }),
+                ),
+            ],
+        );
+
+        let config = ContextConfig {
+            max_tokens: 500,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            ..ContextConfig::default()
+        };
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        assert_tool_pairing(&window.messages);
+        let results: Vec<&str> = window
+            .messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                graphirm_llm::ContentPart::ToolResult { id, content, .. } if id == "call_1" => {
+                    Some(content.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results, ["file body"]);
+    }
+
+    #[test]
+    fn assembled_payloads_are_the_provider_body() {
+        let rejected = provider_body(&rejected_call_window());
+        let approved = provider_body(&pending_then_approved_window());
+        assert_eq!(
+            tool_result_bodies(&rejected),
+            vec![(
+                "call_rejected".to_string(),
+                "rejected by user: no bash".to_string()
+            )]
+        );
+        assert_eq!(
+            tool_result_bodies(&approved),
+            vec![("call_1".to_string(), "file body".to_string())]
+        );
+        if let Ok(dir) = std::env::var("GRAPHIRM_DUMP_TOOL_PAYLOADS") {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                format!("{dir}/rejected.json"),
+                serde_json::to_vec_pretty(&rejected).unwrap(),
+            )
+            .unwrap();
+            std::fs::write(
+                format!("{dir}/pending-then-approved.json"),
+                serde_json::to_vec_pretty(&approved).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
+    fn rejected_call_window() -> ContextWindow {
+        scenario_window(vec![
+            (
+                "user",
+                "Read /tmp/notes.txt".to_string(),
+                serde_json::json!({}),
+            ),
+            (
+                "assistant",
+                "calling".to_string(),
+                serde_json::json!({
+                    "tool_calls": [{"id": "call_rejected", "name": "read", "arguments": {"path": "/tmp/secret.txt"}}]
+                }),
+            ),
+            (
+                "tool",
+                "rejected by user: no bash".to_string(),
+                serde_json::json!({
+                    "tool_call_id": "call_rejected",
+                    "tool_name": "read",
+                    "is_error": true
+                }),
+            ),
+        ])
+    }
+
+    fn pending_then_approved_window() -> ContextWindow {
+        scenario_window(vec![
+            (
+                "user",
+                "Read /tmp/notes.txt".to_string(),
+                serde_json::json!({}),
+            ),
+            (
+                "assistant",
+                "calling".to_string(),
+                serde_json::json!({
+                    "tool_calls": [{"id": "call_1", "name": "read", "arguments": {"path": "/tmp/notes.txt"}}]
+                }),
+            ),
+            (
+                "tool",
+                "awaiting approval".to_string(),
+                serde_json::json!({
+                    "tool_call_id": "call_1",
+                    "tool_name": "read",
+                    "is_error": true,
+                    "pending_approval": true
+                }),
+            ),
+            (
+                "tool",
+                "file body".to_string(),
+                serde_json::json!({
+                    "tool_call_id": "call_1",
+                    "tool_name": "read"
+                }),
+            ),
+        ])
+    }
+
+    fn scenario_window(nodes: Vec<(&str, String, serde_json::Value)>) -> ContextWindow {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+        link_chain(&graph, &agent_id, nodes);
+        let config = ContextConfig {
+            max_tokens: 500,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            ..ContextConfig::default()
+        };
+        build_context(&graph, &agent_id, &config).unwrap()
+    }
+
+    fn provider_body(window: &ContextWindow) -> serde_json::Value {
+        let mut messages = vec![window.system.clone()];
+        messages.extend(window.messages.iter().cloned());
+        let tool = graphirm_llm::ToolDefinition::new(
+            "read",
+            "Read a UTF-8 text file by path.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"]
+            }),
+        );
+        let config = graphirm_llm::CompletionConfig::new("unset")
+            .with_max_tokens(128)
+            .with_temperature(0.0);
+        graphirm_llm::openrouter::build_openai_body(&messages, &[tool], &config)
+    }
+
+    fn tool_result_bodies(body: &serde_json::Value) -> Vec<(String, String)> {
+        body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "tool")
+            .map(|message| {
+                (
+                    message["tool_call_id"].as_str().unwrap_or("").to_string(),
+                    message["content"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect()
     }
 
     #[test]

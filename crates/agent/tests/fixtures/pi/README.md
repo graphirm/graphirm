@@ -94,6 +94,11 @@ and handled by the parser:
   `"stopReason":"error"` or `"aborted"`, `"errorMessage":"..."`, and
   `"content":[]` (`PiEvent::AssistantMessage { error_message: Some(..), .. }`).
 
+## `malformed-div-nav-index.html`
+
+A reply that opened `<div id="index">` and closed `</nav>`. Kept so the HTML
+index cutter can be checked against that mismatch. The page is not a Pi run.
+
 ## Golden-file policy
 
 `hello-run.jsonl` is a golden file. **Do not re-record or edit it** — tests

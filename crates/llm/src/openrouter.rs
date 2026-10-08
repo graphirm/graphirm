@@ -114,7 +114,7 @@ fn convert_response<T>(response: rig::completion::CompletionResponse<T>) -> LlmR
 // OpenAI-compatible request/response types for streaming
 // ----------------------------------------------------------------
 
-fn build_openai_body(
+pub fn build_openai_body(
     messages: &[LlmMessage],
     tools: &[ToolDefinition],
     config: &CompletionConfig,

@@ -1,0 +1,23 @@
+<div id="index">
+<ul>
+<li><a href="#verdict">1.0.0 [statement] Verdict</a></li>
+<li><a href="#proved">2.0.0 [statement] What the live turns proved</a></li>
+<li><a href="#limit">3.0.0 [caveat] What they did not prove</a></li>
+</ul>
+</nav>
+<section id="verdict" class="statement">
+<h2>1.0.0 Verdict</h2>
+<p>1.0.1 Phase 1 passes.</p>
+<p>1.0.2 A rejected call paired with <code>rejected by user: no bash</code> is a payload both providers accept, and both still make the forced next tool call.</p>
+</section>
+<section id="proved" class="statement">
+<h2>2.0.0 What the live turns proved</h2>
+<p>2.0.1 <code>anthropic/claude-haiku-4.5</code> returned HTTP 200 and <code>finish_reason</code> <code>tool_calls</code>.</p>
+<p>2.0.2 <code>deepseek/deepseek-v4-flash</code> returned the same.</p>
+<p>2.0.3 The earlier unit tests already cover the pairing pass, the rejection result, a pending approval, and a steer placed after the result run.</p>
+</section>
+<section id="limit" class="caveat">
+<h2>3.0.0 What they did not prove</h2>
+<p>3.0.1 These two calls were sent straight to OpenRouter in that message shape, so they confirm provider acceptance, not a full Graphirm session assembling the turn.</p>
+<p>3.0.2 Phase 2, the window check and the truncation, is still unstarted.</p>
+</section>
