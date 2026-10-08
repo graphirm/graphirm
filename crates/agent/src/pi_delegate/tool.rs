@@ -46,6 +46,14 @@ use crate::hitl_judge::{DestructiveJudge, JUDGE_ACTION_OBSERVED, JudgeVerdict, b
 /// Registered tool name.
 pub const PI_DELEGATE_TOOL_NAME: &str = "delegate_pi";
 
+/// Appended to the task before spawn. Pi is asked for one HTML index page.
+/// The cutter accepts that page and refuses anything else.
+const HTML_PIECE_INDEX_CONTRACT: &str = "\n\n\
+Reply with only HTML. No markdown.\n\
+Start with <div id=\"index\">. Each entry is one link to a part. The link text is the kind in brackets, then the heading, like [statement] Overview. Point href at that part's id. The order of the links is the order of the parts.\n\
+Each part is a div. Its id matches the link. Its class is the kind word alone, for example class=\"statement\". Put each line of the part in a p or an li. Put a block of code in pre and code.\n\
+statement is something to know. options is something to choose. steps is something to follow in order. instructions is directions. example is a sample. caveat is a warning. code is code. question is a question. Put the kind on the part and on its index entry.\n";
+
 /// At most this many `Warnings:` bullets in the tool result.
 const MAX_SUMMARY_WARNINGS: usize = 10;
 
@@ -265,7 +273,8 @@ impl Tool for PiDelegateTool {
                     .to_string(),
             ));
         }
-        let parsed = self.parse_args(&args)?;
+        let mut parsed = self.parse_args(&args)?;
+        parsed.task.push_str(HTML_PIECE_INDEX_CONTRACT);
         // Deliberately probed on every call (not only at registration): this is
         // what guarantees an uninstalled or broken Pi never creates a Task
         // node. Cost is one `pi --version` (typically ~100 ms, capped at 5 s)
@@ -984,7 +993,10 @@ mod tests {
 
         let (task, meta) = task_data(&ctx.graph, &task_id);
         assert_eq!(task.status, TaskStatus::Completed);
-        assert_eq!(task.description, "make hello.txt");
+        assert_eq!(
+            task.description,
+            format!("make hello.txt{HTML_PIECE_INDEX_CONTRACT}")
+        );
         assert_eq!(meta["executor"], PI_EXECUTOR);
         assert_eq!(meta["result"], "The file content is: `hi`");
         assert_eq!(meta["exit_code"], 0);
@@ -1050,11 +1062,34 @@ mod tests {
         .await
         .expect("ok");
 
-        let expected = "fix it\n\nRelevant files:\n- src/a.rs\n- src/b.rs";
+        let expected =
+            format!("fix it\n\nRelevant files:\n- src/a.rs\n- src/b.rs{HTML_PIECE_INDEX_CONTRACT}");
         let argv = std::fs::read_to_string(&argv_file).expect("argv");
         assert!(argv.ends_with(&format!("{expected}\n")), "{argv}");
         let (task, _) = task_data(&ctx.graph, &delegated_tasks(&ctx)[0].id);
         assert_eq!(task.description, expected);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pi_task_includes_html_index_contract() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let argv_file = dir.path().join("argv.txt");
+        let (ctx, _) = make_ctx(dir.path());
+        let cfg = fake_config(&[("FAKE_PI_ARGV", &argv_file.display().to_string())]);
+        let tool = PiDelegateTool::new(cfg, None);
+
+        tool.execute(json!({"task": "fix the parser"}), &ctx)
+            .await
+            .expect("ok");
+
+        let argv = std::fs::read_to_string(&argv_file).expect("argv");
+        let task_at = argv.find("fix the parser").expect("original task");
+        let contract_at = argv.find("id=\"index\"").expect("index contract");
+        assert!(task_at < contract_at, "{argv}");
+        assert!(argv.contains("[statement]"), "{argv}");
+        assert!(argv.contains("kind word alone"), "{argv}");
+        assert!(argv.contains("p or an li"), "{argv}");
+        assert!(argv.contains("pre and code"), "{argv}");
     }
 
     #[tokio::test]
