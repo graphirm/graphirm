@@ -17,6 +17,8 @@
 #   FAKE_PI_PIDFILE   write $$ here (kill tests)
 #   FAKE_PI_STDERR    1 → write "warn: fake stderr" to stderr once
 #   FAKE_PI_ARGV      path → write "$@" (one per line) here (argv tests)
+#   FAKE_PI_SPAWN_LOG path → append one line per spawn (retry tests)
+#   FAKE_PI_FIXTURE_SEQ path → first line is this spawn's fixture; the line is consumed
 #   FAKE_PI_CHILD     1 → also fork `sleep 3600 &` (a grandchild in the same
 #                     process group) and, when FAKE_PI_PIDFILE is set, write
 #                     its pid to ${FAKE_PI_PIDFILE}.child before the main
@@ -75,6 +77,14 @@ fi
 
 here=$(cd "$(dirname "$0")" && pwd)
 fixture=${FAKE_PI_FIXTURE:-$here/hello-run.jsonl}
+if [ -n "${FAKE_PI_SPAWN_LOG:-}" ]; then
+  echo spawn >> "$FAKE_PI_SPAWN_LOG"
+fi
+if [ -n "${FAKE_PI_FIXTURE_SEQ:-}" ] && [ -s "${FAKE_PI_FIXTURE_SEQ}" ]; then
+  fixture=$(head -n 1 "$FAKE_PI_FIXTURE_SEQ")
+  tail -n +2 "$FAKE_PI_FIXTURE_SEQ" > "${FAKE_PI_FIXTURE_SEQ}.next"
+  mv "${FAKE_PI_FIXTURE_SEQ}.next" "$FAKE_PI_FIXTURE_SEQ"
+fi
 
 ms=$(( ${FAKE_PI_DELAY_MS:-5} ))
 delay=""
