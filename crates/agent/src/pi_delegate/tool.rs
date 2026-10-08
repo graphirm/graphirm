@@ -557,9 +557,10 @@ impl<'a> RunDriver<'a> {
         if text.trim().is_empty() {
             return;
         }
+        let turn_ending = stop_reason.as_deref() != Some(STOP_REASON_TOOL_USE);
         if let Err(e) = self
             .run
-            .record_assistant_message(&text, stop_reason.as_deref(), usage.as_ref())
+            .record_assistant_message(&text, stop_reason.as_deref(), usage.as_ref(), turn_ending)
             .await
         {
             self.graph_write_failed("assistant message", e);

@@ -44,11 +44,12 @@ use std::time::Instant;
 use graphirm_graph::GraphStore;
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{
-    AgentData, GraphNode, InteractionData, NodeId, NodeType, TaskData, TaskStatus,
+    AgentData, ContentData, GraphNode, InteractionData, NodeId, NodeType, TaskData, TaskStatus,
 };
 use graphirm_tools::ToolContext;
 use serde_json::{Map, Value, json};
 
+use super::pieces::{Piece, PieceItem, cut_html_index};
 use crate::error::AgentError;
 use crate::hitl_judge::MAX_ARGS_CHARS;
 
@@ -280,11 +281,14 @@ impl PiRun {
     /// Records an assistant message from Pi as `Interaction{role:"assistant"}`
     /// under the Pi Agent. `usage` (Pi's token accounting) is stored verbatim
     /// in metadata when given.
+    /// `cut` is true for a turn-ending message. Narration (`toolUse`) passes false
+    /// and stores the text with no piece nodes.
     pub async fn record_assistant_message(
         &mut self,
         text: &str,
         stop_reason: Option<&str>,
         usage: Option<&Value>,
+        cut: bool,
     ) -> Result<NodeId, AgentError> {
         let mut meta = self.base_metadata();
         if let Some(reason) = stop_reason {
@@ -302,6 +306,12 @@ impl PiRun {
         node.metadata = Value::Object(meta);
 
         let id = self.persist_interaction(node).await?;
+        if cut {
+            let owned = text.to_string();
+            let g = self.graph.clone();
+            let parent = id.clone();
+            run_blocking(move || attach_reply_pieces(&g, &parent, &owned)).await?;
+        }
         self.assistant_messages += 1;
         Ok(id)
     }
@@ -602,6 +612,75 @@ fn mark_failed(
     extra.insert("duration_ms".into(), json!(duration_ms));
     set_task_status(g, task_id, TaskStatus::Failed, extra)?;
     set_agent_status(g, pi_agent_id, "failed")
+}
+
+/// A clean HTML index becomes `reply_part` and `reply_line` Content nodes.
+/// A failed cut leaves the assistant message as it was recorded.
+fn attach_reply_pieces(graph: &GraphStore, parent: &NodeId, text: &str) -> Result<(), AgentError> {
+    let Ok(pieces) = cut_html_index(text) else {
+        return Ok(());
+    };
+    for piece in pieces {
+        let part_id = graph.add_node(part_node(text, &piece))?;
+        graph.add_edge(GraphEdge::new(
+            EdgeType::Contains,
+            parent.clone(),
+            part_id.clone(),
+        ))?;
+        for item in &piece.items {
+            let line_id = graph.add_node(line_node(item))?;
+            graph.add_edge(GraphEdge::new(EdgeType::Contains, part_id.clone(), line_id))?;
+        }
+    }
+    Ok(())
+}
+
+fn part_node(text: &str, piece: &Piece) -> GraphNode {
+    let slice = text.get(piece.start..piece.end).unwrap_or("");
+    let mut node = GraphNode::new(NodeType::Content(ContentData {
+        content_type: "reply_part".to_string(),
+        path: None,
+        body: piece.heading.clone().unwrap_or_default(),
+        language: None,
+    }));
+    node.metadata = json!({
+        "order": piece.order,
+        "id": element_id(slice).unwrap_or_default(),
+        "kind": piece.kind.as_label(),
+        "heading": piece.heading,
+        "start": piece.start,
+        "end": piece.end,
+    });
+    node
+}
+
+fn line_node(item: &PieceItem) -> GraphNode {
+    let mut node = GraphNode::new(NodeType::Content(ContentData {
+        content_type: "reply_line".to_string(),
+        path: None,
+        body: item.text.clone(),
+        language: None,
+    }));
+    node.metadata = json!({
+        "position": item.position,
+        "start": item.start,
+        "end": item.end,
+    });
+    node
+}
+
+fn element_id(slice: &str) -> Option<String> {
+    for (mark, quote) in [("id=\"", '"'), ("id='", '\'')] {
+        let Some(at) = slice.find(mark) else {
+            continue;
+        };
+        let rest = &slice[at + mark.len()..];
+        let Some(end) = rest.find(quote) else {
+            continue;
+        };
+        return Some(rest[..end].to_string());
+    }
+    None
 }
 
 /// Runs a synchronous store closure off the runtime, mapping `JoinError` the
@@ -962,7 +1041,7 @@ mod tests {
             .expect("tool");
         let usage = json!({ "input": 120, "output": 45 });
         let msg = run
-            .record_assistant_message("All done.", Some("stop"), Some(&usage))
+            .record_assistant_message("All done.", Some("stop"), Some(&usage), true)
             .await
             .expect("assistant");
 
@@ -986,7 +1065,7 @@ mod tests {
 
         // Without usage / stop_reason the keys are absent.
         let bare = run
-            .record_assistant_message("more", None, None)
+            .record_assistant_message("more", None, None, true)
             .await
             .expect("assistant");
         let (_, bare_meta) = interaction_data(g, &bare);
@@ -1216,5 +1295,77 @@ mod tests {
         let (task, meta) = task_data(&ctx.graph, &task_id);
         assert_eq!(task.status, TaskStatus::Completed);
         assert!(meta.get("failure").is_none());
+    }
+
+    #[tokio::test]
+    async fn html_reply_becomes_part_and_line_nodes() {
+        let ctx = make_ctx();
+        let mut run = begin(&ctx, 4000).await;
+        let g = &ctx.graph;
+        let html = r##"<div id="index"><a href="#part1">[statement] Overview</a></div>
+<div id="part1" class="statement"><p>One sentence.</p></div>"##;
+
+        let msg = run
+            .record_assistant_message(html, Some("stop"), None, true)
+            .await
+            .expect("assistant");
+        let (data, meta) = interaction_data(g, &msg);
+        assert_eq!(data.content, html);
+        assert!(meta.get("pieces").is_none());
+
+        let parts = out(g, &msg, EdgeType::Contains);
+        assert_eq!(parts.len(), 1);
+        let part = &parts[0];
+        let NodeType::Content(ContentData {
+            content_type, body, ..
+        }) = &part.node_type
+        else {
+            panic!("expected Content, got {}", part.node_type.type_name());
+        };
+        assert_eq!(content_type, "reply_part");
+        assert_eq!(body, "Overview");
+        assert_eq!(part.metadata["order"], json!(1));
+        assert_eq!(part.metadata["id"], "part1");
+        assert_eq!(part.metadata["kind"], "statement");
+        assert_eq!(part.metadata["heading"], "Overview");
+        let start = part.metadata["start"].as_u64().expect("start") as usize;
+        let end = part.metadata["end"].as_u64().expect("end") as usize;
+        assert!(html[start..end].starts_with("<div id=\"part1\""));
+
+        let lines = out(g, &part.id, EdgeType::Contains);
+        assert_eq!(lines.len(), 1);
+        let line = &lines[0];
+        let NodeType::Content(ContentData {
+            content_type, body, ..
+        }) = &line.node_type
+        else {
+            panic!("expected Content, got {}", line.node_type.type_name());
+        };
+        assert_eq!(content_type, "reply_line");
+        assert_eq!(body, "One sentence.");
+        assert_eq!(line.metadata["position"], json!(1));
+        let line_start = line.metadata["start"].as_u64().expect("start") as usize;
+        let line_end = line.metadata["end"].as_u64().expect("end") as usize;
+        assert_eq!(&html[line_start..line_end], "<p>One sentence.</p>");
+
+        let markdown = "# Hello\n\nA paragraph.\n";
+        let plain = run
+            .record_assistant_message(markdown, Some("stop"), None, true)
+            .await
+            .expect("markdown");
+        assert!(out(g, &plain, EdgeType::Contains).is_empty());
+
+        let narration = run
+            .record_assistant_message(html, Some("toolUse"), None, false)
+            .await
+            .expect("narration");
+        assert!(
+            out(g, &narration, EdgeType::Contains).is_empty(),
+            "toolUse is not cut"
+        );
+
+        run.finish(PiRunFinish::completed("", Some(0)))
+            .await
+            .expect("finish");
     }
 }
