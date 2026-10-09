@@ -289,7 +289,7 @@ pub fn run_label_session<R: BufRead, W: Write>(
                 }
                 writeln!(
                     output,
-                    "use statement, options, steps, instructions, example, caveat, code, or question"
+                    "use statement, recommendation, options, steps, instructions, result, assumption, example, caveat, code, or question"
                 )?;
                 writeln!(output, "kind?")?;
                 output.flush()?;

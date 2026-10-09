@@ -123,6 +123,10 @@ pub async fn compact_context(
         }
     }
 
+    if let Some(prior) = prior_summary_text(graph, &nodes_to_compact)? {
+        texts.insert(0, format!("Previous summary:\n{prior}"));
+    }
+
     let combined = texts.join("\n---\n");
     let (system, prompt) = compaction_prompt(config.max_summary_tokens, &combined);
 
@@ -198,6 +202,61 @@ pub async fn compact_context(
     })
 }
 
+/// The user message that opened the task, plus the latest user message when
+/// a later one exists. Both stay out of compaction. A later user message is
+/// the current request; the first one is the instruction that started the work.
+pub fn pinned_task_nodes<'a>(
+    nodes_oldest_first: impl IntoIterator<Item = &'a GraphNode>,
+) -> Vec<GraphNode> {
+    let mut oldest: Option<&GraphNode> = None;
+    let mut newest: Option<&GraphNode> = None;
+    for node in nodes_oldest_first {
+        if !is_user_message(node) {
+            continue;
+        }
+        if oldest.is_none() {
+            oldest = Some(node);
+        }
+        newest = Some(node);
+    }
+    match (oldest, newest) {
+        (Some(first), Some(last)) if first.id != last.id => vec![first.clone(), last.clone()],
+        (Some(first), _) => vec![first.clone()],
+        _ => Vec::new(),
+    }
+}
+
+fn is_user_message(node: &GraphNode) -> bool {
+    matches!(&node.node_type, NodeType::Interaction(data) if data.role == "user")
+}
+
+/// Newest compaction summary already stored on this thread, so the next
+/// summary can carry its identifiers forward instead of replacing them.
+fn prior_summary_text(graph: &GraphStore, seeds: &[NodeId]) -> Result<Option<String>, AgentError> {
+    use crate::context::latest_compaction_summary;
+
+    let mut latest: Option<GraphNode> = None;
+    for seed in seeds {
+        let thread = graph
+            .conversation_thread(seed)
+            .map_err(|e| AgentError::Context(e.to_string()))?;
+        let Some(found) = latest_compaction_summary(graph, &thread)? else {
+            continue;
+        };
+        let newer = latest
+            .as_ref()
+            .is_none_or(|current| found.created_at > current.created_at);
+        if newer {
+            latest = Some(found);
+        }
+    }
+    Ok(latest
+        .as_ref()
+        .map(get_text_content)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string))
+}
+
 /// Check if a node has been compacted (excluded from future context builds).
 pub fn is_compacted(node: &GraphNode) -> bool {
     node.metadata
@@ -241,6 +300,10 @@ pub fn select_nodes_for_compaction(
         return Ok(vec![]);
     }
     candidates.reverse();
+    let pinned_ids: std::collections::HashSet<NodeId> = pinned_task_nodes(candidates.iter())
+        .into_iter()
+        .map(|node| node.id)
+        .collect();
     let units = group_interaction_units(&candidates);
     let in_tail = tail_unit_indexes(
         &units,
@@ -253,6 +316,7 @@ pub fn select_nodes_for_compaction(
         .enumerate()
         .filter(|(index, _)| !in_tail[*index])
         .flat_map(|(_, unit)| unit.iter().map(|node| node.id.clone()))
+        .filter(|id| !pinned_ids.contains(id))
         .collect();
     if eligible.len() < min_nodes_to_compact {
         return Ok(vec![]);
@@ -397,6 +461,221 @@ mod tests {
         assert!(!all_text.contains("STALE_SUMMARY"), "{all_text}");
         assert!(
             all_text.find("PINNED_SUMMARY").unwrap() < all_text.find("kept turn").unwrap(),
+            "{all_text}"
+        );
+    }
+
+    /// The second summary is whatever the model returns. This provider copies
+    /// the early token into that return only when the prompt still contains it,
+    /// which happens only if the previous summary was fed back in.
+    struct CarryForward;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for CarryForward {
+        async fn complete(
+            &self,
+            messages: Vec<LlmMessage>,
+            _tools: &[graphirm_llm::ToolDefinition],
+            _config: &CompletionConfig,
+        ) -> Result<graphirm_llm::LlmResponse, graphirm_llm::LlmError> {
+            let blob = messages
+                .iter()
+                .flat_map(|message| message.content.iter())
+                .filter_map(|part| match part {
+                    graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let text = if blob.contains("TOKEN_FIRST_991") {
+                "second summary TOKEN_FIRST_991"
+            } else {
+                "second summary lost the token"
+            };
+            Ok(graphirm_llm::LlmResponse {
+                content: vec![graphirm_llm::ContentPart::text(text)],
+                usage: graphirm_llm::TokenUsage::default(),
+                stop_reason: graphirm_llm::StopReason::EndTurn,
+            })
+        }
+
+        async fn stream(
+            &self,
+            _messages: Vec<LlmMessage>,
+            _tools: &[graphirm_llm::ToolDefinition],
+            _config: &CompletionConfig,
+        ) -> Result<
+            std::pin::Pin<Box<dyn futures::Stream<Item = graphirm_llm::StreamEvent> + Send>>,
+            graphirm_llm::LlmError,
+        > {
+            Err(graphirm_llm::LlmError::stream("unused"))
+        }
+
+        fn provider_name(&self) -> &str {
+            "carry-forward"
+        }
+    }
+
+    #[tokio::test]
+    async fn second_compaction_keeps_the_first_token() {
+        let graph = GraphStore::open_memory().unwrap();
+        let mut prev: Option<NodeId> = None;
+        let mut ids = Vec::new();
+        let contents = [
+            "The early token is TOKEN_FIRST_991",
+            "ack",
+            "middle note",
+            "ack",
+            "later note",
+            "ack",
+        ];
+        for (index, content) in contents.iter().enumerate() {
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: if index % 2 == 0 { "user" } else { "assistant" }.to_string(),
+                content: (*content).to_string(),
+                token_count: None,
+            }));
+            node.created_at = Utc::now() - Duration::minutes(20 - index as i64);
+            node.updated_at = node.created_at;
+            let id = node.id.clone();
+            graph.add_node(node).unwrap();
+            if let Some(parent) = &prev {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        id.clone(),
+                        parent.clone(),
+                    ))
+                    .unwrap();
+            }
+            prev = Some(id.clone());
+            ids.push(id);
+        }
+
+        let config = CompactionConfig {
+            model: "mock".to_string(),
+            max_summary_tokens: 500,
+            min_nodes_to_compact: 3,
+        };
+        compact_context(
+            &graph,
+            &MockProvider::fixed("first summary TOKEN_FIRST_991"),
+            ids[..3].to_vec(),
+            &config,
+        )
+        .await
+        .unwrap();
+
+        let second = compact_context(&graph, &CarryForward, ids[3..].to_vec(), &config)
+            .await
+            .unwrap();
+        let summary = graph.get_node(&second.summary_node_id).unwrap();
+        let NodeType::Knowledge(data) = &summary.node_type else {
+            panic!("expected a knowledge summary");
+        };
+        assert!(data.summary.contains("TOKEN_FIRST_991"), "{}", data.summary);
+    }
+
+    #[tokio::test]
+    async fn task_instruction_stays_in_the_payload() {
+        use crate::context::{ContextConfig, build_context};
+
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let task = "Write selection/answer.txt now. The file must contain only the token.";
+        let filler = "pad ".repeat(80);
+        let contents = [
+            task,
+            "ack",
+            filler.as_str(),
+            "ack",
+            filler.as_str(),
+            "newest turn stays",
+        ];
+        let mut prev: Option<NodeId> = None;
+        let mut ids = Vec::new();
+        for (index, content) in contents.iter().enumerate() {
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: if index % 2 == 0 { "user" } else { "assistant" }.to_string(),
+                content: (*content).to_string(),
+                token_count: None,
+            }));
+            node.created_at = Utc::now() - Duration::minutes(20 - index as i64);
+            node.updated_at = node.created_at;
+            let id = node.id.clone();
+            graph.add_node(node).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    id.clone(),
+                ))
+                .unwrap();
+            if let Some(parent) = &prev {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        id.clone(),
+                        parent.clone(),
+                    ))
+                    .unwrap();
+            }
+            prev = Some(id.clone());
+            ids.push(id);
+        }
+
+        let selected = select_nodes_for_compaction(&graph, &agent_id, 200, 0.5, 1, 3, 0.5).unwrap();
+        assert!(
+            !selected.contains(&ids[0]),
+            "the task message must not be compacted: {selected:?}"
+        );
+        compact_context(
+            &graph,
+            &MockProvider::fixed("TOKEN_EARLY_184729"),
+            selected,
+            &CompactionConfig {
+                model: "mock".to_string(),
+                max_summary_tokens: 500,
+                min_nodes_to_compact: 3,
+            },
+        )
+        .await
+        .unwrap();
+
+        let task_node = graph.get_node(&ids[0]).unwrap();
+        assert!(!is_compacted(&task_node));
+
+        let window = build_context(
+            &graph,
+            &agent_id,
+            &ContextConfig {
+                max_tokens: 20,
+                system_prompt: "S".to_string(),
+                guaranteed_recent_turns: 1,
+                ..ContextConfig::default()
+            },
+        )
+        .unwrap();
+        let all_text: String = window
+            .messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            all_text.contains("Write selection/answer.txt now"),
             "{all_text}"
         );
     }

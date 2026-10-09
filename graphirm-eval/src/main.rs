@@ -88,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
         let icon = match result.outcome {
             task::TaskOutcome::Pass => "✅",
             task::TaskOutcome::Fail => "❌",
+            task::TaskOutcome::RanOver => "⏱",
             task::TaskOutcome::Error => "⚠",
         };
         println!(
@@ -103,10 +104,15 @@ async fn main() -> anyhow::Result<()> {
     let score = task::SuiteScore::from_results(&results);
     if score.scored() > 0 || score.errored > 0 {
         println!(
-            "\n{}/{} tasks passed ({:.0}%)",
+            "\nCorrect {}/{} ({:.0}%). On time {}/{} ({:.0}%). Ran over {}. Wrong {}.",
+            score.correct(),
+            score.scored(),
+            score.correct_percent(),
             score.passed,
             score.scored(),
-            score.percent()
+            score.percent(),
+            score.ran_over,
+            score.failed
         );
         if score.errored > 0 {
             println!(

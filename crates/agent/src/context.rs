@@ -1,6 +1,6 @@
 // Context engine: graph-native relevance scoring and context window building
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use chrono::{Duration, Utc};
 use serde::Deserialize;
@@ -544,7 +544,7 @@ fn compute_context_stats(
 
 /// Newest `session_summary` compaction node that summarizes any turn in the thread.
 /// Incoming `Summarizes` edges are the only link, and they land on compacted turns.
-fn latest_compaction_summary(
+pub(crate) fn latest_compaction_summary(
     graph: &GraphStore,
     full_thread: &[GraphNode],
 ) -> Result<Option<GraphNode>, AgentError> {
@@ -660,13 +660,30 @@ pub fn build_context_with_stats(
         }
     }
 
+    // The task-setting user message stays in the payload even when the scored
+    // fill has no room. A later user message is kept the same way when it is
+    // not already in the tail.
+    let pinned_tasks = crate::compact::pinned_task_nodes(thread.iter().rev());
+    let pinned_ids: HashSet<NodeId> = pinned_tasks.iter().map(|node| node.id.clone()).collect();
+    let guaranteed_ids: HashSet<NodeId> = guaranteed_recent
+        .iter()
+        .map(|node| node.id.clone())
+        .collect();
+    let pinned_reserve: usize = pinned_tasks
+        .iter()
+        .filter(|node| !guaranteed_ids.contains(&node.id))
+        .map(estimate_tokens)
+        .sum();
+    older_conversation.retain(|node| !pinned_ids.contains(&node.id));
+
     // Token accounting
     let guaranteed_tokens: usize = guaranteed_recent.iter().map(estimate_tokens).sum();
     let remaining_budget = config
         .max_tokens
         .saturating_sub(system_tokens)
         .saturating_sub(guaranteed_tokens)
-        .saturating_sub(summary_tokens);
+        .saturating_sub(summary_tokens)
+        .saturating_sub(pinned_reserve);
 
     // Collect Content/Knowledge nodes reachable from conversation
     let conversation_ids: Vec<NodeId> = thread.iter().map(|n| n.id.clone()).collect();
@@ -741,13 +758,19 @@ pub fn build_context_with_stats(
 
     let recent_chrono = guaranteed_recent;
 
-    // Layout: [pinned compaction summary] [content/knowledge context]
-    // [older conversation] [guaranteed recent conversation]
-    // The summary stays even when the scored fill has no room left.
+    // Layout: [pinned compaction summary] [task user message]
+    // [content/knowledge context] [older conversation] [guaranteed recent]
+    // The summary and the task message stay even when the scored fill has no room left.
     let mut all_nodes: Vec<GraphNode> = Vec::new();
     if let Some(summary) = summary {
         all_nodes.push(summary);
     }
+    let present: HashSet<&NodeId> = all_nodes.iter().map(|node| &node.id).collect();
+    let forced_tasks: Vec<GraphNode> = pinned_tasks
+        .into_iter()
+        .filter(|node| !present.contains(&node.id) && !guaranteed_ids.contains(&node.id))
+        .collect();
+    all_nodes.extend(forced_tasks);
     all_nodes.extend(ctx_nodes);
     all_nodes.extend(conv_older);
     all_nodes.extend(recent_chrono);
@@ -765,7 +788,8 @@ pub fn build_context_with_stats(
         .count();
     let dropped_units = count_dropped_units(&thread, &kept_ids);
     let thread_tokens: usize = thread.iter().map(estimate_tokens).sum();
-    let kept_tokens = system_tokens + summary_tokens + guaranteed_tokens + selected_tokens;
+    let kept_tokens =
+        system_tokens + summary_tokens + guaranteed_tokens + pinned_reserve + selected_tokens;
     let dropped_tokens: usize = thread
         .iter()
         .filter(|node| !kept_ids.contains(&node.id))
@@ -785,7 +809,8 @@ pub fn build_context_with_stats(
         "context selection"
     );
 
-    let total_tokens = system_tokens + summary_tokens + guaranteed_tokens + selected_tokens;
+    let total_tokens =
+        system_tokens + summary_tokens + guaranteed_tokens + pinned_reserve + selected_tokens;
 
     Ok((
         ContextWindow {

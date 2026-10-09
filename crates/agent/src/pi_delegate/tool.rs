@@ -51,12 +51,28 @@ pub const PI_DELEGATE_TOOL_NAME: &str = "delegate_pi";
 /// The cutter accepts that page and refuses anything else.
 const HTML_PIECE_INDEX_CONTRACT: &str = "\n\n\
 Reply with only HTML. No markdown.\n\
-Start with <nav id=\"index\"> holding one <ul>. Each entry is one <li> with one link. Point href at that part's id. The order of the links is the order of the parts. There is one index. It is that nav. Do not write a second index.\n\
-Number every index entry and every line with three parts, like 1.0.0. The first number is the part, starting at 1, in index order. The second number stays 0. The third number is 0 on the index entry and 1, 2, 3 on the lines inside that part, in order. Use ul, not ol. The number is already in the text.\n\
-The link text is the number, then the kind in brackets, then the heading, like 1.0.0 [statement] Overview. Each line of a part starts with its number, like 1.0.1 One fact.\n\
-Each part is a <section>. Its id matches the link. Its class is the kind word alone, for example class=\"statement\". Its first element is an <h2> with the same number and heading as the link, without the brackets, like 1.0.0 Overview. The link is the heading. When the h2 disagrees, keep the link.\n\
-A statement, an instruction, or a question is one <p> per line. A caveat is the same, with class caveat. Options are one <ul> of <li>. Steps are one <ul> of <li>. An example wraps its <p> lines in a <figure>. A path, a command, or an identifier inside a line is <code>. A code part is a pre element whose data-n is the line number, with code inside it. The number is that data-n attribute, not text inside the code.\n\
-statement is something to know. options is something to choose. steps is something to follow in order. instructions is directions. example is a sample. caveat is a warning. code is code. question is a question.\n";
+Each section has exactly one kind. The kind words are:\n\
+statement: a fact that is true no matter what the user decides.\n\
+recommendation: the pick or advice. A recommendation line is one pick plus its reason, like \"Install fmt per project, so everyone uses the same version.\"\n\
+options: alternatives to choose between, with no pick among them.\n\
+instructions: actions the user should take, in any order.\n\
+steps: actions for the user that only work in order. Never use steps for your own work.\n\
+result: what you did and what happened, like \"Ran the test suite; 3 of 120 tests failed.\"\n\
+assumption: something you assumed because you could not ask or check, like \"Assumed the app sells to EU buyers only.\"\n\
+example: a sample.\n\
+caveat: a warning, or a condition that can change the outcome.\n\
+question: a question for the user.\n\
+code: code.\n\
+Use these exact words. It is instructions, never instruction.\n\
+The page starts with <nav id=\"index\"> holding one <ul>. This nav is the only index. Never write a second index, and never write an index as a div.\n\
+The link text is the number, then the kind in brackets, then the heading, like 1.0.0 [statement] What fmt does.\n\
+Every line carries its number twice: as a data-n attribute, which the script reads, and at the start of its text, which people read.\n\
+statement, recommendation, instructions, result, assumption, caveat, and question: one <p> per line.\n\
+options and steps: one <ul>, with one <li> per line.\n\
+example: the <p> lines go inside one <figure>.\n\
+code: one <pre> holding one <code> with the whole block. The whole block is one line, so its number is only in data-n, never inside the code.\n\
+Give every statement and result line a data-src.\n\
+A section may carry a data-rel attribute that links it to other sections in the same reply.\n";
 
 /// At most this many `Warnings:` bullets in the tool result.
 const MAX_SUMMARY_WARNINGS: usize = 10;
@@ -1136,10 +1152,11 @@ mod tests {
         let task_at = argv.find("fix the parser").expect("original task");
         let contract_at = argv.find("id=\"index\"").expect("index contract");
         assert!(task_at < contract_at, "{argv}");
-        assert!(argv.contains("1.0.0 [statement] Overview"), "{argv}");
-        assert!(argv.contains("1.0.1 One fact"), "{argv}");
-        assert!(argv.contains("Use ul, not ol"), "{argv}");
+        assert!(argv.contains("1.0.0 [statement] What fmt does"), "{argv}");
         assert!(argv.contains("data-n"), "{argv}");
+        assert!(argv.contains("data-src"), "{argv}");
+        assert!(argv.contains("data-rel"), "{argv}");
+        assert!(argv.contains("recommendation"), "{argv}");
     }
 
     #[test]

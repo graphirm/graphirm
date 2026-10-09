@@ -290,6 +290,8 @@ pub async fn stream_and_record(
         && matches!(session.agent_config.mode, crate::config::AgentMode::Primary)
         && let Some(ref text) = crate::tool_gate::last_human_message_text(&context)
         && crate::tool_gate::should_omit_tools_for_user_message(text)
+        && !crate::tool_gate::task_is_open(&context)
+        && !crate::tool_gate::is_verification_checklist(text)
     {
         tool_defs.clear();
         tools_gated = true;
@@ -1107,8 +1109,17 @@ async fn run_tool_calls(
         if call.name == "graph_query" {
             match graph_queries.prepare(&call.arguments) {
                 crate::graph_query_guard::GraphQueryDecision::Run => {}
-                crate::graph_query_guard::GraphQueryDecision::Repeat { notice }
-                | crate::graph_query_guard::GraphQueryDecision::Cap { notice } => {
+                crate::graph_query_guard::GraphQueryDecision::Repeat { notice } => {
+                    tracing::info!("graph_query guard returned the previous result");
+                    synthetic.push((
+                        call.id,
+                        call.name,
+                        Ok(graphirm_tools::ToolOutput::success(notice)),
+                    ));
+                    continue;
+                }
+                crate::graph_query_guard::GraphQueryDecision::Cap { notice } => {
+                    tracing::info!("graph_query guard hit the per-turn cap");
                     synthetic.push((
                         call.id,
                         call.name,
@@ -1674,6 +1685,156 @@ pub(crate) async fn emit_graph_update_for(
     });
 }
 
+/// A text reply that names a next tool action, so the loop can ask for that
+/// call once instead of treating the plan as the end of the task.
+pub(crate) fn announces_unfinished_action(text: &str) -> bool {
+    let lower = text.replace('Ġ', " ").replace('Ċ', "\n").to_lowercase();
+    const LEADS: &[&str] = &[
+        "i will ",
+        "i'll ",
+        "i’ll ",
+        "i shall ",
+        "i'm going to ",
+        "i am going to ",
+        "next i'll ",
+        "next i’ll ",
+        "next i will ",
+        "let me ",
+        "i should ",
+        "i'll proceed",
+        "i’ll proceed",
+    ];
+    const VERBS: &[&str] = &[
+        "write",
+        "edit",
+        "read",
+        "run",
+        "fix",
+        "create",
+        "add",
+        "update",
+        "replace",
+        "implement",
+        "check",
+        "test",
+        "open",
+        "delete",
+        "remove",
+        "change",
+        "apply",
+        "build",
+        "compile",
+        "call",
+    ];
+    for lead in LEADS {
+        let Some(at) = lower.find(lead) else {
+            continue;
+        };
+        let from = at + lead.len();
+        let to = (from + 80).min(lower.len());
+        let window = &lower[from..to];
+        let names_action = window
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|word| VERBS.contains(&word));
+        if names_action {
+            return true;
+        }
+    }
+    false
+}
+
+/// One checklist after a finished reply that followed a write or edit.
+/// `git diff` is included only in a git repo. A test command is included only
+/// when the workspace has tests.
+pub(crate) fn verification_checklist(root: &std::path::Path) -> String {
+    let mut steps = Vec::new();
+    if root.join(".git").exists() {
+        steps.push(
+            "Run `git diff --name-only` and confirm only the intended files changed.".to_string(),
+        );
+    }
+    if let Some(command) = test_command(root) {
+        steps.push(format!("Run `{command}` and confirm it passes."));
+    }
+    steps.push(
+        "In your final reply, state what changed and the result. Include the output you confirmed, or the code you wrote. Then stop. Do not re-read files you already read.".to_string(),
+    );
+    let mut out = format!("{}\n", crate::tool_gate::VERIFICATION_LEAD);
+    for (index, step) in steps.iter().enumerate() {
+        out.push_str(&format!("{}. {step}\n", index + 1));
+    }
+    out
+}
+
+fn test_command(root: &std::path::Path) -> Option<&'static str> {
+    if root.join("Cargo.toml").is_file() && rust_tests_present(root) {
+        return Some("cargo test");
+    }
+    if npm_has_test_script(root) {
+        return Some("npm test");
+    }
+    if python_tests_present(root) {
+        return Some("python -m pytest");
+    }
+    None
+}
+
+fn rust_tests_present(root: &std::path::Path) -> bool {
+    if directory_has_file(root.join("tests")) {
+        return true;
+    }
+    rust_file_has_test_module(&root.join("src"), 0)
+}
+
+fn rust_file_has_test_module(dir: &std::path::Path, depth: u8) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name == "target" || name == ".git" {
+                continue;
+            }
+            if rust_file_has_test_module(&path, depth + 1) {
+                return true;
+            }
+        } else if path.extension().is_some_and(|ext| ext == "rs")
+            && std::fs::read_to_string(&path).is_ok_and(|text| text.contains("#[cfg(test)]"))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn npm_has_test_script(root: &std::path::Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(root.join("package.json")) else {
+        return false;
+    };
+    let Some(scripts) = text.split("\"scripts\"").nth(1) else {
+        return false;
+    };
+    let Some(test) = scripts.split("\"test\"").nth(1) else {
+        return false;
+    };
+    !test.contains("no test specified")
+}
+
+fn python_tests_present(root: &std::path::Path) -> bool {
+    root.join("pytest.ini").is_file()
+        || root.join("tox.ini").is_file()
+        || directory_has_file(root.join("tests"))
+}
+
+fn directory_has_file(dir: std::path::PathBuf) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
+}
+
 /// The main agent loop. Cycles between:
 /// 1. Build context from graph
 /// 2. Call LLM and record response (races against CancellationToken)
@@ -1687,17 +1848,15 @@ pub async fn run_agent_loop(
     cancel: &CancellationToken,
 ) -> Result<(), AgentError> {
     let max_turns = session.agent_config.max_turns;
-    let max_continuations = session.agent_config.max_continuations;
     let pre_completion_verify = session.agent_config.pre_completion_verify;
     let doom_loop_threshold = session.agent_config.doom_loop_threshold;
     let read_loop_threshold = session.agent_config.read_loop_threshold;
     let mut all_node_ids: Vec<NodeId> = Vec::new();
-    // True only when the agent has executed at least one write or edit tool call.
-    // pre_completion_verify uses this so the checklist fires after actual file changes,
-    // not after read-only planning turns.
+    // One extra turn when a text reply announces a tool action and then stops.
+    let mut announced_action_continued = false;
+    // True after any write or edit in this session. The checklist fires once
+    // on the next finished reply, then the following finished reply ends.
     let mut had_write_calls = false;
-    let mut continuation_count: u32 = 0;
-    // Tracks whether the one-shot verification checklist has already been injected.
     let mut verify_injected = false;
     // Per-file write/edit counts for doom loop detection.
     let mut file_edit_counts: std::collections::HashMap<std::path::PathBuf, u32> =
@@ -1933,64 +2092,43 @@ pub async fn run_agent_loop(
             });
             emit_graph_update(session, &response_id, vec![], events).await;
 
-            // Post-verification exit: once the verification checklist has been injected
-            // and the agent responds with a text-only turn (its summary), stop immediately.
-            // Without this guard the auto-continuation below would fire and the agent
-            // would re-read files endlessly in a verification doom loop.
-            if verify_injected {
-                tracing::info!(turn, "Post-verification text turn; exiting loop");
-                break;
-            }
-
-            // Auto-continuation: if the agent stopped text-only while implementation was
-            // in progress (evidenced by prior write/edit calls), inject a continuation
-            // nudge so it resumes rather than silently leaving the task unfinished.
-            // Keyed on had_write_calls (not had_tool_calls) so read-only sessions
-            // (Q&A, repo_briefing, graph_query) don't get spurious continuations.
-            if had_write_calls && continuation_count < max_continuations {
-                continuation_count += 1;
+            // A plan with no tool call is not a finished task. One continue, then
+            // a second prose reply is allowed to end the loop. A report of finished
+            // work does not match, so that reply ends the task.
+            if !announced_action_continued && announces_unfinished_action(&response.text_content())
+            {
+                announced_action_continued = true;
                 tracing::info!(
                     turn,
-                    continuation_count,
-                    max_continuations,
-                    "Text-only turn mid-task; auto-injecting continuation message"
+                    "Text-only turn announced an action; injecting continue"
                 );
                 let cont_node = graphirm_graph::nodes::GraphNode::new(
                     graphirm_graph::nodes::NodeType::Interaction(
                         graphirm_graph::nodes::InteractionData {
                             role: "user".to_string(),
-                            content: "Continue with the implementation. What is the next step?"
+                            content: "Continue. Call the read, write, or edit tool for the action you just stated."
                                 .to_string(),
                             token_count: None,
                         },
                     ),
                 );
                 if let Err(e) = session.record_interaction(cont_node).await {
-                    tracing::warn!(error = %e, "Failed to inject continuation message (non-fatal)");
+                    tracing::warn!(error = %e, "Failed to inject action continue (non-fatal)");
                 } else {
                     continue;
                 }
             }
 
-            // Pre-completion verification: fires once per session after tool work ends.
-            // Injects a checklist that forces the agent to run tests and re-check requirements
-            // before the loop exits. Non-fatal — loop breaks normally if injection fails.
+            // One checklist after the first finished reply that followed a write
+            // or edit. The reply after that checklist ends the task.
             if pre_completion_verify && had_write_calls && !verify_injected {
                 verify_injected = true;
                 tracing::info!(turn, "Injecting pre-completion verification checklist");
-                let verify_content = concat!(
-                    "Before marking this task complete, verify your work:\n",
-                    "1. Run the relevant build command (cargo test, npm run build, etc.) — confirm it passes.\n",
-                    "2. Run `cargo clippy -- -D warnings` if Rust was touched — fix any new lint errors.\n",
-                    "3. If this directory is a git repo, run `git diff --name-only` to see exactly what changed.\n",
-                    "Once checks pass, summarize what was done and stop. Do NOT re-read source files after a passing build.",
-                )
-                .to_string();
                 let verify_node = graphirm_graph::nodes::GraphNode::new(
                     graphirm_graph::nodes::NodeType::Interaction(
                         graphirm_graph::nodes::InteractionData {
                             role: "user".to_string(),
-                            content: verify_content,
+                            content: verification_checklist(&session.agent_config.working_dir),
                             token_count: None,
                         },
                     ),
@@ -2020,6 +2158,15 @@ pub async fn run_agent_loop(
             });
         }
 
+        for part in &tool_calls {
+            let ContentPart::ToolCall { name, .. } = part else {
+                continue;
+            };
+            if name == "write" || name == "edit" {
+                had_write_calls = true;
+            }
+        }
+
         // Doom loop tracking: count write/edit calls per file path.
         let mut edited_this_turn: Vec<std::path::PathBuf> = Vec::new();
         if doom_loop_threshold > 0 {
@@ -2033,7 +2180,6 @@ pub async fn run_agent_loop(
                 if (name == "write" || name == "edit")
                     && let Some(path_str) = arguments.get("path").and_then(|v| v.as_str())
                 {
-                    had_write_calls = true;
                     let p = std::path::PathBuf::from(path_str);
                     *file_edit_counts.entry(p.clone()).or_insert(0) += 1;
                     edited_this_turn.push(p.clone());
@@ -2638,6 +2784,218 @@ mod tests {
             graphirm_graph::nodes::NodeType::Agent(d) => assert_eq!(d.status, "completed"),
             _ => panic!("expected Agent node"),
         }
+    }
+
+    #[test]
+    fn announced_action_matches_the_selection_misses() {
+        assert!(announces_unfinished_action(
+            "I should read early.txt now to get the token, then write answer.txt with only that token."
+        ));
+        assert!(announces_unfinished_action(
+            "I'll\u{0120}read\u{0120}the\u{0120}files\u{0120}in\u{0120}order, and edit late.txt."
+        ));
+        assert!(announces_unfinished_action(
+            "Next I'll write selection/answer.txt."
+        ));
+        assert!(!announces_unfinished_action(
+            "Here are your files: src/ Cargo.toml"
+        ));
+        assert!(!announces_unfinished_action("I wrote answer.txt."));
+    }
+
+    #[tokio::test]
+    async fn announced_action_gets_one_continue() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 4,
+            pre_completion_verify: false,
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session
+            .add_user_message("Edit selection/late.txt")
+            .await
+            .unwrap();
+
+        let provider = Arc::new(MockProvider::new(vec![
+            text_response("I'll edit late.txt now."),
+            text_response("Done."),
+        ]));
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(MockTool {
+            tool_name: "bash".to_string(),
+            output: "ok".to_string(),
+        }));
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        run_agent_loop(&session, provider.clone(), &tools, &bus, &token)
+            .await
+            .unwrap();
+
+        assert_eq!(provider.call_count(), 2);
+        let neighbors = graph
+            .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap();
+        let continued = neighbors.iter().any(|node| {
+            matches!(
+                &node.node_type,
+                NodeType::Interaction(data)
+                    if data.role == "user"
+                        && data.content.contains("Call the read, write, or edit tool")
+            )
+        });
+        assert!(continued, "the plan should be followed by one continue");
+    }
+
+    #[tokio::test]
+    async fn finished_report_after_a_write_gets_one_checklist() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let empty =
+            std::env::temp_dir().join(format!("graphirm-verify-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&empty).unwrap();
+        let config = AgentConfig {
+            max_turns: 4,
+            pre_completion_verify: true,
+            working_dir: empty.clone(),
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session
+            .add_user_message("Write selection/answer.txt")
+            .await
+            .unwrap();
+
+        let provider = Arc::new(MockProvider::new(vec![
+            tool_call_response(vec![(
+                "write",
+                "call_1",
+                serde_json::json!({"path": "selection/answer.txt", "content": "TOKEN"}),
+            )]),
+            text_response("Done. I wrote selection/answer.txt."),
+            text_response("Checked. Stopping."),
+        ]));
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(MockTool {
+            tool_name: "write".to_string(),
+            output: "wrote".to_string(),
+        }));
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        run_agent_loop(&session, provider.clone(), &tools, &bus, &token)
+            .await
+            .unwrap();
+
+        assert_eq!(provider.call_count(), 3);
+        let neighbors = graph
+            .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap();
+        let checklists = neighbors
+            .iter()
+            .filter(|node| {
+                matches!(
+                    &node.node_type,
+                    NodeType::Interaction(data)
+                        if data.role == "user"
+                            && data.content.contains(crate::tool_gate::VERIFICATION_LEAD)
+                )
+            })
+            .count();
+        assert_eq!(checklists, 1, "the checklist is sent once");
+        let checklist = neighbors.iter().find_map(|node| match &node.node_type {
+            NodeType::Interaction(data)
+                if data.role == "user"
+                    && data.content.contains(crate::tool_gate::VERIFICATION_LEAD) =>
+            {
+                Some(data.content.as_str())
+            }
+            _ => None,
+        });
+        let checklist = checklist.unwrap();
+        assert!(!checklist.contains("git diff"));
+        assert!(!checklist.contains("cargo test"));
+        assert!(!checklist.contains("What is the next step"));
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    #[test]
+    fn verification_checklist_matches_the_workspace() {
+        let root =
+            std::env::temp_dir().join(format!("graphirm-verify-steps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let bare = verification_checklist(&root);
+        assert!(bare.contains(crate::tool_gate::VERIFICATION_LEAD));
+        assert!(!bare.contains("git diff"));
+        assert!(!bare.contains("cargo test"));
+
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let git_only = verification_checklist(&root);
+        assert!(git_only.contains("git diff --name-only"));
+        assert!(!git_only.contains("cargo test"));
+
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"t\"\n").unwrap();
+        std::fs::write(root.join("src/lib.rs"), "#[cfg(test)]\nmod tests {}\n").unwrap();
+        let both = verification_checklist(&root);
+        assert!(both.contains("git diff --name-only"));
+        assert!(both.contains("cargo test"));
+        assert!(
+            both.contains("what changed and the result"),
+            "the last step must ask for the change and the result, got {both}"
+        );
+        assert!(crate::tool_gate::is_verification_checklist(&both));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn announced_action_after_a_write_gets_one_continue() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 4,
+            pre_completion_verify: false,
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session
+            .add_user_message("Write selection/answer.txt")
+            .await
+            .unwrap();
+
+        let provider = Arc::new(MockProvider::new(vec![
+            tool_call_response(vec![(
+                "write",
+                "call_1",
+                serde_json::json!({"path": "selection/answer.txt", "content": "TOKEN"}),
+            )]),
+            text_response("Next I'll edit late.txt."),
+            text_response("Done."),
+        ]));
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(MockTool {
+            tool_name: "write".to_string(),
+            output: "wrote".to_string(),
+        }));
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        run_agent_loop(&session, provider.clone(), &tools, &bus, &token)
+            .await
+            .unwrap();
+
+        assert_eq!(provider.call_count(), 3);
+        let neighbors = graph
+            .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap();
+        let continued = neighbors.iter().any(|node| {
+            matches!(
+                &node.node_type,
+                NodeType::Interaction(data)
+                    if data.role == "user"
+                        && data.content.contains("Call the read, write, or edit tool")
+            )
+        });
+        assert!(continued, "an announced edit should get one continue");
     }
 
     #[tokio::test]

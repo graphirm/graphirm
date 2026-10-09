@@ -26,10 +26,15 @@ pub fn write_report(
     md.push('\n');
     let score = SuiteScore::from_results(results);
     md.push_str(&format!(
-        "**Score:** {}/{} ({:.0}%)\n",
+        "**Correct:** {}/{} ({:.0}%)\n**On time:** {}/{} ({:.0}%)\n**Ran over:** {}\n**Wrong:** {}\n",
+        score.correct(),
+        score.scored(),
+        score.correct_percent(),
         score.passed,
         score.scored(),
-        score.percent()
+        score.percent(),
+        score.ran_over,
+        score.failed
     ));
     if score.errored > 0 {
         md.push_str(&format!(
@@ -44,11 +49,14 @@ pub fn write_report(
         let icon = match r.outcome {
             TaskOutcome::Pass => "✅",
             TaskOutcome::Fail => "❌",
+            TaskOutcome::RanOver => "⏱",
             TaskOutcome::Error => "⚠",
         };
         let detail = match r.outcome {
             TaskOutcome::Pass => "",
-            TaskOutcome::Fail | TaskOutcome::Error => r.failure_reason.as_deref().unwrap_or("-"),
+            TaskOutcome::Fail | TaskOutcome::RanOver | TaskOutcome::Error => {
+                r.failure_reason.as_deref().unwrap_or("-")
+            }
         };
         md.push_str(&format!(
             "| {} | {} {} | {} | {:.1}s |\n",
@@ -75,7 +83,9 @@ mod tests {
         ];
         write_report(&results, &path, None).unwrap();
         let md = std::fs::read_to_string(path.with_extension("md")).unwrap();
-        assert!(md.contains("**Score:** 1/2 (50%)"));
+        assert!(md.contains("**Correct:** 1/2 (50%)"));
+        assert!(md.contains("**On time:** 1/2 (50%)"));
+        assert!(md.contains("**Wrong:** 1"));
         assert!(md.contains("1 infrastructure"));
         assert!(md.contains("rate limit exhausted"));
         assert!(!md.contains("❌ rate limit exhausted"));

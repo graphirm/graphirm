@@ -8,11 +8,14 @@ use std::path::Path;
 use super::label::{StoredLabel, parse_stored_label, segment_text_hash};
 use super::pieces::{PIECE_BASELINE_VERSION, PIECE_PARSER_VERSION, PieceKind, structure_segment};
 
-const KINDS: [PieceKind; 8] = [
+const KINDS: [PieceKind; 11] = [
     PieceKind::Statement,
+    PieceKind::Recommendation,
     PieceKind::Options,
     PieceKind::Steps,
     PieceKind::Instructions,
+    PieceKind::Result,
+    PieceKind::Assumption,
     PieceKind::Example,
     PieceKind::Caveat,
     PieceKind::Code,
@@ -38,7 +41,7 @@ pub struct ScoreReport {
     pub changed_text: u32,
     pub missing_source: u32,
     /// `confusion[human][baseline]`.
-    pub confusion: [[u32; 8]; 8],
+    pub confusion: [[u32; 11]; 11],
 }
 
 impl ScoreReport {
@@ -51,7 +54,7 @@ impl ScoreReport {
             moved_pieces: 0,
             changed_text: 0,
             missing_source: 0,
-            confusion: [[0; 8]; 8],
+            confusion: [[0; 11]; 11],
         }
     }
 }

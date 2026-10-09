@@ -28,6 +28,33 @@ fn tokenize_alnum(s: &str) -> impl Iterator<Item = &str> {
         .filter(|w| !w.is_empty())
 }
 
+/// Opening line of the one-shot verification checklist. The tool gate leaves
+/// tools on for a message that starts with this line.
+pub(crate) const VERIFICATION_LEAD: &str = "Before marking this task complete, verify your work:";
+
+/// True when `text` is the verification checklist the loop injected.
+pub(crate) fn is_verification_checklist(text: &str) -> bool {
+    text.trim_start().starts_with(VERIFICATION_LEAD)
+}
+
+/// True when some human message in `messages` is a task, so a later short
+/// "go on" still has tools.
+pub(crate) fn task_is_open(messages: &[LlmMessage]) -> bool {
+    messages.iter().any(|msg| {
+        if msg.role != Role::Human {
+            return false;
+        }
+        let mut out = String::new();
+        for part in &msg.content {
+            if let ContentPart::Text { text } = part {
+                out.push_str(text);
+            }
+        }
+        let text = out.trim();
+        !text.is_empty() && !should_omit_tools_for_user_message(text)
+    })
+}
+
 /// When true, the harness should not send tool definitions for this user text.
 ///
 /// Conservative: only returns true for short messages with no code/repo/shell signals.
@@ -146,6 +173,39 @@ mod tests {
         assert!(!should_omit_tools_for_user_message("run cargo test"));
         assert!(!should_omit_tools_for_user_message("see src/main.rs"));
         assert!(!should_omit_tools_for_user_message("fix the ::foo issue"));
+    }
+
+    #[test]
+    fn go_on_keeps_tools_after_a_task() {
+        let msgs = vec![
+            LlmMessage::human("Read selection/early.txt and write the token."),
+            LlmMessage::assistant("wrote it"),
+            LlmMessage::human("go on"),
+        ];
+        assert!(should_omit_tools_for_user_message("go on"));
+        assert!(task_is_open(&msgs));
+    }
+
+    #[test]
+    fn go_on_alone_is_not_an_open_task() {
+        let msgs = vec![LlmMessage::human("go on")];
+        assert!(!task_is_open(&msgs));
+    }
+
+    #[test]
+    fn verification_lead_is_exempt_even_though_it_looks_like_chat() {
+        assert!(should_omit_tools_for_user_message(VERIFICATION_LEAD));
+        assert!(is_verification_checklist(VERIFICATION_LEAD));
+        assert!(is_verification_checklist(&format!(
+            "{VERIFICATION_LEAD}\n1. Summarize what changed and stop.\n"
+        )));
+    }
+
+    #[test]
+    fn action_continue_keeps_tools() {
+        assert!(!should_omit_tools_for_user_message(
+            "Continue. Call the read, write, or edit tool for the action you just stated."
+        ));
     }
 
     #[test]

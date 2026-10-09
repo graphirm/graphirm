@@ -34,18 +34,51 @@ pub fn eval_workspace_name(task_id: &str, nonce: u64) -> String {
 }
 
 pub fn clear_shared_eval_files() {
+    clear_eval_leftovers(Path::new("/tmp"));
+}
+
+/// Remove the shared eval files, plus leftover `eval_fib*` files in `dir`.
+/// A previous Fibonacci run leaves companions such as `eval_fib_main.rs`.
+/// The next run lists `/tmp`, sees them, and keeps writing after the real file is done.
+pub fn clear_eval_leftovers(dir: &Path) {
     for path in SHARED_EVAL_FILES {
-        let _ = std::fs::remove_file(path);
+        let Some(name) = Path::new(path).file_name() else {
+            continue;
+        };
+        let _ = std::fs::remove_file(dir.join(name));
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("eval_fib") {
+            continue;
+        }
+        let path = entry.path();
+        if path.is_dir() {
+            let _ = std::fs::remove_dir_all(path);
+        } else {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
 /// Copy `crates/` and `src/` from `repo` into `dest`, skipping any `target` directory.
+/// The root `Cargo.toml` is copied too. The BFS task reads that path, and the
+/// slice otherwise has only the crate manifests.
 pub fn copy_repo_slice(repo: &Path, dest: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
     for name in REPO_SLICE {
         let from = repo.join(name);
         if from.is_dir() {
             copy_dir_skipping_targets(&from, &dest.join(name))?;
         }
+    }
+    let manifest = repo.join("Cargo.toml");
+    if manifest.is_file() {
+        std::fs::copy(&manifest, dest.join("Cargo.toml"))?;
     }
     Ok(())
 }
@@ -167,6 +200,12 @@ mod tests {
         );
         assert!(dest.join("src/main.rs").is_file());
         assert!(!dest.join("crates/agent/target/skip.rs").exists());
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"root\"\n").unwrap();
+        copy_repo_slice(&root, &dest).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dest.join("Cargo.toml")).unwrap(),
+            "[package]\nname = \"root\"\n"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -190,6 +229,24 @@ mod tests {
             status.stdout.is_empty(),
             "{}",
             String::from_utf8_lossy(&status.stdout)
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_fibonacci_files_are_cleared() {
+        let root = std::env::temp_dir().join(format!("graphirm-eval-fib-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("eval_fib.rs"), "fn fibonacci() {}\n").unwrap();
+        std::fs::write(root.join("eval_fib_main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.join("keep.txt"), "stay\n").unwrap();
+        clear_eval_leftovers(&root);
+        assert!(!root.join("eval_fib.rs").exists());
+        assert!(!root.join("eval_fib_main.rs").exists());
+        assert_eq!(
+            std::fs::read_to_string(root.join("keep.txt")).unwrap(),
+            "stay\n"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

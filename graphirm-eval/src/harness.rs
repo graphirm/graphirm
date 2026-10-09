@@ -291,10 +291,12 @@ impl TestHarness {
                         .check_verifier(&task.verifier, session_id, last_response, workspace_path)
                         .await
                         .unwrap_or(false);
-                    let mut timed_out = TaskResult::fail(
-                        &task.id,
-                        crate::task::timeout_failure_reason(assistants, verifier_passed),
-                    );
+                    let reason = crate::task::timeout_failure_reason(assistants, verifier_passed);
+                    let mut timed_out = if verifier_passed {
+                        TaskResult::ran_over(&task.id, reason)
+                    } else {
+                        TaskResult::fail(&task.id, reason)
+                    };
                     timed_out.turns_used = assistants;
                     return Ok(timed_out);
                 }
@@ -391,8 +393,8 @@ impl TestHarness {
                     n["node_type"]["content_type"].as_str() == Some(content_type.as_str())
                 }))
             }
-            Verifier::All(verifiers) => {
-                for v in verifiers {
+            Verifier::All(_) => {
+                for v in verifier.decisive_checks() {
                     if !Box::pin(self.check_verifier(v, session_id, last_response, workspace_path))
                         .await?
                     {

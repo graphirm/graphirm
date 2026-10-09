@@ -1,5 +1,18 @@
 # Graphirm Development Progress Log
 
+## 2026-10-09: One verification checklist, then stop — COMPLETE ✅
+
+- A finished text reply ends the task. A reply that announces a tool action it did not take gets one continue. The tool gate keeps tools when an earlier human message was a task, and the verification checklist is exempt from the gate.
+- After the first finished reply that follows a write or edit, one checklist is sent. Its last line asks what changed and the result. The next finished reply ends the task. `pre_completion_verify` turns that on or off. `max_continuations` still loads and is logged as deprecated.
+- Eval scores a correct run that did not stop apart from a wrong answer. A file or command check outranks reply text in the same group. The workspace slice includes the root `Cargo.toml`. Leftover `/tmp/eval_fib*` files are cleared before each task.
+- Three full-suite runs on loopback, standard budget: correct 20/21, 18/21, 19/21. On time 18/21, 16/21, 16/21. `precise-edit-no-collateral` passed all three. `selection-edit-from-early` was correct and late all three. The graph-query cap logged once, on a run that passed. The run that failed `graph-query-bfs` never called `graph_query`.
+- Key files: `crates/agent/src/workflow.rs`, `crates/agent/src/tool_gate.rs`, `crates/agent/src/config.rs`, `graphirm-eval/src/task.rs`, `graphirm-eval/src/harness.rs`, `graphirm-eval/src/workspace.rs`
+
+## 2026-10-09: Task message and chained compaction summaries — COMPLETE ✅
+
+- The user message that opened the task, and the latest user message, are excluded from compaction and kept in the next payload. The next compaction receives the previous summary as input so identifiers carry forward.
+- Key files: `crates/agent/src/compact.rs`, `crates/agent/src/context.rs`
+
 ## 2026-10-09: Compaction summary stays in the next prompt — COMPLETE ✅
 
 - The newest `session_summary` is pinned ahead of the thread, outside the scored fill. The summarizer copies identifiers, paths, values, decisions, and unfinished instructions word for word, under the 500-token cap. The summary is logged, and a failed eval task stores it.

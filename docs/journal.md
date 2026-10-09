@@ -22,6 +22,54 @@ Entry template:
 
 ---
 
+## 2026-10-09 — The checklist's last line is the result, and the old key still loads
+
+**Context:** One full-suite run scored 18 of 21. `fix-broken-script` and `segment-filter-context` had already done the work. The harness grades the last assistant message, and the checklist had pushed the real answer back one message. `graph-query-bfs` never called `graph_query`: the workspace slice has no root `Cargo.toml`, the read failed, and the agent searched until the clock ran out. `write-fibonacci` wrote a correct file, then kept going after `ls /tmp` showed leftover `eval_fib*` files from earlier runs. A config that still sets `max_continuations` does not fail to load. Serde ignores an unknown field unless the struct denies it, so the key was already dropped with no log.
+**Decision:** The checklist's last step asks for what changed and the result, including the output or the code. When a task's evidence is a file or a command, the harness scores that and skips reply-text checks in the same group. `max_continuations` is read and logged as deprecated, then ignored. The eval slice copies the root `Cargo.toml`. Leftover `eval_fib*` files are removed before each task. The graph-query cap stays on the safe-tool path and now logs when it stops a call.
+**Alternatives:** Change the two graders to read an earlier message. That hides a last reply users also read. Delete `max_continuations` from the production file only. The next image would still die on any other copy of the key. Treat the BFS timeout as the query cap. This run made zero `graph_query` calls.
+**Consequences:** A last reply that only says the tests passed is no longer what the checklist asks for. A reply-only task, such as `segment-filter-context`, still depends on that last reply containing the code. A git repo with Rust tests is still asked to run `cargo test` once.
+**Refs:** `verification_checklist`, `Verifier::decisive_checks`, `results/suite/verify-baseline.json`.
+
+## 2026-10-09 — One verification checklist, then stop
+
+**Context:** Turning off the "what is the next step" nudge also stopped `pre_completion_verify` from doing anything, while the config still said it was on.
+**Decision:** After the first finished reply that follows a write or edit, inject the checklist once, with tools left on. The next finished reply ends the task. The checklist includes `git diff` only when `.git` is present, and a test command only when the workspace has tests. `pre_completion_verify` turns that on or off. `max_continuations` is removed.
+**Alternatives:** Leave the checklist off. Real coding sessions would stop without a test or lint pass. Keep `max_continuations` at 1 with no reader. That is a key that does nothing.
+**Consequences:** A toml file that still sets `max_continuations` will fail to load. A workspace that is a git repo with Rust tests will be asked to run `cargo test` once after a write.
+**Refs:** `verification_checklist`, `pre_completion_verify`.
+
+## 2026-10-09 — A finished text reply ends the task
+
+**Context:** Selection was correct in 10 of 10 runs and still failed the 180-second clock. After the write or edit, the loop sent "Continue with the implementation. What is the next step?" The tool gate then dropped tools from that short message.
+**Decision:** A text reply continues only when it announces a tool action it did not take, once. A report of finished work ends the loop. The verification checklist is not injected on that path. A short later message keeps tools when an earlier human message was a task. Eval records a correct run that did not stop apart from a wrong answer.
+**Alternatives:** Stop the nudge only when the eval verifier would pass. Production has no answer key. Keep sending the implementation nudge and only exempt it from the tool gate. The nudge itself is what sends a finished agent looking for more work.
+**Consequences:** `max_continuations` and `pre_completion_verify` still load and no longer change the loop. A session that should have run tests before stopping will not, unless the model does that on its own.
+**Refs:** `announces_unfinished_action`, `task_is_open`, `TaskOutcome::RanOver`.
+
+## 2026-10-09 — HTML index shape 3 follows the chunk rule
+
+**Context:** The Cursor rule gained recommendation, result, and assumption, plus `data-src` on statement and result lines and `data-rel` between sections. The Pi contract and the cutter still knew eight kinds, so a page that followed the rule failed the cut.
+**Decision:** Shape version is `3`. The cutter accepts the eleven kind words, stores `data-src` and `data-rel`, and checks `data-n` when a line has one. The Pi contract is sentences from the rule file. The kind list used to score hand labels is the same eleven words.
+**Alternatives:** Leave the cutter on eight kinds and reject the new pages. The rule is what the reply is asked to be.
+**Consequences:** A line without `data-n` still cuts from the number in the text. A `pre` still needs `data-n`. Markdown labeling still uses `structure_segment`, which does not assign the three new kinds.
+**Refs:** `.cursor/rules/html-part-index.mdc`, `HTML_PIECE_INDEX_CONTRACT`, `cut_html_index`.
+
+## 2026-10-09 — A prose plan gets one continue
+
+**Context:** Selection tasks failed because the smart-tier model, `deepseek/deepseek-v3.2`, answered with a plan and no tool call. The loop treats a reply without tool calls as done. Compaction was already on `qwen/qwen3-coder-next`.
+**Decision:** If that reply says it will take a tool action, and the session has not written or edited yet, inject one user message that names read, write, and edit, so the tool gate leaves the tools on. A second prose reply ends the loop.
+**Alternatives:** Route tool tasks to a stronger tier. The turns were already on the smart tier. Keep nudging until a tool is called. That can re-read files without a stop.
+**Consequences:** A finished answer that says "I wrote" does not continue. A plan that uses the `Ġ` space character still matches. The selection tasks can be read again only after this runs.
+**Refs:** `announces_unfinished_action`.
+
+## 2026-10-09 — The task message stays, and the next summary reads the last one
+
+**Context:** On the 4,000-token selection run, `selection-carry-token` summarized the early token and dropped the instruction to write `selection/answer.txt`. Telling the summarizer to keep unfinished instructions did not. `selection-edit-from-early` compacted again, and the new summary replaced the token with a later file dump. Only the newest summary is pinned, so the next compaction never saw what the previous one had kept.
+**Decision:** The user message that opened the task, and the latest user message, are left out of `select_nodes_for_compaction` and placed in the next payload outside the scored fill. `compact_context` puts the previous summary text at the front of the transcript, under the same word-for-word instruction.
+**Alternatives:** A stronger summarizer prompt. The carry task already had that prompt and still lost the instruction. Pinning every historical summary in the prompt. That grows without a bound; folding the previous summary into the next one keeps one pinned node.
+**Consequences:** A middle user message, including a large pad, can still be compacted once a newer user message exists. A huge latest user message stays until the next user message. The prompt still shows only the newest summary. Long sessions that compact more than once depend on the model copying the previous summary forward.
+**Refs:** `pinned_task_nodes`, `prior_summary_text`.
+
 ## 2026-10-09 — A compaction summary is pinned ahead of the thread
 
 **Context:** A successful compaction marks old turns compacted, and the next build skips those turns. The summary's `Summarizes` edges point at the skipped turns, so the next prompt lost the history and gained nothing. `26f13ec` was already serving `app.graphirm.ai`. Compaction on that container was set to `enable_compaction = false` until this change is the one running.

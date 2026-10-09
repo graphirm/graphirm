@@ -648,6 +648,7 @@ fn part_node(text: &str, piece: &Piece) -> GraphNode {
         "id": element_id(slice).unwrap_or_default(),
         "kind": piece.kind.as_label(),
         "heading": piece.heading,
+        "rel": piece.rel,
         "shape_version": HTML_INDEX_SHAPE_VERSION,
         "start": piece.start,
         "end": piece.end,
@@ -664,6 +665,7 @@ fn line_node(item: &PieceItem) -> GraphNode {
     }));
     node.metadata = json!({
         "position": item.position,
+        "src": item.src,
         "start": item.start,
         "end": item.end,
     });
@@ -1332,7 +1334,7 @@ mod tests {
         let start = part.metadata["start"].as_u64().expect("start") as usize;
         let end = part.metadata["end"].as_u64().expect("end") as usize;
         assert!(html[start..end].starts_with("<section id=\"part1\""));
-        assert_eq!(part.metadata["shape_version"], json!("2"));
+        assert_eq!(part.metadata["shape_version"], json!("3"));
 
         let lines = out(g, &part.id, EdgeType::Contains);
         assert_eq!(lines.len(), 1);

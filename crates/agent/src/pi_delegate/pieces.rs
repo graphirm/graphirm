@@ -19,7 +19,8 @@ pub const PIECE_BASELINE_VERSION: &str = "1";
 /// HTML index contract generation.
 /// `1` was a `div` index and put the line number inside `pre`.
 /// `2` is `nav`, `section`, `h2`, `ul`, and `data-n` on `pre`.
-pub const HTML_INDEX_SHAPE_VERSION: &str = "2";
+/// `3` adds recommendation, result, and assumption, and keeps `data-src` and `data-rel`.
+pub const HTML_INDEX_SHAPE_VERSION: &str = "3";
 
 /// A heading lead-in is one line no longer than this.
 pub const MAX_HEADING_CHARS: usize = 80;
@@ -27,9 +28,12 @@ pub const MAX_HEADING_CHARS: usize = 80;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PieceKind {
     Statement,
+    Recommendation,
     Options,
     Steps,
     Instructions,
+    Result,
+    Assumption,
     Example,
     Caveat,
     Code,
@@ -40,9 +44,12 @@ impl PieceKind {
     pub fn as_label(self) -> &'static str {
         match self {
             Self::Statement => "statement",
+            Self::Recommendation => "recommendation",
             Self::Options => "options",
             Self::Steps => "steps",
             Self::Instructions => "instructions",
+            Self::Result => "result",
+            Self::Assumption => "assumption",
             Self::Example => "example",
             Self::Caveat => "caveat",
             Self::Code => "code",
@@ -53,9 +60,12 @@ impl PieceKind {
     pub fn from_label(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "statement" => Some(Self::Statement),
+            "recommendation" => Some(Self::Recommendation),
             "options" => Some(Self::Options),
             "steps" => Some(Self::Steps),
             "instructions" => Some(Self::Instructions),
+            "result" => Some(Self::Result),
+            "assumption" => Some(Self::Assumption),
             "example" => Some(Self::Example),
             "caveat" => Some(Self::Caveat),
             "code" => Some(Self::Code),
@@ -70,6 +80,8 @@ pub struct PieceItem {
     /// 1-based position within the piece. Distinct from [`Piece::order`].
     pub position: u32,
     pub text: String,
+    /// `data-src` on the line, when the page has one.
+    pub src: Option<String>,
     pub start: usize,
     pub end: usize,
 }
@@ -80,6 +92,8 @@ pub struct Piece {
     pub order: u32,
     pub kind: PieceKind,
     pub heading: Option<String>,
+    /// `data-rel` on the section, when the page has one.
+    pub rel: Option<String>,
     pub items: Vec<PieceItem>,
     /// UTF-8 byte offsets into the original segment.
     pub start: usize,
@@ -138,6 +152,7 @@ fn whole_statement(text: &str) -> Piece {
         order: 1,
         kind: PieceKind::Statement,
         heading: None,
+        rel: None,
         items: Vec::new(),
         start: 0,
         end: text.len(),
@@ -182,6 +197,7 @@ fn parse_blocks(text: &str) -> Vec<Piece> {
                         order: 0,
                         kind: PieceKind::Statement,
                         heading: Some(heading_text(&text[range.clone()])),
+                        rel: None,
                         items: Vec::new(),
                         start: range.start,
                         end: range.end,
@@ -210,6 +226,7 @@ fn parse_blocks(text: &str) -> Vec<Piece> {
                         current_items.push(PieceItem {
                             position: (current_items.len() + 1) as u32,
                             text: body,
+                            src: None,
                             start,
                             end: range.end,
                         });
@@ -244,6 +261,7 @@ fn plain(start: usize, end: usize) -> Piece {
         order: 0,
         kind: PieceKind::Statement,
         heading: None,
+        rel: None,
         items: Vec::new(),
         start,
         end,
@@ -710,6 +728,7 @@ pub fn cut_html_index(text: &str) -> Result<Vec<Piece>, ()> {
             order,
             kind,
             heading,
+            rel: part.value().attr("data-rel").map(str::to_string),
             items,
             start,
             end,
@@ -825,8 +844,13 @@ fn part_items(
             continue;
         }
         let position = u32::try_from(items.len() + 1).map_err(|_| ())?;
+        let expected = format!("{order}.0.{position}");
+        if let Some(number) = el.value().attr("data-n")
+            && number != expected
+        {
+            return Err(());
+        }
         let body = if name == "pre" {
-            let expected = format!("{order}.0.{position}");
             if el.value().attr("data-n") != Some(expected.as_str()) {
                 return Err(());
             }
@@ -843,6 +867,7 @@ fn part_items(
         items.push(PieceItem {
             position,
             text: body,
+            src: el.value().attr("data-src").map(str::to_string),
             start,
             end,
         });
@@ -989,6 +1014,7 @@ mod tests {
             order: 0,
             kind: PieceKind::Statement,
             heading: None,
+            rel: None,
             items: Vec::new(),
             start,
             end,
@@ -1014,6 +1040,34 @@ mod tests {
         let swapped = r##"<div id="index"><a href="#part1">2.0.0 [statement] Overview</a></div>
 <div id="part1" class="statement"><p>2.0.1 One sentence.</p></div>"##;
         assert!(cut_html_index(swapped).is_err());
+    }
+
+    #[test]
+    fn cut_html_index_keeps_recommendation_result_src_and_rel() {
+        let html = r##"<nav id="index"><ul>
+<li><a href="#pick">1.0.0 [recommendation] Which install</a></li>
+<li><a href="#ran">2.0.0 [result] What ran</a></li>
+<li><a href="#guess">3.0.0 [assumption] Who buys</a></li>
+</ul></nav>
+<section id="pick" class="recommendation" data-rel="picks:#install">
+<h2>1.0.0 Which install</h2>
+<p data-n="1.0.1">1.0.1 Install fmt per project, so the version matches.</p>
+</section>
+<section id="ran" class="result">
+<h2>2.0.0 What ran</h2>
+<p data-n="2.0.1" data-src="tool:fmt">2.0.1 Ran fmt --check.</p>
+</section>
+<section id="guess" class="assumption">
+<h2>3.0.0 Who buys</h2>
+<p data-n="3.0.1">3.0.1 Assumed the app sells to EU buyers only.</p>
+</section>"##;
+        let pieces = cut_html_index(html).expect("cut");
+        assert_eq!(pieces[0].kind, PieceKind::Recommendation);
+        assert_eq!(pieces[0].rel.as_deref(), Some("picks:#install"));
+        assert_eq!(pieces[1].kind, PieceKind::Result);
+        assert_eq!(pieces[1].items[0].src.as_deref(), Some("tool:fmt"));
+        assert!(pieces[1].items[0].text.contains("Ran fmt"));
+        assert_eq!(pieces[2].kind, PieceKind::Assumption);
     }
 
     #[test]

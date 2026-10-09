@@ -197,14 +197,8 @@ pub struct AgentConfig {
     /// `compaction_threshold` (default 0.80). Disabled by default; enable in `[agent]` config.
     #[serde(default)]
     pub enable_compaction: bool,
-    /// Maximum number of auto-continuation turns injected after a text-only response when
-    /// the agent has already executed tool calls in this session. Prevents the agent from
-    /// stopping mid-task. 0 disables. Default 2.
-    #[serde(default = "default_max_continuations")]
-    pub max_continuations: u32,
-    /// When true, intercept the first text-only turn after tool work and inject a
-    /// verification checklist (run tests, check lint, re-read task requirements).
-    /// Forces the agent to validate its output before declaring the task complete.
+    /// When true, the first finished reply after a write or edit gets one
+    /// verification checklist. The next finished reply ends the task.
     /// Default true.
     #[serde(default = "default_pre_completion_verify")]
     pub pre_completion_verify: bool,
@@ -532,10 +526,6 @@ fn default_repo_briefing() -> bool {
     true
 }
 
-fn default_max_continuations() -> u32 {
-    0
-}
-
 fn default_pre_completion_verify() -> bool {
     true
 }
@@ -621,7 +611,6 @@ impl Default for AgentConfig {
             adaptive_routing: None,
             hitl_judge: None,
             enable_compaction: false,
-            max_continuations: default_max_continuations(),
             pre_completion_verify: true,
             doom_loop_threshold: default_doom_loop_threshold(),
             read_loop_threshold: default_read_loop_threshold(),
@@ -703,10 +692,12 @@ struct AgentConfigSection {
     hitl_judge: Option<HitlJudgeConfig>,
     #[serde(default)]
     enable_compaction: bool,
-    #[serde(default = "default_max_continuations")]
-    max_continuations: u32,
     #[serde(default = "default_pre_completion_verify")]
     pre_completion_verify: bool,
+    /// Older configs set this. It no longer changes the loop. Present so a
+    /// file that still has the key loads, and so we can log that it is ignored.
+    #[serde(default)]
+    max_continuations: Option<u32>,
     #[serde(default = "default_doom_loop_threshold")]
     doom_loop_threshold: u32,
     #[serde(default = "default_read_loop_threshold")]
@@ -748,6 +739,12 @@ impl AgentConfig {
     pub fn from_toml(toml_str: &str) -> Result<Self, AgentError> {
         let file: AgentConfigFile =
             toml::from_str(toml_str).map_err(|e| AgentError::Workflow(e.to_string()))?;
+        if let Some(value) = file.agent.max_continuations {
+            tracing::warn!(
+                max_continuations = value,
+                "max_continuations is deprecated and ignored; pre_completion_verify sends one checklist"
+            );
+        }
 
         Ok(Self {
             name: file.agent.name,
@@ -779,7 +776,6 @@ impl AgentConfig {
             adaptive_routing: file.agent.adaptive_routing,
             hitl_judge: file.agent.hitl_judge,
             enable_compaction: file.agent.enable_compaction,
-            max_continuations: file.agent.max_continuations,
             pre_completion_verify: file.agent.pre_completion_verify,
             doom_loop_threshold: file.agent.doom_loop_threshold,
             read_loop_threshold: file.agent.read_loop_threshold,
@@ -1259,6 +1255,22 @@ mod tests {
     fn test_agent_config_segment_filter_default_is_none() {
         let config = AgentConfig::default();
         assert!(config.segment_filter.is_none());
+    }
+
+    #[test]
+    fn deprecated_max_continuations_still_loads() {
+        let toml_str = r#"
+            [agent]
+            name = "minimal"
+            model = "gpt-4o"
+            system_prompt = "Help."
+            max_turns = 5
+            tools = []
+            max_continuations = 2
+        "#;
+        let config = AgentConfig::from_toml(toml_str)
+            .expect("an old max_continuations key must not stop the server from loading");
+        assert!(config.pre_completion_verify);
     }
 
     #[test]

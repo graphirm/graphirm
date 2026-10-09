@@ -71,6 +71,46 @@ pub enum Verifier {
     All(Vec<Verifier>),
 }
 
+impl Verifier {
+    /// Checks that decide the score.
+    ///
+    /// A file or a command is the task's evidence. Reply-text checks in the
+    /// same group are skipped, so a later verification summary cannot hide a
+    /// result the file or the command already shows.
+    pub fn decisive_checks(&self) -> Vec<&Verifier> {
+        match self {
+            Verifier::All(verifiers) => {
+                let artifact = verifiers.iter().any(Verifier::is_file_or_command);
+                if artifact {
+                    verifiers
+                        .iter()
+                        .filter(|verifier| !verifier.is_reply_text())
+                        .collect()
+                } else {
+                    verifiers.iter().collect()
+                }
+            }
+            other => vec![other],
+        }
+    }
+
+    fn is_file_or_command(&self) -> bool {
+        matches!(
+            self,
+            Verifier::FileContains { .. } | Verifier::CommandSucceeds { .. }
+        )
+    }
+
+    fn is_reply_text(&self) -> bool {
+        matches!(
+            self,
+            Verifier::ResponseContains { .. }
+                | Verifier::ResponseContainsAny { .. }
+                | Verifier::ResponseNotContains { .. }
+        )
+    }
+}
+
 /// How one task finished.
 ///
 /// `Error` is infrastructure (a rate limit that retries could not clear, for
@@ -81,6 +121,8 @@ pub enum Verifier {
 pub enum TaskOutcome {
     Pass,
     Fail,
+    /// The verifier already held, and the session was still running at the timeout.
+    RanOver,
     Error,
 }
 
@@ -255,6 +297,23 @@ impl TaskResult {
         }
     }
 
+    /// The file or answer was already correct, and the session did not stop in time.
+    /// `passed` stays false so the on-time rate does not count it.
+    pub fn ran_over(task_id: &str, reason: impl Into<String>) -> Self {
+        Self {
+            task_id: task_id.to_string(),
+            passed: false,
+            outcome: TaskOutcome::RanOver,
+            turns_used: 0,
+            elapsed_secs: 0.0,
+            failure_reason: Some(reason.into()),
+            session_id: None,
+            final_answer: None,
+            tool_trace: Vec::new(),
+            compaction_summary: None,
+        }
+    }
+
     /// Infrastructure problem. `passed` stays false so a reader of the bool
     /// does not count it as a success; [`SuiteScore`] leaves it out of the rate.
     pub fn error(task_id: &str, reason: impl Into<String>) -> Self {
@@ -273,12 +332,13 @@ impl TaskResult {
     }
 }
 
-/// Pass rate over tasks the agent actually finished. Infrastructure errors
-/// are counted apart and do not change the percentage.
+/// On-time passes, wrong answers, and correct runs that did not stop.
+/// Infrastructure errors are counted apart and do not change either rate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SuiteScore {
     pub passed: usize,
     pub failed: usize,
+    pub ran_over: usize,
     pub errored: usize,
 }
 
@@ -287,28 +347,47 @@ impl SuiteScore {
         let mut score = Self {
             passed: 0,
             failed: 0,
+            ran_over: 0,
             errored: 0,
         };
         for result in results {
             match result.outcome {
                 TaskOutcome::Pass => score.passed += 1,
                 TaskOutcome::Fail => score.failed += 1,
+                TaskOutcome::RanOver => score.ran_over += 1,
                 TaskOutcome::Error => score.errored += 1,
             }
         }
         score
     }
 
+    /// Tasks with a right or wrong answer. Infrastructure errors are left out.
     pub fn scored(&self) -> usize {
-        self.passed + self.failed
+        self.passed + self.ran_over + self.failed
     }
 
+    /// On-time passes plus correct runs that did not stop.
+    pub fn correct(&self) -> usize {
+        self.passed + self.ran_over
+    }
+
+    /// Share of scored tasks that finished on time.
     pub fn percent(&self) -> f64 {
         let scored = self.scored();
         if scored == 0 {
             0.0
         } else {
             self.passed as f64 / scored as f64 * 100.0
+        }
+    }
+
+    /// Share of scored tasks whose verifier held, including runs that did not stop.
+    pub fn correct_percent(&self) -> f64 {
+        let scored = self.scored();
+        if scored == 0 {
+            0.0
+        } else {
+            self.correct() as f64 / scored as f64 * 100.0
         }
     }
 }
@@ -405,6 +484,31 @@ mod tests {
     }
 
     #[test]
+    fn a_file_or_command_check_outranks_the_reply_text() {
+        let mixed = Verifier::All(vec![
+            Verifier::CommandSucceeds {
+                command: "true".to_string(),
+                args: vec![],
+            },
+            Verifier::ResponseContainsAny {
+                substrings: vec!["fixed".to_string()],
+            },
+        ]);
+        let checks = mixed.decisive_checks();
+        assert_eq!(checks.len(), 1);
+        assert!(matches!(checks[0], Verifier::CommandSucceeds { .. }));
+
+        let reply_only = Verifier::All(vec![Verifier::ResponseContains {
+            substring: "def ".to_string(),
+        }]);
+        assert_eq!(reply_only.decisive_checks().len(), 1);
+        assert!(matches!(
+            reply_only.decisive_checks()[0],
+            Verifier::ResponseContains { .. }
+        ));
+    }
+
+    #[test]
     fn a_timeout_after_the_verifier_would_pass_is_finished_but_not_stopped() {
         assert_eq!(timeout_failure_reason(3, true), "finished but didn't stop");
         assert_eq!(
@@ -423,9 +527,28 @@ mod tests {
         let score = SuiteScore::from_results(&results);
         assert_eq!(score.passed, 1);
         assert_eq!(score.failed, 1);
+        assert_eq!(score.ran_over, 0);
         assert_eq!(score.errored, 1);
         assert_eq!(score.scored(), 2);
         assert_eq!(score.percent(), 50.0);
+        assert_eq!(score.correct(), 1);
+    }
+
+    #[test]
+    fn a_correct_run_that_did_not_stop_is_not_a_wrong_answer() {
+        let results = vec![
+            TaskResult::pass("a", 1, 1.0),
+            TaskResult::ran_over("b", "finished but didn't stop"),
+            TaskResult::fail("c", "verifier returned false"),
+        ];
+        let score = SuiteScore::from_results(&results);
+        assert_eq!(score.correct(), 2);
+        assert_eq!(score.failed, 1);
+        assert_eq!(score.ran_over, 1);
+        assert_eq!(score.passed, 1);
+        assert_eq!(score.scored(), 3);
+        assert!((score.correct_percent() - 200.0 / 3.0).abs() < 0.01);
+        assert!((score.percent() - 100.0 / 3.0).abs() < 0.01);
     }
 
     #[test]
