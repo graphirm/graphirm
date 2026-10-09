@@ -1,0 +1,305 @@
+[
+  {
+    "task_id": "grep-and-explain",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 41.942630998,
+    "failure_reason": null,
+    "session_id": "054b36ce-f04c-45ed-9f5a-7ef2f4b8ad6b"
+  },
+  {
+    "task_id": "read-line-count",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 37.651311466,
+    "failure_reason": null,
+    "session_id": "e53fe8d9-b6c5-4e51-9a4d-9835b3fe6054"
+  },
+  {
+    "task_id": "bash-line-count",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 31.143842307,
+    "failure_reason": null,
+    "session_id": "d6e5a9f2-fb34-4edf-927e-fbd7d5a9a563"
+  },
+  {
+    "task_id": "write-fibonacci",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 57.756171209,
+    "failure_reason": null,
+    "session_id": "55ebca2e-8b9a-480e-89ee-67826cbc30da"
+  },
+  {
+    "task_id": "multi-turn-read-write",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 2,
+    "elapsed_secs": 62.462974508,
+    "failure_reason": null,
+    "session_id": "87756110-ece8-4791-a27f-f96fa4d812e3"
+  },
+  {
+    "task_id": "entity-recall",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 12.605608177,
+    "failure_reason": null,
+    "session_id": "d9ed79ab-1e0e-4391-93af-12f36ef0df1d"
+  },
+  {
+    "task_id": "multi-entity",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 23.312387306,
+    "failure_reason": null,
+    "session_id": "dc79356c-38d7-41ad-bf88-733f478c6ffc"
+  },
+  {
+    "task_id": "graph-integrity",
+    "passed": false,
+    "outcome": "fail",
+    "turns_used": 2,
+    "elapsed_secs": 120.324277301,
+    "failure_reason": "session timed out after 2 model responses",
+    "session_id": "f9d1bcf2-2d0c-446b-a9b9-cdd83a45cc19",
+    "final_answer": "The file `crates/agent/src/lib.rs` is the main library file for the agent crate. It exports:\n\n**Public modules:**\n- briefing, compact, config, context, context_stats, coordinator, delegate, error, escalation, event, event_sink, hitl, hitl_judge, impact, import, knowledge, multi, pi_delegate, reply_judge, router, session, strategy, trace_analysis, trace_analysis_tool, workflow, workspace\n\n**Private modules:**\n- graph_query_guard, tool_gate\n\n**Public re-exports:**\n1. From `compact`: `CompactionConfig`, `CompactionResult`, `compact_context`, `compaction_status`, `is_compacted`, `resolve_compaction_model`\n2. From `config`: `AgentConfig`, `AgentMode`, `Permission`\n3. From `context`: `ContextConfig`, `ContextWindow`, `EdgeWeights`, `ScoredNode`, `build_context`, `build_context_with_stats`, `build_subagent_context`, `estimate_tokens`, `estimate_tokens_str`, `fit_to_budget`, `score_node`, `score_recency`\n4. `ContextStats` from `context_stats`\n5. `Coordinator` from `coordinator`\n6. `SubagentTool` from `delegate`\n7. `AgentError` from `error`\n8. `AgentEvent`, `EventBus` from `event`\n9. `EventBusSink` from `event_sink`\n10. From `hitl`: `HitlDecision`, `HitlGate`, `JudgeOutcome`, `is_destructive_tool`\n11. From `hitl_judge`: `DestructiveJudge`, `JudgeVerdict`, `build_judge`\n12. From `import`: `cursor::ParsedTranscript`, `cursor::ParsedTurn`, `cursor::parse_transcript`, `cursor::write_transcript`\n13. From `multi`: `AgentRegistry`, `LlmFactory`, `SubagentHandle`, `collect_subagent_results`, `spawn_subagent`, `wait_for_dependencies`, `wait_for_subagents`\n14. From `pi_delegate`: `PiDelegateTool`, `apply_pi_delegate_system_notice`, `register_pi_delegate`\n15. From `router`: `ModelRouter`, `ModelRoutingConfig`, `ModelTier`, `RoutingRule`, `TurnSignals`\n16. From `session`: `Session`, `SessionMetadata`, `SessionStatus`\n17. From `strategy`: `ObjectiveWeights`, `RoutingDecision`, `RoutingStrategy`, `SessionScore`, `TurnOutcome`, `compute_session_score`\n18. `TraceAnalysisTool` from `trace_analysis_tool`\n19. `run_agent_loop` from `workflow`\n\nAdditionally, there's a `glibc_compat` module (conditionally compiled on Linux with the `local-extraction` feature) that provides compatibility shims for older glibc versions.",
+    "tool_trace": [
+      {
+        "name": "read",
+        "is_error": false,
+        "output": "   1|pub mod briefing;\n   2|pub mod compact;\n   3|pub mod config;\n   4|pub mod context;\n   5|pub mod context_stats;\n   6|pub mod coordinator;\n   7|pub mod delegate;\n   8|pub mod error;\n   9|pub mod escalation;\n  10|pub mod event;\n  11|pub mod event_sink;\n  12|mod graph_query_guard;\n  13|pub mod hitl;\n  14|pub mod hitl_judge;\n  15|pub mod impact;\n  16|pub mod import;\n  17|pub mod knowledge;\n  18|pub mod multi;\n  19|pub mod pi_delegate;\n  20|pub mod reply_judge;\n  21|pub mod router;\n  22|pub mod session;\n  23|pub mod strategy;\n  24|mod tool_gate;\n  25|pub mod trace_analysis;\n  26|pub mod trace_analysis_tool;\n  27|pub mod workflow;\n  28|pub mod workspace;\n  29|\n  30|pub use compact::{\n  31|    CompactionConfig, CompactionResult, compact_context, compaction_status, is_compacted,\n  32|    resolve_compaction_model,\n  33|};\n  34|pub use config::{AgentConfig, AgentMode, Permission};\n  35|pub use context::{\n  36|    ContextConfig, ContextWindow, EdgeWeights, ScoredNode, build_context, build_context_with_stats,\n  37|    build_subagent_context, estimate_tokens, estimate_tokens_str, fit_to_budget, score_node,\n  38|    score_recency,\n  39|};\n  40|pub use context_stats::ContextStats;\n  41|pub use coordinator::Coordinator;\n  42|pub use delegate::SubagentTool;\n  43|pub use error::AgentError;\n  44|pub use event::{AgentEvent, EventBus};\n  45|pub use event_sink::EventBusSink;\n  46|pub use hitl::{HitlDecision, HitlGate, JudgeOutcome, is_destructive_tool};\n  47|pub use hitl_judge::{DestructiveJudge, JudgeVerdict, build_judge};\n  48|pub use import::{\n  49|    cursor::ParsedTranscript, cursor::ParsedTurn, cursor::parse_transcript,\n  50|    cursor::write_transcript,\n  51|};\n  52|pub use multi::{\n  53|    AgentRegistry, LlmFactory, SubagentHandle, collect_subagent_results, spawn_subagent,\n  54|    wait_for_dependencies, wait_for_subagents,\n  55|};\n  56|pub use pi_delegate::{PiDelegateTool, apply_pi_delegate_system_notice, register_pi_delegate};\n  57|pub use router::{ModelRouter, ModelRoutin…"
+      }
+    ]
+  },
+  {
+    "task_id": "graph-query-list-type",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 31.15099731,
+    "failure_reason": null,
+    "session_id": "2e56bc70-f952-48dc-9579-5db1463896fe"
+  },
+  {
+    "task_id": "graph-query-search-empty",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 48.798549398,
+    "failure_reason": null,
+    "session_id": "41f3a34f-21a8-4725-90c2-1f3edc1547ee"
+  },
+  {
+    "task_id": "graph-query-bfs",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 2,
+    "elapsed_secs": 89.462197684,
+    "failure_reason": null,
+    "session_id": "8c4f3570-51e1-4f26-9c0e-55e561442522"
+  },
+  {
+    "task_id": "graph-query-invalid-mode",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 20.557277792,
+    "failure_reason": null,
+    "session_id": "cdad5c00-474c-4c7e-a05d-4169e1b029bf"
+  },
+  {
+    "task_id": "missing-file-resilience",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 21.466901462,
+    "failure_reason": null,
+    "session_id": "1810f27f-0f9a-4d29-be6c-ffdeb9f8bfa0"
+  },
+  {
+    "task_id": "precise-edit-no-collateral",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 2,
+    "elapsed_secs": 129.786903816,
+    "failure_reason": null,
+    "session_id": "c11bc93e-a3b5-4a14-9cc2-9f26a8e70e53"
+  },
+  {
+    "task_id": "grep-exact-count",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 11.513992658,
+    "failure_reason": null,
+    "session_id": "0c0cb866-4966-4f3f-9599-c9614b313b1d"
+  },
+  {
+    "task_id": "cascading-pipeline",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 3,
+    "elapsed_secs": 84.909207241,
+    "failure_reason": null,
+    "session_id": "3da2be9f-08c0-4b7b-856f-226b8da79800"
+  },
+  {
+    "task_id": "fix-broken-script",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 2,
+    "elapsed_secs": 131.162208383,
+    "failure_reason": null,
+    "session_id": "7fe6e7ba-f86b-4596-832b-a34d61989ee6"
+  },
+  {
+    "task_id": "segment-extraction",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 22.376740236,
+    "failure_reason": null,
+    "session_id": "fba6ad94-7ff4-4c15-b9a5-b26a8f506060"
+  },
+  {
+    "task_id": "segment-filter-context",
+    "passed": true,
+    "outcome": "pass",
+    "turns_used": 1,
+    "elapsed_secs": 20.397621129,
+    "failure_reason": null,
+    "session_id": "d487ec89-cf34-417a-ac69-e9cbb4c8663f"
+  },
+  {
+    "task_id": "selection-carry-token",
+    "passed": false,
+    "outcome": "ran_over",
+    "turns_used": 12,
+    "elapsed_secs": 180.581878704,
+    "failure_reason": "finished but didn't stop",
+    "session_id": "004d04cf-0d24-46f6-abf1-604ddfb6a8a8",
+    "final_answer": "Perfect. The file contains only the token \"TOKEN_EARLY_184729\" as required.\n\n{\"segments\": [{\"type\": \"observation\", \"content\": \"Created selection/answer.txt with content 'TOKEN_EARLY_184729'. Git diff shows only selection/answer.txt is new (untracked). Cargo test fails due to missing workspace member, not related to my changes. The file contains exactly the token as required.\"}]}",
+    "tool_trace": [
+      {
+        "name": "read",
+        "is_error": false,
+        "output": "   1|TOKEN_EARLY_184729\n   2|w1_0 w1_1 w1_2 w1_3 w1_4 w1_5 w1_6 w1_7 w1_8 w1_9 w1_10 w1_11 w1_12 w1_13 w1_14 w1_15 w1_16 w1_17 w1_18 w1_19 w1_20 w1_21 w1_22 w1_23 w1_24 w1_25 w1_26 w1_27 w1_28 w1_29 w1_30 w1_31 w1_32 w1_33 w1_34 w1_35 w1_36 w1_37 w1_38 w1_39 w1_40 w1_41 w1_42 w1_43 w1_44 w1_45 w1_46 w1_47 w1_48 w1_49 w1_50 w1_51 w1_52 w1_53 w1_54 w1_55 w1_56 w1_57 w1_58 w1_59 w1_60 w1_61 w1_62 w1_63 w1_64 w1_65 w1_66 w1_67 w1_68 w1_69 w1_70 w1_71 w1_72 w1_73 w1_74 w1_75 w1_76 w1_77 w1_78 w1_79 w1_80 w1_81 w1_82 w1_83 w1_84 w1_85 w1_86 w1_87 w1_88 w1_89 w1_90 w1_91 w1_92 w1_93 w1_94 w1_95 w1_96 w1_97 w1_98 w1_99 w1_100 w1_101 w1_102 w1_103 w1_104 w1_105 w1_106 w1_107 w1_108 w1_109 w1_110 w1_111 w1_112 w1_113 w1_114 w1_115 w1_116 w1_117 w1_118 w1_119 w1_120 w1_121 w1_122 w1_123 w1_124 w1_125 w1_126 w1_127 w1_128 w1_129 w1_130 w1_131 w1_132 w1_133 w1_134 w1_135 w1_136 w1_137 w1_138 w1_139 w1_140 w1_141 w1_142 w1_143 w1_144 w1_145 w1_146 w1_147 w1_148 w1_149 w1_150 w1_151 w1_152 w1_153 w1_154 w1_155 w1_156 w1_157 w1_158 w1_159 w1_160 w1_161 w1_162 w1_163 w1_164 w1_165 w1_166 w1_167 w1_168 w1_169 w1_170 w1_171 w1_172 w1_173 w1_174 w1_175 w1_176 w1_177 w1_178 w1_179 w1_180 w1_181 w1_182 w1_183 w1_184 w1_185 w1_186 w1_187 w1_188 w1_189 w1_190 w1_191 w1_192 w1_193 w1_194 w1_195 w1_196 w1_197 w1_198 w1_199 w1_200 w1_201 w1_202 w1_203 w1_204 w1_205 w1_206 w1_207 w1_208 w1_209 w1_210 w1_211 w1_212 w1_213 w1_214 w1_215 w1_216 w1_217 w1_218 w1_219 w1_220 w1_221 w1_222 w1_223 w1_224 w1_225 w1_226 w1_227 w1_228 w1_229 w1_230 w1_231 w1_232 w1_233 w1_234 w1_235 w1_236 w1_237 w1_238 w1_239 w1_240 w1_241 w1_242 w1_243 w1_244 w1_245 w1_246 w1_247 w1_248 w1_249 w1_250 w1_251 w1_252 w1_253 w1_254 w1_255 w1_256 w1_257 w1_258 w1_259 w1_260 w1_261 w1_262 w1_263 w1_264 w1_265 w1_266 w1_267 w1_268 w1_269 w1_270 w1_271 w1_272 w1_273 w1_274 w1_275 w1_276 w1_277 w1_278 w1_279 w1_280 w1_281 w1_282 w1_283 w1_284 w1_285 w1_286 w1_287 w1_288 w1_289 w1_290 w1_291 w1_292 w1_293 w1_294 w1_295 w1_296 w1…"
+      },
+      {
+        "name": "read",
+        "is_error": false,
+        "output": "   1|FILLER_A\n   2|w2_0 w2_1 w2_2 w2_3 w2_4 w2_5 w2_6 w2_7 w2_8 w2_9 w2_10 w2_11 w2_12 w2_13 w2_14 w2_15 w2_16 w2_17 w2_18 w2_19 w2_20 w2_21 w2_22 w2_23 w2_24 w2_25 w2_26 w2_27 w2_28 w2_29 w2_30 w2_31 w2_32 w2_33 w2_34 w2_35 w2_36 w2_37 w2_38 w2_39 w2_40 w2_41 w2_42 w2_43 w2_44 w2_45 w2_46 w2_47 w2_48 w2_49 w2_50 w2_51 w2_52 w2_53 w2_54 w2_55 w2_56 w2_57 w2_58 w2_59 w2_60 w2_61 w2_62 w2_63 w2_64 w2_65 w2_66 w2_67 w2_68 w2_69 w2_70 w2_71 w2_72 w2_73 w2_74 w2_75 w2_76 w2_77 w2_78 w2_79 w2_80 w2_81 w2_82 w2_83 w2_84 w2_85 w2_86 w2_87 w2_88 w2_89 w2_90 w2_91 w2_92 w2_93 w2_94 w2_95 w2_96 w2_97 w2_98 w2_99 w2_100 w2_101 w2_102 w2_103 w2_104 w2_105 w2_106 w2_107 w2_108 w2_109 w2_110 w2_111 w2_112 w2_113 w2_114 w2_115 w2_116 w2_117 w2_118 w2_119 w2_120 w2_121 w2_122 w2_123 w2_124 w2_125 w2_126 w2_127 w2_128 w2_129 w2_130 w2_131 w2_132 w2_133 w2_134 w2_135 w2_136 w2_137 w2_138 w2_139 w2_140 w2_141 w2_142 w2_143 w2_144 w2_145 w2_146 w2_147 w2_148 w2_149 w2_150 w2_151 w2_152 w2_153 w2_154 w2_155 w2_156 w2_157 w2_158 w2_159 w2_160 w2_161 w2_162 w2_163 w2_164 w2_165 w2_166 w2_167 w2_168 w2_169 w2_170 w2_171 w2_172 w2_173 w2_174 w2_175 w2_176 w2_177 w2_178 w2_179 w2_180 w2_181 w2_182 w2_183 w2_184 w2_185 w2_186 w2_187 w2_188 w2_189 w2_190 w2_191 w2_192 w2_193 w2_194 w2_195 w2_196 w2_197 w2_198 w2_199 w2_200 w2_201 w2_202 w2_203 w2_204 w2_205 w2_206 w2_207 w2_208 w2_209 w2_210 w2_211 w2_212 w2_213 w2_214 w2_215 w2_216 w2_217 w2_218 w2_219 w2_220 w2_221 w2_222 w2_223 w2_224 w2_225 w2_226 w2_227 w2_228 w2_229 w2_230 w2_231 w2_232 w2_233 w2_234 w2_235 w2_236 w2_237 w2_238 w2_239 w2_240 w2_241 w2_242 w2_243 w2_244 w2_245 w2_246 w2_247 w2_248 w2_249 w2_250 w2_251 w2_252 w2_253 w2_254 w2_255 w2_256 w2_257 w2_258 w2_259 w2_260 w2_261 w2_262 w2_263 w2_264 w2_265 w2_266 w2_267 w2_268 w2_269 w2_270 w2_271 w2_272 w2_273 w2_274 w2_275 w2_276 w2_277 w2_278 w2_279 w2_280 w2_281 w2_282 w2_283 w2_284 w2_285 w2_286 w2_287 w2_288 w2_289 w2_290 w2_291 w2_292 w2_293 w2_294 w2_295 w2_296 w2_297 w2_29…"
+      },
+      {
+        "name": "read",
+        "is_error": false,
+        "output": "   1|FILLER_B\n   2|w3_0 w3_1 w3_2 w3_3 w3_4 w3_5 w3_6 w3_7 w3_8 w3_9 w3_10 w3_11 w3_12 w3_13 w3_14 w3_15 w3_16 w3_17 w3_18 w3_19 w3_20 w3_21 w3_22 w3_23 w3_24 w3_25 w3_26 w3_27 w3_28 w3_29 w3_30 w3_31 w3_32 w3_33 w3_34 w3_35 w3_36 w3_37 w3_38 w3_39 w3_40 w3_41 w3_42 w3_43 w3_44 w3_45 w3_46 w3_47 w3_48 w3_49 w3_50 w3_51 w3_52 w3_53 w3_54 w3_55 w3_56 w3_57 w3_58 w3_59 w3_60 w3_61 w3_62 w3_63 w3_64 w3_65 w3_66 w3_67 w3_68 w3_69 w3_70 w3_71 w3_72 w3_73 w3_74 w3_75 w3_76 w3_77 w3_78 w3_79 w3_80 w3_81 w3_82 w3_83 w3_84 w3_85 w3_86 w3_87 w3_88 w3_89 w3_90 w3_91 w3_92 w3_93 w3_94 w3_95 w3_96 w3_97 w3_98 w3_99 w3_100 w3_101 w3_102 w3_103 w3_104 w3_105 w3_106 w3_107 w3_108 w3_109 w3_110 w3_111 w3_112 w3_113 w3_114 w3_115 w3_116 w3_117 w3_118 w3_119 w3_120 w3_121 w3_122 w3_123 w3_124 w3_125 w3_126 w3_127 w3_128 w3_129 w3_130 w3_131 w3_132 w3_133 w3_134 w3_135 w3_136 w3_137 w3_138 w3_139 w3_140 w3_141 w3_142 w3_143 w3_144 w3_145 w3_146 w3_147 w3_148 w3_149 w3_150 w3_151 w3_152 w3_153 w3_154 w3_155 w3_156 w3_157 w3_158 w3_159 w3_160 w3_161 w3_162 w3_163 w3_164 w3_165 w3_166 w3_167 w3_168 w3_169 w3_170 w3_171 w3_172 w3_173 w3_174 w3_175 w3_176 w3_177 w3_178 w3_179 w3_180 w3_181 w3_182 w3_183 w3_184 w3_185 w3_186 w3_187 w3_188 w3_189 w3_190 w3_191 w3_192 w3_193 w3_194 w3_195 w3_196 w3_197 w3_198 w3_199 w3_200 w3_201 w3_202 w3_203 w3_204 w3_205 w3_206 w3_207 w3_208 w3_209 w3_210 w3_211 w3_212 w3_213 w3_214 w3_215 w3_216 w3_217 w3_218 w3_219 w3_220 w3_221 w3_222 w3_223 w3_224 w3_225 w3_226 w3_227 w3_228 w3_229 w3_230 w3_231 w3_232 w3_233 w3_234 w3_235 w3_236 w3_237 w3_238 w3_239 w3_240 w3_241 w3_242 w3_243 w3_244 w3_245 w3_246 w3_247 w3_248 w3_249 w3_250 w3_251 w3_252 w3_253 w3_254 w3_255 w3_256 w3_257 w3_258 w3_259 w3_260 w3_261 w3_262 w3_263 w3_264 w3_265 w3_266 w3_267 w3_268 w3_269 w3_270 w3_271 w3_272 w3_273 w3_274 w3_275 w3_276 w3_277 w3_278 w3_279 w3_280 w3_281 w3_282 w3_283 w3_284 w3_285 w3_286 w3_287 w3_288 w3_289 w3_290 w3_291 w3_292 w3_293 w3_294 w3_295 w3_296 w3_297 w3_29…"
+      },
+      {
+        "name": "read",
+        "is_error": false,
+        "output": "   1|LABEL=unset\n   2|w4_0 w4_1 w4_2 w4_3 w4_4 w4_5 w4_6 w4_7 w4_8 w4_9 w4_10 w4_11 w4_12 w4_13 w4_14 w4_15 w4_16 w4_17 w4_18 w4_19 w4_20 w4_21 w4_22 w4_23 w4_24 w4_25 w4_26 w4_27 w4_28 w4_29 w4_30 w4_31 w4_32 w4_33 w4_34 w4_35 w4_36 w4_37 w4_38 w4_39 w4_40 w4_41 w4_42 w4_43 w4_44 w4_45 w4_46 w4_47 w4_48 w4_49 w4_50 w4_51 w4_52 w4_53 w4_54 w4_55 w4_56 w4_57 w4_58 w4_59 w4_60 w4_61 w4_62 w4_63 w4_64 w4_65 w4_66 w4_67 w4_68 w4_69 w4_70 w4_71 w4_72 w4_73 w4_74 w4_75 w4_76 w4_77 w4_78 w4_79 w4_80 w4_81 w4_82 w4_83 w4_84 w4_85 w4_86 w4_87 w4_88 w4_89 w4_90 w4_91 w4_92 w4_93 w4_94 w4_95 w4_96 w4_97 w4_98 w4_99 w4_100 w4_101 w4_102 w4_103 w4_104 w4_105 w4_106 w4_107 w4_108 w4_109 w4_110 w4_111 w4_112 w4_113 w4_114 w4_115 w4_116 w4_117 w4_118 w4_119 w4_120 w4_121 w4_122 w4_123 w4_124 w4_125 w4_126 w4_127 w4_128 w4_129 w4_130 w4_131 w4_132 w4_133 w4_134 w4_135 w4_136 w4_137 w4_138 w4_139 w4_140 w4_141 w4_142 w4_143 w4_144 w4_145 w4_146 w4_147 w4_148 w4_149 w4_150 w4_151 w4_152 w4_153 w4_154 w4_155 w4_156 w4_157 w4_158 w4_159 w4_160 w4_161 w4_162 w4_163 w4_164 w4_165 w4_166 w4_167 w4_168 w4_169 w4_170 w4_171 w4_172 w4_173 w4_174 w4_175 w4_176 w4_177 w4_178 w4_179 w4_180 w4_181 w4_182 w4_183 w4_184 w4_185 w4_186 w4_187 w4_188 w4_189 w4_190 w4_191 w4_192 w4_193 w4_194 w4_195 w4_196 w4_197 w4_198 w4_199 w4_200 w4_201 w4_202 w4_203 w4_204 w4_205 w4_206 w4_207 w4_208 w4_209 w4_210 w4_211 w4_212 w4_213 w4_214 w4_215 w4_216 w4_217 w4_218 w4_219 w4_220 w4_221 w4_222 w4_223 w4_224 w4_225 w4_226 w4_227 w4_228 w4_229 w4_230 w4_231 w4_232 w4_233 w4_234 w4_235 w4_236 w4_237 w4_238 w4_239 w4_240 w4_241 w4_242 w4_243 w4_244 w4_245 w4_246 w4_247 w4_248 w4_249 w4_250 w4_251 w4_252 w4_253 w4_254 w4_255 w4_256 w4_257 w4_258 w4_259 w4_260 w4_261 w4_262 w4_263 w4_264 w4_265 w4_266 w4_267 w4_268 w4_269 w4_270 w4_271 w4_272 w4_273 w4_274 w4_275 w4_276 w4_277 w4_278 w4_279 w4_280 w4_281 w4_282 w4_283 w4_284 w4_285 w4_286 w4_287 w4_288 w4_289 w4_290 w4_291 w4_292 w4_293 w4_294 w4_295 w4_296 w4_297 w4…"
+      },
+      {
+        "name": "write",
+        "is_error": false,
+        "output": "> **Impact:** `selection/answer.txt` — **Risk: Medium**\n> - **24 files depend on this**\nFile created '/data/workspaces/eval-selection-carry-token-1791578074800068481/selection/answer.txt'"
+      },
+      {
+        "name": "bash",
+        "is_error": false,
+        "output": ""
+      },
+      {
+        "name": "bash",
+        "is_error": false,
+        "output": "On branch master\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tselection/answer.txt\n\nnothing added to commit but untracked files present (use \"git add\" to track)\n"
+      },
+      {
+        "name": "bash",
+        "is_error": true,
+        "output": "Exit 101\nstderr:\nerror: failed to load manifest for workspace member `/data/workspaces/eval-selection-carry-token-1791578074800068481/graphirm-eval`\nreferenced by workspace at `/data/workspaces/eval-selection-carry-token-1791578074800068481/Cargo.toml`\n\nCaused by:\n  failed to read `/data/workspaces/eval-selection-carry-token-1791578074800068481/graphirm-eval/Cargo.toml`\n\nCaused by:\n  No such file or directory (os error 2)\n"
+      },
+      {
+        "name": "bash",
+        "is_error": false,
+        "output": "total 60\ndrwxrwxr-x   6 krs krs  4096 Oct  9 23:34 .\ndrwxr-xr-x 410 krs krs 32768 Oct  9 23:34 ..\n-rw-rw-r--   1 krs krs  1340 Oct  9 23:34 Cargo.toml\ndrwxrwxr-x   8 krs krs  4096 Oct  9 23:34 crates\ndrwxrwxr-x   8 krs krs  4096 Oct  9 23:36 .git\ndrwxrwxr-x   2 krs krs  4096 Oct  9 23:35 selection\ndrwxrwxr-x   4 krs krs  4096 Oct  9 23:34 src\n"
+      },
+      {
+        "name": "bash",
+        "is_error": false,
+        "output": "> **Impact:** `selection/answer.txt` — **Risk: Medium**\n> - **24 files depend on this**\nTOKEN_EARLY_184729"
+      }
+    ]
+  },
+  {
+    "task_id": "selection-edit-from-early",
+    "passed": false,
+    "outcome": "ran_over",
+    "turns_used": 12,
+    "elapsed_secs": 180.575214739,
+    "failure_reason": "finished but didn't stop",
+    "session_id": "1ce2f885-7a8d-4880-8bd3-ec1662bcccef",
+    "final_answer": "The workspace references `graphirm-eval` but it doesn't exist. Let me test the workspace without that problematic member.\n\n\n\n",
+    "tool_trace": [
+      {
+        "name": "read",
+        "is_error": false,
+        "output": "   1|TOKEN_EARLY_184729\n   2|w1_0 w1_1 w1_2 w1_3 w1_4 w1_5 w1_6 w1_7 w1_8 w1_9 w1_10 w1_11 w1_12 w1_13 w1_14 w1_15 w1_16 w1_17 w1_18 w1_19 w1_20 w1_21 w1_22 w1_23 w1_24 w1_25 w1_26 w1_27 w1_28 w1_29 w1_30 w1_31 w1_32 w1_33 w1_34 w1_35 w1_36 w1_37 w1_38 w1_39 w1_40 w1_41 w1_42 w1_43 w1_44 w1_45 w1_46 w1_47 w1_48 w1_49 w1_50 w1_51 w1_52 w1_53 w1_54 w1_55 w1_56 w1_57 w1_58 w1_59 w1_60 w1_61 w1_62 w1_63 w1_64 w1_65 w1_66 w1_67 w1_68 w1_69 w1_70 w1_71 w1_72 w1_73 w1_74 w1_75 w1_76 w1_77 w1_78 w1_79 w1_80 w1_81 w1_82 w1_83 w1_84 w1_85 w1_86 w1_87 w1_88 w1_89 w1_90 w1_91 w1_92 w1_93 w1_94 w1_95 w1_96 w1_97 w1_98 w1_99 w1_100 w1_101 w1_102 w1_103 w1_104 w1_105 w1_106 w1_107 w1_108 w1_109 w1_110 w1_111 w1_112 w1_113 w1_114 w1_115 w1_116 w1_117 w1_118 w1_119 w1_120 w1_121 w1_122 w1_123 w1_124 w1_125 w1_126 w1_127 w1_128 w1_129 w1_130 w1_131 w1_132 w1_133 w1_134 w1_135 w1_136 w1_137 w1_138 w1_139 w1_140 w1_141 w1_142 w1_143 w1_144 w1_145 w1_146 w1_147 w1_148 w1_149 w1_150 w1_151 w1_152 w1_153 w1_154 w1_155 w1_156 w1_157 w1_158 w1_159 w1_160 w1_161 w1_162 w1_163 w1_164 w1_165 w1_166 w1_167 w1_168 w1_169 w1_170 w1_171 w1_172 w1_173 w1_174 w1_175 w1_176 w1_177 w1_178 w1_179 w1_180 w1_181 w1_182 w1_183 w1_184 w1_185 w1_186 w1_187 w1_188 w1_189 w1_190 w1_191 w1_192 w1_193 w1_194 w1_195 w1_196 w1_197 w1_198 w1_199 w1_200 w1_201 w1_202 w1_203 w1_204 w1_205 w1_206 w1_207 w1_208 w1_209 w1_210 w1_211 w1_212 w1_213 w1_214 w1_215 w1_216 w1_217 w1_218 w1_219 w1_220 w1_221 w1_222 w1_223 w1_224 w1_225 w1_226 w1_227 w1_228 w1_229 w1_230 w1_231 w1_232 w1_233 w1_234 w1_235 w1_236 w1_237 w1_238 w1_239 w1_240 w1_241 w1_242 w1_243 w1_244 w1_245 w1_246 w1_247 w1_248 w1_249 w1_250 w1_251 w1_252 w1_253 w1_254 w1_255 w1_256 w1_257 w1_258 w1_259 w1_260 w1_261 w1_262 w1_263 w1_264 w1_265 w1_266 w1_267 w1_268 w1_269 w1_270 w1_271 w1_272 w1_273 w1_274 w1_275 w1_276 w1_277 w1_278 w1_279 w1_280 w1_281 w1_282 w1_283 w1_284 w1_285 w1_286 w1_287 w1_288 w1_289 w1_290 w1_291 w1_292 w1_293 w1_294 w1_295 w1_296 w1…"
+      },
+      {
+        "name": "read",
+        "is_error": false,
+        "output": "   1|FILLER_A\n   2|w2_0 w2_1 w2_2 w2_3 w2_4 w2_5 w2_6 w2_7 w2_8 w2_9 w2_10 w2_11 w2_12 w2_13 w2_14 w2_15 w2_16 w2_17 w2_18 w2_19 w2_20 w2_21 w2_22 w2_23 w2_24 w2_25 w2_26 w2_27 w2_28 w2_29 w2_30 w2_31 w2_32 w2_33 w2_34 w2_35 w2_36 w2_37 w2_38 w2_39 w2_40 w2_41 w2_42 w2_43 w2_44 w2_45 w2_46 w2_47 w2_48 w2_49 w2_50 w2_51 w2_52 w2_53 w2_54 w2_55 w2_56 w2_57 w2_58 w2_59 w2_60 w2_61 w2_62 w2_63 w2_64 w2_65 w2_66 w2_67 w2_68 w2_69 w2_70 w2_71 w2_72 w2_73 w2_74 w2_75 w2_76 w2_77 w2_78 w2_79 w2_80 w2_81 w2_82 w2_83 w2_84 w2_85 w2_86 w2_87 w2_88 w2_89 w2_90 w2_91 w2_92 w2_93 w2_94 w2_95 w2_96 w2_97 w2_98 w2_99 w2_100 w2_101 w2_102 w2_103 w2_104 w2_105 w2_106 w2_107 w2_108 w2_109 w2_110 w2_111 w2_112 w2_113 w2_114 w2_115 w2_116 w2_117 w2_118 w2_119 w2_120 w2_121 w2_122 w2_123 w2_124 w2_125 w2_126 w2_127 w2_128 w2_129 w2_130 w2_131 w2_132 w2_133 w2_134 w2_135 w2_136 w2_137 w2_138 w2_139 w2_140 w2_141 w2_142 w2_143 w2_144 w2_145 w2_146 w2_147 w2_148 w2_149 w2_150 w2_151 w2_152 w2_153 w2_154 w2_155 w2_156 w2_157 w2_158 w2_159 w2_160 w2_161 w2_162 w2_163 w2_164 w2_165 w2_166 w2_167 w2_168 w2_169 w2_170 w2_171 w2_172 w2_173 w2_174 w2_175 w2_176 w2_177 w2_178 w2_179 w2_180 w2_181 w2_182 w2_183 w2_184 w2_185 w2_186 w2_187 w2_188 w2_189 w2_190 w2_191 w2_192 w2_193 w2_194 w2_195 w2_196 w2_197 w2_198 w2_199 w2_200 w2_201 w2_202 w2_203 w2_204 w2_205 w2_206 w2_207 w2_208 w2_209 w2_210 w2_211 w2_212 w2_213 w2_214 w2_215 w2_216 w2_217 w2_218 w2_219 w2_220 w2_221 w2_222 w2_223 w2_224 w2_225 w2_226 w2_227 w2_228 w2_229 w2_230 w2_231 w2_232 w2_233 w2_234 w2_235 w2_236 w2_237 w2_238 w2_239 w2_240 w2_241 w2_242 w2_243 w2_244 w2_245 w2_246 w2_247 w2_248 w2_249 w2_250 w2_251 w2_252 w2_253 w2_254 w2_255 w2_256 w2_257 w2_258 w2_259 w2_260 w2_261 w2_262 w2_263 w2_264 w2_265 w2_266 w2_267 w2_268 w2_269 w2_270 w2_271 w2_272 w2_273 w2_274 w2_275 w2_276 w2_277 w2_278 w2_279 w2_280 w2_281 w2_282 w2_283 w2_284 w2_285 w2_286 w2_287 w2_288 w2_289 w2_290 w2_291 w2_292 w2_293 w2_294 w2_295 w2_296 w2_297 w2_29…"
+      },
+      {
+        "name": "read",
+        "is_error": false,
+        "output": "   1|FILLER_B\n   2|w3_0 w3_1 w3_2 w3_3 w3_4 w3_5 w3_6 w3_7 w3_8 w3_9 w3_10 w3_11 w3_12 w3_13 w3_14 w3_15 w3_16 w3_17 w3_18 w3_19 w3_20 w3_21 w3_22 w3_23 w3_24 w3_25 w3_26 w3_27 w3_28 w3_29 w3_30 w3_31 w3_32 w3_33 w3_34 w3_35 w3_36 w3_37 w3_38 w3_39 w3_40 w3_41 w3_42 w3_43 w3_44 w3_45 w3_46 w3_47 w3_48 w3_49 w3_50 w3_51 w3_52 w3_53 w3_54 w3_55 w3_56 w3_57 w3_58 w3_59 w3_60 w3_61 w3_62 w3_63 w3_64 w3_65 w3_66 w3_67 w3_68 w3_69 w3_70 w3_71 w3_72 w3_73 w3_74 w3_75 w3_76 w3_77 w3_78 w3_79 w3_80 w3_81 w3_82 w3_83 w3_84 w3_85 w3_86 w3_87 w3_88 w3_89 w3_90 w3_91 w3_92 w3_93 w3_94 w3_95 w3_96 w3_97 w3_98 w3_99 w3_100 w3_101 w3_102 w3_103 w3_104 w3_105 w3_106 w3_107 w3_108 w3_109 w3_110 w3_111 w3_112 w3_113 w3_114 w3_115 w3_116 w3_117 w3_118 w3_119 w3_120 w3_121 w3_122 w3_123 w3_124 w3_125 w3_126 w3_127 w3_128 w3_129 w3_130 w3_131 w3_132 w3_133 w3_134 w3_135 w3_136 w3_137 w3_138 w3_139 w3_140 w3_141 w3_142 w3_143 w3_144 w3_145 w3_146 w3_147 w3_148 w3_149 w3_150 w3_151 w3_152 w3_153 w3_154 w3_155 w3_156 w3_157 w3_158 w3_159 w3_160 w3_161 w3_162 w3_163 w3_164 w3_165 w3_166 w3_167 w3_168 w3_169 w3_170 w3_171 w3_172 w3_173 w3_174 w3_175 w3_176 w3_177 w3_178 w3_179 w3_180 w3_181 w3_182 w3_183 w3_184 w3_185 w3_186 w3_187 w3_188 w3_189 w3_190 w3_191 w3_192 w3_193 w3_194 w3_195 w3_196 w3_197 w3_198 w3_199 w3_200 w3_201 w3_202 w3_203 w3_204 w3_205 w3_206 w3_207 w3_208 w3_209 w3_210 w3_211 w3_212 w3_213 w3_214 w3_215 w3_216 w3_217 w3_218 w3_219 w3_220 w3_221 w3_222 w3_223 w3_224 w3_225 w3_226 w3_227 w3_228 w3_229 w3_230 w3_231 w3_232 w3_233 w3_234 w3_235 w3_236 w3_237 w3_238 w3_239 w3_240 w3_241 w3_242 w3_243 w3_244 w3_245 w3_246 w3_247 w3_248 w3_249 w3_250 w3_251 w3_252 w3_253 w3_254 w3_255 w3_256 w3_257 w3_258 w3_259 w3_260 w3_261 w3_262 w3_263 w3_264 w3_265 w3_266 w3_267 w3_268 w3_269 w3_270 w3_271 w3_272 w3_273 w3_274 w3_275 w3_276 w3_277 w3_278 w3_279 w3_280 w3_281 w3_282 w3_283 w3_284 w3_285 w3_286 w3_287 w3_288 w3_289 w3_290 w3_291 w3_292 w3_293 w3_294 w3_295 w3_296 w3_297 w3_29…"
+      },
+      {
+        "name": "read",
+        "is_error": false,
+        "output": "   1|LABEL=unset\n   2|w4_0 w4_1 w4_2 w4_3 w4_4 w4_5 w4_6 w4_7 w4_8 w4_9 w4_10 w4_11 w4_12 w4_13 w4_14 w4_15 w4_16 w4_17 w4_18 w4_19 w4_20 w4_21 w4_22 w4_23 w4_24 w4_25 w4_26 w4_27 w4_28 w4_29 w4_30 w4_31 w4_32 w4_33 w4_34 w4_35 w4_36 w4_37 w4_38 w4_39 w4_40 w4_41 w4_42 w4_43 w4_44 w4_45 w4_46 w4_47 w4_48 w4_49 w4_50 w4_51 w4_52 w4_53 w4_54 w4_55 w4_56 w4_57 w4_58 w4_59 w4_60 w4_61 w4_62 w4_63 w4_64 w4_65 w4_66 w4_67 w4_68 w4_69 w4_70 w4_71 w4_72 w4_73 w4_74 w4_75 w4_76 w4_77 w4_78 w4_79 w4_80 w4_81 w4_82 w4_83 w4_84 w4_85 w4_86 w4_87 w4_88 w4_89 w4_90 w4_91 w4_92 w4_93 w4_94 w4_95 w4_96 w4_97 w4_98 w4_99 w4_100 w4_101 w4_102 w4_103 w4_104 w4_105 w4_106 w4_107 w4_108 w4_109 w4_110 w4_111 w4_112 w4_113 w4_114 w4_115 w4_116 w4_117 w4_118 w4_119 w4_120 w4_121 w4_122 w4_123 w4_124 w4_125 w4_126 w4_127 w4_128 w4_129 w4_130 w4_131 w4_132 w4_133 w4_134 w4_135 w4_136 w4_137 w4_138 w4_139 w4_140 w4_141 w4_142 w4_143 w4_144 w4_145 w4_146 w4_147 w4_148 w4_149 w4_150 w4_151 w4_152 w4_153 w4_154 w4_155 w4_156 w4_157 w4_158 w4_159 w4_160 w4_161 w4_162 w4_163 w4_164 w4_165 w4_166 w4_167 w4_168 w4_169 w4_170 w4_171 w4_172 w4_173 w4_174 w4_175 w4_176 w4_177 w4_178 w4_179 w4_180 w4_181 w4_182 w4_183 w4_184 w4_185 w4_186 w4_187 w4_188 w4_189 w4_190 w4_191 w4_192 w4_193 w4_194 w4_195 w4_196 w4_197 w4_198 w4_199 w4_200 w4_201 w4_202 w4_203 w4_204 w4_205 w4_206 w4_207 w4_208 w4_209 w4_210 w4_211 w4_212 w4_213 w4_214 w4_215 w4_216 w4_217 w4_218 w4_219 w4_220 w4_221 w4_222 w4_223 w4_224 w4_225 w4_226 w4_227 w4_228 w4_229 w4_230 w4_231 w4_232 w4_233 w4_234 w4_235 w4_236 w4_237 w4_238 w4_239 w4_240 w4_241 w4_242 w4_243 w4_244 w4_245 w4_246 w4_247 w4_248 w4_249 w4_250 w4_251 w4_252 w4_253 w4_254 w4_255 w4_256 w4_257 w4_258 w4_259 w4_260 w4_261 w4_262 w4_263 w4_264 w4_265 w4_266 w4_267 w4_268 w4_269 w4_270 w4_271 w4_272 w4_273 w4_274 w4_275 w4_276 w4_277 w4_278 w4_279 w4_280 w4_281 w4_282 w4_283 w4_284 w4_285 w4_286 w4_287 w4_288 w4_289 w4_290 w4_291 w4_292 w4_293 w4_294 w4_295 w4_296 w4_297 w4…"
+      },
+      {
+        "name": "edit",
+        "is_error": false,
+        "output": "> **Impact:** `selection/late.txt` — **Risk: High**\n> - **48 files depend on this**\n> - Turn 0: modular_crate_structure\nEdited '/data/workspaces/eval-selection-edit-from-early-1791578258383318777/selection/late.txt': replaced 1 occurrence"
+      },
+      {
+        "name": "bash",
+        "is_error": false,
+        "output": "selection/late.txt\n"
+      },
+      {
+        "name": "bash",
+        "is_error": false,
+        "output": "error: failed to load manifest for workspace member `/data/workspaces/eval-selection-edit-from-early-1791578258383318777/graphirm-eval`\nreferenced by workspace at `/data/workspaces/eval-selection-edit-from-early-1791578258383318777/Cargo.toml`\n\nCaused by:\n  failed to read `/data/workspaces/eval-selection-edit-from-early-1791578258383318777/graphirm-eval/Cargo.toml`\n\nCaused by:\n  No such file or directory (os error 2)\n"
+      },
+      {
+        "name": "bash",
+        "is_error": false,
+        "output": "total 60\ndrwxrwxr-x   6 krs krs  4096 Oct  9 23:37 .\ndrwxr-xr-x 411 krs krs 32768 Oct  9 23:37 ..\n-rw-rw-r--   1 krs krs  1340 Oct  9 23:37 Cargo.toml\ndrwxrwxr-x   8 krs krs  4096 Oct  9 23:37 crates\ndrwxrwxr-x   8 krs krs  4096 Oct  9 23:37 .git\ndrwxrwxr-x   2 krs krs  4096 Oct  9 23:37 selection\ndrwxrwxr-x   4 krs krs  4096 Oct  9 23:37 src\n"
+      },
+      {
+        "name": "read",
+        "is_error": false,
+        "output": "   1|[workspace]\n   2|members = [\n   3|    \"crates/graph\",\n   4|    \"crates/llm\",\n   5|    \"crates/tools\",\n   6|    \"crates/agent\",\n   7|    \"crates/tui\",\n   8|    \"crates/server\",\n   9|    \"graphirm-eval\",\n  10|    \"experiments/gliner2-segment-probe\",\n  11|]\n  12|resolver = \"2\"\n  13|\n  14|[workspace.package]\n  15|version = \"0.1.0\"\n  16|edition = \"2024\"\n  17|rust-version = \"1.88\"\n  18|license = \"MIT\"\n  19|authors = [\"Consoul <team@consoul.dev>\"]\n  20|\n  21|[package]\n  22|name = \"graphirm\"\n  23|version.workspace = true\n  24|edition.workspace = true\n  25|rust-version.workspace = true\n  26|license.workspace = true\n  27|authors.workspace = true\n  28|description = \"Graph-native coding agent\"\n  29|\n  30|[[bin]]\n  31|name = \"graphirm\"\n  32|path = \"src/main.rs\"\n  33|\n  34|[features]\n  35|local-embed = [\"graphirm-llm/local-embed\"]\n  36|local-extraction = [\"graphirm-agent/local-extraction\"]\n  37|\n  38|[dependencies]\n  39|graphirm-graph = { path = \"crates/graph\" }\n  40|graphirm-llm = { path = \"crates/llm\" }\n  41|graphirm-tools = { path = \"crates/tools\" }\n  42|graphirm-agent = { path = \"crates/agent\" }\n  43|graphirm-tui = { path = \"crates/tui\" }\n  44|graphirm-server = { path = \"crates/server\" }\n  45|clap = { version = \"4\", features = [\"derive\"] }\n  46|tokio = { version = \"1\", features = [\"full\"] }\n  47|tokio-util = \"0.7\"\n  48|thiserror = \"2\"\n  49|tracing = \"0.1\"\n  50|tracing-subscriber = { version = \"0.3\", features = [\"env-filter\"] }\n  51|serde = { version = \"1\", features = [\"derive\"] }\n  52|serde_json = \"1\"\n  53|toml = \"0.8\"\n  54|tracing-appender = \"0.2.4\"\n  55|dirs-next = \"2.0.0\"\n  56|dotenvy = \"0.15.7\""
+      },
+      {
+        "name": "bash",
+        "is_error": false,
+        "output": "error: failed to load manifest for workspace member `/data/workspaces/eval-selection-edit-from-early-1791578258383318777/graphirm-eval`\nreferenced by workspace at `/data/workspaces/eval-selection-edit-from-early-1791578258383318777/Cargo.toml`\n\nCaused by:\n  failed to read `/data/workspaces/eval-selection-edit-from-early-1791578258383318777/graphirm-eval/Cargo.toml`\n\nCaused by:\n  No such file or directory (os error 2)\n"
+      }
+    ]
+  }
+]

@@ -1,0 +1,35 @@
+{
+  "commit": "51d0087",
+  "chat_model": "deepseek/deepseek-v3.2",
+  "router": "jev_router",
+  "tier": "Smart",
+  "context_budget_tokens": 100000,
+  "correct": 57,
+  "on_time": 50,
+  "ran_over": 7,
+  "wrong": 6,
+  "task_runs": 63,
+  "runs": [
+    {
+      "file": "baseline-1.json",
+      "correct": 20,
+      "on_time": 18,
+      "ran_over": 2,
+      "wrong": 1
+    },
+    {
+      "file": "baseline-2.json",
+      "correct": 18,
+      "on_time": 16,
+      "ran_over": 2,
+      "wrong": 3
+    },
+    {
+      "file": "baseline-3.json",
+      "correct": 19,
+      "on_time": 16,
+      "ran_over": 3,
+      "wrong": 2
+    }
+  ]
+}

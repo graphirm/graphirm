@@ -48,8 +48,12 @@ docs/validation_summary.txt
 # Pipeline / eval data files (corpus, spans, annotations)
 data/
 
-# Eval results output
-results/
+# Eval results output. The reference suite below is the exception.
+results/*
+!results/suite/
+results/suite/*
+!results/suite/2026-10-09-51d0087/
+!results/suite/2026-10-09-51d0087/**
 # Tracked sweep JSON for gliner2-segment-probe (exception to results/ above)
 !experiments/gliner2-segment-probe/results/
 !experiments/gliner2-segment-probe/results/*.json
