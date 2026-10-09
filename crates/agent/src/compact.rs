@@ -65,6 +65,20 @@ pub struct CompactionResult {
     pub tokens_saved: usize,
 }
 
+/// System and user text for one compaction call.
+/// Identifiers, paths, values, decisions, and unfinished instructions come first, copied as written.
+pub fn compaction_prompt(max_summary_tokens: usize, transcript: &str) -> (String, String) {
+    let system = "You are a concise summarizer. Copy identifiers, file paths, values, \
+         decisions, and unfinished instructions word for word, and put those ahead of any narrative."
+        .to_string();
+    let human = format!(
+        "Copy identifiers, file paths, values, decisions, and unfinished instructions \
+         word for word, and put those ahead of any narrative. \
+         Keep it under {max_summary_tokens} tokens.\n\n{transcript}"
+    );
+    (system, human)
+}
+
 /// Compact old context nodes by summarizing them via an LLM call.
 ///
 /// Steps:
@@ -109,22 +123,10 @@ pub async fn compact_context(
         }
     }
 
-    // Build summarization prompt
     let combined = texts.join("\n---\n");
-    let prompt = format!(
-        "Summarize the following conversation context into a concise summary \
-         that preserves key information, decisions, and file changes. \
-         Keep it under {} tokens.\n\n{}",
-        config.max_summary_tokens, combined
-    );
+    let (system, prompt) = compaction_prompt(config.max_summary_tokens, &combined);
 
-    let messages = vec![
-        LlmMessage::system(
-            "You are a concise summarizer. Produce a factual summary preserving \
-             key technical details, file paths, decisions, and outcomes.",
-        ),
-        LlmMessage::human(prompt),
-    ];
+    let messages = vec![LlmMessage::system(system), LlmMessage::human(prompt)];
 
     let completion_config =
         CompletionConfig::new(&config.model).with_max_tokens(config.max_summary_tokens as u32);
@@ -136,6 +138,11 @@ pub async fn compact_context(
 
     let summary_text = response.text_content();
     let summary_tokens = estimate_tokens_str(&summary_text);
+    tracing::info!(
+        summary_tokens,
+        summary = %summary_text,
+        "compaction summary"
+    );
 
     // Create Knowledge node with summary
     let summary_node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
@@ -259,6 +266,140 @@ mod tests {
     use chrono::Utc;
     use graphirm_graph::{AgentData, GraphEdge, GraphNode, InteractionData, NodeType};
     use graphirm_llm::MockProvider;
+
+    #[test]
+    fn compaction_instruction_copies_facts_ahead_of_narrative() {
+        let (system, human) = compaction_prompt(500, "early TOKEN_EARLY_184729");
+        assert!(system.contains("word for word"), "{system}");
+        assert!(human.contains("identifiers"), "{human}");
+        assert!(human.contains("file paths"), "{human}");
+        assert!(human.contains("values"), "{human}");
+        assert!(human.contains("decisions"), "{human}");
+        assert!(human.contains("unfinished instructions"), "{human}");
+        assert!(human.contains("ahead of any narrative"), "{human}");
+        assert!(human.contains("Keep it under 500 tokens"), "{human}");
+        assert!(human.contains("TOKEN_EARLY_184729"), "{human}");
+    }
+
+    #[tokio::test]
+    async fn next_context_keeps_the_latest_summary_and_the_token() {
+        use crate::context::{ContextConfig, build_context};
+        use chrono::{Duration, Utc};
+        use graphirm_llm::ContentPart;
+
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test".to_string(),
+            model: "mock".to_string(),
+            system_prompt: None,
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let contents = [
+            "early file token TOKEN_EARLY_184729 lives in selection/early.txt",
+            "assistant saw the early file",
+            "read selection/late.txt LABEL=unset",
+            "kept turn edit selection/late.txt",
+        ];
+        let mut prev: Option<NodeId> = None;
+        let mut ids = Vec::new();
+        for (index, content) in contents.iter().enumerate() {
+            let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: if index % 2 == 0 { "user" } else { "assistant" }.to_string(),
+                content: (*content).to_string(),
+                token_count: None,
+            }));
+            node.created_at = Utc::now() - Duration::minutes(10 - index as i64);
+            node.updated_at = node.created_at;
+            let id = node.id.clone();
+            graph.add_node(node).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    id.clone(),
+                ))
+                .unwrap();
+            if let Some(parent) = &prev {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        id.clone(),
+                        parent.clone(),
+                    ))
+                    .unwrap();
+            }
+            prev = Some(id.clone());
+            ids.push(id);
+        }
+
+        let mut stale = GraphNode::new(NodeType::Knowledge(KnowledgeData {
+            entity: "session_summary".to_string(),
+            entity_type: "compaction".to_string(),
+            summary: "STALE_SUMMARY".to_string(),
+            confidence: 1.0,
+        }));
+        stale.created_at = Utc::now() - Duration::hours(2);
+        stale.updated_at = stale.created_at;
+        let stale_id = stale.id.clone();
+        graph.add_node(stale).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Summarizes,
+                stale_id,
+                ids[0].clone(),
+            ))
+            .unwrap();
+
+        let llm = MockProvider::fixed("PINNED_SUMMARY TOKEN_EARLY_184729 selection/early.txt");
+        compact_context(
+            &graph,
+            &llm,
+            ids[..3].to_vec(),
+            &CompactionConfig {
+                model: "mock".to_string(),
+                max_summary_tokens: 500,
+                min_nodes_to_compact: 3,
+            },
+        )
+        .await
+        .unwrap();
+
+        let window = build_context(
+            &graph,
+            &agent_id,
+            &ContextConfig {
+                max_tokens: 8,
+                system_prompt: "S".to_string(),
+                guaranteed_recent_turns: 1,
+                ..ContextConfig::default()
+            },
+        )
+        .unwrap();
+        let all_text: String = window
+            .messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert!(
+            all_text.contains("PINNED_SUMMARY TOKEN_EARLY_184729"),
+            "{all_text}"
+        );
+        assert!(!all_text.contains("early file token"), "{all_text}");
+        assert!(!all_text.contains("STALE_SUMMARY"), "{all_text}");
+        assert!(
+            all_text.find("PINNED_SUMMARY").unwrap() < all_text.find("kept turn").unwrap(),
+            "{all_text}"
+        );
+    }
 
     #[test]
     fn resolve_compaction_model_prefers_the_session_model() {

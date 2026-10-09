@@ -1,5 +1,10 @@
 # Graphirm Development Progress Log
 
+## 2026-10-09: Compaction summary stays in the next prompt — COMPLETE ✅
+
+- The newest `session_summary` is pinned ahead of the thread, outside the scored fill. The summarizer copies identifiers, paths, values, decisions, and unfinished instructions word for word, under the 500-token cap. The summary is logged, and a failed eval task stores it.
+- Key files: `crates/agent/src/context.rs`, `crates/agent/src/compact.rs`, `crates/server/src/routes.rs`, `graphirm-eval/src/task.rs`
+
 ## 2026-10-09: Tool-pair units and compaction model — COMPLETE ✅
 
 - Context selection keeps a tool exchange as one unit, and compaction drops a whole exchange. The newest unit still ships whole when it exceeds the knapsack budget. Provider-window truncation is still open in `docs/plans/2026-10-08-tool-pair-atomicity.md`.

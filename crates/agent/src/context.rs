@@ -542,6 +542,38 @@ fn compute_context_stats(
     })
 }
 
+/// Newest `session_summary` compaction node that summarizes any turn in the thread.
+/// Incoming `Summarizes` edges are the only link, and they land on compacted turns.
+fn latest_compaction_summary(
+    graph: &GraphStore,
+    full_thread: &[GraphNode],
+) -> Result<Option<GraphNode>, AgentError> {
+    let mut latest: Option<GraphNode> = None;
+    for node in full_thread {
+        let neighbors = graph
+            .neighbors(&node.id, Some(EdgeType::Summarizes), Direction::Incoming)
+            .map_err(|e| AgentError::Context(e.to_string()))?;
+        for neighbor in neighbors {
+            let NodeType::Knowledge(data) = &neighbor.node_type else {
+                continue;
+            };
+            if neighbor.is_dismissed()
+                || data.entity != "session_summary"
+                || data.entity_type != "compaction"
+            {
+                continue;
+            }
+            let newer = latest
+                .as_ref()
+                .is_none_or(|current| neighbor.created_at > current.created_at);
+            if newer {
+                latest = Some(neighbor);
+            }
+        }
+    }
+    Ok(latest)
+}
+
 /// Build a relevance-scored context window from the session graph.
 ///
 /// Algorithm:
@@ -594,10 +626,15 @@ pub fn build_context_with_stats(
         }
     };
 
-    // Walk conversation thread (newest-first), excluding compacted nodes
+    // Walk conversation thread (newest-first), excluding compacted nodes.
+    // The summary is pinned from the full thread, including compacted turns,
+    // because its Summarizes edges point at those turns.
     let full_thread = graph
         .conversation_thread(&current_turn.id)
         .map_err(|e| AgentError::Context(e.to_string()))?;
+    let summary = latest_compaction_summary(graph, &full_thread)?;
+    let summary_tokens = summary.as_ref().map(estimate_tokens).unwrap_or(0);
+    let summary_id = summary.as_ref().map(|node| node.id.clone());
     let thread: Vec<GraphNode> = full_thread
         .into_iter()
         .filter(|n| !is_compacted(n))
@@ -628,7 +665,8 @@ pub fn build_context_with_stats(
     let remaining_budget = config
         .max_tokens
         .saturating_sub(system_tokens)
-        .saturating_sub(guaranteed_tokens);
+        .saturating_sub(guaranteed_tokens)
+        .saturating_sub(summary_tokens);
 
     // Collect Content/Knowledge nodes reachable from conversation
     let conversation_ids: Vec<NodeId> = thread.iter().map(|n| n.id.clone()).collect();
@@ -656,6 +694,9 @@ pub fn build_context_with_stats(
     // Score content/knowledge nodes (capped by max_content_nodes)
     let mut content_scored: Vec<ScoredNode> = Vec::new();
     for node in &content_nodes {
+        if summary_id.as_ref().is_some_and(|id| id == &node.id) {
+            continue;
+        }
         let score = score_node(node, &pagerank_scores, &distances, config, graph)?;
         content_scored.push(ScoredNode {
             node: node.clone(),
@@ -700,8 +741,14 @@ pub fn build_context_with_stats(
 
     let recent_chrono = guaranteed_recent;
 
-    // Layout: [content/knowledge context] [older conversation] [guaranteed recent conversation]
-    let mut all_nodes: Vec<GraphNode> = ctx_nodes;
+    // Layout: [pinned compaction summary] [content/knowledge context]
+    // [older conversation] [guaranteed recent conversation]
+    // The summary stays even when the scored fill has no room left.
+    let mut all_nodes: Vec<GraphNode> = Vec::new();
+    if let Some(summary) = summary {
+        all_nodes.push(summary);
+    }
+    all_nodes.extend(ctx_nodes);
     all_nodes.extend(conv_older);
     all_nodes.extend(recent_chrono);
 
@@ -718,7 +765,7 @@ pub fn build_context_with_stats(
         .count();
     let dropped_units = count_dropped_units(&thread, &kept_ids);
     let thread_tokens: usize = thread.iter().map(estimate_tokens).sum();
-    let kept_tokens = system_tokens + guaranteed_tokens + selected_tokens;
+    let kept_tokens = system_tokens + summary_tokens + guaranteed_tokens + selected_tokens;
     let dropped_tokens: usize = thread
         .iter()
         .filter(|node| !kept_ids.contains(&node.id))
@@ -738,7 +785,7 @@ pub fn build_context_with_stats(
         "context selection"
     );
 
-    let total_tokens = system_tokens + guaranteed_tokens + selected_tokens;
+    let total_tokens = system_tokens + summary_tokens + guaranteed_tokens + selected_tokens;
 
     Ok((
         ContextWindow {

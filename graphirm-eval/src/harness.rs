@@ -248,6 +248,11 @@ impl TestHarness {
             }
             r.tool_trace = tools;
         }
+        if !r.passed
+            && let Ok(knowledge) = self.client.get_knowledge(&session_id).await
+        {
+            r.compaction_summary = crate::task::latest_compaction_summary(&knowledge);
+        }
 
         let _ = self.client.delete_session(&session_id).await;
 

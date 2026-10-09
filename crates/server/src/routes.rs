@@ -1249,11 +1249,11 @@ async fn patch_session_task_status(
 
 /// `GET /api/graph/{session_id}/knowledge` — list Knowledge nodes produced by this session.
 ///
-/// Knowledge nodes are not linked directly to the agent node. They are linked via
-/// `DerivedFrom` edges from the knowledge node to the interaction node that triggered
-/// extraction. So we do a 2-hop traversal:
+/// Knowledge nodes are not linked directly to the agent node. Extraction links them
+/// with `DerivedFrom` onto the interaction that triggered them. A compaction summary
+/// links with `Summarizes` onto the turns it replaced. Both are incoming on those turns:
 ///   agent → (Produces, Outgoing) → interaction nodes
-///   interaction node → (DerivedFrom, Incoming) → knowledge nodes
+///   interaction node → (DerivedFrom or Summarizes, Incoming) → knowledge nodes
 async fn get_knowledge(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -1277,6 +1277,7 @@ async fn get_knowledge(
         )?;
 
         // Hop 2: for each interaction node, find knowledge nodes that derived from it.
+        let mut seen = std::collections::HashSet::new();
         let mut knowledge_nodes: Vec<GraphNode> = Vec::new();
         for node in &interaction_nodes {
             if !matches!(node.node_type, NodeType::Interaction(_)) {
@@ -1284,8 +1285,10 @@ async fn get_knowledge(
             }
             let derived =
                 graph.neighbors(&node.id, Some(EdgeType::DerivedFrom), Direction::Incoming)?;
-            for k in derived {
-                if matches!(k.node_type, NodeType::Knowledge(_)) {
+            let summarized =
+                graph.neighbors(&node.id, Some(EdgeType::Summarizes), Direction::Incoming)?;
+            for k in derived.into_iter().chain(summarized) {
+                if matches!(k.node_type, NodeType::Knowledge(_)) && seen.insert(k.id.clone()) {
                     knowledge_nodes.push(k);
                 }
             }

@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-09 — A compaction summary is pinned ahead of the thread
+
+**Context:** A successful compaction marks old turns compacted, and the next build skips those turns. The summary's `Summarizes` edges point at the skipped turns, so the next prompt lost the history and gained nothing. `26f13ec` was already serving `app.graphirm.ai`. Compaction on that container was set to `enable_compaction = false` until this change is the one running.
+**Decision:** The newest `session_summary` compaction node is always placed before the thread, outside the scored fill. The summarizer must copy identifiers, file paths, values, decisions, and unfinished instructions word for word, ahead of narrative, under the 500-token cap. The summary text is logged, and a failed eval task stores the newest one.
+**Alternatives:** An edge from the first kept turn to the summary, so the existing walk finds it. That still depends on which turn survives. A minimum summary length. Length does not put the node into the prompt.
+**Consequences:** A successful compaction replaces the dropped turns with that one summary. An older summary is left out. The selection tasks now measure whether the summary kept the early fact. Provider-window truncation is still open.
+**Refs:** `latest_compaction_summary`, `compaction_prompt`.
+
 ## 2026-10-09 — Compaction uses the session model when none is set
 
 **Context:** Auto-compaction sent `model: ""`. OpenRouter answered `No models provided`. The failure is logged and the chat call still runs, so a long session never gets summarized.

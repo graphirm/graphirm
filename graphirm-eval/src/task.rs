@@ -100,6 +100,9 @@ pub struct TaskResult {
     /// Tool results from the session, kept when the task does not pass.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_trace: Vec<ToolTrace>,
+    /// Newest compaction summary, kept when the task does not pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_summary: Option<String>,
 }
 
 /// One tool result stored with a failed task.
@@ -170,6 +173,31 @@ fn clip(text: &str, cap: usize) -> String {
     clipped
 }
 
+/// Newest compaction summary from a knowledge-node list.
+/// Other knowledge nodes are ignored. An empty summary is ignored.
+pub fn latest_compaction_summary(nodes: &[serde_json::Value]) -> Option<String> {
+    let mut best: Option<(&str, &str)> = None;
+    for node in nodes {
+        let data = &node["node_type"];
+        let is_summary = data["type"].as_str() == Some("Knowledge")
+            && data["entity"].as_str() == Some("session_summary")
+            && data["entity_type"].as_str() == Some("compaction");
+        if !is_summary {
+            continue;
+        }
+        let summary = data["summary"].as_str().unwrap_or("");
+        if summary.is_empty() {
+            continue;
+        }
+        let created = node["created_at"].as_str().unwrap_or("");
+        let newer = best.is_none_or(|(at, _)| created > at);
+        if newer {
+            best = Some((created, summary));
+        }
+    }
+    best.map(|(_, summary)| clip(summary, ANSWER_CAP))
+}
+
 /// Final assistant text and tool outputs from a session message list.
 pub fn failure_transcript(messages: &[serde_json::Value]) -> (String, Vec<ToolTrace>) {
     let answer = messages
@@ -208,6 +236,7 @@ impl TaskResult {
             session_id: None,
             final_answer: None,
             tool_trace: Vec::new(),
+            compaction_summary: None,
         }
     }
 
@@ -222,6 +251,7 @@ impl TaskResult {
             session_id: None,
             final_answer: None,
             tool_trace: Vec::new(),
+            compaction_summary: None,
         }
     }
 
@@ -238,6 +268,7 @@ impl TaskResult {
             session_id: None,
             final_answer: None,
             tool_trace: Vec::new(),
+            compaction_summary: None,
         }
     }
 }
@@ -315,6 +346,45 @@ mod tests {
         assert!(!fail.passed);
         assert_eq!(fail.outcome, TaskOutcome::Fail);
         assert!(fail.failure_reason.is_some());
+    }
+
+    #[test]
+    fn latest_compaction_summary_keeps_the_newest_text() {
+        let older = serde_json::json!({
+            "created_at": "2026-10-09T09:00:00Z",
+            "node_type": {
+                "type": "Knowledge",
+                "entity": "session_summary",
+                "entity_type": "compaction",
+                "summary": "STALE_SUMMARY",
+                "confidence": 1.0
+            }
+        });
+        let newer = serde_json::json!({
+            "created_at": "2026-10-09T09:21:20Z",
+            "node_type": {
+                "type": "Knowledge",
+                "entity": "session_summary",
+                "entity_type": "compaction",
+                "summary": "PINNED_SUMMARY TOKEN_EARLY_184729",
+                "confidence": 1.0
+            }
+        });
+        let other = serde_json::json!({
+            "created_at": "2026-10-09T09:30:00Z",
+            "node_type": {
+                "type": "Knowledge",
+                "entity": "file",
+                "entity_type": "code",
+                "summary": "not a compaction summary",
+                "confidence": 0.5
+            }
+        });
+        assert_eq!(
+            latest_compaction_summary(&[older, newer, other]).as_deref(),
+            Some("PINNED_SUMMARY TOKEN_EARLY_184729")
+        );
+        assert_eq!(latest_compaction_summary(&[]), None);
     }
 
     #[test]
