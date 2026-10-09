@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-10 — Tests follow the files that changed
+
+**Context:** Three suite runs scored 57 of 63 correct. Seven of those were correct and late. Selection edits a text file, then the checklist told the agent to run the workspace `cargo test`. `graph-query-bfs` passed when the query cap fired, and failed once by reading `store.rs` instead of calling `graph_query`. The read-loop path injected a warning after the file contents had already come back.
+**Decision:** Text, config, and `/tmp` scratch files get no test step. A code change runs `cargo test -p <crate>`, or `--test` for the nearest integration test file. The unscoped suite stays only when the user asked for it. The BFS prompt says to answer with `graph_query` and not by reading source. From the third read of the same file, the tool result is "already read" and the file is not returned. An edit of that path resets the count.
+**Alternatives:** Leave the full `cargo test` line and hope the model skips it. That is what made the selection tasks late. Lower the read-loop threshold and keep returning the file plus a warning. The warning did not stop the exploration.
+**Consequences:** A git repo with Rust tests is no longer asked to test the whole workspace after a text edit. A reply-only task can still miss if the last message drops the evidence. Compare later suites with `results/suite/2026-10-09-51d0087/` (57 correct, 50 on time, 7 ran over, 6 wrong).
+**Refs:** `scoped_test_command`, `already_read_notice`, `graph-query-bfs`.
+
 ## 2026-10-09 — The checklist's last line is the result, and the old key still loads
 
 **Context:** One full-suite run scored 18 of 21. `fix-broken-script` and `segment-filter-context` had already done the work. The harness grades the last assistant message, and the checklist had pushed the real answer back one message. `graph-query-bfs` never called `graph_query`: the workspace slice has no root `Cargo.toml`, the read failed, and the agent searched until the clock ran out. `write-fibonacci` wrote a correct file, then kept going after `ls /tmp` showed leftover `eval_fib*` files from earlier runs. A config that still sets `max_continuations` does not fail to load. Serde ignores an unknown field unless the struct denies it, so the key was already dropped with no log.

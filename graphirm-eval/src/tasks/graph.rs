@@ -90,7 +90,8 @@ pub fn tasks() -> Vec<EvalTask> {
                 // Seed a Content node so the BFS has something to traverse.
                 "Read the file `Cargo.toml` using the read tool.".to_string(),
                 // Ask the agent to discover a node ID and run BFS from it.
-                "Now use graph_query with mode='list_type' and node_type='content' \
+                "Answer with the graph_query tool. Do not read source files to answer. \
+                 Use graph_query with mode='list_type' and node_type='content' \
                  to find a node ID. Then use graph_query in bfs mode with that node_id \
                  and depth=2. Report what nodes you found and how many."
                     .to_string(),
@@ -138,4 +139,20 @@ pub fn tasks() -> Vec<EvalTask> {
             segment_filter: None,
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bfs_prompt_asks_for_the_graph_tool() {
+        let task = tasks()
+            .into_iter()
+            .find(|task| task.id == "graph-query-bfs")
+            .expect("bfs task");
+        let second = &task.prompts[1];
+        assert!(second.contains("graph_query"));
+        assert!(second.to_lowercase().contains("do not read source files"));
+    }
 }

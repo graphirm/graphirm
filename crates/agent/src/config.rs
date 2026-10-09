@@ -208,9 +208,8 @@ pub struct AgentConfig {
     #[serde(default = "default_doom_loop_threshold")]
     pub doom_loop_threshold: u32,
     /// Number of times the agent may read the same file in one session before
-    /// an advisory is injected ("you already read this, stop re-verifying").
-    /// Catches verification doom loops where the agent re-reads files after a
-    /// passing build instead of stopping. 0 disables. Default 3.
+    /// later reads return "already read" instead of the file. A write or edit
+    /// of that path resets the count. 0 disables. Default 3.
     #[serde(default = "default_read_loop_threshold")]
     pub read_loop_threshold: u32,
     /// Token budget thresholds at which a warning is appended to the system prompt for

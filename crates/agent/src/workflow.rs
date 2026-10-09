@@ -962,6 +962,7 @@ pub async fn stream_and_record(
 /// When `session.hitl` is `Some`, destructive tools (`write`, `edit`, `bash`)
 /// are pulled out of the parallel set and processed sequentially, each awaiting
 /// a human approval decision before executing.
+#[allow(clippy::too_many_arguments)]
 async fn execute_tools_parallel(
     session: &Session,
     tools: &ToolRegistry,
@@ -970,6 +971,7 @@ async fn execute_tools_parallel(
     events: &EventBus,
     cancel: &CancellationToken,
     graph_queries: &mut crate::graph_query_guard::GraphQueryGuard,
+    repeat_reads: &std::collections::HashSet<std::path::PathBuf>,
 ) -> Result<Vec<NodeId>, AgentError> {
     let knowledge_retriever: Option<Arc<dyn graphirm_tools::retriever::KnowledgeRetriever>> =
         session
@@ -1020,6 +1022,7 @@ async fn execute_tools_parallel(
         cancel,
         ctx,
         graph_queries,
+        repeat_reads,
     )
     .await;
 
@@ -1052,6 +1055,7 @@ async fn run_tool_calls(
     cancel: &CancellationToken,
     ctx: ToolContext,
     graph_queries: &mut crate::graph_query_guard::GraphQueryGuard,
+    repeat_reads: &std::collections::HashSet<std::path::PathBuf>,
 ) -> Result<Vec<NodeId>, AgentError> {
     // Partition tool calls: destructive ones go through sequential HITL approval,
     // safe ones run in parallel without gating.
@@ -1106,6 +1110,20 @@ async fn run_tool_calls(
     let mut set = JoinSet::new();
     let mut synthetic = Vec::new();
     for (tool, call) in resolved {
+        if call.name == "read"
+            && let Some(path) = call.arguments.get("path").and_then(|value| value.as_str())
+            && repeat_reads.contains(std::path::Path::new(path))
+        {
+            tracing::info!(path, "read loop returned already read");
+            synthetic.push((
+                call.id,
+                call.name,
+                Ok(graphirm_tools::ToolOutput::success(already_read_notice(
+                    std::path::Path::new(path),
+                ))),
+            ));
+            continue;
+        }
         if call.name == "graph_query" {
             match graph_queries.prepare(&call.arguments) {
                 crate::graph_query_guard::GraphQueryDecision::Run => {}
@@ -1744,17 +1762,33 @@ pub(crate) fn announces_unfinished_action(text: &str) -> bool {
 }
 
 /// One checklist after a finished reply that followed a write or edit.
-/// `git diff` is included only in a git repo. A test command is included only
-/// when the workspace has tests.
-pub(crate) fn verification_checklist(root: &std::path::Path) -> String {
+/// `git diff` is included only in a git repo. Tests are skipped for text,
+/// config, and `/tmp` scratch files. Code changes get a scoped test command.
+/// `full_suite` keeps `cargo test` when the user asked for the whole run.
+pub(crate) fn verification_checklist(
+    root: &std::path::Path,
+    changed: &[std::path::PathBuf],
+    full_suite: bool,
+) -> String {
     let mut steps = Vec::new();
     if root.join(".git").exists() {
         steps.push(
             "Run `git diff --name-only` and confirm only the intended files changed.".to_string(),
         );
     }
-    if let Some(command) = test_command(root) {
-        steps.push(format!("Run `{command}` and confirm it passes."));
+    if let Some(command) = scoped_test_command(root, changed, full_suite) {
+        if full_suite {
+            steps.push(format!("Run `{command}` and confirm it passes."));
+        } else {
+            steps.push(format!(
+                "Run `{command}` and confirm it passes. Do not run a wider suite."
+            ));
+        }
+    } else if !full_suite
+        && !changed.is_empty()
+        && changed.iter().all(|path| is_non_code(root, path))
+    {
+        steps.push("Do not run tests. The changes are text, config, or scratch files.".to_string());
     }
     steps.push(
         "In your final reply, state what changed and the result. Include the output you confirmed, or the code you wrote. Then stop. Do not re-read files you already read.".to_string(),
@@ -1777,6 +1811,192 @@ fn test_command(root: &std::path::Path) -> Option<&'static str> {
         return Some("python -m pytest");
     }
     None
+}
+
+/// The user asked for the whole suite, not a scoped run.
+pub(crate) fn user_asked_for_full_suite(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower.contains("full suite")
+        || lower.contains("full test")
+        || lower.contains("all tests")
+        || lower.contains("entire test")
+        || (lower.contains("cargo test") && !lower.contains("-p "))
+}
+
+/// Text, config, and `/tmp` scratch files do not need a test run.
+/// A workspace that itself lives under `/tmp` is not scratch.
+fn is_non_code(root: &std::path::Path, path: &std::path::Path) -> bool {
+    if is_scratch(root, path) {
+        return true;
+    }
+    let ext = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "" | "txt"
+            | "md"
+            | "markdown"
+            | "rst"
+            | "toml"
+            | "json"
+            | "yaml"
+            | "yml"
+            | "ini"
+            | "cfg"
+            | "conf"
+            | "csv"
+            | "env"
+            | "log"
+    )
+}
+
+fn is_scratch(root: &std::path::Path, path: &std::path::Path) -> bool {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+    if absolute.starts_with(root) {
+        return false;
+    }
+    let text = path.to_string_lossy().replace('\\', "/");
+    text == "/tmp" || text.starts_with("/tmp/")
+}
+
+fn is_rust(path: &std::path::Path) -> bool {
+    path.extension().is_some_and(|ext| ext == "rs")
+}
+
+fn scoped_test_command(
+    root: &std::path::Path,
+    changed: &[std::path::PathBuf],
+    full_suite: bool,
+) -> Option<String> {
+    if full_suite {
+        return test_command(root).map(str::to_string);
+    }
+    let code: Vec<&std::path::PathBuf> = changed
+        .iter()
+        .filter(|path| !is_non_code(root, path))
+        .collect();
+    if code.is_empty() || !root.join("Cargo.toml").is_file() {
+        return None;
+    }
+    let mut packages = Vec::new();
+    for path in &code {
+        if !is_rust(path) {
+            continue;
+        }
+        if let Some(name) = package_name_for(root, path)
+            && !packages.contains(&name)
+        {
+            packages.push(name);
+        }
+    }
+    if !packages.is_empty() {
+        let mut command = String::from("cargo test");
+        for name in &packages {
+            command.push_str(" -p ");
+            command.push_str(name);
+        }
+        if packages.len() == 1
+            && let Some(test_name) = code.iter().find_map(|path| integration_test_name(path))
+        {
+            command.push_str(" --test ");
+            command.push_str(&test_name);
+        }
+        return Some(command);
+    }
+    code.iter()
+        .find_map(|path| nearest_test_target(root, path))
+        .map(|test_name| format!("cargo test --test {test_name}"))
+}
+
+fn package_name_for(root: &std::path::Path, changed: &std::path::Path) -> Option<String> {
+    let start = if changed.is_absolute() {
+        changed.to_path_buf()
+    } else {
+        root.join(changed)
+    };
+    let mut dir = start.parent()?.to_path_buf();
+    loop {
+        if let Some(name) = package_name(&dir.join("Cargo.toml")) {
+            return Some(name);
+        }
+        if dir == root {
+            break;
+        }
+        let parent = dir.parent()?;
+        if parent != root && !parent.starts_with(root) {
+            break;
+        }
+        dir = parent.to_path_buf();
+    }
+    None
+}
+
+fn package_name(manifest: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(manifest).ok()?;
+    let value: toml::Value = toml::from_str(&text).ok()?;
+    value
+        .get("package")?
+        .get("name")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn integration_test_name(path: &std::path::Path) -> Option<String> {
+    let parent = path.parent()?;
+    if parent.file_name().is_some_and(|name| name == "tests")
+        && path.extension().is_some_and(|ext| ext == "rs")
+    {
+        path.file_stem()?.to_str().map(str::to_string)
+    } else {
+        None
+    }
+}
+
+fn nearest_test_target(root: &std::path::Path, changed: &std::path::Path) -> Option<String> {
+    if let Some(name) = integration_test_name(changed) {
+        return Some(name);
+    }
+    let full = if changed.is_absolute() {
+        changed.to_path_buf()
+    } else {
+        root.join(changed)
+    };
+    let stem = full.file_stem()?.to_str()?;
+    let mut dir = full.parent()?.to_path_buf();
+    for _ in 0..6 {
+        let candidate = dir.join("tests").join(format!("{stem}.rs"));
+        if candidate.is_file() {
+            return Some(stem.to_string());
+        }
+        if dir == root {
+            break;
+        }
+        let parent = dir.parent()?;
+        if parent != root && !parent.starts_with(root) {
+            break;
+        }
+        dir = parent.to_path_buf();
+    }
+    None
+}
+
+/// A later read of a file that was already read enough times.
+pub(crate) fn read_is_repeat(count: u32, threshold: u32) -> bool {
+    threshold > 0 && count >= threshold
+}
+
+pub(crate) fn already_read_notice(path: &std::path::Path) -> String {
+    format!(
+        "already read `{}`. Use the earlier result. Do not read this file again until you edit it.",
+        path.display()
+    )
 }
 
 fn rust_tests_present(root: &std::path::Path) -> bool {
@@ -1858,6 +2078,11 @@ pub async fn run_agent_loop(
     // on the next finished reply, then the following finished reply ends.
     let mut had_write_calls = false;
     let mut verify_injected = false;
+    let mut changed_paths: Vec<std::path::PathBuf> = Vec::new();
+    let full_suite = session
+        .recent_user_message()
+        .await
+        .is_some_and(|text| user_asked_for_full_suite(&text));
     // Per-file write/edit counts for doom loop detection.
     let mut file_edit_counts: std::collections::HashMap<std::path::PathBuf, u32> =
         std::collections::HashMap::new();
@@ -2128,7 +2353,11 @@ pub async fn run_agent_loop(
                     graphirm_graph::nodes::NodeType::Interaction(
                         graphirm_graph::nodes::InteractionData {
                             role: "user".to_string(),
-                            content: verification_checklist(&session.agent_config.working_dir),
+                            content: verification_checklist(
+                                &session.agent_config.working_dir,
+                                &changed_paths,
+                                full_suite,
+                            ),
                             token_count: None,
                         },
                     ),
@@ -2159,11 +2388,17 @@ pub async fn run_agent_loop(
         }
 
         for part in &tool_calls {
-            let ContentPart::ToolCall { name, .. } = part else {
+            let ContentPart::ToolCall {
+                name, arguments, ..
+            } = part
+            else {
                 continue;
             };
             if name == "write" || name == "edit" {
                 had_write_calls = true;
+                if let Some(path_str) = arguments.get("path").and_then(|v| v.as_str()) {
+                    changed_paths.push(std::path::PathBuf::from(path_str));
+                }
             }
         }
 
@@ -2190,7 +2425,6 @@ pub async fn run_agent_loop(
 
         // Read-loop tracking: count read/read_many/grep calls per file path.
         // Catches verification doom loops where the agent re-reads completed files.
-        let mut read_this_turn: Vec<std::path::PathBuf> = Vec::new();
         if read_loop_threshold > 0 {
             for part in &tool_calls {
                 let ContentPart::ToolCall {
@@ -2203,19 +2437,23 @@ pub async fn run_agent_loop(
                     && let Some(path_str) = arguments.get("path").and_then(|v| v.as_str())
                 {
                     let p = std::path::PathBuf::from(path_str);
-                    *file_read_counts.entry(p.clone()).or_insert(0) += 1;
-                    read_this_turn.push(p);
+                    *file_read_counts.entry(p).or_insert(0) += 1;
                 } else if name == "read_many"
                     && let Some(paths) = arguments.get("paths").and_then(|v| v.as_array())
                 {
                     for p in paths.iter().filter_map(|v| v.as_str()) {
                         let pb = std::path::PathBuf::from(p);
-                        *file_read_counts.entry(pb.clone()).or_insert(0) += 1;
-                        read_this_turn.push(pb);
+                        *file_read_counts.entry(pb).or_insert(0) += 1;
                     }
                 }
             }
         }
+
+        let repeat_reads: std::collections::HashSet<std::path::PathBuf> = file_read_counts
+            .iter()
+            .filter(|(_, count)| read_is_repeat(**count, read_loop_threshold))
+            .map(|(path, _)| path.clone())
+            .collect();
 
         let tool_result_ids = execute_tools_parallel(
             session,
@@ -2225,6 +2463,7 @@ pub async fn run_agent_loop(
             events,
             cancel,
             &mut graph_queries,
+            &repeat_reads,
         )
         .await?;
 
@@ -2260,42 +2499,6 @@ pub async fn run_agent_loop(
                     );
                     if let Err(e) = session.record_interaction(advisory_node).await {
                         tracing::warn!(error = %e, "Failed to inject doom loop advisory (non-fatal)");
-                    }
-                }
-            }
-        }
-
-        // Read-loop advisory: warn when the agent re-reads a file too many times
-        // without editing it. Only check files read THIS turn to avoid re-firing.
-        if read_loop_threshold > 0 {
-            for file_path in &read_this_turn {
-                let count = file_read_counts.get(file_path).copied().unwrap_or(0);
-                if count == read_loop_threshold {
-                    tracing::warn!(
-                        path = %file_path.display(),
-                        count,
-                        "Read loop detected; injecting advisory"
-                    );
-                    let advisory = format!(
-                        "Warning: you have read `{}` {} times this session without editing it. \
-                         You already know this file's contents. Stop re-reading and either: \
-                         (a) state 'Task complete' and stop, or \
-                         (b) make an edit if something is actually wrong. \
-                         Do NOT re-read files after a passing build.",
-                        file_path.display(),
-                        count,
-                    );
-                    let advisory_node = graphirm_graph::nodes::GraphNode::new(
-                        graphirm_graph::nodes::NodeType::Interaction(
-                            graphirm_graph::nodes::InteractionData {
-                                role: "user".to_string(),
-                                content: advisory,
-                                token_count: None,
-                            },
-                        ),
-                    );
-                    if let Err(e) = session.record_interaction(advisory_node).await {
-                        tracing::warn!(error = %e, "Failed to inject read loop advisory (non-fatal)");
                     }
                 }
             }
@@ -2925,26 +3128,80 @@ mod tests {
             std::env::temp_dir().join(format!("graphirm-verify-steps-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src")).unwrap();
-        let bare = verification_checklist(&root);
+        let bare = verification_checklist(&root, &[], false);
         assert!(bare.contains(crate::tool_gate::VERIFICATION_LEAD));
         assert!(!bare.contains("git diff"));
         assert!(!bare.contains("cargo test"));
 
         std::fs::create_dir_all(root.join(".git")).unwrap();
-        let git_only = verification_checklist(&root);
+        let git_only = verification_checklist(&root, &[], false);
         assert!(git_only.contains("git diff --name-only"));
         assert!(!git_only.contains("cargo test"));
 
         std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"t\"\n").unwrap();
         std::fs::write(root.join("src/lib.rs"), "#[cfg(test)]\nmod tests {}\n").unwrap();
-        let both = verification_checklist(&root);
+        let code = vec![root.join("src/lib.rs")];
+        let both = verification_checklist(&root, &code, false);
         assert!(both.contains("git diff --name-only"));
-        assert!(both.contains("cargo test"));
+        assert!(both.contains("cargo test -p t"));
+        assert!(!both.contains("cargo test` and"));
         assert!(
             both.contains("what changed and the result"),
             "the last step must ask for the change and the result, got {both}"
         );
         assert!(crate::tool_gate::is_verification_checklist(&both));
+
+        let text = verification_checklist(&root, &[root.join("selection/answer.txt")], false);
+        assert!(text.contains("Do not run tests"));
+        assert!(!text.contains("cargo test"));
+
+        let scratch = verification_checklist(
+            &root,
+            &[std::path::PathBuf::from("/tmp/eval_fib.rs")],
+            false,
+        );
+        assert!(scratch.contains("Do not run tests"));
+        assert!(!scratch.contains("cargo test"));
+
+        let asked = verification_checklist(&root, &code, true);
+        assert!(asked.contains("cargo test` and"));
+        assert!(!asked.contains("-p "));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_crate_change_does_not_run_the_whole_suite() {
+        let root =
+            std::env::temp_dir().join(format!("graphirm-verify-crate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("crates/agent/src")).unwrap();
+        std::fs::write(
+            root.join("crates/agent/Cargo.toml"),
+            "[package]\nname = \"graphirm-agent\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/agent\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("crates/agent/src/lib.rs"),
+            "#[cfg(test)]\nmod tests {}\n",
+        )
+        .unwrap();
+        let changed = vec![std::path::PathBuf::from("crates/agent/src/lib.rs")];
+        let checklist = verification_checklist(&root, &changed, false);
+        assert!(checklist.contains("cargo test -p graphirm-agent"));
+        assert!(!checklist.contains("cargo test` and"));
+        assert!(!user_asked_for_full_suite("edit selection/late.txt"));
+        assert!(user_asked_for_full_suite("Run the full test suite"));
+        assert!(user_asked_for_full_suite("please cargo test"));
+        assert!(!user_asked_for_full_suite("cargo test -p graphirm-agent"));
+        assert!(read_is_repeat(3, 3));
+        assert!(!read_is_repeat(2, 3));
+        assert!(!read_is_repeat(9, 0));
+        assert!(already_read_notice(std::path::Path::new("src/store.rs")).contains("already read"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
