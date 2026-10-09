@@ -22,6 +22,11 @@ pub enum LlmError {
 
     #[error("Configuration error: {0}")]
     Config(String),
+
+    /// The provider rejected the request because it does not fit the model window.
+    /// Not retryable: a fallback would send the same payload again.
+    #[error("Context length exceeded: {0}")]
+    ContextLength(String),
 }
 
 impl LlmError {
@@ -36,6 +41,9 @@ impl LlmError {
     }
     pub fn config(msg: impl Into<String>) -> Self {
         Self::Config(msg.into())
+    }
+    pub fn context_length(msg: impl Into<String>) -> Self {
+        Self::ContextLength(msg.into())
     }
 
     /// Whether this error is transient and worth retrying with a fallback model.
@@ -113,5 +121,14 @@ mod tests {
     fn non_retryable_errors() {
         assert!(!LlmError::invalid_model("bad-model").is_retryable());
         assert!(!LlmError::config("missing key").is_retryable());
+    }
+
+    #[test]
+    fn context_length_is_not_retryable() {
+        let err = LlmError::ContextLength(
+            "openrouter/deepseek/deepseek-v3.2: context_length_exceeded".into(),
+        );
+        assert!(!err.is_retryable());
+        assert!(err.to_string().contains("context_length_exceeded"));
     }
 }
