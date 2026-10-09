@@ -1415,7 +1415,7 @@ mod tests {
         );
         let ship = g
             .get_node(
-                &first_ids
+                first_ids
                     .iter()
                     .find(|id| line_body(g, id).as_deref() == Some("Ship"))
                     .expect("Ship line"),

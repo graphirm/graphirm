@@ -1187,7 +1187,7 @@ mod tests {
         )
     }
 
-    fn reply_parts<'a>(graph: &GraphStore, message: &'a GraphNode) -> Vec<GraphNode> {
+    fn reply_parts(graph: &GraphStore, message: &GraphNode) -> Vec<GraphNode> {
         graph
             .neighbors(&message.id, Some(EdgeType::Contains), Direction::Outgoing)
             .expect("contains")

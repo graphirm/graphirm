@@ -1648,10 +1648,10 @@ Should I apply the patch?
             serde_json::Value::String(s) => parts.push(s.clone()),
             serde_json::Value::Array(items) => {
                 for item in items {
-                    if item.get("type").and_then(|t| t.as_str()) == Some("text") {
-                        if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                            parts.push(text.to_string());
-                        }
+                    if item.get("type").and_then(|t| t.as_str()) == Some("text")
+                        && let Some(text) = item.get("text").and_then(|t| t.as_str())
+                    {
+                        parts.push(text.to_string());
                     }
                 }
             }
