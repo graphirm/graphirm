@@ -1,5 +1,11 @@
 # Graphirm Development Progress Log
 
+## 2026-10-09: Tool-pair units and compaction model — COMPLETE ✅
+
+- Context selection keeps a tool exchange as one unit, and compaction drops a whole exchange. The newest unit still ships whole when it exceeds the knapsack budget. Provider-window truncation is still open in `docs/plans/2026-10-08-tool-pair-atomicity.md`.
+- Auto-compaction uses the session model, then the cheap tier. An empty model is refused before the provider call. Health reports `compaction` as `off`, `ready`, or `unconfigured`, and the eval preflight rejects `unconfigured`.
+- Key files: `crates/agent/src/context.rs`, `crates/agent/src/compact.rs`, `crates/agent/src/workflow.rs`, `crates/server/src/routes.rs`
+
 ## 2026-09-28: Track A — Pi as delegate executor enabled after A4 live check — COMPLETE ✅
 
 - Live check (temp config on `:3111`, worktree stayed disabled until this flip): happy path

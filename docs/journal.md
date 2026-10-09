@@ -22,6 +22,70 @@ Entry template:
 
 ---
 
+## 2026-10-09 — Compaction uses the session model when none is set
+
+**Context:** Auto-compaction sent `model: ""`. OpenRouter answered `No models provided`. The failure is logged and the chat call still runs, so a long session never gets summarized.
+**Decision:** Use the session model, then the first cheap-tier model. Refuse the provider call when both are empty. Eval preflight fails when health reports compaction `unconfigured`.
+**Alternatives:** A new `compaction_model` config key. Nothing in the toml sets one today, and the session model is already a model the provider accepts.
+**Consequences:** `app.graphirm.ai` has compaction on, so this has to be deployed before long sessions cross the threshold. The summary text from the 4,000-token selection run was deleted with the session and was not logged.
+**Refs:** `resolve_compaction_model`, `docs/plans/2026-10-08-tool-pair-atomicity.md`.
+
+## 2026-10-09 — A graph_query loop stops on a repeat or after four calls
+
+**Context:** `graph-query-invalid-mode` repeated one result (the same search, or `depth is required`) until the prompt timed out. `graph-query-bfs` changed the query each time and also timed out. Line-count misses were the digits `3537` written as `3,537`. `write-fibonacci` once timed out after the file and its tests already existed.
+**Decision:** The same `graph_query` arguments return the previous result instead of running again. A fifth distinct `graph_query` in one agent loop is refused. Four is the cap because the BFS prompt needs two calls and a retry still fits. The tool schema requires `node_id` and `depth` when mode is `bfs`. The grader strips thousands separators before a command-output compare. A timeout whose verifier already passes is recorded as `finished but didn't stop`.
+**Alternatives:** One cap for every graph_query loop. That would hide the identical-call case, which already has a result. Raising the prompt time limit. The passes finished inside the limit; the failures were still calling the tool.
+**Consequences:** The Phase 2 comparison is 3 runs of this harness on a main binary and 3 on `feat/tool-pair-units`. Both binaries get the stop rule, the LLM extraction fallback, the health fields, and the eval rate-limit burst. A remaining score gap is the unit change. The main checkout itself is untouched; that binary is built from a detached worktree.
+**Refs:** `crates/agent/src/graph_query_guard.rs`, `crates/tools/src/graph_query.rs`, `graphirm-eval/src/task.rs`.
+
+## 2026-10-08 — Eval tasks get a fresh workspace copy
+
+**Context:** `GRAPHIRM_DISABLE_WORKSPACES=1` made session tools use the checkout. Counting then passed, and `git status` showed no task-written files, because the write prompts use absolute `/tmp` paths. A relative write would still land in the repo, and a shared directory makes the next run see leftovers.
+**Decision:** Workspaces stay on. Each task gets a new directory. The harness copies `crates/` and `src/` into it and deletes the shared `/tmp/eval_*` files first. The in-flight repo-cwd suite is a counting check, not the Phase 2 baseline. Cross-session ranking stays described as available: it is off on app.graphirm.ai until `EMBEDDING_BACKEND` is set, which would send user content to the embedding provider.
+**Alternatives:** Leave tools pointed at the checkout for the three runs. That checks counting and risks the tree.
+**Consequences:** Run 1 of `results/fix-*.json` still used the checkout. Later runs in that loop pick up the workspace copy when the harness recompiles.
+**Refs:** `graphirm-eval/src/workspace.rs`, `README.md`.
+
+## 2026-10-08 — Eval tools stay in the repo, and a missing extractor falls back once
+
+**Context:** Auto-select chose the local GLiNER2 backend because the model files were on disk. This binary was built without `local-extraction`, so every turn logged that error and no knowledge node was written. The same toml sets `workspaces_root` to `/data/workspaces`, so eval sessions ran in `/data/workspaces/session`, which has no `crates/` tree. `app.graphirm.ai` does not have the GLiNER2 files, so it already uses the LLM extractor (`Knowledge extraction complete backend=Llm`). Its log also says `EMBEDDING_BACKEND not set`, so cross-session ranking is off there. The dogfood host did not accept SSH from this machine.
+**Decision:** `select_compiled_backend` uses local ONNX only when that feature is compiled. Otherwise it uses the LLM backend and logs that once at startup. Eval preflight refuses a run whose health reports extraction disabled or memory off. The eval child keeps `EMBEDDING_BACKEND` and sets `GRAPHIRM_DISABLE_WORKSPACES=1`. A task that does not pass stores the final answer and tool outputs before the session is deleted.
+**Alternatives:** Rebuild eval with `local-extraction` and keep selecting ONNX. That would measure a path production is not on. Leaving `workspaces_root` and reading the bash error from the next artifacts. The empty workspace is already visible on disk.
+**Consequences:** Knowledge tasks now depend on the LLM extractor. Counting tasks run against the repo. `cascading-pipeline` keeps its 120s prompt limit: the pass finished all three prompts in 130s, and both failures were still inside the first prompt, so finishing within the limit is part of that task. `graph_query` already lists the valid modes; the invalid-mode timeout was a loop of successful calls.
+**Refs:** `crates/agent/src/knowledge/extraction.rs`, `src/commands/serve.rs`, `graphirm-eval/src/harness.rs`.
+
+## 2026-10-08 — A timeout counts as infrastructure only before the model answers
+
+**Context:** The GLM variance suite printed several tasks as `0 turns` plus `session timed out`. That counter is the harness prompt count, and `TaskResult::fail` writes 0. The server log for every one of those tasks already had assistant replies and tool calls. `cascading-pipeline` was cancelled mid-loop on both failures (turns 6 and 12).
+**Decision:** A prompt wait with no assistant message is retried, then excluded from the score, the same way a 429 is. A timeout after at least one assistant message stays a failure, and the result stores that message count.
+**Alternatives:** Treat every printed `0 turns` timeout as infrastructure. That would have dropped the graph-query loop and both pipeline timeouts, which were the agent still working when the prompt clock ran out.
+**Consequences:** This suite's 58–68% band is not an artifact of empty waits. The next suite can still exclude a true no-response timeout.
+**Refs:** `graphirm-eval/src/harness.rs`, `results/v4-1.json` through `results/v4-3.json`.
+
+## 2026-10-08 — Smart tier follows GLM Latest
+
+**Context:** Both tiers had just been set to pinned DeepSeek V4 Flash. The ask was for smart to be GLM 5.3 or newer. OpenRouter `~z-ai/glm-latest` currently resolves to the flagship `z-ai/glm-5.3` and moves when a newer GLM flagship ships. GLM 5.3 Prime and Flash are separate models.
+**Decision:** Smart is `openrouter/~z-ai/glm-latest` on this branch and on the main checkout. Cheap on this branch stays the pinned `openrouter/deepseek/deepseek-v4-flash`. The Flash-only suite was stopped so the next runs use the split.
+**Alternatives:** Pin `openrouter/z-ai/glm-5.3`, which is what main had and what the 2026-10-06 entry chose. That stays on 5.3 when a newer flagship appears.
+**Consequences:** A smart turn follows whatever GLM Latest points at. A server already running keeps the tiers it loaded until restart.
+**Refs:** `config/default.toml` `[agent.routing]`.
+
+## 2026-10-08 — Eval turns use pinned DeepSeek V4 Flash
+
+**Context:** The variance suite logged `deepseek/deepseek-v3.2` on every turn. `EVAL_MODEL` is qwen, and `GRAPHIRM_MODEL` is v4 Flash, but the Jev router reads `[agent.routing]` in `config/default.toml`. On this branch both tiers, `[model].name`, and `[agent].model` were still v3.2.
+**Decision:** Those four strings are the pinned `deepseek/deepseek-v4-flash` (OpenRouter-prefixed where the old string was). Both tiers stay the same model. The v3.2 suite was stopped and the full suite started again.
+**Alternatives:** The moving `~deepseek/deepseek-v4-flash-latest` alias, or the main checkout's split (that alias for cheap, GLM 5.3 for smart). The request was to replace v3.2 with V4 Flash, so both tiers use the pinned id.
+**Consequences:** A server already running keeps the model it loaded until restart. Dated journal lines above still name v3.2 as the setting they were written about.
+**Refs:** `config/default.toml` `[model]`, `[agent].model`, `[agent.routing]`.
+
+## 2026-10-08 — Eval 429s stay out of the score
+
+**Context:** The coding smoke test recorded two task failures because the harness polled `GET /api/sessions/{id}` twice a second, drained the burst-60 limiter, and decoded the 429 body as a harness error. A slower poll then passed 2/2. tower_governor reports a sub-second wait as `Retry-After: 0`.
+**Decision:** A 429 is retried, then recorded as an infrastructure error and left out of the pass rate. The server wait is at least one second. The harness waits on the session SSE stream, which it opens before the prompt. Eval traffic stays on the loopback process this harness spawns, with `GRAPHIRM_RATE_LIMIT_BURST=1000` on that process only. `app.graphirm.ai` is refused.
+**Alternatives:** Keep polling, only slower. That still shares a bucket with whatever else is on the host, and a 429 would still lower the score. Point the harness at the dogfood host. This binary does not open a remote base URL, so that host is not a target here.
+**Consequences:** Production burst stays 60. A rate-limit blip no longer changes the percentage, so runs can be compared. A timeout or a failed loop is still a failure. The 2/2 coding pass was a smoke test; the full suite still has to be repeated before it can judge the context-unit change.
+**Refs:** `graphirm-eval` client and harness, `governor_error_response`.
+
 ## 2026-10-08 — The approval placeholder is payload-only
 
 **Context:** Writing `awaiting approval` into the graph left a second result with the same `tool_call_id` once the real result was recorded.

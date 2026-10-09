@@ -96,15 +96,13 @@ pub fn tasks() -> Vec<EvalTask> {
             segment_filter: None,
         },
         // ── 3. Grep exact count ───────────────────────────────────────────────
-        // Ask the agent to count how many times a specific token appears in the
-        // source tree. Verifier runs the same command and compares dynamically —
-        // the count changes as we add spawn_blocking calls, so no hardcoding.
-        // Failure mode: agent answers from "knowledge" without running bash,
-        // producing a plausible-but-wrong number. The prompt explicitly requires
-        // the agent to run the command and quote its output.
+        // The prompt asks the model to run `grep -c` and quote that number.
+        // `grep -c` counts matching lines, not occurrences on a line. The
+        // verifier runs the same command, so a quoted command output passes
+        // even when one line contains `spawn_blocking` more than once.
         EvalTask {
             id: "grep-exact-count".to_string(),
-            name: "Count spawn_blocking occurrences precisely across all Rust files".to_string(),
+            name: "Quote the grep -c sum for spawn_blocking across Rust files".to_string(),
             tags: vec!["adversarial".to_string(), "tool-use".to_string()],
             prompts: vec![
                 "Run this exact bash command and tell me the number it prints:\n\n\

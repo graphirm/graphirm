@@ -710,6 +710,34 @@ pub fn build_context_with_stats(
     let all_nodes = omit_stale_pending_placeholders(&all_nodes);
     let messages = assemble_paired_messages(&all_nodes, graph, config.segment_filter.as_deref());
 
+    let kept_ids: std::collections::HashSet<&NodeId> =
+        all_nodes.iter().map(|node| &node.id).collect();
+    let dropped_messages = thread
+        .iter()
+        .filter(|node| !kept_ids.contains(&node.id))
+        .count();
+    let dropped_units = count_dropped_units(&thread, &kept_ids);
+    let thread_tokens: usize = thread.iter().map(estimate_tokens).sum();
+    let kept_tokens = system_tokens + guaranteed_tokens + selected_tokens;
+    let dropped_tokens: usize = thread
+        .iter()
+        .filter(|node| !kept_ids.contains(&node.id))
+        .map(estimate_tokens)
+        .sum();
+    tracing::info!(
+        session_id = %agent_id,
+        budget = config.max_tokens,
+        system_tokens,
+        thread_tokens,
+        kept_tokens,
+        dropped_tokens,
+        remaining_budget,
+        thread_messages = thread.len(),
+        dropped_messages,
+        dropped_units,
+        "context selection"
+    );
+
     let total_tokens = system_tokens + guaranteed_tokens + selected_tokens;
 
     Ok((
@@ -1266,6 +1294,17 @@ pub(crate) fn tail_unit_indexes(
         cost = cost.saturating_add(unit_cost);
     }
     in_tail
+}
+
+/// Units whose members were all left out of the payload. A unit that keeps
+/// any member counts as kept, so a split pair still shows up here as kept
+/// and in the Phase 1 drop warning.
+fn count_dropped_units(thread: &[GraphNode], kept: &std::collections::HashSet<&NodeId>) -> usize {
+    let chrono: Vec<GraphNode> = thread.iter().rev().cloned().collect();
+    group_interaction_units(&chrono)
+        .iter()
+        .filter(|unit| unit.iter().all(|node| !kept.contains(&node.id)))
+        .count()
 }
 
 fn tool_call_ids_of(node: &GraphNode) -> Vec<String> {

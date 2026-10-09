@@ -141,7 +141,7 @@ mod tests {
     #[tokio::test]
     async fn keeps_rule_tier_when_both_tiers_share_one_model() {
         // Cost-neutral config: cheap and smart are the same model string.
-        let shared = "openrouter/deepseek/deepseek-v3.2";
+        let shared = "openrouter/deepseek/deepseek-v4-flash";
         let config = ModelRoutingConfig {
             cheap: vec![shared.into()],
             smart: vec![shared.into()],

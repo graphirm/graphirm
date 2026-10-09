@@ -31,6 +31,14 @@ pub async fn run(db_path: &Path, host: String, port: u16) -> Result<(), Graphirm
             .map_err(|e| GraphirmError::Config(e.to_string()))?,
     );
 
+    let mut agent_config = agent_config;
+    if std::env::var("GRAPHIRM_DISABLE_WORKSPACES").ok().as_deref() == Some("1") {
+        tracing::info!(
+            "GRAPHIRM_DISABLE_WORKSPACES=1; session tools use the server working directory"
+        );
+        agent_config.workspaces_root = None;
+    }
+
     let extraction_enabled = std::env::var("GRAPHIRM_EXTRACTION")
         .map(|v| v != "0" && v != "false")
         .unwrap_or(true);
@@ -137,19 +145,33 @@ fn find_web_dir() -> Option<PathBuf> {
     None
 }
 
-/// Select the knowledge extraction backend.
+/// Select a knowledge extraction backend this binary can run.
 fn resolve_extraction_backend() -> graphirm_agent::knowledge::extraction::ExtractionBackend {
-    use graphirm_agent::knowledge::extraction::ExtractionBackend;
+    use graphirm_agent::knowledge::extraction::{ExtractionBackend, select_compiled_backend};
 
+    let (backend, notice) =
+        select_compiled_backend(cfg!(feature = "local-extraction"), gliner_model_dir());
+    match &backend {
+        ExtractionBackend::Local { model_dir } => {
+            tracing::info!(model_dir = %model_dir, "{notice}");
+        }
+        ExtractionBackend::Llm if notice.contains("no local-extraction feature") => {
+            tracing::warn!("{notice}");
+        }
+        _ => tracing::info!("{notice}"),
+    }
+    backend
+}
+
+fn gliner_model_dir() -> Option<String> {
     if let Ok(dir) = std::env::var("GLINER2_MODEL_DIR") {
         let path = std::path::PathBuf::from(&dir);
         if path.join("gliner2_config.json").exists() {
-            tracing::info!(model_dir = %dir, "Using Local ONNX extraction backend (GLINER2_MODEL_DIR)");
-            return ExtractionBackend::Local { model_dir: dir };
+            return Some(dir);
         }
         tracing::warn!(
             model_dir = %dir,
-            "GLINER2_MODEL_DIR is set but gliner2_config.json not found; falling back to LLM"
+            "GLINER2_MODEL_DIR is set but gliner2_config.json not found"
         );
     }
 
@@ -165,16 +187,10 @@ fn resolve_extraction_backend() -> graphirm_agent::knowledge::extraction::Extrac
     {
         let snapshot_dir = entry.path();
         if snapshot_dir.join("gliner2_config.json").exists() {
-            let dir_str = snapshot_dir.to_string_lossy().to_string();
-            tracing::info!(model_dir = %dir_str, "Auto-detected GLiNER2 model; using Local ONNX backend");
-            return ExtractionBackend::Local { model_dir: dir_str };
+            return Some(snapshot_dir.to_string_lossy().to_string());
         }
     }
-
-    tracing::info!(
-        "No GLiNER2 model found; using LLM extraction backend. Run `graphirm model download` to enable fast local extraction."
-    );
-    ExtractionBackend::Llm
+    None
 }
 
 /// Initialize the optional embedding provider for cross-session memory.

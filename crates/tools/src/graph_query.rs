@@ -169,7 +169,14 @@ The tool is read-only for bfs/list_type/search/semantic/neighbors/stats modes; p
                     "description": "Status for update action"
                 }
             },
-            "required": ["mode"]
+            "required": ["mode"],
+            "allOf": [{
+                "if": {
+                    "properties": { "mode": { "const": "bfs" } },
+                    "required": ["mode"]
+                },
+                "then": { "required": ["node_id", "depth"] }
+            }]
         })
     }
 
@@ -1057,6 +1064,25 @@ mod tests {
                 })
                 .collect())
         }
+    }
+
+    #[test]
+    fn bfs_mode_schema_requires_node_id_and_depth() {
+        let params = GraphQueryTool::new().parameters();
+        let branches = params["allOf"]
+            .as_array()
+            .expect("schema states bfs requirements");
+        let then_required: Vec<&str> = branches
+            .iter()
+            .find(|branch| branch["if"]["properties"]["mode"]["const"] == "bfs")
+            .expect("a branch for bfs")["then"]["required"]
+            .as_array()
+            .expect("bfs required list")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect();
+        assert!(then_required.contains(&"node_id"));
+        assert!(then_required.contains(&"depth"));
     }
 
     #[tokio::test]

@@ -327,6 +327,12 @@ pub struct HealthResponse {
     pub version: String,
     /// Number of active sessions currently loaded in memory.
     pub session_count: usize,
+    /// `llm`, `local`, `hybrid`, or `disabled`.
+    pub extraction: String,
+    /// `on` when an embedding retriever is loaded, otherwise `off`.
+    pub memory: String,
+    /// `off` when compaction is disabled, `ready` when a model resolves, `unconfigured` otherwise.
+    pub compaction: String,
 }
 
 /// Response body for graph query endpoints.
@@ -497,12 +503,17 @@ mod tests {
             status: "ok".to_string(),
             version: "0.1.0".to_string(),
             session_count: 5,
+            extraction: "llm".to_string(),
+            memory: "on".to_string(),
+            compaction: "off".to_string(),
         };
         let json = serde_json::to_string(&health).unwrap();
         let back: HealthResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back.status, "ok");
         assert_eq!(back.version, "0.1.0");
         assert_eq!(back.session_count, 5);
+        assert_eq!(back.extraction, "llm");
+        assert_eq!(back.memory, "on");
     }
 
     #[test]

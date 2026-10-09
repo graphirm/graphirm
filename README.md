@@ -11,7 +11,7 @@ Single static binary. No Docker. No runtime dependencies.
 Every other coding agent stores conversations as linear message arrays. Graphirm stores everything as a graph. That difference unlocks:
 
 - **Relevance-scored context** — PageRank + recency decay + edge type weights + BFS distance, not "last N messages"
-- **Cross-session memory** — Knowledge nodes persist; high-PageRank nodes surface in every future session automatically
+- **Cross-session memory** — available when `EMBEDDING_BACKEND` is set. Knowledge nodes are then embedded, and high-PageRank matches can surface in a later session. It is off on app.graphirm.ai, where that variable is unset.
 - **Entity extraction** — GLiNER2 ONNX or LLM-based extraction of entities and relationships for semantic search
 - **Task DAGs** — tasks form a dependency graph, trackable and replayable
 - **Multi-agent coordination** — subagents write nodes into a shared graph; any agent can traverse them

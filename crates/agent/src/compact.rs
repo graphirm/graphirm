@@ -16,6 +16,35 @@ pub struct CompactionConfig {
     pub min_nodes_to_compact: usize,
 }
 
+/// Session model first, then the first non-empty cheap-tier model.
+/// `None` means compaction has no model and must not call the provider.
+pub fn resolve_compaction_model(session_model: &str, cheap_models: &[String]) -> Option<String> {
+    let session_model = session_model.trim();
+    if !session_model.is_empty() {
+        return Some(session_model.to_string());
+    }
+    cheap_models
+        .iter()
+        .map(|model| model.trim())
+        .find(|model| !model.is_empty())
+        .map(str::to_string)
+}
+
+/// `off` when compaction is disabled, `ready` when a model resolves, `unconfigured` otherwise.
+pub fn compaction_status(
+    enabled: bool,
+    session_model: &str,
+    cheap_models: &[String],
+) -> &'static str {
+    if !enabled {
+        "off"
+    } else if resolve_compaction_model(session_model, cheap_models).is_some() {
+        "ready"
+    } else {
+        "unconfigured"
+    }
+}
+
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
@@ -51,6 +80,12 @@ pub async fn compact_context(
     nodes_to_compact: Vec<NodeId>,
     config: &CompactionConfig,
 ) -> Result<CompactionResult, AgentError> {
+    if config.model.trim().is_empty() {
+        return Err(AgentError::Context(
+            "compaction model is empty; set the session model or a cheap routing tier".into(),
+        ));
+    }
+
     if nodes_to_compact.len() < config.min_nodes_to_compact {
         return Err(AgentError::Context(format!(
             "Need at least {} nodes to compact, got {}",
@@ -226,6 +261,20 @@ mod tests {
     use graphirm_llm::MockProvider;
 
     #[test]
+    fn resolve_compaction_model_prefers_the_session_model() {
+        assert_eq!(
+            resolve_compaction_model("openrouter/deepseek/deepseek-v4-flash", &[]).as_deref(),
+            Some("openrouter/deepseek/deepseek-v4-flash")
+        );
+        assert_eq!(
+            resolve_compaction_model("", &["openrouter/deepseek/deepseek-v4-flash".to_string()])
+                .as_deref(),
+            Some("openrouter/deepseek/deepseek-v4-flash")
+        );
+        assert_eq!(resolve_compaction_model("  ", &[String::new()]), None);
+    }
+
+    #[test]
     fn compaction_config_defaults() {
         let config = CompactionConfig::default();
         assert_eq!(config.max_summary_tokens, 500);
@@ -304,10 +353,36 @@ mod tests {
         graph.add_node(node).unwrap();
 
         let llm = MockProvider::fixed("summary");
-        let config = CompactionConfig::default();
+        let config = CompactionConfig {
+            model: "mock".to_string(),
+            ..CompactionConfig::default()
+        };
 
         let result = compact_context(&graph, &llm, vec![id], &config).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn compact_context_rejects_an_empty_model() {
+        let graph = GraphStore::open_memory().unwrap();
+        let mut ids = Vec::new();
+        for i in 0..3 {
+            let node = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: format!("message {i}"),
+                token_count: None,
+            }));
+            ids.push(node.id.clone());
+            graph.add_node(node).unwrap();
+        }
+        let llm = MockProvider::fixed("summary");
+        let err = compact_context(&graph, &llm, ids, &CompactionConfig::default())
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("compaction model is empty"),
+            "{err}"
+        );
     }
 
     #[test]

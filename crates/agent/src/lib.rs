@@ -9,6 +9,7 @@ pub mod error;
 pub mod escalation;
 pub mod event;
 pub mod event_sink;
+mod graph_query_guard;
 pub mod hitl;
 pub mod hitl_judge;
 pub mod impact;
@@ -26,7 +27,10 @@ pub mod trace_analysis_tool;
 pub mod workflow;
 pub mod workspace;
 
-pub use compact::{CompactionConfig, CompactionResult, compact_context, is_compacted};
+pub use compact::{
+    CompactionConfig, CompactionResult, compact_context, compaction_status, is_compacted,
+    resolve_compaction_model,
+};
 pub use config::{AgentConfig, AgentMode, Permission};
 pub use context::{
     ContextConfig, ContextWindow, EdgeWeights, ScoredNode, build_context, build_context_with_stats,

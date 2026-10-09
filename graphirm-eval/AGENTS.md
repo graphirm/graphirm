@@ -57,7 +57,7 @@ and `ResponseContains` as a smoke check that the agent's output is intact.
 
 ## Integration Points
 
-**Requires:** graphirm binary at `target/release/graphirm` (harness spawns its own server on port 19555)
+**Requires:** graphirm binary at `target/release/graphirm`. The harness spawns that binary on `127.0.0.1:19555` and refuses any other host. `app.graphirm.ai` is not an eval target: its limiter is shared with users. The child process gets `GRAPHIRM_RATE_LIMIT_BURST=1000`. Production leaves that variable unset, so the server default stays 60.
 
 **Does not import:** Any `graphirm-*` crate — pure HTTP client
 
@@ -88,3 +88,7 @@ cargo run -p graphirm-eval -- --skip-memory
 ```
 
 Results are written to `results/latest.json`.
+
+The harness waits on `GET /api/events/{session}` (opened before the prompt) instead of polling the session. A 429 is retried with the server's `Retry-After`, and never sooner than one second. If the retries run out, the task is an infrastructure error and is left out of the pass rate. A prompt wait that ends before any assistant message is the same kind of error: the task is retried up to three times, then excluded. A timeout after the model has already replied stays a task failure, and the result records how many assistant messages were stored. If that timeout's verifier already passes, the reason is `finished but didn't stop`. Command-output checks ignore thousands separators, so `3,537` matches `3537`. A failed agent loop is still a task failure.
+
+Startup refuses the run unless `/api/health` reports an extraction backend of `llm`, `local`, or `hybrid`, and `memory` of `on`. The child inherits `EMBEDDING_BACKEND` (do not clear it). Each task gets its own workspace under `workspaces_root`. The harness copies `crates/` and `src/` into that directory and deletes the shared `/tmp/eval_*` files first, so a run neither writes the checkout nor inherits the previous run's files. A task that does not pass stores `final_answer` and `tool_trace` on the result before the session is deleted.

@@ -104,6 +104,27 @@ async fn consume_llm_stream(
     })
 }
 
+/// Context window budget. `GRAPHIRM_CONTEXT_MAX_TOKENS` overrides the toml
+/// value so a squeezed eval can force selection to drop messages. Unset keeps
+/// the configured budget, or 100_000.
+fn context_budget_tokens(configured: Option<u32>) -> usize {
+    if let Ok(raw) = std::env::var("GRAPHIRM_CONTEXT_MAX_TOKENS") {
+        match raw.parse::<usize>() {
+            Ok(n) if n > 0 => {
+                tracing::info!(
+                    max_tokens = n,
+                    "context budget set from GRAPHIRM_CONTEXT_MAX_TOKENS"
+                );
+                return n;
+            }
+            _ => {
+                tracing::warn!(value = %raw, "ignoring GRAPHIRM_CONTEXT_MAX_TOKENS");
+            }
+        }
+    }
+    configured.map(|t| t as usize).unwrap_or(100_000)
+}
+
 /// Call the LLM with the current conversation context and record the
 /// assistant response as an Interaction node in the graph.
 ///
@@ -135,11 +156,7 @@ pub async fn stream_and_record(
     };
     let context_config = crate::context::ContextConfig {
         system_prompt,
-        max_tokens: session
-            .agent_config
-            .max_tokens
-            .map(|t| t as usize)
-            .unwrap_or(100_000),
+        max_tokens: context_budget_tokens(session.agent_config.max_tokens),
         segment_filter: session.agent_config.segment_filter.clone(),
         enable_compaction: session.agent_config.enable_compaction,
         ..crate::context::ContextConfig::default()
@@ -178,22 +195,38 @@ pub async fn stream_and_record(
         .await;
         match nodes {
             Ok(Ok(ids)) if !ids.is_empty() => {
-                tracing::info!(count = ids.len(), "auto-compacting old context nodes");
-                let compact_cfg = crate::compact::CompactionConfig {
-                    model: String::new(),
-                    ..Default::default()
-                };
-                match crate::compact::compact_context(
-                    &session.graph,
-                    llm.as_ref(),
-                    ids,
-                    &compact_cfg,
-                )
-                .await
+                let cheap = session
+                    .agent_config
+                    .model_routing
+                    .as_ref()
+                    .map(|routing| routing.cheap.clone())
+                    .unwrap_or_default();
+                match crate::compact::resolve_compaction_model(&session.agent_config.model, &cheap)
                 {
-                    Err(e) => tracing::warn!("auto-compaction failed (non-fatal): {e}"),
-                    Ok(_) => {
-                        context_stats.compaction_triggered = true;
+                    None => tracing::warn!("auto-compaction skipped: no model configured"),
+                    Some(model) => {
+                        tracing::info!(
+                            count = ids.len(),
+                            model = %model,
+                            "auto-compacting old context nodes"
+                        );
+                        let compact_cfg = crate::compact::CompactionConfig {
+                            model,
+                            ..Default::default()
+                        };
+                        match crate::compact::compact_context(
+                            &session.graph,
+                            llm.as_ref(),
+                            ids,
+                            &compact_cfg,
+                        )
+                        .await
+                        {
+                            Err(e) => tracing::warn!("auto-compaction failed (non-fatal): {e}"),
+                            Ok(_) => {
+                                context_stats.compaction_triggered = true;
+                            }
+                        }
                     }
                 }
             }
@@ -934,6 +967,7 @@ async fn execute_tools_parallel(
     tool_calls: &[&graphirm_llm::ContentPart],
     events: &EventBus,
     cancel: &CancellationToken,
+    graph_queries: &mut crate::graph_query_guard::GraphQueryGuard,
 ) -> Result<Vec<NodeId>, AgentError> {
     let knowledge_retriever: Option<Arc<dyn graphirm_tools::retriever::KnowledgeRetriever>> =
         session
@@ -975,7 +1009,17 @@ async fn execute_tools_parallel(
 
     // `ctx` is moved into `run_tool_calls` and dropped (along with every clone
     // spawned into tool tasks) before it returns, on success and error alike.
-    let result = run_tool_calls(session, tools, response_id, tool_calls, events, cancel, ctx).await;
+    let result = run_tool_calls(
+        session,
+        tools,
+        response_id,
+        tool_calls,
+        events,
+        cancel,
+        ctx,
+        graph_queries,
+    )
+    .await;
 
     // Drain the sink *before* the caller emits its own turn-end GraphUpdate, so
     // a `graph_changed` queued at the tail of a tool's run can never be emitted
@@ -996,6 +1040,7 @@ async fn execute_tools_parallel(
 /// Body of [`execute_tools_parallel`]: partition, run, and record every tool
 /// call in `tool_calls` using `ctx`. Takes `ctx` by value so that all
 /// references to its `event_sink` are gone when this returns.
+#[allow(clippy::too_many_arguments)] // the query guard lives for one agent loop, not on ToolContext
 async fn run_tool_calls(
     session: &Session,
     tools: &ToolRegistry,
@@ -1004,6 +1049,7 @@ async fn run_tool_calls(
     events: &EventBus,
     cancel: &CancellationToken,
     ctx: ToolContext,
+    graph_queries: &mut crate::graph_query_guard::GraphQueryGuard,
 ) -> Result<Vec<NodeId>, AgentError> {
     // Partition tool calls: destructive ones go through sequential HITL approval,
     // safe ones run in parallel without gating.
@@ -1056,12 +1102,28 @@ async fn run_tool_calls(
     }
 
     let mut set = JoinSet::new();
+    let mut synthetic = Vec::new();
     for (tool, call) in resolved {
+        if call.name == "graph_query" {
+            match graph_queries.prepare(&call.arguments) {
+                crate::graph_query_guard::GraphQueryDecision::Run => {}
+                crate::graph_query_guard::GraphQueryDecision::Repeat { notice }
+                | crate::graph_query_guard::GraphQueryDecision::Cap { notice } => {
+                    synthetic.push((
+                        call.id,
+                        call.name,
+                        Ok(graphirm_tools::ToolOutput::success(notice)),
+                    ));
+                    continue;
+                }
+            }
+        }
         let ctx_clone = ctx.clone();
         set.spawn(async move {
+            let arguments = call.arguments.clone();
             let result: Result<graphirm_tools::ToolOutput, graphirm_tools::ToolError> =
-                tool.execute(call.arguments.clone(), &ctx_clone).await;
-            (call.id, call.name, result)
+                tool.execute(arguments.clone(), &ctx_clone).await;
+            (call.id, call.name, arguments, result)
         });
     }
 
@@ -1071,7 +1133,16 @@ async fn run_tool_calls(
     let mut join_error: Option<AgentError> = None;
     while let Some(join_result) = set.join_next().await {
         match join_result {
-            Ok(r) => exec_results.push(r),
+            Ok((call_id, tool_name, arguments, result)) => {
+                if tool_name == "graph_query" {
+                    let text = match &result {
+                        Ok(output) => output.content.clone(),
+                        Err(error) => error.to_string(),
+                    };
+                    graph_queries.remember(&arguments, &text);
+                }
+                exec_results.push((call_id, tool_name, result));
+            }
             Err(e) => {
                 join_error.get_or_insert_with(|| AgentError::Join(e.to_string()));
             }
@@ -1080,6 +1151,7 @@ async fn run_tool_calls(
     if let Some(e) = join_error {
         return Err(e);
     }
+    exec_results.extend(synthetic);
 
     // Phase 2: record safe tool results to graph (best-effort — log failures
     // rather than dropping results for tools that already executed successfully)
@@ -1635,6 +1707,7 @@ pub async fn run_agent_loop(
         std::collections::HashMap::new();
     // Retries after segment JSON contained fake `tool_call` types instead of native tools.
     let mut tool_call_leak_retries: u32 = 0;
+    let mut graph_queries = crate::graph_query_guard::GraphQueryGuard::default();
 
     events.emit(AgentEvent::AgentStart {
         agent_id: session.id.clone(),
@@ -1909,7 +1982,7 @@ pub async fn run_agent_loop(
                     "Before marking this task complete, verify your work:\n",
                     "1. Run the relevant build command (cargo test, npm run build, etc.) — confirm it passes.\n",
                     "2. Run `cargo clippy -- -D warnings` if Rust was touched — fix any new lint errors.\n",
-                    "3. Run `git diff --name-only` to see exactly what changed.\n",
+                    "3. If this directory is a git repo, run `git diff --name-only` to see exactly what changed.\n",
                     "Once checks pass, summarize what was done and stop. Do NOT re-read source files after a passing build.",
                 )
                 .to_string();
@@ -2005,6 +2078,7 @@ pub async fn run_agent_loop(
             tool_calls.as_slice(),
             events,
             cancel,
+            &mut graph_queries,
         )
         .await?;
 

@@ -3,8 +3,10 @@
 use std::sync::Arc;
 
 use axum::Router;
+use axum::body::Body;
 use axum::extract::{Json, Path, Query, State};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use chrono::Utc;
 use http::Request as HttpRequest;
@@ -102,6 +104,38 @@ async fn build_workspace_context(path: &std::path::Path) -> String {
     lines.join("\n")
 }
 
+/// Burst size for the per-IP limiter. Unset, empty, or non-positive values stay at 60.
+pub(crate) fn rate_limit_burst(raw: Option<&str>) -> u32 {
+    raw.and_then(|value| value.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(60)
+}
+
+/// Rate-limit response. tower_governor truncates the wait to whole seconds, so a
+/// sub-second wait arrives as 0 and tells the client to retry immediately.
+/// The wait sent here is at least one second, in both the header and the body.
+pub(crate) fn governor_error_response(error: GovernorError) -> Response<Body> {
+    match error {
+        GovernorError::TooManyRequests { wait_time, .. } => {
+            let secs = wait_time.max(1);
+            let mut response = (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Too Many Requests! Wait for {secs}s"),
+            )
+                .into_response();
+            let value = axum::http::HeaderValue::from_str(&secs.to_string())
+                .expect("retry seconds are digits");
+            response.headers_mut().insert("retry-after", value.clone());
+            response.headers_mut().insert("x-ratelimit-after", value);
+            response
+        }
+        other => {
+            let (parts, body) = other.into_response().into_parts();
+            Response::from_parts(parts, Body::from(body))
+        }
+    }
+}
+
 /// Build the axum router with all routes wired to shared [`AppState`].
 ///
 /// Middleware applied on the merged router (outermost → innermost):
@@ -119,8 +153,11 @@ pub fn create_router(state: AppState) -> Router {
     let governor_conf = Arc::new({
         let mut b = GovernorConfigBuilder::default();
         b.period(std::time::Duration::from_secs(1));
-        // Allow interactive bursts (e.g. web UI + scenario tests); sustained cap ~60/min per key.
-        b.burst_size(60);
+        // Default burst is 60. GRAPHIRM_RATE_LIMIT_BURST raises it for a local
+        // eval process only; production leaves the variable unset.
+        b.burst_size(rate_limit_burst(
+            std::env::var("GRAPHIRM_RATE_LIMIT_BURST").ok().as_deref(),
+        ));
         b.key_extractor(ShardedIpKeyExtractor {
             shard: state.rate_limit_shard,
         })
@@ -200,7 +237,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/events", get(sse_handler))
         .route("/api/events/{session_id}", get(sse_session_handler))
         .fallback(fallback_not_found)
-        .layer(GovernorLayer::new(governor_conf));
+        .layer(GovernorLayer::new(governor_conf).error_handler(governor_error_response));
 
     let mut router = Router::new()
         .merge(health_router)
@@ -276,10 +313,33 @@ impl KeyExtractor for ShardedIpKeyExtractor {
 /// `GET /api/health` — liveness check.
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     let session_count = state.sessions.read().await.len();
+    let extraction = match state.default_config.extraction.as_ref() {
+        Some(config) if config.enabled => config.backend.health_name().to_string(),
+        _ => "disabled".to_string(),
+    };
+    let memory = if state.memory_retriever.is_some() {
+        "on"
+    } else {
+        "off"
+    };
+    let cheap = state
+        .default_config
+        .model_routing
+        .as_ref()
+        .map(|routing| routing.cheap.as_slice())
+        .unwrap_or(&[]);
+    let compaction = graphirm_agent::compaction_status(
+        state.default_config.enable_compaction,
+        &state.default_config.model,
+        cheap,
+    );
     Json(HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         session_count,
+        extraction,
+        memory: memory.to_string(),
+        compaction: compaction.to_string(),
     })
 }
 
@@ -3645,5 +3705,72 @@ mod workspace_tests {
             sanitize_workspace_name("my-project_2"),
             Some("my-project_2".into())
         );
+    }
+}
+
+#[cfg(test)]
+mod rate_limit_response_tests {
+    use super::{governor_error_response, rate_limit_burst};
+    use axum::body::to_bytes;
+    use tower_governor::errors::GovernorError;
+
+    #[tokio::test]
+    async fn zero_second_wait_becomes_one_second() {
+        let response = governor_error_response(GovernorError::TooManyRequests {
+            wait_time: 0,
+            headers: None,
+        });
+        assert_eq!(response.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            response
+                .headers()
+                .get("retry-after")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "1"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-ratelimit-after")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "1"
+        );
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert_eq!(text, "Too Many Requests! Wait for 1s");
+    }
+
+    #[tokio::test]
+    async fn longer_wait_is_kept() {
+        let response = governor_error_response(GovernorError::TooManyRequests {
+            wait_time: 4,
+            headers: None,
+        });
+        assert_eq!(
+            response
+                .headers()
+                .get("retry-after")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "4"
+        );
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        assert_eq!(
+            String::from_utf8(body.to_vec()).unwrap(),
+            "Too Many Requests! Wait for 4s"
+        );
+    }
+
+    #[test]
+    fn burst_defaults_to_sixty_and_accepts_a_positive_override() {
+        assert_eq!(rate_limit_burst(None), 60);
+        assert_eq!(rate_limit_burst(Some("0")), 60);
+        assert_eq!(rate_limit_burst(Some("nope")), 60);
+        assert_eq!(rate_limit_burst(Some("1000")), 1000);
     }
 }

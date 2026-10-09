@@ -71,15 +71,129 @@ pub enum Verifier {
     All(Vec<Verifier>),
 }
 
+/// How one task finished.
+///
+/// `Error` is infrastructure (a rate limit that retries could not clear, for
+/// example). It is recorded and left out of the pass rate so a blip does not
+/// change the score.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskOutcome {
+    Pass,
+    Fail,
+    Error,
+}
+
 /// The outcome of running one EvalTask.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskResult {
     pub task_id: String,
     pub passed: bool,
+    pub outcome: TaskOutcome,
     pub turns_used: u32,
     pub elapsed_secs: f64,
     pub failure_reason: Option<String>,
     pub session_id: Option<String>,
+    /// Last assistant text, kept when the task does not pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_answer: Option<String>,
+    /// Tool results from the session, kept when the task does not pass.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_trace: Vec<ToolTrace>,
+}
+
+/// One tool result stored with a failed task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolTrace {
+    pub name: String,
+    pub is_error: bool,
+    pub output: String,
+}
+
+const TOOL_OUTPUT_CAP: usize = 2000;
+const ANSWER_CAP: usize = 4000;
+
+/// Drop commas that group digits (`3,537` → `3537`) so a formatted count
+/// still matches the command's digits. Other commas stay put.
+pub fn answer_contains_command_output(answer: &str, expected: &str) -> bool {
+    let expected = strip_thousands_separators(expected).to_lowercase();
+    if expected.is_empty() {
+        return false;
+    }
+    strip_thousands_separators(answer)
+        .to_lowercase()
+        .contains(&expected)
+}
+
+fn strip_thousands_separators(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let comma_between_digits = chars[index] == ','
+            && index > 0
+            && chars[index - 1].is_ascii_digit()
+            && chars[index + 1..].len() >= 3
+            && chars[index + 1..index + 4]
+                .iter()
+                .all(|ch| ch.is_ascii_digit())
+            && chars.get(index + 4).is_none_or(|ch| !ch.is_ascii_digit());
+        if comma_between_digits {
+            index += 1;
+            continue;
+        }
+        out.push(chars[index]);
+        index += 1;
+    }
+    out
+}
+
+/// A timeout whose verifier already holds is a different miss from a timeout
+/// that never finished the task.
+pub fn timeout_failure_reason(assistants: u32, verifier_passed: bool) -> String {
+    if verifier_passed {
+        "finished but didn't stop".to_string()
+    } else {
+        format!("session timed out after {assistants} model responses")
+    }
+}
+
+fn clip(text: &str, cap: usize) -> String {
+    let mut clipped = String::new();
+    for (index, ch) in text.chars().enumerate() {
+        if index == cap {
+            clipped.push('…');
+            return clipped;
+        }
+        clipped.push(ch);
+    }
+    clipped
+}
+
+/// Final assistant text and tool outputs from a session message list.
+pub fn failure_transcript(messages: &[serde_json::Value]) -> (String, Vec<ToolTrace>) {
+    let answer = messages
+        .iter()
+        .rev()
+        .find(|message| message["node_type"]["role"].as_str() == Some("assistant"))
+        .and_then(|message| message["node_type"]["content"].as_str())
+        .unwrap_or("");
+    let tools = messages
+        .iter()
+        .filter(|message| message["node_type"]["role"].as_str() == Some("tool"))
+        .map(|message| ToolTrace {
+            name: message["metadata"]["tool_name"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string(),
+            is_error: message["metadata"]["is_error"].as_bool().unwrap_or(false),
+            output: clip(
+                message["node_type"]["content"].as_str().unwrap_or(""),
+                TOOL_OUTPUT_CAP,
+            ),
+        })
+        .collect();
+    (clip(answer, ANSWER_CAP), tools)
 }
 
 impl TaskResult {
@@ -87,10 +201,13 @@ impl TaskResult {
         Self {
             task_id: task_id.to_string(),
             passed: true,
+            outcome: TaskOutcome::Pass,
             turns_used,
             elapsed_secs,
             failure_reason: None,
             session_id: None,
+            final_answer: None,
+            tool_trace: Vec::new(),
         }
     }
 
@@ -98,10 +215,69 @@ impl TaskResult {
         Self {
             task_id: task_id.to_string(),
             passed: false,
+            outcome: TaskOutcome::Fail,
             turns_used: 0,
             elapsed_secs: 0.0,
             failure_reason: Some(reason.into()),
             session_id: None,
+            final_answer: None,
+            tool_trace: Vec::new(),
+        }
+    }
+
+    /// Infrastructure problem. `passed` stays false so a reader of the bool
+    /// does not count it as a success; [`SuiteScore`] leaves it out of the rate.
+    pub fn error(task_id: &str, reason: impl Into<String>) -> Self {
+        Self {
+            task_id: task_id.to_string(),
+            passed: false,
+            outcome: TaskOutcome::Error,
+            turns_used: 0,
+            elapsed_secs: 0.0,
+            failure_reason: Some(reason.into()),
+            session_id: None,
+            final_answer: None,
+            tool_trace: Vec::new(),
+        }
+    }
+}
+
+/// Pass rate over tasks the agent actually finished. Infrastructure errors
+/// are counted apart and do not change the percentage.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SuiteScore {
+    pub passed: usize,
+    pub failed: usize,
+    pub errored: usize,
+}
+
+impl SuiteScore {
+    pub fn from_results(results: &[TaskResult]) -> Self {
+        let mut score = Self {
+            passed: 0,
+            failed: 0,
+            errored: 0,
+        };
+        for result in results {
+            match result.outcome {
+                TaskOutcome::Pass => score.passed += 1,
+                TaskOutcome::Fail => score.failed += 1,
+                TaskOutcome::Error => score.errored += 1,
+            }
+        }
+        score
+    }
+
+    pub fn scored(&self) -> usize {
+        self.passed + self.failed
+    }
+
+    pub fn percent(&self) -> f64 {
+        let scored = self.scored();
+        if scored == 0 {
+            0.0
+        } else {
+            self.passed as f64 / scored as f64 * 100.0
         }
     }
 }
@@ -134,8 +310,75 @@ mod tests {
     fn task_result_pass_and_fail() {
         let pass = TaskResult::pass("test-task", 2, 5.0);
         assert!(pass.passed);
+        assert_eq!(pass.outcome, TaskOutcome::Pass);
         let fail = TaskResult::fail("test-task", "file not found");
         assert!(!fail.passed);
+        assert_eq!(fail.outcome, TaskOutcome::Fail);
         assert!(fail.failure_reason.is_some());
+    }
+
+    #[test]
+    fn a_thousands_separator_still_matches_the_command_output() {
+        assert!(answer_contains_command_output(
+            "The file has 3,537 lines.",
+            "3537"
+        ));
+        assert!(answer_contains_command_output("3537 lines", "3537"));
+        assert!(!answer_contains_command_output(
+            "about three thousand",
+            "3537"
+        ));
+        assert!(!answer_contains_command_output(
+            "hello, world",
+            "helloworld"
+        ));
+    }
+
+    #[test]
+    fn a_timeout_after_the_verifier_would_pass_is_finished_but_not_stopped() {
+        assert_eq!(timeout_failure_reason(3, true), "finished but didn't stop");
+        assert_eq!(
+            timeout_failure_reason(3, false),
+            "session timed out after 3 model responses"
+        );
+    }
+
+    #[test]
+    fn infrastructure_error_is_excluded_from_the_score() {
+        let results = vec![
+            TaskResult::pass("a", 1, 1.0),
+            TaskResult::fail("b", "verifier returned false"),
+            TaskResult::error("c", "rate limit exhausted"),
+        ];
+        let score = SuiteScore::from_results(&results);
+        assert_eq!(score.passed, 1);
+        assert_eq!(score.failed, 1);
+        assert_eq!(score.errored, 1);
+        assert_eq!(score.scored(), 2);
+        assert_eq!(score.percent(), 50.0);
+    }
+
+    #[test]
+    fn failure_transcript_keeps_the_answer_and_the_tool_error() {
+        let messages = vec![
+            serde_json::json!({
+                "node_type": {"role": "user", "content": "count the lines"},
+                "metadata": {}
+            }),
+            serde_json::json!({
+                "node_type": {"role": "tool", "content": "No such file"},
+                "metadata": {"tool_name": "bash", "is_error": true}
+            }),
+            serde_json::json!({
+                "node_type": {"role": "assistant", "content": "about 100 lines"},
+                "metadata": {}
+            }),
+        ];
+        let (answer, tools) = failure_transcript(&messages);
+        assert_eq!(answer, "about 100 lines");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "bash");
+        assert!(tools[0].is_error);
+        assert_eq!(tools[0].output, "No such file");
     }
 }

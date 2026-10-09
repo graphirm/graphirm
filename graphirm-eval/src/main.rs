@@ -3,6 +3,7 @@ mod harness;
 mod report;
 mod task;
 mod tasks;
+mod workspace;
 
 use clap::Parser;
 
@@ -13,7 +14,7 @@ struct Cli {
     #[arg(long, default_value = "target/release/graphirm")]
     binary: std::path::PathBuf,
 
-    /// Only run tasks whose tags include this value
+    /// Only run tasks whose id or tags include this value
     #[arg(long)]
     filter: Option<String>,
 
@@ -43,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
     let mut tasks = tasks::all_tasks();
 
     if let Some(tag) = &cli.filter {
-        tasks.retain(|t| t.tags.iter().any(|tg| tg == tag));
+        tasks.retain(|t| &t.id == tag || t.tags.iter().any(|tg| tg == tag));
     }
     if cli.skip_memory {
         tasks.retain(|t| !t.tags.contains(&"memory".to_string()));
@@ -84,7 +85,11 @@ async fn main() -> anyhow::Result<()> {
         }
         print!("  [{}] {} ... ", task.id, task.name);
         let result = harness.run_task(task).await;
-        let icon = if result.passed { "✅" } else { "❌" };
+        let icon = match result.outcome {
+            task::TaskOutcome::Pass => "✅",
+            task::TaskOutcome::Fail => "❌",
+            task::TaskOutcome::Error => "⚠",
+        };
         println!(
             "{icon} ({:.1}s, {} turns)",
             result.elapsed_secs, result.turns_used
@@ -95,15 +100,21 @@ async fn main() -> anyhow::Result<()> {
         results.push(result);
     }
 
-    let passed = results.iter().filter(|r| r.passed).count();
-    let total = results.len();
-    if total > 0 {
+    let score = task::SuiteScore::from_results(&results);
+    if score.scored() > 0 || score.errored > 0 {
         println!(
             "\n{}/{} tasks passed ({:.0}%)",
-            passed,
-            total,
-            passed as f64 / total as f64 * 100.0
+            score.passed,
+            score.scored(),
+            score.percent()
         );
+        if score.errored > 0 {
+            println!(
+                "{} infrastructure error{} excluded from the score",
+                score.errored,
+                if score.errored == 1 { "" } else { "s" }
+            );
+        }
     }
 
     report::write_report(&results, &report_path, cli.experiment.as_deref())?;

@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::task::TaskResult;
+use crate::task::{SuiteScore, TaskOutcome, TaskResult};
 
 pub fn write_report(
     results: &[TaskResult],
@@ -24,30 +24,60 @@ pub fn write_report(
         md.push_str(&format!("**Experiment:** `{id}`\n"));
     }
     md.push('\n');
-    let passed = results.iter().filter(|r| r.passed).count();
+    let score = SuiteScore::from_results(results);
     md.push_str(&format!(
-        "**Score:** {}/{} ({:.0}%)\n\n",
-        passed,
-        results.len(),
-        if results.is_empty() {
-            0.0
-        } else {
-            passed as f64 / results.len() as f64 * 100.0
-        }
+        "**Score:** {}/{} ({:.0}%)\n",
+        score.passed,
+        score.scored(),
+        score.percent()
     ));
+    if score.errored > 0 {
+        md.push_str(&format!(
+            "**Excluded:** {} infrastructure error{}\n",
+            score.errored,
+            if score.errored == 1 { "" } else { "s" }
+        ));
+    }
+    md.push('\n');
     md.push_str("| Task | Result | Turns | Time |\n|---|---|---|---|\n");
     for r in results {
-        let icon = if r.passed { "✅" } else { "❌" };
-        let reason = r.failure_reason.as_deref().unwrap_or("-");
+        let icon = match r.outcome {
+            TaskOutcome::Pass => "✅",
+            TaskOutcome::Fail => "❌",
+            TaskOutcome::Error => "⚠",
+        };
+        let detail = match r.outcome {
+            TaskOutcome::Pass => "",
+            TaskOutcome::Fail | TaskOutcome::Error => r.failure_reason.as_deref().unwrap_or("-"),
+        };
         md.push_str(&format!(
             "| {} | {} {} | {} | {:.1}s |\n",
-            r.task_id,
-            icon,
-            if r.passed { "" } else { reason },
-            r.turns_used,
-            r.elapsed_secs
+            r.task_id, icon, detail, r.turns_used, r.elapsed_secs
         ));
     }
     std::fs::write(md_path, md)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task::TaskResult;
+
+    #[test]
+    fn report_excludes_infrastructure_errors_from_the_score() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eval.json");
+        let results = vec![
+            TaskResult::pass("a", 1, 1.0),
+            TaskResult::fail("b", "verifier returned false"),
+            TaskResult::error("c", "rate limit exhausted"),
+        ];
+        write_report(&results, &path, None).unwrap();
+        let md = std::fs::read_to_string(path.with_extension("md")).unwrap();
+        assert!(md.contains("**Score:** 1/2 (50%)"));
+        assert!(md.contains("1 infrastructure"));
+        assert!(md.contains("rate limit exhausted"));
+        assert!(!md.contains("❌ rate limit exhausted"));
+    }
 }

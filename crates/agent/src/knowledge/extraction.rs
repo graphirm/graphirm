@@ -50,6 +50,42 @@ pub enum ExtractionBackend {
     Hybrid { model_dir: String },
 }
 
+/// Pick a backend this binary can actually run.
+///
+/// A GLiNER2 directory is used only when `local_compiled` is true. Otherwise
+/// the LLM backend is the one that is available, and `notice` is the single
+/// startup line. Callers log that once instead of failing on every turn.
+pub fn select_compiled_backend(
+    local_compiled: bool,
+    model_dir: Option<String>,
+) -> (ExtractionBackend, &'static str) {
+    match (local_compiled, model_dir) {
+        (true, Some(model_dir)) => (
+            ExtractionBackend::Local { model_dir },
+            "using local ONNX extraction",
+        ),
+        (false, Some(_)) => (
+            ExtractionBackend::Llm,
+            "GLiNER2 model found, but this binary has no local-extraction feature; using the LLM extraction backend",
+        ),
+        (_, None) => (
+            ExtractionBackend::Llm,
+            "no GLiNER2 model found; using the LLM extraction backend",
+        ),
+    }
+}
+
+impl ExtractionBackend {
+    /// Short name reported by `GET /api/health`.
+    pub fn health_name(&self) -> &'static str {
+        match self {
+            Self::Llm => "llm",
+            Self::Local { .. } => "local",
+            Self::Hybrid { .. } => "hybrid",
+        }
+    }
+}
+
 /// Configuration for post-turn knowledge extraction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractionConfig {
@@ -1086,6 +1122,20 @@ mod tests {
     fn test_extraction_config_default_backend_is_llm() {
         let config = ExtractionConfig::default();
         assert!(matches!(config.backend, ExtractionBackend::Llm));
+    }
+
+    #[test]
+    fn local_model_without_the_feature_uses_the_llm_backend() {
+        let (backend, notice) = select_compiled_backend(false, Some("/models/gliner2".to_string()));
+        assert!(matches!(backend, ExtractionBackend::Llm));
+        assert!(notice.contains("no local-extraction feature"));
+
+        let (backend, _) = select_compiled_backend(true, Some("/models/gliner2".to_string()));
+        assert!(matches!(backend, ExtractionBackend::Local { .. }));
+
+        let (backend, notice) = select_compiled_backend(true, None);
+        assert!(matches!(backend, ExtractionBackend::Llm));
+        assert!(notice.contains("no GLiNER2 model"));
     }
 
     #[test]
