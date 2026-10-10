@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-10 — The scoped checklist did not clear the 57/50/7/6 bar
+
+**Context:** Three suite runs on `b5bd775`, chat model `deepseek/deepseek-v3.2` via `jev_router`, scored 47 correct, 32 on time, 15 late, and 16 wrong out of 63. The reference at `51d0087` is 57, 50, 7, and 6. `selection-edit-from-early` was late in all three. `selection-carry-token` was late in two.
+**Decision:** Leave production on `51d0087`. Do not push `332ae74` or `b5bd775`.
+**Alternatives:** Deploy because `precise-edit-no-collateral` and `fix-broken-script` passed all three. The suite as a whole got slower and less correct.
+**Consequences:** The read-count reset and the script run line stay on `feat/compaction-summary` until a later suite matches or beats 57 correct and 50 on time.
+**Refs:** `results/suite/scoped-1.json`, `results/suite/scoped-2.json`, `results/suite/scoped-3.json`, `results/suite/2026-10-09-51d0087/`.
+
 ## 2026-10-10 — A dropped read is readable again, and a script is run once
 
 **Context:** "Already read" returns no file body and assumes the earlier read is still in the prompt. Selection can drop that read, and compaction can summarize it away. The model then has neither the file nor a way to get it back. A `/tmp` script was told not to run tests, and nothing told the agent to run the script.
