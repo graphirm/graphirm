@@ -30,30 +30,45 @@ pub enum PieceKind {
     Statement,
     Recommendation,
     Options,
-    Steps,
     Instructions,
+    Steps,
     Result,
     Assumption,
     Example,
     Caveat,
-    Code,
     Question,
+    Code,
 }
 
 impl PieceKind {
+    /// Same order as the `kinds:` list in the HTML reply rule.
+    pub const ALL: [PieceKind; 11] = [
+        PieceKind::Statement,
+        PieceKind::Recommendation,
+        PieceKind::Options,
+        PieceKind::Instructions,
+        PieceKind::Steps,
+        PieceKind::Result,
+        PieceKind::Assumption,
+        PieceKind::Example,
+        PieceKind::Caveat,
+        PieceKind::Question,
+        PieceKind::Code,
+    ];
+
     pub fn as_label(self) -> &'static str {
         match self {
             Self::Statement => "statement",
             Self::Recommendation => "recommendation",
             Self::Options => "options",
-            Self::Steps => "steps",
             Self::Instructions => "instructions",
+            Self::Steps => "steps",
             Self::Result => "result",
             Self::Assumption => "assumption",
             Self::Example => "example",
             Self::Caveat => "caveat",
-            Self::Code => "code",
             Self::Question => "question",
+            Self::Code => "code",
         }
     }
 
@@ -62,17 +77,52 @@ impl PieceKind {
             "statement" => Some(Self::Statement),
             "recommendation" => Some(Self::Recommendation),
             "options" => Some(Self::Options),
-            "steps" => Some(Self::Steps),
             "instructions" => Some(Self::Instructions),
+            "steps" => Some(Self::Steps),
             "result" => Some(Self::Result),
             "assumption" => Some(Self::Assumption),
             "example" => Some(Self::Example),
             "caveat" => Some(Self::Caveat),
-            "code" => Some(Self::Code),
             "question" => Some(Self::Question),
+            "code" => Some(Self::Code),
             _ => None,
         }
     }
+}
+
+/// Kind words from the rule file's frontmatter `kinds:` list.
+/// Ignores the prose under the frontmatter.
+pub fn kinds_from_rule(text: &str) -> Vec<String> {
+    let Some(rest) = text.strip_prefix("---\n") else {
+        return Vec::new();
+    };
+    let Some(end) = rest.find("\n---") else {
+        return Vec::new();
+    };
+    let mut kinds = Vec::new();
+    let mut in_list = false;
+    for line in rest[..end].lines() {
+        let trimmed = line.trim();
+        if trimmed == "kinds:" {
+            in_list = true;
+            continue;
+        }
+        if !in_list {
+            continue;
+        }
+        let Some(item) = trimmed.strip_prefix("- ") else {
+            if !trimmed.is_empty() {
+                break;
+            }
+            continue;
+        };
+        let word = item.trim();
+        if word.is_empty() || word.contains([' ', ':']) {
+            break;
+        }
+        kinds.push(word.to_string());
+    }
+    kinds
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1149,6 +1199,35 @@ mod tests {
         assert_eq!(pieces[6].items[0].text, "let x = 1;");
         assert_eq!(pieces[7].kind, PieceKind::Question);
         assert_eq!(pieces[7].items[0].text, "Should I apply the patch?");
+    }
+
+    #[test]
+    fn cutter_kinds_match_the_rule_file() {
+        let kinds = kinds_from_rule(include_str!(
+            "../../../../.cursor/rules/html-part-index.mdc"
+        ));
+        assert!(!kinds.is_empty());
+        let accepted: Vec<&str> = PieceKind::ALL.iter().map(|kind| kind.as_label()).collect();
+        assert_eq!(kinds, accepted);
+        for kind in &kinds {
+            assert_eq!(PieceKind::from_label(kind).map(PieceKind::as_label), Some(kind.as_str()));
+            let pieces = cut_html_index(&page_for_kind(kind)).expect(kind);
+            assert_eq!(pieces.len(), 1);
+            assert_eq!(pieces[0].kind.as_label(), kind);
+        }
+    }
+
+    fn page_for_kind(kind: &str) -> String {
+        let body = match kind {
+            "options" | "steps" => "<ul><li>1.0.1 First</li></ul>",
+            "example" => "<figure><p>1.0.1 Sample</p></figure>",
+            "code" => r#"<pre data-n="1.0.1"><code>let x = 1;</code></pre>"#,
+            _ => "<p>1.0.1 One line.</p>",
+        };
+        format!(
+            "<nav id=\"index\"><ul><li><a href=\"#p\">1.0.0 [{kind}] Title</a></li></ul></nav>\n\
+             <section id=\"p\" class=\"{kind}\"><h2>1.0.0 Title</h2>{body}</section>"
+        )
     }
 
     #[test]

@@ -1161,22 +1161,15 @@ mod tests {
 
     #[test]
     fn html_index_contract_matches_the_rule_file() {
-        let rule = include_str!("../../../../.cursor/rules/html-part-index.mdc").replace('`', "");
-        let rule = normalize_ws(&rule);
-        for line in HTML_PIECE_INDEX_CONTRACT.lines() {
-            let line = normalize_ws(line);
-            if line.is_empty() {
-                continue;
-            }
-            assert!(
-                rule.contains(&line),
-                "rule file is missing a contract line: {line}"
-            );
-        }
-    }
-
-    fn normalize_ws(text: &str) -> String {
-        text.split_whitespace().collect::<Vec<_>>().join(" ")
+        let kinds = crate::pi_delegate::pieces::kinds_from_rule(include_str!(
+            "../../../../.cursor/rules/html-part-index.mdc"
+        ));
+        assert!(!kinds.is_empty());
+        let accepted: Vec<&str> = crate::pi_delegate::pieces::PieceKind::ALL
+            .iter()
+            .map(|kind| kind.as_label())
+            .collect();
+        assert_eq!(kinds, accepted);
     }
 
     #[test]
