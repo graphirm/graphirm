@@ -1,37 +1,214 @@
 ---
-description: Every reply is HTML with an index of links and one kind on each part.
+description: Every reply is HTML with one nav index and one kind per section, so a script can cut it into chunks.
 alwaysApply: true
 ---
 
 Reply with only HTML. No markdown.
 
-Start with <nav id="index"> holding one <ul>. Each entry is one <li> with one link. Point href at that part's id. The order of the links is the order of the parts. There is one index. It is that nav. Do not write a second index.
+Why: a script cuts each reply at every `<section>` and stores the sections as chunks. Later, single chunks are pulled into other answers, without the rest of the reply. So every section must make sense alone, and its class must say truthfully what it holds.
 
-Number every index entry and every line with three parts, like 1.0.0. The first number is the part, starting at 1, in index order. The second number stays 0. The third number is 0 on the index entry and 1, 2, 3 on the lines inside that part, in order. Use ul, not ol. The number is already in the text.
+## Kinds
 
-The link text is the number, then the kind in brackets, then the heading, like 1.0.0 [statement] Overview. Each line of a part starts with its number, like 1.0.1 One fact.
+Each section has exactly one kind. The kind words are:
 
-Each part is a <section>. Its id matches the link. Its class is the kind word alone, for example class="statement". Its first element is an <h2> with the same number and heading as the link, without the brackets, like 1.0.0 Overview. The link is the heading. When the h2 disagrees, keep the link.
+- statement: a fact that is true no matter what the user decides.
+- recommendation: the pick or advice. A recommendation line is one pick plus its reason, like "Install fmt per project, so everyone uses the same version."
+- options: alternatives to choose between, with no pick among them.
+- instructions: actions the user should take, in any order.
+- steps: actions for the user that only work in order. Never use steps for your own work.
+- result: what you did and what happened, like "Ran the test suite; 3 of 120 tests failed." Errors and failed actions are results too. A result was true when written and may change later, so state exactly what you did and what you saw.
+- assumption: something you assumed because you could not ask or check, like "Assumed the app sells to EU buyers only." Never present an assumption as a statement.
+- example: a sample.
+- caveat: a warning, or a condition that can change the outcome. A caveat line may end with what to do about it, like "Webhooks can arrive twice, so make every handler idempotent."
+- question: a question for the user.
+- code: code.
 
-A statement, an instruction, or a question is one <p> per line. A caveat is the same, with class caveat. Options are one <ul> of <li>. Steps are one <ul> of <li>. An example wraps its <p> lines in a <figure>. A path, a command, or an identifier inside a line is <code>. A code part is a pre element whose data-n is the line number, with code inside it. The number is that data-n attribute, not text inside the code.
+Use these exact words. It is `instructions`, never `instruction`.
 
-statement is something to know. options is something to choose. steps is something to follow in order. instructions is directions. example is a sample. caveat is a warning. code is code. question is a question.
+When you list options and also have a pick, put the pick in its own recommendation section. Never put advice such as "Use X" in a statement section.
 
-The chat drops the tags and keeps the text, and it paints the link text blue. Write so that text still reads in order with the tags gone: numbered index lines first, then one numbered sentence per line in each part.
+Report your own actions after you take them, as result. Do not describe your own future work as steps.
+
+## Page shape
+
+Copy this shape and replace the content with your own. The section names here are only samples.
 
 ```html
 <nav id="index">
 <ul>
-<li><a href="#overview">1.0.0 [statement] Overview</a></li>
-<li><a href="#patch">2.0.0 [code] Patch</a></li>
+<li><a href="#answer">1.0.0 [statement] What fmt does</a></li>
+<li><a href="#install">2.0.0 [options] Ways to install fmt</a></li>
+<li><a href="#pick">3.0.0 [recommendation] Which fmt install to use</a></li>
+<li><a href="#setup">4.0.0 [steps] Set up fmt in a project</a></li>
+<li><a href="#warning">5.0.0 [caveat] Before you run fmt</a></li>
+<li><a href="#config">6.0.0 [code] fmt config file</a></li>
+<li><a href="#ran">7.0.0 [result] fmt check run in this project</a></li>
 </ul>
 </nav>
-<section id="overview" class="statement">
-<h2>1.0.0 Overview</h2>
-<p>1.0.1 One fact per line.</p>
+<section id="answer" class="statement">
+<h2>1.0.0 What fmt does</h2>
+<p data-n="1.0.1" data-src="file:README.md">1.0.1 The tool <code>fmt</code> rewrites every source file in a project to one style.</p>
 </section>
-<section id="patch" class="code">
-<h2>2.0.0 Patch</h2>
-<pre data-n="2.0.1"><code>let x = 1;</code></pre>
+<section id="install" class="options">
+<h2>2.0.0 Ways to install fmt</h2>
+<ul>
+<li data-n="2.0.1">2.0.1 Install fmt with <code>npm i -g fmt</code> to use it in every project.</li>
+<li data-n="2.0.2">2.0.2 Install fmt with <code>npm i -D fmt</code> to pin its version to one project.</li>
+</ul>
+</section>
+<section id="pick" class="recommendation" data-rel="picks:#install">
+<h2>3.0.0 Which fmt install to use</h2>
+<p data-n="3.0.1">3.0.1 Install fmt per project with <code>npm i -D fmt</code>, so everyone on the team formats with the same version.</p>
+</section>
+<section id="setup" class="steps" data-rel="depends-on:#pick">
+<h2>4.0.0 Set up fmt in a project</h2>
+<ul>
+<li data-n="4.0.1">4.0.1 Create <code>fmt.json</code> in the project root.</li>
+<li data-n="4.0.2">4.0.2 Run <code>fmt --check</code> to list the files fmt would change.</li>
+</ul>
+</section>
+<section id="warning" class="caveat">
+<h2>5.0.0 Before you run fmt</h2>
+<p data-n="5.0.1">5.0.1 fmt rewrites files in place, so commit your work before you run it.</p>
+</section>
+<section id="config" class="code">
+<h2>6.0.0 fmt config file</h2>
+<pre data-n="6.0.1"><code>{ "indent": 2, "maxWidth": 100 }</code></pre>
+</section>
+<section id="ran" class="result">
+<h2>7.0.0 fmt check run in this project</h2>
+<p data-n="7.0.1" data-src="tool:fmt">7.0.1 Ran <code>fmt --check</code> in the project root.</p>
+<p data-n="7.0.2" data-src="tool:fmt">7.0.2 fmt reported 4 files that would change, all in <code>src/components</code>.</p>
 </section>
 ```
+
+## Short replies
+
+Use only as many sections as the answer needs. A one-line answer is an index with one entry and one section:
+
+```html
+<nav id="index">
+<ul>
+<li><a href="#port">1.0.0 [statement] Default port of the dev server</a></li>
+</ul>
+</nav>
+<section id="port" class="statement">
+<h2>1.0.0 Default port of the dev server</h2>
+<p data-n="1.0.1" data-src="file:package.json">1.0.1 The dev server listens on port 3000 unless <code>PORT</code> is set.</p>
+</section>
+```
+
+## Elements
+
+Use only these elements: `nav`, `ul`, `li`, `a`, `section`, `h2`, `p`, `figure`, `pre`, and `code`. No tables, no other headings, no other tags.
+
+The only `<a>` elements are the links inside the index.
+
+## Index
+
+The page starts with `<nav id="index">` holding one `<ul>`. This nav is the only index. Never write a second index, and never write an index as a div.
+
+Each `<li>` holds one link. The link's `href` points at its section's `id`. The links are in the same order as the sections.
+
+The link text is the number, then the kind in brackets, then the heading, like `1.0.0 [statement] What fmt does`.
+
+## Numbers
+
+Every index entry and every line has a three-part number, like 1.0.0.
+
+- The first number is the section, starting at 1, in index order.
+- The second number is always 0. That slot is reserved; do not use it.
+- The third number is 0 for the index entry and the heading. For the lines inside a section it is 1, 2, 3, in order.
+
+Every line carries its number twice: as a `data-n` attribute, which the script reads, and at the start of its text, which people read. Code is the one exception (see the code rule under Lines).
+
+Use `<ul>`, never `<ol>`. The number is already in the text.
+
+## Sections
+
+Each section is a `<section>`. Its `id` matches its link. Its `class` is its kind word alone, like `class="caveat"`.
+
+Its first element is an `<h2>` with the same number and heading as its link, without the bracketed kind, like `1.0.0 What fmt does`. If the two ever differ, the script trusts the link.
+
+## Lines
+
+A line is one fact, one action, one choice, or one question. If a sentence holds two, split it into two lines.
+
+There are three exceptions, each still one line:
+
+- A caveat line may hold one warning and its fix.
+- A recommendation line may hold one pick and its reason.
+- A statement line may set one fact against another when only the pair makes the point, like "The guide says port 8080, but the server listens on 3000."
+
+How each kind is written:
+
+- statement, recommendation, instructions, result, assumption, caveat, and question: one `<p>` per line.
+- options and steps: one `<ul>`, with one `<li>` per line.
+- example: the `<p>` lines go inside one `<figure>`.
+- code: one `<pre>` holding one `<code>` with the whole block. The whole block is one line, so its number is only in `data-n`, never inside the code. A second block in the same section is the next line.
+
+Put a path, a command, or an identifier inside a line in `<code>`.
+
+Inside any `<code>`, escape `<` as `&lt;`, `>` as `&gt;`, and `&` as `&amp;`.
+
+`class` appears only on `<section>`. Never put it on a line.
+
+## One kind per section
+
+A section holds one kind only. If a line is a different kind from its section, move it to a section of that kind. Split a part into two sections rather than mix kinds.
+
+For example, "Bring your photo ID" is instructions, not a caveat. "Confirm the club is open that night" is a caveat, not an option.
+
+## Headings and references
+
+A chunk may be read without the sections around it.
+
+Each heading names its subject, like "Before you go to Coco Bongo", not "Before you go".
+
+Lines may rely on their own heading and on earlier lines in the same section. Never refer to another section in words, as in "the same block", "above", or "as mentioned". To link sections, use `data-rel`.
+
+## Links between sections
+
+A section may carry a `data-rel` attribute that links it to other sections in the same reply. The script turns these into edges between chunks.
+
+Write each link as the relation, a colon, and the target section's id with `#`. Separate several links with spaces, like `data-rel="picks:#install depends-on:#answer"`.
+
+The relations are:
+
+- answers: this section answers the target question section.
+- supports: this section gives evidence or reasons for the target.
+- contradicts: this section disagrees with the target or limits it.
+- depends-on: this section only holds or only works if the target does.
+- picks: this recommendation chooses from the target options section.
+- supersedes: this section corrects or replaces the target.
+
+Put each link on one side only, on the section the relation describes. Never add the reverse link on the target.
+
+Add a link only when the relation is real and direct. Most sections need none. Every target must be a section id in this reply.
+
+## Sources of lines
+
+A line may carry a `data-src` attribute that says where its content came from:
+
+- `tool:NAME` for the output of a tool or command you ran, like `tool:cargo-test`.
+- `file:PATH` for something you read in a file, like `file:src/graph.rs`.
+- `web:URL` for something you read on a web page.
+- `context` for something the user said, or something in your prompt or rules.
+- `model` for your own knowledge, not checked against any source.
+
+Give every statement and result line a `data-src`. On other kinds it is optional. If one line draws on two sources, split it into two lines.
+
+## Check before sending
+
+- There is exactly one `id="index"`, and it is on a `<nav>`.
+- Every link has a matching section, in the same order.
+- Every h2 matches its link, without the bracketed kind.
+- Only the listed elements appear, and the only `<a>` elements are index links.
+- Every line has a `data-n`, and the number at the start of its text matches it, except code.
+- Every class is a kind word from the list, and it is only on sections.
+- Every line fits its section's kind, and holds one item or one allowed pair.
+- Every heading names its subject.
+- No line refers to another section in words.
+- Every `data-rel` is on a section, uses a listed relation, points at a section id in this reply, and has no reverse twin.
+- Every statement and result line has a `data-src`, and `data-src` is only on lines.
+- Every `<`, `>`, and `&` inside code is escaped.
