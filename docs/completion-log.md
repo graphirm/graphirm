@@ -1,5 +1,12 @@
 # Graphirm Development Progress Log
 
+## 2026-10-10: Scoped checklist and a read that returns after it leaves context — COMPLETE ✅
+
+- The checklist runs `cargo test -p` for the crate that changed, and skips tests when the change is text, config, or scratch. A `.py`, `.sh`, or other executable script is run once.
+- A file whose earlier read is no longer in the assembled context can be read again. A write or edit of that path still resets the count. The same-hour suite on `google/gemini-3.8-flash` scored 21 of 21 on both the previous binary and this one. The DeepSeek late runs are not claimed fixed.
+- The chat model stays `deepseek/deepseek-v3.2`.
+- Key files: `crates/agent/src/workflow.rs`, `crates/agent/src/config.rs`, `graphirm-eval/src/tasks/graph.rs`
+
 ## 2026-10-09: One verification checklist, then stop — COMPLETE ✅
 
 - A finished text reply ends the task. A reply that announces a tool action it did not take gets one continue. The tool gate keeps tools when an earlier human message was a task, and the verification checklist is exempt from the gate.

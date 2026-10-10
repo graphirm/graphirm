@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-10 — Ship the read reset after the same-hour suite
+
+**Context:** The same-hour check on `google/gemini-3.8-flash` scored 21 of 21, twice, on both `51d0087` and `b5bd775`. The DeepSeek drop lined up with a slower tail, not with more selection reads.
+**Decision:** Ship the scoped checklist and the read reset. Leave the reset as it is. Keep the chat model at `deepseek/deepseek-v3.2` until a later yes.
+**Alternatives:** Hold production on `51d0087`, which was the call before the same-hour suite. That suite is what changed the call.
+**Consequences:** The DeepSeek late runs are not claimed fixed. A model switch is a separate decision.
+**Refs:** `results/suite/ab-ref-1.log`, `results/suite/ab-new-1.log`.
+
 ## 2026-10-10 — The same-hour suite does not blame the read reset
 
 **Context:** The DeepSeek runs on `b5bd775` scored worse than `51d0087`, and selection kept hitting 180 seconds. A same-hour check was the way to separate a slow provider from the new read reset.
