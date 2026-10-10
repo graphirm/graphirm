@@ -1,6 +1,18 @@
 ---
 description: Every reply is HTML with one nav index and one kind per section, so a script can cut it into chunks.
 alwaysApply: true
+kinds:
+  - statement
+  - recommendation
+  - options
+  - instructions
+  - steps
+  - result
+  - assumption
+  - example
+  - caveat
+  - question
+  - code
 ---
 
 Reply with only HTML. No markdown.
