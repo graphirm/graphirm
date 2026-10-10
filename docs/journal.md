@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-10 — The same-hour suite does not blame the read reset
+
+**Context:** The DeepSeek runs on `b5bd775` scored worse than `51d0087`, and selection kept hitting 180 seconds. A same-hour check was the way to separate a slow provider from the new read reset.
+**Decision:** Leave the read reset as it is. Selection reads did not rise (about 5 then, about 4 to 5 on the new DeepSeek logs, and 4 on every Gemini run). Alternating `51d0087` and `b5bd775` on `google/gemini-3.8-flash` scored 21 of 21 on time, twice each.
+**Alternatives:** Cap the reset at one re-read, or return the file with a note that it was fetched again. Those were for the case where reads went up. They did not.
+**Consequences:** Production stays on `51d0087` until a ship is asked for. The DeepSeek drop lines up with a slower tail (median call about 5.9s both sets; 90th percentile 14.9s then, 19.1s on the new logs), measured from router selection to the recorded reply.
+**Refs:** `results/suite/baseline-1.log`, `results/suite/scoped-1.log`, `results/suite/ab-ref-1.log`, `results/suite/ab-new-1.log`.
+
 ## 2026-10-10 — The scoped checklist did not clear the 57/50/7/6 bar
 
 **Context:** Three suite runs on `b5bd775`, chat model `deepseek/deepseek-v3.2` via `jev_router`, scored 47 correct, 32 on time, 15 late, and 16 wrong out of 63. The reference at `51d0087` is 57, 50, 7, and 6. `selection-edit-from-early` was late in all three. `selection-carry-token` was late in two.
