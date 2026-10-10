@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-10 — A dropped read is readable again, and a script is run once
+
+**Context:** "Already read" returns no file body and assumes the earlier read is still in the prompt. Selection can drop that read, and compaction can summarize it away. The model then has neither the file nor a way to get it back. A `/tmp` script was told not to run tests, and nothing told the agent to run the script.
+**Decision:** The read count resets when the assembled context no longer contains that file's body. An "already read" notice does not count as the body. A `.py`, `.sh`, or executable change tells the agent to run that file once. Workspace tests stay skipped for text, config, and scratch files.
+**Alternatives:** Tell the model the earlier content may be gone and only let a ranged read through. That still depends on the model asking for a range, and a plain re-read stays blocked. Keep saying nothing for scripts. Running the script is the check that matters.
+**Consequences:** A third read of a file that is still in context stays blocked. After compaction or a selection drop, the next read returns the file. Compare the next suite with `results/suite/2026-10-09-51d0087/` (57 correct, 50 on time, 7 late, 6 wrong).
+**Refs:** `drop_reads_missing_from_context`, `script_run_command`.
+
 ## 2026-10-10 — Tests follow the files that changed
 
 **Context:** Three suite runs scored 57 of 63 correct. Seven of those were correct and late. Selection edits a text file, then the checklist told the agent to run the workspace `cargo test`. `graph-query-bfs` passed when the query cap fired, and failed once by reading `store.rs` instead of calling `graph_query`. The read-loop path injected a warning after the file contents had already come back.

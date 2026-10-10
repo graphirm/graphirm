@@ -128,14 +128,21 @@ fn context_budget_tokens(configured: Option<u32>) -> usize {
 /// Call the LLM with the current conversation context and record the
 /// assistant response as an Interaction node in the graph.
 ///
-/// Returns the LlmResponse (which may contain tool calls) and the
-/// NodeId of the recorded response node.
+/// Returns the LlmResponse, the recorded response node, and the file paths
+/// whose earlier read content is still in the context that was just sent.
 pub async fn stream_and_record(
     session: &Session,
     llm: Arc<dyn LlmProvider>,
     tools: &ToolRegistry,
     events: &EventBus,
-) -> Result<(LlmResponse, NodeId), AgentError> {
+) -> Result<
+    (
+        LlmResponse,
+        NodeId,
+        std::collections::HashSet<std::path::PathBuf>,
+    ),
+    AgentError,
+> {
     // Append cross-session memory context to the system prompt if available.
     let suffix = session.memory_suffix().await;
     let system_prompt = if suffix.is_empty() {
@@ -234,6 +241,7 @@ pub async fn stream_and_record(
         }
     }
 
+    let kept_reads = read_paths_in_messages(&window.messages);
     let mut context = Vec::with_capacity(1 + window.messages.len());
     context.push(window.system);
     context.extend(window.messages);
@@ -950,7 +958,7 @@ pub async fn stream_and_record(
         node_id: node_id.clone(),
     });
 
-    Ok((response, node_id))
+    Ok((response, node_id, kept_reads))
 }
 
 /// Execute tool calls in parallel using tokio::JoinSet.
@@ -1776,6 +1784,10 @@ pub(crate) fn verification_checklist(
             "Run `git diff --name-only` and confirm only the intended files changed.".to_string(),
         );
     }
+    let scripts: Vec<String> = changed
+        .iter()
+        .filter_map(|path| script_run_command(root, path))
+        .collect();
     if let Some(command) = scoped_test_command(root, changed, full_suite) {
         if full_suite {
             steps.push(format!("Run `{command}` and confirm it passes."));
@@ -1785,10 +1797,14 @@ pub(crate) fn verification_checklist(
             ));
         }
     } else if !full_suite
+        && scripts.is_empty()
         && !changed.is_empty()
         && changed.iter().all(|path| is_non_code(root, path))
     {
         steps.push("Do not run tests. The changes are text, config, or scratch files.".to_string());
+    }
+    for command in scripts {
+        steps.push(format!("Run `{command}` once and confirm it succeeds."));
     }
     steps.push(
         "In your final reply, state what changed and the result. Include the output you confirmed, or the code you wrote. Then stop. Do not re-read files you already read.".to_string(),
@@ -1992,6 +2008,149 @@ pub(crate) fn read_is_repeat(count: u32, threshold: u32) -> bool {
     threshold > 0 && count >= threshold
 }
 
+/// Paths whose file body is still in the context that was sent.
+/// An "already read" notice does not count: the body is gone.
+pub(crate) fn read_paths_in_messages(
+    messages: &[graphirm_llm::LlmMessage],
+) -> std::collections::HashSet<std::path::PathBuf> {
+    let mut calls: std::collections::HashMap<String, Vec<std::path::PathBuf>> =
+        std::collections::HashMap::new();
+    let mut kept = std::collections::HashSet::new();
+    for message in messages {
+        for part in &message.content {
+            match part {
+                graphirm_llm::ContentPart::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } if name == "read" => {
+                    if let Some(path) = arguments.get("path").and_then(|value| value.as_str()) {
+                        calls
+                            .entry(id.clone())
+                            .or_default()
+                            .push(std::path::PathBuf::from(path));
+                    }
+                }
+                graphirm_llm::ContentPart::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } if name == "read_many" => {
+                    if let Some(paths) = arguments.get("paths").and_then(|value| value.as_array()) {
+                        calls.entry(id.clone()).or_default().extend(
+                            paths
+                                .iter()
+                                .filter_map(|value| value.as_str().map(std::path::PathBuf::from)),
+                        );
+                    }
+                }
+                graphirm_llm::ContentPart::ToolResult {
+                    id,
+                    content,
+                    is_error,
+                } => {
+                    if *is_error || content.starts_with("already read ") {
+                        continue;
+                    }
+                    if let Some(paths) = calls.get(id) {
+                        kept.extend(paths.iter().cloned());
+                    }
+                }
+                graphirm_llm::ContentPart::Text { text } => {
+                    if let Some(path) = file_banner_path(text) {
+                        kept.insert(path);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    kept
+}
+
+fn file_banner_path(text: &str) -> Option<std::path::PathBuf> {
+    let rest = text.strip_prefix("[File: ")?;
+    let line = rest.split('\n').next()?;
+    let path = line.strip_suffix(']')?;
+    if path.is_empty() {
+        None
+    } else {
+        Some(std::path::PathBuf::from(path))
+    }
+}
+
+/// Drop read counts whose file body is not in the assembled context.
+pub(crate) fn drop_reads_missing_from_context(
+    counts: &mut std::collections::HashMap<std::path::PathBuf, u32>,
+    kept: &std::collections::HashSet<std::path::PathBuf>,
+) {
+    counts.retain(|path, _| {
+        kept.iter()
+            .any(|present| paths_refer_to_same(path, present))
+    });
+}
+
+fn paths_refer_to_same(counted: &std::path::Path, present: &std::path::Path) -> bool {
+    if counted == present {
+        return true;
+    }
+    let counted: Vec<_> = counted.components().collect();
+    let present: Vec<_> = present.components().collect();
+    !counted.is_empty() && (present.ends_with(&counted) || counted.ends_with(&present))
+}
+
+/// A `.py` or `.sh` file, or a file with the executable bit, is run once.
+/// Rust sources stay on the crate test step.
+fn script_run_command(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
+    if !is_script(root, path) {
+        return None;
+    }
+    let shown = path.display().to_string();
+    let ext = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let command = match ext.as_str() {
+        "py" => format!("python3 {shown}"),
+        "sh" => format!("bash {shown}"),
+        _ => shown,
+    };
+    Some(command)
+}
+
+fn is_script(root: &std::path::Path, path: &std::path::Path) -> bool {
+    if is_rust(path) {
+        return false;
+    }
+    let ext = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    ext == "py" || ext == "sh" || is_executable(root, path)
+}
+
+fn is_executable(root: &std::path::Path, path: &std::path::Path) -> bool {
+    let full = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(&full)
+            .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = full;
+        false
+    }
+}
+
 pub(crate) fn already_read_notice(path: &std::path::Path) -> String {
     format!(
         "already read `{}`. Use the earlier result. Do not read this file again until you edit it.",
@@ -2153,9 +2312,9 @@ pub async fn run_agent_loop(
         // Race the LLM call against cancellation and a per-turn timeout so
         // hung provider connections don't leave the session stuck forever.
         let llm_timeout = std::time::Duration::from_secs(session.agent_config.timeout_seconds);
-        let (response, response_id) = tokio::select! {
+        let (response, response_id, kept_reads) = tokio::select! {
             result = stream_and_record(session, llm.clone(), tools, events) => match result {
-                Ok(pair) => pair,
+                Ok(triple) => triple,
                 Err(AgentError::SessionTokenCapExceeded {
                     used,
                     cap,
@@ -2199,6 +2358,9 @@ pub async fn run_agent_loop(
             }
         };
         all_node_ids.push(response_id.clone());
+        // A read that selection or compaction dropped is not "already read".
+        // The model no longer has the file, so the next read must return it.
+        drop_reads_missing_from_context(&mut file_read_counts, &kept_reads);
 
         if !response.has_tool_calls() {
             // Model put tool invocations inside segment JSON instead of using native tool calls.
@@ -2820,7 +2982,7 @@ mod tests {
         let tools = ToolRegistry::new();
         let bus = EventBus::new();
 
-        let (response, node_id) = stream_and_record(&session, provider.clone(), &tools, &bus)
+        let (response, node_id, _) = stream_and_record(&session, provider.clone(), &tools, &bus)
             .await
             .unwrap();
 
@@ -3163,6 +3325,47 @@ mod tests {
         assert!(scratch.contains("Do not run tests"));
         assert!(!scratch.contains("cargo test"));
 
+        let python = verification_checklist(
+            &root,
+            &[std::path::PathBuf::from("/tmp/eval_broken.py")],
+            false,
+        );
+        assert!(
+            python.contains("python3 /tmp/eval_broken.py"),
+            "a python script is run once, got {python}"
+        );
+        assert!(python.contains("once"));
+        assert!(!python.contains("cargo test"));
+        assert!(!python.contains("Do not run tests"));
+
+        let shell = verification_checklist(
+            &root,
+            &[std::path::PathBuf::from("/tmp/eval_run.sh")],
+            false,
+        );
+        assert!(
+            shell.contains("bash /tmp/eval_run.sh"),
+            "a shell script is run once, got {shell}"
+        );
+        assert!(!shell.contains("Do not run tests"));
+
+        let bin = root.join("run-me");
+        std::fs::write(&bin, "#!/bin/sh\necho ok\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&bin).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&bin, perms).unwrap();
+        }
+        let executable = verification_checklist(&root, &[bin], false);
+        assert!(
+            executable.contains("run-me"),
+            "an executable is run once, got {executable}"
+        );
+        assert!(executable.contains("once"));
+        assert!(!executable.contains("Do not run tests"));
+
         let asked = verification_checklist(&root, &code, true);
         assert!(asked.contains("cargo test` and"));
         assert!(!asked.contains("-p "));
@@ -3202,6 +3405,159 @@ mod tests {
         assert!(!read_is_repeat(2, 3));
         assert!(!read_is_repeat(9, 0));
         assert!(already_read_notice(std::path::Path::new("src/store.rs")).contains("already read"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Marks earlier `read` results and their file nodes compacted, the same
+    /// flag `build_context` already skips.
+    struct CompactReads;
+
+    #[async_trait::async_trait]
+    impl graphirm_tools::Tool for CompactReads {
+        fn name(&self) -> &str {
+            "compact_reads"
+        }
+        fn description(&self) -> &str {
+            "Mark earlier reads compacted"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+            ctx: &ToolContext,
+        ) -> Result<graphirm_tools::ToolOutput, graphirm_tools::ToolError> {
+            let graph = ctx.graph.clone();
+            let agent = ctx.agent_id.clone();
+            tokio::task::spawn_blocking(move || {
+                let produced = graph
+                    .neighbors(&agent, Some(EdgeType::Produces), Direction::Outgoing)
+                    .map_err(|error| {
+                        graphirm_tools::ToolError::ExecutionFailed(error.to_string())
+                    })?;
+                for node in produced {
+                    let is_read = node
+                        .metadata
+                        .get("tool_name")
+                        .and_then(|value| value.as_str())
+                        == Some("read");
+                    let is_assistant = matches!(
+                        &node.node_type,
+                        NodeType::Interaction(data) if data.role == "assistant"
+                    );
+                    if is_assistant {
+                        let reads = graph
+                            .neighbors(&node.id, Some(EdgeType::Reads), Direction::Outgoing)
+                            .map_err(|error| {
+                                graphirm_tools::ToolError::ExecutionFailed(error.to_string())
+                            })?;
+                        for mut content in reads {
+                            content.metadata["compacted"] = serde_json::json!(true);
+                            let id = content.id.clone();
+                            graph.update_node(&id, content).map_err(|error| {
+                                graphirm_tools::ToolError::ExecutionFailed(error.to_string())
+                            })?;
+                        }
+                    }
+                    if is_read {
+                        let mut node = node;
+                        node.metadata["compacted"] = serde_json::json!(true);
+                        let id = node.id.clone();
+                        graph.update_node(&id, node).map_err(|error| {
+                            graphirm_tools::ToolError::ExecutionFailed(error.to_string())
+                        })?;
+                    }
+                }
+                Ok(graphirm_tools::ToolOutput::success("compacted"))
+            })
+            .await
+            .map_err(|error| graphirm_tools::ToolError::ExecutionFailed(error.to_string()))?
+        }
+    }
+
+    /// The third read is blocked only while an earlier read is still in context.
+    /// After that read is compacted, the file has to come back.
+    #[tokio::test]
+    async fn a_read_returns_content_again_after_compaction() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let root = std::env::temp_dir().join(format!(
+            "graphirm-read-after-compact-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("notes.txt"), "TOKEN_AFTER_COMPACT\n").unwrap();
+        let config = AgentConfig {
+            max_turns: 5,
+            pre_completion_verify: false,
+            working_dir: root.clone(),
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session
+            .add_user_message("Read notes.txt, compact that read, then read notes.txt twice more.")
+            .await
+            .unwrap();
+
+        let provider = Arc::new(MockProvider::new(vec![
+            tool_call_response(vec![(
+                "read",
+                "call_r1",
+                serde_json::json!({"path": "notes.txt"}),
+            )]),
+            tool_call_response(vec![("compact_reads", "call_c", serde_json::json!({}))]),
+            tool_call_response(vec![(
+                "read",
+                "call_r2",
+                serde_json::json!({"path": "notes.txt"}),
+            )]),
+            tool_call_response(vec![(
+                "read",
+                "call_r3",
+                serde_json::json!({"path": "notes.txt"}),
+            )]),
+            text_response("Done."),
+        ]));
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(graphirm_tools::read::ReadTool::new()));
+        tools.register(Arc::new(CompactReads));
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        run_agent_loop(&session, provider, &tools, &bus, &token)
+            .await
+            .unwrap();
+
+        let produced = graph
+            .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap();
+        let mut reads: Vec<_> = produced
+            .iter()
+            .filter(|node| {
+                node.metadata
+                    .get("tool_name")
+                    .and_then(|value| value.as_str())
+                    == Some("read")
+            })
+            .collect();
+        reads.sort_by_key(|node| node.created_at);
+        assert_eq!(reads.len(), 3, "three reads should be recorded");
+        for node in &reads {
+            let NodeType::Interaction(data) = &node.node_type else {
+                panic!("read result must be an interaction");
+            };
+            assert!(
+                data.content.contains("TOKEN_AFTER_COMPACT"),
+                "read content was dropped: {}",
+                data.content
+            );
+            assert!(
+                !data.content.starts_with("already read"),
+                "compaction must let the file come back, got {}",
+                data.content
+            );
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 

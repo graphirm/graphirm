@@ -209,7 +209,8 @@ pub struct AgentConfig {
     pub doom_loop_threshold: u32,
     /// Number of times the agent may read the same file in one session before
     /// later reads return "already read" instead of the file. A write or edit
-    /// of that path resets the count. 0 disables. Default 3.
+    /// of that path resets the count, and so does a turn whose assembled
+    /// context no longer contains that read. 0 disables. Default 3.
     #[serde(default = "default_read_loop_threshold")]
     pub read_loop_threshold: u32,
     /// Token budget thresholds at which a warning is appended to the system prompt for
