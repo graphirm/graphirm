@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-11 — The image tag is the deploy record
+
+**Context:** The runtime image declared `org.opencontainers.image.revision` from `ARG SOURCE_COMMIT`, default `unknown`. Coolify's "Include Source Commit in Build" was already on. The deploy of `a0dc927` still ran `docker build` without `--build-arg SOURCE_COMMIT`, and the label stayed `unknown`.
+**Decision:** Remove the label. The image tag is the commit (`r2kuw7u27hwqku90luoqu57j:<sha>`).
+**Alternatives:** Keep the label and expect the checkbox to fill it. That checkbox did not add the build-arg on this Coolify build path.
+**Consequences:** `docker image inspect` will not show a revision label. The tag still will.
+**Refs:** Coolify deployment `ijuy41f021cpd0v33bbvzjfk`.
+
 ## 2026-10-11 — Hosted embeddings go through OpenRouter Codestral Embed
 
 **Context:** `EMBEDDING_BACKEND` is unset on app.graphirm.ai, so memory is off. The Mistral path in `create_embedding_provider` needs `MISTRAL_API_KEY`, and the container does not have one. It does have `OPENROUTER_API_KEY`. OpenRouter lists `mistralai/codestral-embed-2505` at $0.15 per million tokens, one provider, OpenAI-compatible embeddings. Prod has no stored vectors.
