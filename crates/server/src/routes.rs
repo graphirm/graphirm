@@ -215,7 +215,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/knowledge", post(create_knowledge))
         .route(
             "/api/knowledge/{id}",
-            patch(patch_knowledge).delete(delete_knowledge),
+            get(get_knowledge_by_id)
+                .patch(patch_knowledge)
+                .delete(delete_knowledge),
         )
         .route("/api/knowledge/pinned", get(list_pinned_knowledge))
         .route("/api/interactions/{id}/edit", patch(patch_interaction_edit))
@@ -1344,6 +1346,29 @@ async fn node_action(
             "No pending gate for node {node_id}"
         )))
     }
+}
+
+/// `GET /api/knowledge/{id}` — return one Knowledge node.
+async fn get_knowledge_by_id(
+    State(state): State<AppState>,
+    Path(node_id): Path<String>,
+) -> Result<Json<GraphNode>, ServerError> {
+    let id = NodeId::from(node_id.as_str());
+    let graph = state.graph.clone();
+    let node = tokio::task::spawn_blocking(move || graph.get_node(&id))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(|e| match e {
+            graphirm_graph::GraphError::NodeNotFound(msg) => ServerError::NotFound(msg),
+            other => ServerError::Graph(other),
+        })?;
+    if !matches!(node.node_type, NodeType::Knowledge(_)) {
+        return Err(ServerError::BadRequest(format!(
+            "node {} is not a Knowledge node",
+            node.id.0
+        )));
+    }
+    Ok(Json(node))
 }
 
 /// `PATCH /api/knowledge/{id}` — update summary, soft-dismiss, and/or pin/unpin a Knowledge node.
@@ -3392,6 +3417,76 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(again.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_get_knowledge_by_id_returns_the_node() {
+        let app = create_router(test_app_state());
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/knowledge")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"entity":"dedupe","entity_type":"test","summary":"one"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create_resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: GraphNode = serde_json::from_slice(&body).unwrap();
+        let kid = created.id.0.clone();
+
+        let get = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/knowledge/{kid}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(get.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(get.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let fetched: GraphNode = serde_json::from_slice(&body).unwrap();
+        assert_eq!(fetched.id, created.id);
+        match &fetched.node_type {
+            NodeType::Knowledge(data) => assert_eq!(data.entity, "dedupe"),
+            other => panic!("expected knowledge, got {other:?}"),
+        }
+
+        let missing = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/knowledge/does-not-exist")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+        let pinned = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/knowledge/pinned")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(pinned.status(), StatusCode::OK);
     }
 
     // ── agent_event_to_sse ────────────────────────────────────────────────────
