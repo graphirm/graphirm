@@ -22,6 +22,22 @@ Entry template:
 
 ---
 
+## 2026-10-11 — Hosted embeddings go through OpenRouter Codestral Embed
+
+**Context:** `EMBEDDING_BACKEND` is unset on app.graphirm.ai, so memory is off. The Mistral path in `create_embedding_provider` needs `MISTRAL_API_KEY`, and the container does not have one. It does have `OPENROUTER_API_KEY`. OpenRouter lists `mistralai/codestral-embed-2505` at $0.15 per million tokens, one provider, OpenAI-compatible embeddings. Prod has no stored vectors.
+**Decision:** Add an `openrouter/` embedding backend. The spec is `openrouter/mistralai/codestral-embed-2505`. The vector length is 1536, measured with one live call on 2026-10-11. Set `EMBEDDING_BACKEND` in Coolify only after this binary is deployed.
+**Alternatives:** A separate `MISTRAL_API_KEY` for `mistral/codestral-embed`. That is the same model family and the same 1536 dimensions, and it needs a second key. Setting the bare slug `mistralai/codestral-embed-2505` on the current image fails closed: the first token before `/` is the backend name.
+**Consequences:** Prod stays comparable to the 2026-10-10 suites, which embedded with `mistral/codestral-embed` at 1536 dimensions. Nothing to re-embed. A different OpenRouter embedding model is rejected until its dimension is measured.
+**Refs:** `crates/llm/src/openrouter_embed.rs`, `crates/llm/src/factory.rs`.
+
+## 2026-10-11 — Pi stays off on the hosted image
+
+**Context:** `[agent.pi] enabled` was true. The hosted image has no `pi` binary. Startup registers `delegate_pi` and the tool fails when called.
+**Decision:** Ship `enabled = false` in `config/default.toml`. A machine that has `pi` can turn it on.
+**Alternatives:** Install `pi` in the image and leave the flag on. Hosted is not meant to delegate to Pi.
+**Consequences:** New sessions from this file do not offer `delegate_pi`. `disable_bash` is still the switch that hides bash on a public host.
+**Refs:** `config/default.toml`.
+
 ## 2026-10-11 — The chat model is Gemini 3.8 Flash
 
 **Context:** In one window, three suites on `deepseek/deepseek-v3.2` scored 45 correct, 30 on time, 15 late, and 18 wrong out of 63. Three on `google/gemini-3.8-flash` scored 63, 62, 1, and 0. Median call time was 8574 ms versus 3557 ms.

@@ -200,8 +200,12 @@ async fn setup_memory_retriever(
 {
     let embedding_backend = std::env::var("EMBEDDING_BACKEND").ok();
     if let Some(spec) = embedding_backend {
-        let mistral_key = std::env::var("MISTRAL_API_KEY").ok();
-        match graphirm_llm::factory::create_embedding_provider(&spec, mistral_key.as_deref()) {
+        let api_key = if spec.starts_with("openrouter/") {
+            std::env::var("OPENROUTER_API_KEY").ok()
+        } else {
+            std::env::var("MISTRAL_API_KEY").ok()
+        };
+        match graphirm_llm::factory::create_embedding_provider(&spec, api_key.as_deref()) {
             Ok((provider, dim)) => {
                 tracing::info!(backend = %spec, dim, "Embedding provider initialised");
                 let retriever = std::sync::Arc::new(
