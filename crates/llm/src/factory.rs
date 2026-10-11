@@ -234,7 +234,11 @@ mod tests {
         assert!(err.to_string().contains("mistralai"), "{err}");
     }
 
+    /// Hits OpenRouter. Ignored so a normal `cargo test` neither fails without a
+    /// key nor spends an embedding request when the key is present.
+    /// `cargo test -p graphirm-llm --lib openrouter_codestral_embed_vector_matches_dim -- --ignored`
     #[tokio::test]
+    #[ignore = "calls OpenRouter and spends an embedding request"]
     async fn openrouter_codestral_embed_vector_matches_dim() {
         let Ok(key) = std::env::var("OPENROUTER_API_KEY") else {
             eprintln!("OPENROUTER_API_KEY unset; skipping live embed");
