@@ -1210,7 +1210,10 @@ mod tests {
         let accepted: Vec<&str> = PieceKind::ALL.iter().map(|kind| kind.as_label()).collect();
         assert_eq!(kinds, accepted);
         for kind in &kinds {
-            assert_eq!(PieceKind::from_label(kind).map(PieceKind::as_label), Some(kind.as_str()));
+            assert_eq!(
+                PieceKind::from_label(kind).map(PieceKind::as_label),
+                Some(kind.as_str())
+            );
             let pieces = cut_html_index(&page_for_kind(kind)).expect(kind);
             assert_eq!(pieces.len(), 1);
             assert_eq!(pieces[0].kind.as_label(), kind);
