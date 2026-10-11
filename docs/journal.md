@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-11 — The chat model is Gemini 3.8 Flash
+
+**Context:** In one window, three suites on `deepseek/deepseek-v3.2` scored 45 correct, 30 on time, 15 late, and 18 wrong out of 63. Three on `google/gemini-3.8-flash` scored 63, 62, 1, and 0. Median call time was 8574 ms versus 3557 ms.
+**Decision:** Use `google/gemini-3.8-flash` for `[model].name`, `[agent].model`, and both routing tiers. Leave Pi on `deepseek/deepseek-v4-flash` and extraction on `deepseek-chat`.
+**Alternatives:** The alias `google/gemini-flash-latest`. The concrete id is the one the suite measured. Keeping v3.2 lost the comparison on correctness and on the slow tail.
+**Consequences:** A correct task costs more on the Flash card price ($0.0806 versus $0.0270 on 2026-10-10). Cache reads were priced as full input.
+**Refs:** `results/suite/cmp-deepseek-1.json`, `results/suite/cmp-gemini-1.json`.
+
 ## 2026-10-10 — Ship the read reset after the same-hour suite
 
 **Context:** The same-hour check on `google/gemini-3.8-flash` scored 21 of 21, twice, on both `51d0087` and `b5bd775`. The DeepSeek drop lined up with a slower tail, not with more selection reads.

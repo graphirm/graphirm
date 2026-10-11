@@ -16,13 +16,13 @@
 
 [model]
 provider = "openrouter"
-name = "deepseek/deepseek-v3.2"
+name = "google/gemini-3.8-flash"
 temperature = 0.7
 max_tokens = 8192
 
 [agent]
 name = "graphirm"
-model = "openrouter/deepseek/deepseek-v3.2"
+model = "openrouter/google/gemini-3.8-flash"
 max_iterations = 50
 parallel_tool_calls = true
 max_output_tokens = 4096
@@ -199,13 +199,13 @@ enforce_work_loop = true               # inject Plan→Build→Verify→Fix fram
 default_auto_approve = true
 
 # Two-tier model routing — used when [agent.adaptive_routing] strategy = "rules".
-# Both tiers use the same model for now (cost-neutral); rules still record model_tier
-# on turns for analysis. Use the same top-level provider (openrouter/...) for both.
+# Both tiers use Gemini 3.8 Flash. The router still records model_tier.
+# Use the same top-level provider (openrouter/...) for both.
 # Rule order: first match wins; see crates/agent/src/router.rs. To split tiers later,
 # set smart to e.g. openrouter/anthropic/claude-sonnet-4.6 (same openrouter/ prefix).
 [agent.routing]
-cheap = ["openrouter/deepseek/deepseek-v3.2"]
-smart = ["openrouter/deepseek/deepseek-v3.2"]
+cheap = ["openrouter/google/gemini-3.8-flash"]
+smart = ["openrouter/google/gemini-3.8-flash"]
 default_tier = "cheap"
 
 [[agent.routing.rules]]

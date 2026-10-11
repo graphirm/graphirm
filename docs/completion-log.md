@@ -1,5 +1,11 @@
 # Graphirm Development Progress Log
 
+## 2026-10-11: Chat model is Gemini 3.8 Flash — COMPLETE ✅
+
+- `[model].name`, `[agent].model`, and both routing tiers are `google/gemini-3.8-flash`. Pi stays on `deepseek/deepseek-v4-flash`. Extraction stays on `deepseek-chat`.
+- Same-window suites: DeepSeek v3.2 was 45 correct, 30 on time, 15 late, 18 wrong of 63. Gemini 3.8 Flash was 63, 62, 1, 0.
+- Key file: `config/default.toml`
+
 ## 2026-10-10: Scoped checklist and a read that returns after it leaves context — COMPLETE ✅
 
 - The checklist runs `cargo test -p` for the crate that changed, and skips tests when the change is text, config, or scratch. A `.py`, `.sh`, or other executable script is run once.
