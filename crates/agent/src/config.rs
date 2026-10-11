@@ -259,6 +259,21 @@ pub struct AgentConfig {
     /// require per-call approval by default. The TUI has no HITL gate today.
     #[serde(default = "default_true")]
     pub default_auto_approve: bool,
+    /// When true, context scoring uses only the recency weight.
+    #[serde(default)]
+    pub recency_only: bool,
+    /// When true, each new session opens an empty graph instead of the shared one.
+    #[serde(default)]
+    pub fresh_graph_per_session: bool,
+    /// Directory for per-session graph files. Used only when `fresh_graph_per_session` is set.
+    #[serde(default)]
+    pub fresh_graph_dir: Option<PathBuf>,
+    /// Sent as OpenRouter `reasoning.effort` when set. Example: `"high"`.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    /// OpenRouter provider slug pinned with `provider.only`. Example: `"xai"`.
+    #[serde(default)]
+    pub openrouter_provider: Option<String>,
 }
 
 /// Objective weights for composite score optimisation.
@@ -634,6 +649,11 @@ impl Default for AgentConfig {
             tool_gate_enabled: default_tool_gate_enabled(),
             pi: None,
             default_auto_approve: true,
+            recency_only: false,
+            fresh_graph_per_session: false,
+            fresh_graph_dir: None,
+            reasoning_effort: None,
+            openrouter_provider: None,
         }
     }
 }
@@ -729,6 +749,16 @@ struct AgentConfigSection {
     pi: Option<PiConfig>,
     #[serde(default = "default_true")]
     default_auto_approve: bool,
+    #[serde(default)]
+    recency_only: bool,
+    #[serde(default)]
+    fresh_graph_per_session: bool,
+    #[serde(default)]
+    fresh_graph_dir: Option<PathBuf>,
+    #[serde(default)]
+    reasoning_effort: Option<String>,
+    #[serde(default)]
+    openrouter_provider: Option<String>,
 }
 
 fn default_system_prompt() -> String {
@@ -792,6 +822,11 @@ impl AgentConfig {
             tool_gate_enabled: file.agent.tool_gate_enabled,
             pi: file.agent.pi,
             default_auto_approve: file.agent.default_auto_approve,
+            recency_only: file.agent.recency_only,
+            fresh_graph_per_session: file.agent.fresh_graph_per_session,
+            fresh_graph_dir: file.agent.fresh_graph_dir,
+            reasoning_effort: file.agent.reasoning_effort,
+            openrouter_provider: file.agent.openrouter_provider,
         })
     }
 
@@ -1427,6 +1462,36 @@ segment_filter = ["reasoning", "code"]
     #[test]
     fn model_routing_absent_by_default() {
         let config = AgentConfig::default();
+        assert!(config.model_routing.is_none());
+        assert!(!config.recency_only);
+        assert!(!config.fresh_graph_per_session);
+        assert!(config.reasoning_effort.is_none());
+        assert!(config.openrouter_provider.is_none());
+    }
+
+    #[test]
+    fn eval_memory_and_reasoning_flags_parse_from_toml() {
+        let toml = r#"
+            [agent]
+            name = "eval"
+            model = "x-ai/grok-4.7"
+            system_prompt = "test"
+            max_turns = 5
+            recency_only = true
+            fresh_graph_per_session = true
+            fresh_graph_dir = "/tmp/graphirm-fresh"
+            reasoning_effort = "high"
+            openrouter_provider = "xai"
+        "#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        assert!(config.recency_only);
+        assert!(config.fresh_graph_per_session);
+        assert_eq!(
+            config.fresh_graph_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/graphirm-fresh"))
+        );
+        assert_eq!(config.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(config.openrouter_provider.as_deref(), Some("xai"));
         assert!(config.model_routing.is_none());
     }
 

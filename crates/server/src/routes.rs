@@ -403,11 +403,24 @@ async fn create_session(
         config.system_prompt.push_str(&ws_context);
     }
 
-    // Inject compact repo briefing when enabled
+    // Inject compact repo briefing when enabled. A fresh-graph session briefs
+    // from its empty store, so prior sessions' knowledge does not leak in.
+    let graph_for_session = {
+        let shared = state.graph.clone();
+        let config_for_graph = config.clone();
+        tokio::task::spawn_blocking(move || {
+            graphirm_agent::open_session_graph(shared, &config_for_graph)
+        })
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(ServerError::Agent)?
+    };
     if config.repo_briefing
-        && let Some(briefing) =
-            graphirm_agent::briefing::build_repo_briefing(&config.working_dir, state.graph.as_ref())
-                .await
+        && let Some(briefing) = graphirm_agent::briefing::build_repo_briefing(
+            &config.working_dir,
+            graph_for_session.as_ref(),
+        )
+        .await
     {
         config.system_prompt.push_str(&briefing);
     }
@@ -441,7 +454,6 @@ async fn create_session(
         Some(judge) => HitlGate::new().with_judge(judge),
         None => HitlGate::new(),
     });
-    let graph_for_session = state.graph.clone();
     let config_clone = config.clone();
     let mut session =
         tokio::task::spawn_blocking(move || Session::new(graph_for_session, config_clone))
@@ -473,7 +485,9 @@ async fn create_session(
         "session created"
     );
 
-    if let Some(ref retriever) = state.memory_retriever {
+    if !config.fresh_graph_per_session
+        && let Some(ref retriever) = state.memory_retriever
+    {
         session = session.with_memory_retriever(retriever.clone());
     }
     let session_id = SessionId(session.id.to_string());

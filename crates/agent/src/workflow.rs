@@ -159,6 +159,7 @@ pub async fn stream_and_record(
         max_tokens: context_budget_tokens(session.agent_config.max_tokens),
         segment_filter: session.agent_config.segment_filter.clone(),
         enable_compaction: session.agent_config.enable_compaction,
+        recency_only: session.agent_config.recency_only,
         ..crate::context::ContextConfig::default()
     };
     let graph_ref = session.graph.clone();
@@ -479,6 +480,14 @@ pub async fn stream_and_record(
         let comp_config = CompletionConfig::new(model)
             .with_max_tokens(max_output)
             .with_temperature(temperature);
+        let comp_config = match session.agent_config.reasoning_effort.clone() {
+            Some(effort) => comp_config.with_reasoning_effort(effort),
+            None => comp_config,
+        };
+        let comp_config = match session.agent_config.openrouter_provider.clone() {
+            Some(provider) => comp_config.with_provider_only(provider),
+            None => comp_config,
+        };
         let start = std::time::Instant::now();
         match llm.stream(context.clone(), &tool_defs, &comp_config).await {
             Ok(stream) => {

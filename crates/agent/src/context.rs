@@ -87,6 +87,10 @@ pub struct ContextConfig {
     pub max_content_nodes: usize,
     #[serde(default = "default_recency_decay")]
     pub recency_decay: f64,
+    /// When true, `score_node` uses only the recency term. Edge weight, graph
+    /// distance, and PageRank stay in the function and are not applied.
+    #[serde(default)]
+    pub recency_only: bool,
     #[serde(default)]
     pub edge_weights: EdgeWeights,
     /// When true, `build_context` will trigger compaction of old nodes that
@@ -138,6 +142,7 @@ impl Default for ContextConfig {
             tail_max_fraction: 0.5,
             max_content_nodes: 20,
             recency_decay: 0.1,
+            recency_only: false,
             edge_weights: EdgeWeights::default(),
             enable_compaction: false,
             compaction_threshold: 0.80,
@@ -1354,6 +1359,9 @@ pub fn score_node(
     graph: &GraphStore,
 ) -> Result<f64, AgentError> {
     let recency = score_recency(node, config.recency_decay);
+    if config.recency_only {
+        return Ok(W_RECENCY * recency);
+    }
 
     let edge_raw = score_edge_weights(&node.id, graph, &config.edge_weights)?;
     let edge_normalized = edge_raw / (1.0 + edge_raw);
@@ -3630,6 +3638,178 @@ mod tests {
             score_file > score_old,
             "Recent file with Modifies edge ({score_file}) should outscore \
              10h-old message with RespondsTo edge ({score_old})"
+        );
+    }
+
+    #[test]
+    fn score_node_recency_only_ignores_pagerank_and_distance() {
+        let graph = GraphStore::open_memory().unwrap();
+        let mut config = ContextConfig::default();
+        config.recency_only = true;
+
+        let mut old = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "old decision".to_string(),
+            token_count: None,
+        }));
+        old.created_at = Utc::now() - Duration::hours(100);
+        old.updated_at = old.created_at;
+        let id = old.id.clone();
+        graph.add_node(old.clone()).unwrap();
+
+        let mut pagerank_scores = HashMap::new();
+        pagerank_scores.insert(id.clone(), 1.0);
+        let mut distances = HashMap::new();
+        distances.insert(id.clone(), 0);
+
+        let score = score_node(&old, &pagerank_scores, &distances, &config, &graph).unwrap();
+        let expected = W_RECENCY * score_recency(&old, config.recency_decay);
+        assert!(
+            (score - expected).abs() < 1e-9,
+            "recency-only score {score} != recency term {expected}"
+        );
+        assert!(
+            score < 0.01,
+            "a 100h-old node must not keep PageRank or distance, got {score}"
+        );
+    }
+
+    /// Flags off must keep the pre-change score: recency 0.3, edge 0.2,
+    /// distance 0.3, PageRank 0.2. Context selection then keeps the node
+    /// that formula ranks first when the budget fits only one of them.
+    #[test]
+    fn flags_off_match_pre_change_score_and_selection() {
+        let agent_cfg = crate::config::AgentConfig::default();
+        assert!(!agent_cfg.recency_only);
+        assert!(!agent_cfg.fresh_graph_per_session);
+
+        let graph = GraphStore::open_memory().unwrap();
+        let mut config = ContextConfig::default();
+        config.recency_only = false;
+        config.guaranteed_recent_turns = 1;
+        config.tail_max_fraction = 0.9;
+        config.system_prompt = "sys".to_string();
+
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "test-agent".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("sys".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+
+        let same_age = Utc::now() - Duration::hours(2);
+        let mut older = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "old aa bb cc dd".to_string(),
+            token_count: None,
+        }));
+        older.created_at = same_age;
+        older.updated_at = same_age;
+        let older_id = older.id.clone();
+        graph.add_node(older.clone()).unwrap();
+
+        let mut mid = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "mid aa bb cc dd".to_string(),
+            token_count: None,
+        }));
+        mid.created_at = same_age;
+        mid.updated_at = same_age;
+        let mid_id = mid.id.clone();
+        graph.add_node(mid.clone()).unwrap();
+
+        let current = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "CURRENT".to_string(),
+            token_count: None,
+        }));
+        let current_id = current.id.clone();
+        graph.add_node(current).unwrap();
+
+        for id in [&older_id, &mid_id, &current_id] {
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    id.clone(),
+                ))
+                .unwrap();
+        }
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                mid_id.clone(),
+                older_id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                current_id.clone(),
+                mid_id.clone(),
+            ))
+            .unwrap();
+
+        let pr_vec = graph.pagerank().unwrap();
+        let pagerank_scores: HashMap<NodeId, f64> = pr_vec.into_iter().collect();
+        let distances = bfs_distances(&graph, &current_id, 10).unwrap();
+
+        let pre_change = |node: &GraphNode| -> f64 {
+            let recency = score_recency(node, config.recency_decay);
+            let edge_raw = score_edge_weights(&node.id, &graph, &config.edge_weights).unwrap();
+            let edge_normalized = edge_raw / (1.0 + edge_raw);
+            let distance = score_graph_distance(&node.id, &distances);
+            let pagerank = pagerank_scores
+                .get(&node.id)
+                .copied()
+                .unwrap_or(0.0)
+                .min(1.0);
+            // Weights frozen at the values from before the flag: 0.3, 0.2, 0.3, 0.2.
+            0.3 * recency + 0.2 * edge_normalized + 0.3 * distance + 0.2 * pagerank
+        };
+
+        let score_mid = score_node(&mid, &pagerank_scores, &distances, &config, &graph).unwrap();
+        let score_old = score_node(&older, &pagerank_scores, &distances, &config, &graph).unwrap();
+        assert!((score_mid - pre_change(&mid)).abs() < 1e-12);
+        assert!((score_old - pre_change(&older)).abs() < 1e-12);
+        assert!(
+            score_mid > score_old,
+            "mid {score_mid} should outrank old {score_old} under the pre-change weights"
+        );
+
+        let system_tokens = estimate_tokens_str(&config.system_prompt);
+        let current_tokens = estimate_tokens_str("CURRENT");
+        let one_older = estimate_tokens_str("mid aa bb cc dd");
+        config.max_tokens = system_tokens + current_tokens + one_older;
+
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        let texts: Vec<String> = window
+            .messages
+            .iter()
+            .map(|message| {
+                message
+                    .content
+                    .iter()
+                    .filter_map(|part| match part {
+                        graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<String>()
+            })
+            .collect();
+        assert!(
+            texts.iter().any(|text| text.contains("mid aa bb cc dd")),
+            "selected {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|text| text.contains("CURRENT")),
+            "selected {texts:?}"
+        );
+        assert!(
+            texts.iter().all(|text| !text.contains("old aa bb cc dd")),
+            "budget should drop the lower pre-change score, selected {texts:?}"
         );
     }
 

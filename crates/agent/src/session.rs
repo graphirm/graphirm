@@ -13,6 +13,30 @@ use crate::error::AgentError;
 use crate::hitl::HitlGate;
 use crate::knowledge::memory::MemoryRetriever;
 
+/// Graph store for a new session.
+///
+/// When `fresh_graph_per_session` is false, this returns the shared store.
+/// When it is true, this opens a new empty SQLite file and does not copy nodes.
+pub fn open_session_graph(
+    shared: Arc<GraphStore>,
+    config: &AgentConfig,
+) -> Result<Arc<GraphStore>, AgentError> {
+    if !config.fresh_graph_per_session {
+        return Ok(shared);
+    }
+    let dir = config
+        .fresh_graph_dir
+        .clone()
+        .unwrap_or_else(|| std::env::temp_dir().join("graphirm-fresh"));
+    std::fs::create_dir_all(&dir)
+        .map_err(|err| AgentError::Workflow(format!("fresh graph dir: {err}")))?;
+    let path = dir.join(format!("{}.db", NodeId::new()));
+    let path_str = path
+        .to_str()
+        .ok_or_else(|| AgentError::Workflow("fresh graph path is not utf-8".to_string()))?;
+    Ok(Arc::new(GraphStore::open(path_str)?))
+}
+
 /// Lifecycle status of a restored or active session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionStatus {
@@ -357,6 +381,29 @@ mod tests {
             }
             _ => panic!("expected Agent node"),
         }
+    }
+
+    #[test]
+    fn fresh_graph_per_session_opens_an_empty_store() {
+        let shared = Arc::new(GraphStore::open_memory().unwrap());
+        let marker = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "remember this".to_string(),
+            token_count: None,
+        }));
+        let marker_id = marker.id.clone();
+        shared.add_node(marker).unwrap();
+
+        let same = open_session_graph(shared.clone(), &AgentConfig::default()).unwrap();
+        assert!(Arc::ptr_eq(&same, &shared));
+        assert!(same.get_node(&marker_id).is_ok());
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = AgentConfig::default();
+        config.fresh_graph_per_session = true;
+        config.fresh_graph_dir = Some(dir.path().to_path_buf());
+        let fresh = open_session_graph(shared, &config).unwrap();
+        assert!(fresh.get_node(&marker_id).is_err());
     }
 
     #[test]
