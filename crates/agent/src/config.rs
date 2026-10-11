@@ -12,7 +12,8 @@ use crate::router::ModelRoutingConfig;
 /// Configuration for the embedding provider used by cross-session memory.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmbeddingConfig {
-    /// Backend/model spec, e.g. `"mistral/codestral-embed"` or `"fastembed/nomic-embed-text-v1"`.
+    /// Backend/model spec, e.g. `"openrouter/mistralai/codestral-embed-2505"`,
+    /// `"mistral/codestral-embed"`, or `"fastembed/nomic-embed-text-v1"`.
     #[serde(rename = "embedding_backend")]
     pub backend: String,
     /// Vector dimension produced by this model. Must match the HNSW index.
@@ -1742,13 +1743,13 @@ mod default_toml_tests {
         assert!((judge.threshold - 0.8).abs() < 1e-9);
     }
 
-    /// `[agent.pi]` ships enabled after the A4 live check; sessions created over
-    /// HTTP default to auto-approve (decision 17).
+    /// `[agent.pi]` ships off: the hosted image has no `pi` binary. Sessions
+    /// created over HTTP still default to auto-approve (decision 17).
     #[test]
-    fn default_toml_has_pi_enabled() {
+    fn default_toml_leaves_pi_off() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
         let config = AgentConfig::from_file(std::path::Path::new(path)).expect("default.toml");
-        assert!(config.pi.expect("pi block present").enabled);
+        assert!(!config.pi.expect("pi block present").enabled);
         assert!(config.default_auto_approve);
     }
 }

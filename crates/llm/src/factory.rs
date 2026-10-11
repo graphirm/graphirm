@@ -61,16 +61,20 @@ pub fn create_provider_from_model_string(
 ///
 /// Supported:
 /// - `"mistral/mistral-embed"` — 1024-dim, API key from `MISTRAL_API_KEY`
-/// - `"mistral/codestral-embed"` — 1024-dim, code-optimised
+/// - `"mistral/codestral-embed"` — 1536-dim, code-optimised
+/// - `"openrouter/mistralai/codestral-embed-2505"` — 1536-dim, key from `OPENROUTER_API_KEY`
 /// - `"fastembed/nomic-embed-text-v1"` — 768-dim, local ONNX, no key (requires `local-embed` feature)
+///
+/// `api_key` is the key for the selected backend. Mistral reads `MISTRAL_API_KEY`.
+/// OpenRouter reads `OPENROUTER_API_KEY`.
 pub fn create_embedding_provider(
     spec: &str,
-    mistral_key: Option<&str>,
+    api_key: Option<&str>,
 ) -> Result<(Box<dyn EmbeddingProvider>, usize), LlmError> {
     let (backend, model) = parse_model_string(spec)?;
     match backend {
         "mistral" => {
-            let key = mistral_key.unwrap_or("").to_string();
+            let key = api_key.unwrap_or("").to_string();
             if key.is_empty() {
                 return Err(LlmError::provider("MISTRAL_API_KEY not set"));
             }
@@ -87,6 +91,15 @@ pub fn create_embedding_provider(
             let dim = provider.dim();
             Ok((Box::new(provider), dim))
         }
+        "openrouter" => {
+            let key = api_key.unwrap_or("").to_string();
+            if key.is_empty() {
+                return Err(LlmError::provider("OPENROUTER_API_KEY not set"));
+            }
+            let provider = crate::openrouter_embed::OpenRouterEmbeddingProvider::new(key, model)?;
+            let dim = provider.dim();
+            Ok((Box::new(provider), dim))
+        }
         #[cfg(feature = "local-embed")]
         "fastembed" => {
             let provider = crate::fastembed_provider::FastEmbedProvider::new(model)
@@ -99,7 +112,7 @@ pub fn create_embedding_provider(
             "fastembed backend requires the 'local-embed' feature flag",
         )),
         other => Err(LlmError::invalid_model(format!(
-            "Unknown embedding backend '{other}'. Use mistral or fastembed"
+            "Unknown embedding backend '{other}'. Use mistral, openrouter, or fastembed"
         ))),
     }
 }
@@ -193,6 +206,55 @@ mod tests {
         let result = create_provider_from_model_string("bad-format", "key");
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("provider/model"));
+    }
+
+    #[test]
+    fn openrouter_embedding_spec_uses_the_codestral_slug() {
+        let (_provider, dim) = create_embedding_provider(
+            "openrouter/mistralai/codestral-embed-2505",
+            Some("test-key"),
+        )
+        .expect("openrouter embeddings");
+        assert_eq!(dim, 1536);
+    }
+
+    #[test]
+    fn openrouter_embedding_requires_a_key() {
+        let err = create_embedding_provider("openrouter/mistralai/codestral-embed-2505", None)
+            .map(|_| ())
+            .expect_err("missing key");
+        assert!(err.to_string().contains("OPENROUTER_API_KEY"), "{err}");
+    }
+
+    #[test]
+    fn bare_codestral_slug_is_not_an_embedding_backend() {
+        let err = create_embedding_provider("mistralai/codestral-embed-2505", Some("test-key"))
+            .map(|_| ())
+            .expect_err("bare slug");
+        assert!(err.to_string().contains("mistralai"), "{err}");
+    }
+
+    /// Hits OpenRouter. Ignored so a normal `cargo test` neither fails without a
+    /// key nor spends an embedding request when the key is present.
+    /// `cargo test -p graphirm-llm --lib openrouter_codestral_embed_vector_matches_dim -- --ignored`
+    #[tokio::test]
+    #[ignore = "calls OpenRouter and spends an embedding request"]
+    async fn openrouter_codestral_embed_vector_matches_dim() {
+        let Ok(key) = std::env::var("OPENROUTER_API_KEY") else {
+            eprintln!("OPENROUTER_API_KEY unset; skipping live embed");
+            return;
+        };
+        if key.is_empty() {
+            eprintln!("OPENROUTER_API_KEY empty; skipping live embed");
+            return;
+        }
+        let (provider, dim) =
+            create_embedding_provider("openrouter/mistralai/codestral-embed-2505", Some(&key))
+                .expect("openrouter embeddings");
+        let vector = provider.embed("graphirm").await.expect("live embed");
+        assert_eq!(vector.len(), dim);
+        assert_eq!(dim, 1536);
+        assert!(vector.iter().any(|v| *v != 0.0));
     }
 
     #[test]

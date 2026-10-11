@@ -35,10 +35,17 @@ COPY crates/ crates/
 COPY src/ src/
 COPY graphirm-eval/ graphirm-eval/
 COPY experiments/gliner2-segment-probe/ experiments/gliner2-segment-probe/
+# LLM extraction only. This image does not pass `--features local-extraction`,
+# so a missing GLiNER2 model stays on the LLM fallback.
 RUN cargo build --release -p graphirm
 
 # Stage 5: Slim runtime image
 FROM debian:bookworm-slim AS runtime
+
+# Coolify passes SOURCE_COMMIT as a build-arg. The image tag already carries
+# the same SHA; this label is what `docker image inspect` shows.
+ARG SOURCE_COMMIT=unknown
+LABEL org.opencontainers.image.revision="${SOURCE_COMMIT}"
 
 # curl is required by the HEALTHCHECK instruction below
 RUN apt-get update && apt-get install -y --no-install-recommends \

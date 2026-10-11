@@ -9,6 +9,7 @@ pub mod mock;
 pub mod ollama;
 pub mod openai;
 pub mod openrouter;
+pub mod openrouter_embed;
 pub mod provider;
 pub mod stream;
 pub mod tool;
