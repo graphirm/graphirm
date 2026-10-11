@@ -1,0 +1,1 @@
+Add `daily_export(rows, when)` to a new module `till/export.py`. `rows` is a list of strings. `when` is a `datetime`. The return value is one string: the date line we agreed, then a newline, then each row on its own line.
