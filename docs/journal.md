@@ -25,7 +25,7 @@ Entry template:
 ## 2026-10-12 — Pre-register the SWE-bench tracks without Fable
 
 **Context:** Calibration is finished. The headline comparison needs a frozen document before any T1 task runs.
-**Decision:** `eval/swebench/prereg.md` registers T1 (M, G, G-md, G-b16, G-b16-recency), T2 SWE-Bench-CL, T3 CL-Bench codebase, and T4 Harbor if the budget allows. T5 Fable is not registered. A Grok confirmation run is future work. Commit PENDING_SHA.
+**Decision:** `eval/swebench/prereg.md` registers T1 (M, G, G-md, G-b16, G-b16-recency), T2 SWE-Bench-CL, T3 CL-Bench codebase, and T4 Harbor if the budget allows. T5 Fable is not registered. A Grok confirmation run is future work. Commit 4bae8c993af85ffa91524f45ed1ca82f49ee21d0.
 **Alternatives:** Holding pre-registration until Graphirm's cache hit reached about 90% was rejected. Caching changes cost, not resolve rate.
 **Consequences:** Deviations after the first headline run go in this journal before results are seen. T2 keeps these 14 calibration tasks so the sequence order stays intact: django__django-10999, django__django-13023, sympy__sympy-12096, sympy__sympy-15345, sympy__sympy-14976, sympy__sympy-18698, sphinx-doc__sphinx-8475, sphinx-doc__sphinx-9258, sphinx-doc__sphinx-9591, matplotlib__matplotlib-25775, scikit-learn__scikit-learn-14983, scikit-learn__scikit-learn-25102, astropy__astropy-13977, pytest-dev__pytest-6197.
 **Refs:** `eval/swebench/prereg.md`, `eval/swebench/PLAN.md`.

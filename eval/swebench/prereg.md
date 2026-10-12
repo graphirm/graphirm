@@ -1,10 +1,10 @@
 # Graphirm benchmark — pre-registration
 
-Date: 2026-10-12. Commit: PENDING_SHA. Nothing below is changed after the first
+Date: 2026-10-12. Commit: 4bae8c993af85ffa91524f45ed1ca82f49ee21d0. Nothing below is changed after the first
 headline run; deviations go to docs/journal.md with a reason, logged before results are seen.
 
 ## 1. Frozen system
-- Graphirm: commit PENDING_SHA, binary sha256 a4e75be8392e7a6f520618984f9ca17c4c3448ee21d06d19620cbbfa3ae3495c, eval config hash f791cc2803a1219088716944750698551dd6bd9bb38bbacc76a975e567086487.
+- Graphirm: commit 4bae8c993af85ffa91524f45ed1ca82f49ee21d0, binary sha256 a4e75be8392e7a6f520618984f9ca17c4c3448ee21d06d19620cbbfa3ae3495c, eval config hash f791cc2803a1219088716944750698551dd6bd9bb38bbacc76a975e567086487.
   Defaults: segments replies, dedup + prefix-stable packing (already-sent content kept in place),
   budget note on the final message only, product warning thresholds [0.7, 0.9],
   task node always packed, Pi handoff off, auto-approve on.
