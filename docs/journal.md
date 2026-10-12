@@ -22,6 +22,70 @@ Entry template:
 
 ---
 
+## 2026-10-12 — Pre-register the SWE-bench tracks without Fable
+
+**Context:** Calibration is finished. The headline comparison needs a frozen document before any T1 task runs.
+**Decision:** `eval/swebench/prereg.md` registers T1 (M, G, G-md, G-b16, G-b16-recency), T2 SWE-Bench-CL, T3 CL-Bench codebase, and T4 Harbor if the budget allows. T5 Fable is not registered. A Grok confirmation run is future work. Commit PENDING_SHA.
+**Alternatives:** Holding pre-registration until Graphirm's cache hit reached about 90% was rejected. Caching changes cost, not resolve rate.
+**Consequences:** Deviations after the first headline run go in this journal before results are seen. T2 keeps these 14 calibration tasks so the sequence order stays intact: django__django-10999, django__django-13023, sympy__sympy-12096, sympy__sympy-15345, sympy__sympy-14976, sympy__sympy-18698, sphinx-doc__sphinx-8475, sphinx-doc__sphinx-9258, sphinx-doc__sphinx-9591, matplotlib__matplotlib-25775, scikit-learn__scikit-learn-14983, scikit-learn__scikit-learn-25102, astropy__astropy-13977, pytest-dev__pytest-6197.
+**Refs:** `eval/swebench/prereg.md`, `eval/swebench/PLAN.md`.
+
+## 2026-10-12 — Freeze the G cache setup after one budget-note measurement
+
+**Context:** A changing usage percentage near the start of the prompt breaks the cache. Disabling the warning would hide a product feature, and another round of tuning on the same 30 tasks would fit the setup to them.
+**Decision:** Append the budget note to the latest user or tool message, keep the product thresholds, measure G once on the first 10 calibration tasks, and freeze. That run's median cache hit was 0.828, against M's Phase D median of 0.941.
+**Alternatives:** An empty threshold list removes the line and was rejected. Waiting for about a 90% hit before pre-registration was rejected, because caching changes cost and not resolve rate.
+**Consequences:** The gap versus M stays a known limitation. The note is not stored, so the next call rebuilds that one message without it and the cache stops at that message.
+**Refs:** `eval/swebench/PLAN.md`, `/tmp/cache-confirm-3/summary.json`.
+
+## 2026-10-12 — The segment reminder stays on the system message
+
+**Context:** Phase D's pack trace showed the segment reminder moving onto the latest human message. Call 1 wrote it onto the task. Call 2 wrote it onto a later content node and the task text shrank, so the prompt cache missed from the first message. A budget warning on the system message would do the same once usage crossed 70%.
+
+**Decision:** The reminder is appended to the system message, which is identical on every call. Nodes sent on the previous call keep that order, and newly selected nodes append. The budget warning, whose text changes with usage, is a trailing message. Each assistant turn stores `context_dropped_node_ids`.
+
+**Alternatives:** Leave the reminder on the latest human message so it stays the nearest instruction. That is the cache break. Freeze the whole prefix by never dropping a node that was already sent. That would ignore the context budget.
+
+**Consequences:** A node the token budget drops still breaks the cache at that point. A derived content node that was already sent stays in the pack, so dedup does not punch a hole in the prefix. The budget warning is appended to the latest user or tool message, not stored, and the eval config keeps the product default thresholds.
+
+**Refs:** `crates/agent/src/knowledge/segments.rs` `append_segment_json_request`, `crates/agent/src/context.rs` `keep_previous_pack_order`.
+
+## 2026-10-12 — A carried graph pins the current task, and reuses the existing agent
+
+**Context:** G-persist keeps one graph for every task in a repository. The pin from 2026-10-11 keeps the oldest user message, which would be the first task forever. `graphirm run` also called `Session::new`, so a second run on the same file started a new agent and the new task did not chain onto the old conversation.
+
+**Decision:** `graphirm run` calls `Session::open`. An existing graph binds the oldest agent and appends the new task to that conversation. The task message is marked `task`. The packer pins the latest marked message. A thread with no mark still pins the oldest user message, so a single-task graph behaves as before. A later retry nudge is not marked and does not take the pin.
+
+**Alternatives:** Pin the oldest message and start a new agent per task, then search the whole graph for earlier tasks. That leaves the first issue in every pack and does not put later tasks on the conversation thread the packer walks. Pin every marked task. A long sequence would spend the budget on old issues.
+
+**Consequences:** Single-task runs that set the mark pin the same node as before. A multi-task graph pins the issue for the run that is in progress. The Phase D musl binary was not rebuilt, so the running calibration batch still uses the oldest-message pin.
+
+**Refs:** `crates/agent/src/session.rs` `Session::open`, `crates/agent/src/context.rs` `current_task_user_id`. Tests `open_reuses_the_agent_and_chains_the_next_task` and `recency_16k_pins_the_current_task_not_the_first`.
+
+## 2026-10-11 — The first user message stays packed at any budget
+
+**Context:** G-b16-recency scores by recency inside a 16k pack. The oldest node is the issue text. Recency drops the oldest nodes first, so the task could vanish mid-run and make scoring look stronger than it is.
+
+**Decision:** `build_context_with_stats` always keeps the oldest user message. Its tokens still reduce the budget. It is not part of the droppable set. Each assistant turn records `task_node_present`.
+
+**Alternatives:** Leave it to the four-turn tail. That tail is the newest turns, not the issue. Give the issue a score bonus under recency. That still lets a tight budget skip it when the bonus is not enough.
+
+**Consequences:** A long issue can crowd out other nodes at 16k. The issue text itself stays. 16k runs from before this pin are discarded.
+
+**Refs:** `crates/agent/src/context.rs` `first_task_user_id`. Test `recency_16k_keeps_the_first_user_message`.
+
+## 2026-10-11 — Replay token estimate uses characters/3.8, and a pinned model retries itself
+
+**Context:** Phase C measured Morph input tokens at about 0.53 of the replay estimate, which divided characters by 2. The official DeepSeek endpoint is blocked by the account privacy setting, so the eval pins one OpenRouter provider and has no fallback model. A 429 on that single model ended the turn.
+
+**Decision:** `replay-pack` estimates input tokens as characters/3.8 and writes that factor on every CSV row. A retryable provider error is tried again on the same model, up to five times, and a failed attempt is not written into usage or the cost total.
+
+**Alternatives:** Leave the characters/2 estimate and apply 0.53 only in the report. That keeps the tool wrong for the next replay. Treat 429 as fatal so a rate limit cannot hide inside the budget. That throws away the run instead of the failed attempt.
+
+**Consequences:** Replay dollar figures still use the old blended Flash rates, not the Morph lock. The cache-prefix projection is unchanged. Same-model retries can add provider-billed cost that the frozen ledger does not include, because the failed response is not stored.
+
+**Refs:** `eval/swebench/PLAN.md` Phase C and Phase D. `src/commands/replay_pack.rs`. `crates/agent/src/workflow.rs`.
+
 ## 2026-10-09 — Compaction uses the session model when none is set
 
 **Context:** Auto-compaction sent `model: ""`. OpenRouter answered `No models provided`. The failure is logged and the chat call still runs, so a long session never gets summarized.

@@ -1,0 +1,13 @@
+[agent]
+name = "eval"
+model = "openrouter/deepseek/deepseek-v4.1-flash"
+system_prompt = "Fix the failing test by editing product code. Do not edit tests."
+pre_completion_verify = false
+max_turns = 100
+reasoning_effort = "high"
+openrouter_provider = "morph/fp8"
+
+[agent.segments]
+enabled = true
+labels = ["observation", "reasoning", "code", "plan", "answer", "caveat", "action"]
+structured_output = true

@@ -1,0 +1,21 @@
+# Prices come from eval/swebench/litellm_model_registry.json, which matches
+# prices.lock.json. Set LITELLM_MODEL_REGISTRY_PATH to that file, or pass
+# model.litellm_model_registry on the command line. cost_limit is US dollars
+# at the primary formula: uncached input, cache-read input, and output.
+# mini-swe-agent applies that limit after the call returns. Graphirm estimates
+# the next call from its input size and stops before sending it.
+model:
+  # OpenRouter's own API model id. The openrouter/ prefix is Graphirm's
+  # provider/model form, and this client already posts to OpenRouter.
+  model_name: deepseek/deepseek-v4.1-flash
+  model_class: openrouter
+  model_kwargs:
+    reasoning:
+      effort: high
+    provider:
+      only:
+        - morph/fp8
+      allow_fallbacks: false
+agent:
+  cost_limit: 0.5
+  step_limit: 100
