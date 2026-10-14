@@ -47,8 +47,9 @@ ORDER = [
     "jd__tenacity-628",
 ]
 TRACK = "t3-validity"
-WORKERS = 2
+WORKERS = 1
 DISK_LIMIT = 82.0
+SETTLED = {"completed", "tests_failed", "apply_failed"}
 
 
 def used_pct() -> float:
@@ -76,6 +77,15 @@ def load_instances() -> list[dict]:
     return [rows[iid] for iid in ORDER]
 
 
+def _grade(patch: str, instance: dict):
+    last = None
+    for _attempt in (1, 2):
+        last = evaluate_generic_pr_submission(patch, instance)
+        if last.status in SETTLED:
+            return last
+    return last
+
+
 def one(instance: dict) -> dict:
     iid = instance["instance_id"]
     wait_disk()
@@ -89,17 +99,17 @@ def one(instance: dict) -> dict:
         "empty_error": None,
         "complete": False,
     }
-    gold = evaluate_generic_pr_submission(instance.get("patch") or "", instance)
-    record["gold_resolved"] = bool(gold.success)
+    gold = _grade(instance.get("patch") or "", instance)
+    empty = _grade("", instance)
     record["gold_status"] = gold.status
-    record["gold_error"] = (gold.error or None) and str(gold.error)[:400]
-    empty = evaluate_generic_pr_submission("", instance)
-    record["empty_resolved"] = bool(empty.success)
     record["empty_status"] = empty.status
+    record["gold_error"] = (gold.error or None) and str(gold.error)[:400]
     record["empty_error"] = (empty.error or None) and str(empty.error)[:400]
-    record["complete"] = (
-        record["gold_resolved"] is not None and record["empty_resolved"] is not None
-    )
+    if gold.status in SETTLED:
+        record["gold_resolved"] = bool(gold.success)
+    if empty.status in SETTLED:
+        record["empty_resolved"] = bool(empty.success)
+    record["complete"] = gold.status in SETTLED and empty.status in SETTLED
     return record
 
 

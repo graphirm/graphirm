@@ -72,7 +72,8 @@ def load_done(path: Path) -> set[str]:
             if index == len(lines) - 1:
                 continue
             raise
-        done.add(record["instance_id"])
+        if record.get("complete") is True:
+            done.add(record["instance_id"])
     return done
 
 
