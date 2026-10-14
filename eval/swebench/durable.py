@@ -114,3 +114,15 @@ def backup_record(track: str, record: dict, files: list[Path] | None = None) -> 
         capture_output=True,
         text=True,
     )
+
+
+def push_backup() -> None:
+    """Push the backup repo to origin. Local commits stay if the push fails."""
+    root = ensure_backup_repo()
+    subprocess.run(
+        ["git", "push", "origin", "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )

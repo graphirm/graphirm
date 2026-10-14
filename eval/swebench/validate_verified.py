@@ -52,8 +52,8 @@ from durable import append_ledger, backup_record, load_done, runs_dir
 
 CURRICULUM = Path("/home/krs/graphirm-runs/sources/SWE-Bench-CL-Curriculum.json")
 TRACK = "t2-validity"
-WORKERS = 2
-DISK_LIMIT = 82.0
+WORKERS = int(os.environ.get("T2_WORKERS", "2"))
+DISK_LIMIT = float(os.environ.get("T2_DISK_LIMIT", "82"))
 NAMESPACE = "swebench"
 
 

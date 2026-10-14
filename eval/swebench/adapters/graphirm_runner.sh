@@ -52,6 +52,7 @@ PRICES="${GRAPHIRM_PRICES:-./eval/swebench/prices.lock.json}"
 GRAPH_OUT="${GRAPH_OUT:-./graph.db}"
 SUMMARY_OUT="${SUMMARY_OUT:-./summary.json}"
 export GRAPH_OUT
+export SUMMARY_OUT
 if [ -n "${TEST_PATCH_FILE:-}" ]; then
   export TEST_PATCH_FILE
 fi
@@ -60,6 +61,9 @@ docker cp "$BIN" "$CONTAINER:/usr/local/bin/graphirm"
 docker cp "$CONFIG" "$CONTAINER:/tmp/eval-agent.toml"
 docker cp "$PRICES" "$CONTAINER:/tmp/prices.lock.json"
 docker cp "$TASK_FILE" "$CONTAINER:/tmp/issue.md"
+
+mkdir -p "$(dirname "$SUMMARY_OUT")"
+docker exec "$CONTAINER" git -C "$WORKDIR" rev-parse HEAD > "${SUMMARY_OUT}.start_commit"
 
 set +e
 pack_env=""
@@ -116,6 +120,19 @@ Path(os.environ["GRAPH_OUT"] + ".diff").write_text(strip_test_hunks(raw, test_pa
 PY
 docker cp "$CONTAINER:/tmp/graph.db" "$GRAPH_OUT"
 docker cp "$CONTAINER:/tmp/summary.json" "$SUMMARY_OUT"
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+summary = Path(os.environ["SUMMARY_OUT"])
+commit_path = Path(str(summary) + ".start_commit")
+if summary.is_file() and commit_path.is_file():
+    data = json.loads(summary.read_text())
+    data["start_commit"] = commit_path.read_text().strip()
+    data["image"] = os.environ.get("GRAPHIRM_IMAGE", "")
+    summary.write_text(json.dumps(data, indent=2) + "\n")
+PY
 if [ -n "${PACK_TRACE_OUT:-}" ]; then
   docker cp "$CONTAINER:/tmp/pack-trace.jsonl" "$PACK_TRACE_OUT" || true
 fi

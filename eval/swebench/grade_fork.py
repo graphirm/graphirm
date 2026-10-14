@@ -50,12 +50,14 @@ def prepare_spec(instance: dict):
     return spec
 
 
-def grade_gold(instance: dict, client, timeout: int, run_id: str = "t1-gold") -> bool:
+def grade_patch(
+    instance: dict, patch: str, client, timeout: int, run_id: str, model: str
+) -> bool:
     spec = prepare_spec(instance)
     pred = {
         KEY_INSTANCE_ID: spec.instance_id,
-        KEY_PREDICTION: instance["patch"],
-        KEY_MODEL: "gold",
+        KEY_PREDICTION: patch,
+        KEY_MODEL: model,
     }
     _drop(client, spec.get_instance_container_name(run_id))
     _iid, report = run_instance(
@@ -68,6 +70,10 @@ def grade_gold(instance: dict, client, timeout: int, run_id: str = "t1-gold") ->
         timeout=timeout,
     )
     return bool(report[spec.instance_id]["resolved"])
+
+
+def grade_gold(instance: dict, client, timeout: int, run_id: str = "t1-gold") -> bool:
+    return grade_patch(instance, instance["patch"], client, timeout, run_id, "gold")
 
 
 def grade_empty(instance: dict, client, timeout: int, run_id: str = "t1-empty") -> bool:

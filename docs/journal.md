@@ -22,6 +22,40 @@ Entry template:
 
 ---
 
+## 2026-10-14 — Push eval backups off this machine
+
+**Context:** `/home/krs/graphirm-runs-backup` is on the same disk as the run outputs. A disk failure would take both copies.
+**Decision:** Push patches, grades, summaries, and ledgers to the private repo `consoulhub/graphirm-eval-results` every 10 completed T1 tasks and at the end of a track. `graph.db` files stay local until the track ends. Where the per-track `graph.db` tarball goes is still open.
+**Alternatives:** A second disk is not attached to this machine.
+**Consequences:** A reboot no longer deletes the only copy of the small files, once the push has succeeded. A push failure leaves the local backup in place and is logged.
+**Refs:** `eval/swebench/durable.py` `push_backup`, `eval/swebench/run_t1.py`.
+
+## 2026-10-14 — Phase D table, reconstructed
+
+Reconstructed from the Phase D report of 2026-10-12 (relayed through the planning chat); raw runs and graphs were lost in the /tmp wipe.
+
+Phase D calibration (30 SWE-bench Verified tasks, DeepSeek V4.1 Flash via morph/fp8):
+
+- M: resolved 27/30, median primary cost $0.012520, median cache hit 0.941, median calls 30.
+- G: resolved 28/30, median primary cost $0.024043, median cache hit 0.752, median calls 26.
+- G-md: resolved 28/30, median primary cost $0.024259, median cache hit 0.832, median calls 30.
+- G-b16: resolved 28/30, median primary cost $0.028504, median cache hit 0.501, median calls 30.
+- G-b16-recency: resolved 25/30, median primary cost $0.021041, median cache hit 0.449, median calls 25.5.
+- Paired with M: G 1-29-0, G-md 1-29-0, G-b16 1-29-0, G-b16-recency 0-28-2 (win-tie-loss). Shared Graphirm win: matplotlib__matplotlib-25775 (M submitted an empty patch). Recency losses to M: django__django-13023, django__django-15930.
+- G-b16 vs G-b16-recency: 3-27-0 (django-13023, django-15930, matplotlib-25775). Extra reps on the two django tasks: 2-4-0.
+- All arms unresolved: django__django-10999, pylint-dev__pylint-4604.
+- Flips across 3 reps (first 10 tasks): M 1, G 0, G-md 2, G-b16 0, G-b16-recency 1.
+- 16k drops: G-b16 dropped on 35.8% of 1,502 calls (when dropping: median 12 nodes, 13,546 tokens). Recency dropped on 42.8% of 1,405 calls (median 20 nodes, 10,208 tokens).
+- Provenance: 1,212 citations; 1,175 matched under the original rule; all 37 failures were files viewed through bash; 1,212/1,212 under the widened rule.
+- 429s: 2 (Graphirm), 0 (mini). Phase D spend: $7.302.
+- Frozen-config check (G, first 10 tasks): 9/10 resolved, median cache hit 0.828, token-weighted 0.816, median cost $0.021693.
+
+**Context:** The raw Phase D graphs were only under `/tmp/phase-d`.
+**Decision:** Keep this reconstructed table in the journal so the write-up is not limited to the cache-hit line from 2026-10-12.
+**Alternatives:** Leaving the table only in the planning chat would lose it again if that chat is gone.
+**Consequences:** These figures are not recomputed from graphs. They are the report as relayed.
+**Refs:** `eval/swebench/PLAN.md`.
+
 ## 2026-10-14 — The wiped T1 runs are discarded
 
 **Context:** A reboot cleared `/tmp`. The only copies of the first 94 T1 patches, trajectories, graphs, and ledger were there. A search under the home directory, `/var`, and `/opt` found no `model_patch.diff` and no T1 ledger. Those 94 tasks had been graded with the broken grader.
