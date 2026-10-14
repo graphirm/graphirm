@@ -22,6 +22,70 @@ Entry template:
 
 ---
 
+## 2026-10-14 — The wiped T1 runs are discarded
+
+**Context:** A reboot cleared `/tmp`. The only copies of the first 94 T1 patches, trajectories, graphs, and ledger were there. A search under the home directory, `/var`, and `/opt` found no `model_patch.diff` and no T1 ledger. Those 94 tasks had been graded with the broken grader.
+**Decision:** Those 94 tasks are discarded entirely. They are not regraded and they are not carried into the rerun. The per-arm counts seen at 93 tasks came from that broken grader and carried no information about the arms.
+**Alternatives:** Treating the broken-grader counts as a partial result was rejected. The gold check showed the official harness resolves tasks the broken grader marked unresolved.
+**Consequences:** The write-up does not use those per-arm counts. Phase D's cache summary remains the journal figure from 2026-10-12 (G median cache hit 0.828, M Phase D median 0.941). The fuller cache-confirm figures, including 9 of 10 resolved and median primary cost $0.0217, are in `eval/swebench/PLAN.md`. The raw Phase D graphs under `/tmp/phase-d` are gone.
+**Refs:** `eval/swebench/PLAN.md`, `/home/krs/graphirm-runs/t1-validity/validity.jsonl`.
+
+## 2026-10-14 — Rerun T1 fresh on the 210 valid tasks
+
+**Context:** The headline gold check finished. Two tasks drop out: `sigma67__ytmusicapi-909_interface` (official gold did not resolve) and `huggingface__trl-5135` (an empty patch resolves). `pydap__pydap-624` gold resolved on this run, so it stays. The saved agent patches for the first 94 tasks are gone.
+**Decision:** The T1 rerun starts fresh on the 210 valid tasks, with the corrected SWE-rebench fork grader and durable storage. Hypotheses, arms, configs, and the agent environment are unchanged.
+**Alternatives:** Resuming the wiped ledger is impossible. Regrading the 94 patches is impossible.
+**Consequences:** The rerun has not started. It waits until the free validity checks for T3, T2, and T4 are reported.
+**Refs:** `eval/swebench/prereg.md`, `eval/swebench/grade_fork.py`, `/home/krs/graphirm-runs/t1-validity/validity.jsonl`.
+
+## 2026-10-14 — The lost $12.88 is outside the rerun cap
+
+**Context:** The wiped T1 run had spent about $12.88 of calculated primary cost before it was discarded.
+**Decision:** That $12.88 is reported separately. The pre-registered $35 T1 limit applies to the rerun, not to the sum of the lost run and the rerun.
+**Alternatives:** Subtracting $12.88 from the $35 cap would shrink the rerun because of a grader bug and a wiped disk, which is not what the cap was for.
+**Consequences:** The rerun may spend up to $35 of new calculated primary cost. The lost $12.88 stays in the write-up as spent and discarded.
+**Refs:** `eval/swebench/prereg.md`.
+
+## 2026-10-14 — Eval outputs stay out of /tmp
+
+**Context:** The only copies of the T1 patches were under `/tmp`, and a reboot deleted them. This machine has one disk.
+**Decision:** Run outputs go under `/home/krs/graphirm-runs/<track>/`. The driver refuses a path under `/tmp`. Ledger lines are flushed and fsynced. After each completed task, the record is committed in `/home/krs/graphirm-runs-backup`, a separate git repo on the same disk. `graph.db` files stay under `graphirm-runs` and are tarred when a track finishes.
+**Alternatives:** A second physical disk is not available. A branch of the product repo would mix run artifacts with source.
+**Consequences:** The backup survives a reboot and a `/tmp` wipe. It does not survive loss of this disk.
+**Refs:** `eval/swebench/durable.py`.
+
+## 2026-10-13 — Rerun the gold check outside /tmp
+
+**Context:** A power cut rebooted the machine at 18:16. `/tmp` was cleared. The 94 tasks of agent patches, the partial gold-check log, the T1 ledger, and the SWE-rebench fork clone were only stored there. A search under the home directory, `/var`, and `/opt` found no copies.
+**Decision:** Rerun the gold and empty checks for all 212 headline tasks onto `/home/krs/graphirm-runs`, which survives a reboot. Do not call the model for this check. Do not rerun agent tasks until this check's exclusion list exists. The exclusion rule and the fork grader decision already recorded still stand.
+**Alternatives:** Waiting for a backup was checked, and none exists. Spending on the 94 agent tasks again before the exclusion list would repeat work on tasks that may carry no signal.
+**Consequences:** Those 94 runs cannot be regraded. A later T1 is a new run, not a resume from the ledger. The earlier commit sample already showed the agent and the grading image on the same commit, including `pydap__pydap-624`. `pandas-dev__pandas-63945` has a dataset `base_commit` field that differs from the image both sides used.
+**Refs:** `docs/journal.md` entries from earlier today, `/home/krs/graphirm-runs`.
+
+## 2026-10-13 — Grade T1 with the SWE-rebench fork
+
+**Context:** The T1 grader ran `test_cmd` in a login shell and did not activate conda or apply `test_patch`. Official gold patches passed 4 of 30 that way, and 29 of 30 through the SWE-rebench fork.
+**Decision:** Deviation: T1 grading now uses the SWE-rebench fork's `run_evaluation` path, including conda activation and `test_patch`. Images are removed after each task. This corrects a grading bug. Hypotheses, arms, configs, and the agent environment are unchanged.
+**Alternatives:** Rerunning failed agent runs was rejected. Missing the testbed Python is the agent's own behaviour, and it happened in both arms. A second try for only those runs would bias the comparison.
+**Consequences:** Saved patches are regraded. Remaining T1 tasks use the corrected grader and the same agent container as the tasks already run. Agents still have to find the testbed Python themselves. That limit stays in the write-up.
+**Refs:** `/tmp/t1/drive.py`, `/tmp/t1/grade_fork.py`, `/tmp/SWE-bench-fork`.
+
+## 2026-10-13 — Exclude headline tasks that carry no signal
+
+**Context:** The T1 grader was paused after a validity check. Some tasks cannot separate a correct fix from no fix.
+**Decision:** Deviation: tasks are excluded from all arms if (a) the official gold patch fails under the official SWE-rebench harness, or (b) an empty patch resolves them. Reason: such tasks carry no signal. The rule was set before regraded results were seen.
+**Alternatives:** Keeping every task would mix grader and task failures into the arm comparison. Dropping tasks after seeing which arm solved them would bias the comparison.
+**Consequences:** The same exclusion list applies to every arm. Excluded tasks are omitted from scoring. The list is fixed from gold and empty runs only.
+**Refs:** `eval/swebench/prereg.md`, `/tmp/t1-validity/`.
+
+## 2026-10-13 — Pause T1 to check grading validity
+
+**Context:** At 93 fully graded tasks, interim per-arm resolve counts were reported. The plan said to hold those counts until T1 finished. Every arm resolved about 7 of 93, and paired comparisons were almost all ties, which can mean the grader rather than the agents is deciding the outcome.
+**Decision:** Stop launching new T1 tasks after the task already in progress finished grading. Keep every saved patch, trajectory, and graph. Grade official gold patches through the existing grader before any further spend. Do not change hypotheses, arms, or configs.
+**Alternatives:** Continuing the run would spend more on scores that may not mean the agents failed.
+**Consequences:** T1 stays paused until that validity report is reviewed. Restarting `/tmp/t1/drive.py` resumes from the ledger and does not repeat finished arms.
+**Refs:** `/tmp/t1/ledger.jsonl`, `eval/swebench/prereg.md`.
+
 ## 2026-10-12 — Pre-register the SWE-bench tracks without Fable
 
 **Context:** Calibration is finished. The headline comparison needs a frozen document before any T1 task runs.
