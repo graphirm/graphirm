@@ -203,6 +203,7 @@ def one(instance: dict) -> dict:
 def main() -> None:
     root = runs_dir(TRACK)
     os.chdir(root)
+    (root / "running").write_text("t2\n")
     ledger = root / "ledger.jsonl"
     done = load_done(ledger)
     instances = load_instances(curriculum_ids())
@@ -213,6 +214,7 @@ def main() -> None:
     )
     if not pending:
         print("HOLD nothing pending", flush=True)
+        (root / "running").unlink(missing_ok=True)
         return
 
     def run_one(instance: dict) -> None:
@@ -243,6 +245,7 @@ def main() -> None:
         for future in as_completed(futures):
             future.result()
     print("HOLD validation finished", flush=True)
+    (root / "running").unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,118 @@ Entry template:
 
 ---
 
+## 2026-10-22 — Three ungraded T1 tasks are graded late; pydap-624 is a harness error on every arm
+
+**Context:** The T1 analysis refused to start: `pydap__pydap-624`, `scipy__scipy-24454` and `aws__bedrock-agentcore-sdk-python-279_interface` had all five arms complete in the ledger but no usable `grades.json`. Resume treated a task as done when its arms were done, and `grade_arms` recorded a grading exception as `None` without a log line. The agents' patches were on disk; no agent run was repeated.
+**Decision:** Grade the three tasks with the same fork grader and image tags, record the task rows with `late_grade`, and back them up. scipy and bedrock graded on the first try. pydap failed to apply on all five arms both times: `src/pydap/parsers/dmr.py` has CRLF endings on all 1066 lines and the captured patches hold no CR byte because the adapters pass patches through text mode. Under prereg §5 (harness error, rerun once, then unresolved) all five pydap arms are unresolved. The defect is identical across arms, so the paired comparisons gain five ties and no wins or losses.
+**Alternatives:** Re-adding CR to the pydap patches and regrading would have been a post-hoc repair outside the registered protocol. Dropping the task would change n after results were in view.
+**Consequences:** Byte-safe patch capture is a backlog item that must land before T2. Resume must regrade tasks with missing or null grades. The T1 per-arm table carries one task that no arm could resolve for adapter reasons.
+**Refs:** `/home/krs/graphirm-runs/t1/pydap__pydap-624/harness-error.json`, `eval/swebench/analysis/t1_report.py`, `docs/backlog.md`.
+
+## 2026-10-22 — Retry sensitivity is reported three ways because the wall-clock rule is asymmetric
+
+**Context:** Prereg §5 says provider errors are retried and retries do not count toward budgets. In T1 the runner's 1900 s kill of a Graphirm process was classed infrastructure and rerun, while mini-swe-agent stops itself at 1800 s and submits what it has. The user asked for H1–H3 under all retries and under first attempt only. The definitions below were fixed before the numbers were computed.
+**Decision:** (a) all retries, the registered rule; (b) first attempt only — the first ledger row that ran the registered model (the 2026-10-14 wrong-model rows are config, not attempts) decides, and an errored first attempt is unresolved; (c) wall-clock kills count against the arm while provider-side errors (HTTP 429, connection drop, LLM call timeout) may still be retried. (c) exists because the wall-clock retry is the only rule that treated the two systems differently. Cache hits for M come from `usage.prompt_tokens_details.cached_tokens` in the trajectory; the graph-based `closing.py` figure for M was never available.
+**Alternatives:** Reporting only (a) would hide that the H1 lower bound moves across −5 pp under (b) and (c). Reporting only (b) would count Morph's pool refusals against Graphirm alone, since mini's client retried them inside the call.
+**Consequences:** The write-up states H1 under all three rules. Graphirm gets a wall-clock budget of its own before T2 (backlog), so the asymmetry does not recur.
+**Refs:** `eval/swebench/analysis/t1_report.py`, `/home/krs/graphirm-runs/t1/analysis/t1_report.md`.
+
+## 2026-10-22 — T3 runs on CL-Bench's own workspace protocol, one sequence per arm
+
+**Context:** T1 finished on 2026-10-21 (210 tasks, $35.65). The registered order puts T3 next: the 19 CL-Bench codebase tasks, arms M, M-notes, G-fresh, G-persist, cap $5. No paid driver existed for the memory tracks; only the validity check did. Written before any T3 result exists.
+**Decision:** `run_t3.py` prepares every agent workspace with CL-Bench's `initialize_generic_pr_container`: reset, checkout `base_commit`, apply `test_patch`. Grading is `evaluate_generic_pr_submission` with the same two-attempt settle rule as the validity check; a harness error after the rerun counts as unresolved and prints `HARNESS_ERR`. Each arm walks the 19 tasks strictly in the published order; the four arms run in parallel because each arm is its own memory sequence. M-notes bind-mounts a per-task host directory at `/memory`; the file is carried with `memory_notes.carry` (4k-token cap, oldest first) and promoted to the repo's carried copy only after a clean task. G-persist copies the repo's carried `graph.db` into the container (`GRAPH_IN` in the runner) and promotes the task's graph after a clean task, so a retried task restarts from the pre-task state. Memory directories are keyed by repo, so the tablib → tenacity switch is a reset. Budgets are the headline ones: 100 steps, $0.50, 30 minutes. Containers keep network access because Graphirm calls the model from inside the container; CL-Bench's official `--network=none` is not used for any arm. The request-caused streak is one counter across the four arms. Disk waits at 78% without the T1 image reclaim, and the reclaim keeps the two CL-Bench images while `t3/running` exists. The watchdog now loops over tracks.
+**Alternatives:** Hiding `test_patch` from the agent would match T1 but not the benchmark's own harness; prereg names CL-Bench's harness for T3. Running the arms one after another would quadruple the clock for no independence gain. Promoting memory before grading would let a retried task see its own failed attempt.
+**Consequences:** T3 resolve rates are not comparable to T1's because the agent sees the failing tests. CL-Bench's reward and gain can be computed later from `api_calls` and Graphirm turns. The same driver shape is the template for T2, with `swebench` 4.1.0 grading in place of the CL-Bench runtime.
+**Refs:** `eval/swebench/run_t3.py`, `eval/swebench/adapters/graphirm_runner.sh`, `eval/swebench/watchdog.py`, `eval/swebench/disk_guard.py`, `eval/swebench/prereg.md`.
+
+## 2026-10-20 — T1 spend cap moves from $35 to $45
+
+**Context:** The running projection rose from about $27 to about $31 as heavier tasks arrived. The pre-registered T1 cap is $35. Crossing it would leave the rest of the 210 unrun. The account balance covers a higher cap.
+**Decision:** Raise the T1 driver cap to $45 before the track finishes. This was done without looking at per-arm resolve rates. Hypotheses, arms, and configs stay as registered.
+**Alternatives:** Leaving $35 in place would stop the headline track for a budget chosen before the pandas tasks showed up. Waiting until after the results to raise it would make the limit look tuned to the scores.
+**Consequences:** Primary cost still uses the frozen prices. The extra room is only so the remaining tasks can run. A later track keeps its own registered cap.
+**Refs:** `eval/swebench/run_t1.py`, `eval/swebench/prereg.md`.
+
+## 2026-10-20 — A full disk gets one Docker reclaim, then the driver waits
+
+**Context:** T1's wait line is 78% of the filesystem. Disk was reported near that line. The growth is not the run directory.
+**Decision:** The first time a wait starts, the driver prunes stopped containers, dangling images, and build cache, and removes task images that are not in the remaining T1 list and not used by a running container. It checks the disk again. If the disk is still over the line, it keeps waiting. The watchdog logs the percent and does not delete runs or the backup repo. The stamp clears once usage falls back under the line, so a later climb can reclaim once more.
+**Alternatives:** Deleting Cursor's state database would free more space and would risk the open editor. Keeping every finished task image would fill the disk again.
+**Consequences:** T2, under the same delete-after-task rule, holds one SWE-bench Verified image at a time. Sampled hub sizes are 1.0–3.1GB compressed. That fits under 85% with the current free space. A whole repo sequence kept on disk at once is the case that would need a prune between sequences.
+**Refs:** `eval/swebench/disk_guard.py`, `eval/swebench/run_t1.py`.
+
+## 2026-10-19 — One rejected request does not stop the track
+
+**Context:** A single HTTP 400, context-length error, or malformed call was going to stop the driver. That halt needs a person, and these alerts are off.
+**Decision:** Record that arm unresolved, keep the error as its exit reason, and continue. Stop only when more than three request-caused errors happen in a row across arms, or when any arm has a config or model mismatch. Infrastructure errors still wait, run pre-flight, and retry.
+**Alternatives:** Stopping on the first rejected request would leave the rest of the track unrun. Retrying a rejected request would hide a Graphirm failure.
+**Consequences:** The registered order is unchanged: T1, then T3, then T2, then T4. T3's finished job was the validity pre-check. The T3 memory track itself has not run: 19 tasks, arms M, M-notes, G-fresh, and G-persist. T2's memory track is 273 tasks with those same four arms. Each track uses ledger resume, durable outputs, the model and config guards, and this recovery rule.
+**Refs:** `eval/swebench/run_t1.py`, `eval/swebench/prereg.md`.
+
+## 2026-10-19 — Infrastructure failures restart themselves
+
+**Context:** The kill switch paused T1 and the pause sat unread for four days. Phone and email alerts were added, then dropped. The benchmark has to keep going without a person watching it.
+**Decision:** There is no phone or email notification. A user timer checks every five minutes. If T1's `running` file is present, the process is dead, and `stop-reason` is absent, it waits with a doubling backoff, runs pre-flight, and starts the driver again. Inside the driver, an infrastructure failure (HTTP 429, a 5xx, Morph's shared-pool overload, a timeout, or a dropped connection) waits, runs pre-flight, and retries that arm. A request the provider rejects (HTTP 400, context length, a malformed tool call) is stored as unresolved for that arm and the driver stops. The watchdog does not start it again while `stop-reason` exists. A 404 or a wrong-model config stop is the same kind of halt.
+**Alternatives:** Leaving the pause as a hard exit needs a person to notice. Retrying a request the provider rejects would hide a Graphirm failure.
+**Consequences:** The process that is already running still has the old pause. The timer restarts it with this code if that process exits on an infrastructure streak. All six stopped arms were infrastructure and stay in the rerun: four `marimo-team__marimo-8387_interface` arms were Morph HTTP 429 `service_overloaded`, `koxudaxi__datamodel-code-generator-2998` G-b16 was a dropped connection, and `strands-agents__sdk-python-1734` G was the same HTTP 429. Morph's listing changed during the gap: prompt $0.041 per million tokens against the frozen $0.042, cache read $0.005 per million against the frozen $0.009, and `supports_implicit_caching` is now true. Primary cost stays on the frozen prices. Billed-cost differences above 5% are expected for this reason and are not an error in the run. The packing budget remains words divided by 0.75. The end-of-T1 report prints provider prompt-token median and 90th percentile beside the nominal budget, and the median cache-hit ratio before the gap against the ratio after it. Nothing in the frozen config changes.
+**Refs:** `eval/swebench/failure_class.py`, `eval/swebench/watchdog.py`, `eval/swebench/closing.py`, `eval/swebench/prices.lock.json`.
+
+## 2026-10-19 — Infrastructure provider errors are rerun
+
+**Context:** T1 paused itself on 2026-10-15 at 06:49 EEST after four Graphirm arms on `marimo-team__marimo-8387_interface` returned empty patches. The log was not read until 2026-10-19. Two other Graphirm arms had also stopped on provider errors. Nothing was lost. 92 tasks with all five arms complete stay as they are.
+**Decision:** Classify the failing call before any rerun. Infrastructure is a 5xx, a provider pool or overload error, a timeout, a connection drop, or a 429 after the in-run retries. Those arms are rerun, which is the pre-registered provider-error rule. A 400-type validation error, a context-length rejection, or a malformed tool call is request-caused: that arm counts as unresolved, the error is its exit reason, and it is not rerun. A resend that gets the same 429 is still infrastructure. A resend that gets the same 400 is request-caused.
+**Alternatives:** Rerunning every failure would hide a request the provider rejects. Treating every 429 as the agent's score would punish the run for an overloaded pool.
+**Consequences:** All six stopped arms are infrastructure and will be rerun. The four marimo arms failed on call 1: four logged attempts were HTTP 429, `service_overloaded`, `upstream_provider_shared_pool`, and the run then stopped. Prompt tokens were not returned; the stored task is 2504 characters. `koxudaxi__datamodel-code-generator-2998` G-b16 failed on call 90 with `error sending request` and no HTTP status, after call 89 had used 55085 prompt tokens. `strands-agents__sdk-python-1734` G failed on call 38 with the same HTTP 429 pool error, after call 37 had used 202552 prompt tokens. The packed HTTP body of those later calls was not stored. Resending each stored task text once, with the same model, morph/fp8 pin, and reasoning effort, returned HTTP 200 from Morph. The Morph listing on 2026-10-19 is still `deepseek/deepseek-v4.1-flash`, tag `morph/fp8`, quantisation fp8, context length 1048576, status 0. Prompt price moved from 0.000000042 to 0.000000041 per token, and cache-read price moved from 0.000000009 to 0.000000005. Output price is unchanged at 0.0000006. The catalog field `supports_implicit_caching` is now true; the lock note recorded it as false. Primary cost stays on the frozen prices. The resume preflight matched on all five arms: `deepseek/deepseek-v4.1-flash`, morph/fp8, reasoning high.
+**Refs:** `eval/swebench/prices.lock.json`, `eval/swebench/prereg.md`.
+
+## 2026-10-19 — A driver pause must reach the phone
+
+**Context:** The kill switch worked and then sat unread for four days. The T2 validator had also stopped on 2026-10-15, on the old backup code, after its grades were already in the ledger.
+**Decision:** The driver posts to a private ntfy.sh topic on a pause, a crash, disk above 85%, track completion, and every 50 tasks. A user systemd timer runs every 30 minutes and alerts when a track's `running` file exists and its log is older than 45 minutes. The topic is stored in `/home/krs/graphirm-runs/alert.env`, outside the repo. A failed send does not stop the run.
+**Alternatives:** Email was left as a later swap if the phone app is a poor fit. A topic name chosen in chat would have blocked the test.
+**Consequences:** A paused driver keeps its `running` file, so the watchdog repeats until the track finishes or the file is removed. T2's two checks that never printed `VALID` (`django__django-9296` and `matplotlib__matplotlib-24637`) are already complete in the ledger, gold true and empty false, and they are not exclusions.
+**Refs:** `eval/swebench/alert.py`, `eval/swebench/watchdog.py`.
+
+## 2026-10-14 — A backup failure must not stop the eval
+
+**Context:** T1 died because `git add` in the shared backup repo found an existing index lock. T1's arms and the T2 validator both commit in `/home/krs/graphirm-runs-backup`. T1 also commits several arms at once.
+**Decision:** One file lock serialises git in that repo. A backup tries three times, then logs a warning and the run continues. Failed backups are counted on the progress line and retried at the next 10-task push.
+**Alternatives:** A separate clone per track would stop T1 colliding with T2, and would still leave T1's own arms colliding. It would also split the GitHub history.
+**Consequences:** The running T2 process keeps the old backup code until it is restarted. T1's retries cover a collision with that process.
+**Refs:** `eval/swebench/durable.py`, `eval/swebench/run_t1.py`.
+
+## 2026-10-14 — Sequential replay rebuilds 69 of 70 sampled turns
+
+**Context:** Stateless re-selection, which starts every turn with an empty already-sent list, matched 54 of 70 sampled turns. The live packer keeps that list in process memory.
+**Decision:** Log the measured rates and leave the one miss for later. Stateless re-selection is 54/70. Sequential replay, carrying kept node ids forward and using the system text the packer counted, is 69/70. The miss is stable: `chaoss__augur-3512` G-b16 from call 15, where the budget fit dropped a derived command output differently from the live pack. At the end of T1 the driver prints the sequential rate over every sampled run.
+**Alternatives:** Chasing the one turn now would hold up the headline run.
+**Consequences:** The write-up can say sequential replay rebuilds the context nearly always. The system text still comes from the pack trace, not the graph. One turn remains unexplained.
+**Refs:** `eval/swebench/reconstruct_check.py`, `eval/swebench/PLAN.md`, `src/commands/replay_pack.rs`.
+
+## 2026-10-14 — Provenance and reconstruction go out with each Graphirm summary
+
+**Context:** The headline runs need the strict and lenient provenance rates, and a 10-turn rebuild of packed context against the logged request, without waiting for the write-up. Graph files stay off the Hugging Face upload until every track has finished.
+**Decision:** After each Graphirm arm writes its graph, `provenance/check.py` records strict and lenient match counts on that run's summary. A stable 5% of arms also log the pack trace and diff 10 random turns against `replay-pack`. The summary is what the backup push already copies. The 25-task size report still prints. The dataset upload does not run yet.
+**Alternatives:** Uploading graphs at 25 tasks would put a partial track on Hugging Face before T2, T3, and T4 exist.
+**Consequences:** A summary without a graph has no provenance block. Reconstruction is absent on the other 95% of arms.
+**Refs:** `eval/swebench/provenance/check.py`, `eval/swebench/reconstruct_check.py`, `eval/swebench/run_t1.py`, `eval/swebench/PLAN.md`.
+
+## 2026-10-14 — A wrong eval setting must stop the run
+
+**Context:** `.env` set `GRAPHIRM_MODEL` to `openrouter/deepseek/deepseek-v4-flash`. The T1 driver loaded that file, and the runner treated it as the eval model. morph/fp8 rejected it. 20 Graphirm arms on 5 tasks produced nothing and were invalid. The 5 mini arms used `deepseek/deepseek-v4.1-flash` on morph/fp8 and were kept. This provider has no time-of-day pricing, so rerunning the Graphirm arms does not change the comparison. Phase C and Phase D are unchanged: a run that finished could not have used the rejected model.
+**Decision:** The adapter passes the pre-registered model, reasoning effort, and morph/fp8 pin itself. `.env` and `GRAPHIRM_MODEL` cannot override them. The stale `.env` value is now `openrouter/deepseek/deepseek-v4.1-flash`. Before the first task, each arm makes one short call and the driver refuses to start unless the resolved model, provider, and reasoning effort match `prereg.md`. After each run, a metadata or trajectory mismatch, or an empty patch from a provider error such as 404, is `invalid_config`: it is not scored and not counted. More than three such runs in a row pause the driver. After 25 completed tasks the driver reports median and total compressed `graph.db` size, extrapolates to 210 tasks, and uploads the graphs to `consoulhub/graphirm-eval-graphs` when a Hugging Face token is present.
+**Alternatives:** Scoring the empty patches as ordinary failures would have counted a broken setting as an agent result.
+**Consequences:** The 20 invalid Graphirm arms run again. The 5 mini arms stay. No Hugging Face token is on this machine yet, so the 25-task upload waits for a login.
+**Refs:** `eval/swebench/config_guard.py`, `eval/swebench/adapters/graphirm_runner.sh`, `eval/swebench/run_t1.py`, `eval/swebench/prereg.md`.
+
+## 2026-10-14 — Eval model must not follow the chat model in .env
+
+**Context:** The T1 rerun's Graphirm arms exited in under a minute with empty patches and no `graph.db`. `.env` sets `GRAPHIRM_MODEL` to `openrouter/deepseek/deepseek-v4-flash` for chat. The driver loads that file, and the runner treated the value as an eval override. morph/fp8 does not serve that model, so every Graphirm call returned 404. The registered eval model is `openrouter/deepseek/deepseek-v4.1-flash`.
+**Decision:** The runner now drops `GRAPHIRM_MODEL` after reading `.env`. The eval model is the CLI default unless `GRAPHIRM_EVAL_MODEL` is set. The graph and the summary are copied even when `graphirm run` exits non-zero. An arm ledger row with an error is not treated as done, so those arms run again. Mini rows that finished on the registered model stay.
+**Alternatives:** Leaving the rerun up would have stored empty Graphirm patches as finished results.
+**Consequences:** The first tasks keep their mini runs and repeat the four Graphirm arms. No per-track `graph.db` size exists until those arms write databases.
+**Refs:** `eval/swebench/adapters/graphirm_runner.sh`, `eval/swebench/run_t1.py`.
+
 ## 2026-10-14 — Push eval backups off this machine
 
 **Context:** `/home/krs/graphirm-runs-backup` is on the same disk as the run outputs. A disk failure would take both copies.

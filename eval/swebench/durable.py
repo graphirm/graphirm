@@ -9,10 +9,13 @@ and a /tmp wipe. It does not survive loss of the disk.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
 import subprocess
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 RUNS_ROOT = Path("/home/krs/graphirm-runs")
@@ -86,8 +89,19 @@ def ensure_backup_repo() -> Path:
     return root
 
 
-def backup_record(track: str, record: dict, files: list[Path] | None = None) -> None:
-    """Copy one task's record into the backup repo and commit it."""
+@contextmanager
+def _backup_lock(root: Path):
+    """One git writer at a time. T1's arms and the T2 validator share this repo."""
+    handle = (root / ".backup.lock").open("a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+def _backup_once(track: str, record: dict, files: list[Path] | None) -> None:
     root = ensure_backup_repo()
     dest = refuse_tmp(root / track / record["instance_id"])
     dest.mkdir(parents=True, exist_ok=True)
@@ -96,33 +110,121 @@ def backup_record(track: str, record: dict, files: list[Path] | None = None) -> 
         if src.is_file():
             shutil.copy2(src, dest / src.name)
     append_ledger(root / track / "ledger.jsonl", record)
-    subprocess.run(["git", "add", "-A", track], cwd=root, check=True)
-    status = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    if not status.stdout.strip():
-        return
-    message = f"{track} {record['instance_id']}"
-    subprocess.run(
-        ["git", "commit", "-m", message],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
+    with _backup_lock(root):
+        subprocess.run(["git", "add", "-A", track], cwd=root, check=True)
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--", track],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if not status.stdout.strip():
+            return
+        message = f"{track} {record['instance_id']}"
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+
+def backup_record(track: str, record: dict, files: list[Path] | None = None) -> bool:
+    """Copy one record into the backup repo and commit it.
+
+    Three tries, then a warning. A failure does not raise.
+    """
+    last = "backup failed"
+    for attempt in range(3):
+        try:
+            _backup_once(track, record, files)
+            return True
+        except Exception as exc:
+            last = f"{type(exc).__name__}: {exc}"
+            if attempt < 2:
+                time.sleep(2)
+    print(f"BACKUP_WARN {track} {record.get('instance_id')} {last}", flush=True)
+    return False
+
+
+def _pending_path(track: str) -> Path:
+    return runs_dir(track) / "backup-pending.jsonl"
+
+
+def remember_failed_backup(track: str, record: dict, files: list[Path] | None = None) -> None:
+    """Keep a failed backup so the next 10-task push can try it again."""
+    append_ledger(
+        _pending_path(track),
+        {
+            "instance_id": record["instance_id"],
+            "record": record,
+            "files": [str(path) for path in (files or [])],
+        },
     )
 
 
-def push_backup() -> None:
-    """Push the backup repo to origin. Local commits stay if the push fails."""
+def pending_backup_count(track: str) -> int:
+    path = _pending_path(track)
+    if not path.exists():
+        return 0
+    ids = set()
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            ids.add(json.loads(line)["instance_id"])
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return len(ids)
+
+
+def retry_failed_backups(track: str) -> int:
+    """Retry pending backups. Return how many are still failing."""
+    path = _pending_path(track)
+    if not path.exists():
+        return 0
+    latest: dict[str, dict] = {}
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        latest[record["instance_id"]] = record
+    still = []
+    for item in latest.values():
+        payload = item.get("record") or item
+        files = [Path(name) for name in item.get("files") or []]
+        if not backup_record(track, payload, files):
+            still.append(item)
+    if still:
+        path.write_text("".join(json.dumps(record, sort_keys=True) + "\n" for record in still))
+    elif path.exists():
+        path.unlink()
+    return len(still)
+
+
+def push_backup() -> bool:
+    """Push the backup repo to origin. A failure does not raise."""
     root = ensure_backup_repo()
-    subprocess.run(
-        ["git", "push", "origin", "HEAD"],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    last = "push failed"
+    for attempt in range(3):
+        try:
+            with _backup_lock(root):
+                subprocess.run(
+                    ["git", "push", "origin", "HEAD"],
+                    cwd=root,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+            return True
+        except Exception as exc:
+            last = f"{type(exc).__name__}: {exc}"
+            if attempt < 2:
+                time.sleep(2)
+    print(f"BACKUP_WARN push {last}", flush=True)
+    return False

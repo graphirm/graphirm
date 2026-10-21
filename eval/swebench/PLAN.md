@@ -228,3 +228,8 @@ On 2026-10-12 the OpenRouter credits endpoint left $7.36. **Top up before T1.** 
 - AMA-Bench or Memoria-Bench: graph scoring against long-context and summary baselines. Needs a question-answering adapter.
 - T5 Fable is not registered. SWE-Marathon remains the comparison for Fable.
 - A Grok 4.7 confirmation on headline tasks, M and G only.
+- Store a per-turn pack manifest in the graph: the ordered node ids that were sent, plus the budget note or the inputs that regenerate it. Exact reconstruction then holds from the graph. Re-running selection does not, because the live packer keeps the already-sent id list in session memory and the graph does not store it. `context_dropped_node_ids` lists thread nodes left out of the pack. It is not the ordered sent list, and it does not list derived content nodes omitted by dedup.
+- Store the full system text in the graph, for example on `run_metadata`, so sequential replay does not need the external pack trace for that text.
+- Investigate the one stable sequential-replay divergence: `chaoss__augur-3512` G-b16 from call 15, where the budget fit dropped a derived command output differently from the live pack.
+- The packing budget is Graphirm's estimate, words divided by 0.75, not provider tokens. One T1 call reached 202552 provider prompt tokens under the nominal 100k budget. At the end of T1, report for each Graphirm arm the median and 90th-percentile provider prompt tokens per call next to the nominal budget (100k or 16k). Do not change the frozen config to chase the provider count.
+- At the end of T1, compare the median per-task cache-hit ratio of each arm on the tasks finished before the 2026-10-15 pause with the tasks finished after it. Report the two medians. Do not retune caching from that comparison.

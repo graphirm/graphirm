@@ -15,22 +15,17 @@
 # The binary path defaults to ./target/release/graphirm.
 set -eu
 
-# .env holds API keys and may also set GRAPHIRM_MODEL for everyday chat.
-# The eval arm keeps a model the caller exported, otherwise the Flash default
-# below. It does not follow the chat model in .env.
-caller_model=${GRAPHIRM_MODEL-}
-caller_model_set=${GRAPHIRM_MODEL+yes}
+# .env holds API keys and the everyday chat model. Eval ignores both
+# GRAPHIRM_MODEL and GRAPHIRM_REASONING. The flags below are the
+# pre-registered model and reasoning effort.
 if [ -f .env ]; then
   set -a
   # shellcheck disable=SC1091
   . ./.env
   set +a
 fi
-if [ "$caller_model_set" = yes ]; then
-  GRAPHIRM_MODEL=$caller_model
-else
-  unset GRAPHIRM_MODEL
-fi
+unset GRAPHIRM_MODEL
+unset GRAPHIRM_REASONING
 
 if [ -z "${CONTAINER:-}" ] || [ -z "${TASK_FILE:-}" ] || [ -z "${WORKDIR:-}" ]; then
   echo "graphirm_runner.sh needs CONTAINER, TASK_FILE, and WORKDIR" >&2
@@ -48,6 +43,10 @@ fi
 
 BIN="${GRAPHIRM_BIN:-./target/release/graphirm}"
 CONFIG="${CONFIG:-./eval/swebench/adapters/eval-agent.toml}"
+if ! grep -q 'openrouter_provider = "morph/fp8"' "$CONFIG"; then
+  echo "refusing to run: $CONFIG provider pin is not morph/fp8" >&2
+  exit 5
+fi
 PRICES="${GRAPHIRM_PRICES:-./eval/swebench/prices.lock.json}"
 GRAPH_OUT="${GRAPH_OUT:-./graph.db}"
 SUMMARY_OUT="${SUMMARY_OUT:-./summary.json}"
@@ -61,6 +60,14 @@ docker cp "$BIN" "$CONTAINER:/usr/local/bin/graphirm"
 docker cp "$CONFIG" "$CONTAINER:/tmp/eval-agent.toml"
 docker cp "$PRICES" "$CONTAINER:/tmp/prices.lock.json"
 docker cp "$TASK_FILE" "$CONTAINER:/tmp/issue.md"
+# Memory tracks: GRAPH_IN is the repo's carried graph (G-persist). Graphirm
+# reopens it and appends this task. Unset or missing means a fresh graph.
+# A docker-cp'd file keeps the host uid and SQLite then refuses to write it,
+# so the copy is re-created by the container's own user.
+if [ -n "${GRAPH_IN:-}" ] && [ -s "$GRAPH_IN" ]; then
+  docker cp "$GRAPH_IN" "$CONTAINER:/tmp/graph.in.db"
+  docker exec "$CONTAINER" sh -c 'cp /tmp/graph.in.db /tmp/graph.db && rm -f /tmp/graph.in.db'
+fi
 
 mkdir -p "$(dirname "$SUMMARY_OUT")"
 docker exec "$CONTAINER" git -C "$WORKDIR" rev-parse HEAD > "${SUMMARY_OUT}.start_commit"
@@ -88,8 +95,8 @@ docker exec -e OPENROUTER_API_KEY $pack_env "$CONTAINER" graphirm run \
   --cwd "$WORKDIR" \
   --graph /tmp/graph.db \
   --config /tmp/eval-agent.toml \
-  --model "${GRAPHIRM_MODEL:-openrouter/deepseek/deepseek-v4.1-flash}" \
-  --reasoning-effort "${GRAPHIRM_REASONING:-high}" \
+  --model openrouter/deepseek/deepseek-v4.1-flash \
+  --reasoning-effort high \
   --scoring "${GRAPHIRM_SCORING:-default}" \
   --reply-format "${GRAPHIRM_REPLY:-segments}" \
   --max-turns "${GRAPHIRM_MAX_TURNS:-100}" \
@@ -98,11 +105,8 @@ docker exec -e OPENROUTER_API_KEY $pack_env "$CONTAINER" graphirm run \
   --summary /tmp/summary.json
 code=$?
 set -e
-# Exit 2 is a budget stop. The patch and summary are still collected.
-if [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then
-  echo "graphirm run exited $code" >&2
-  exit "$code"
-fi
+# Exit 2 is a budget stop. Copy the graph and the patch either way,
+# then return the real status so a provider failure can be retried.
 
 docker exec "$CONTAINER" git -C "$WORKDIR" diff > "${GRAPH_OUT}.diff.raw" || true
 python3 - <<'PY'
@@ -118,8 +122,8 @@ if extra:
     test_patch = Path(extra).read_text()
 Path(os.environ["GRAPH_OUT"] + ".diff").write_text(strip_test_hunks(raw, test_patch))
 PY
-docker cp "$CONTAINER:/tmp/graph.db" "$GRAPH_OUT"
-docker cp "$CONTAINER:/tmp/summary.json" "$SUMMARY_OUT"
+docker cp "$CONTAINER:/tmp/graph.db" "$GRAPH_OUT" || true
+docker cp "$CONTAINER:/tmp/summary.json" "$SUMMARY_OUT" || true
 python3 - <<'PY'
 import json
 import os
@@ -138,4 +142,8 @@ if [ -n "${PACK_TRACE_OUT:-}" ]; then
 fi
 if [ -n "${RETRY_LOG_OUT:-}" ]; then
   docker cp "$CONTAINER:/tmp/provider-retries.log" "$RETRY_LOG_OUT" || true
+fi
+if [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then
+  echo "graphirm run exited $code" >&2
+  exit "$code"
 fi

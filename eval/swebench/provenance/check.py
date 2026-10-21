@@ -23,6 +23,7 @@ from pathlib import Path
 
 FILE_TOOLS = {"read", "write", "edit"}
 VIEW_COMMANDS = {"cat", "sed", "grep", "head", "tail", "less", "more", "nl", "awk", "rg", "bat"}
+STRICT_COMMANDS = {"cat", "sed", "head", "less"}
 
 
 def _nodes(conn: sqlite3.Connection) -> list[dict]:
@@ -153,7 +154,54 @@ def _tool_nodes_for(cite: str, nodes: list[dict]) -> list[dict]:
     return []
 
 
+def _bash_named(nodes: list[dict], path: str, commands: set[str] | None, command_only: bool) -> bool:
+    """Lenient: any bash command or its output names the path.
+
+    Strict: the command itself is cat, sed, head, or less and names the file.
+    """
+    bash_commands = _bash_commands(nodes)
+    for node in nodes:
+        if node["metadata"].get("tool_name") != "bash":
+            continue
+        call_id = str(node["metadata"].get("tool_call_id") or "")
+        command = bash_commands.get(call_id, "")
+        if commands is not None and not any(token in commands for token in _command_tokens(command)):
+            continue
+        output = ""
+        data = node["data"]
+        if isinstance(data, dict):
+            output = str(data.get("content") or "")
+        if _mentions_path(command, path):
+            return True
+        if not command_only and _mentions_path(output, path):
+            return True
+    return False
+
+
+def _command_tokens(command: str) -> list[str]:
+    tokens = []
+    token = []
+    for char in command:
+        if char.isalnum() or char in {"_", "-"}:
+            token.append(char)
+        elif token:
+            tokens.append("".join(token))
+            token = []
+    if token:
+        tokens.append("".join(token))
+    return tokens
+
+
+def _file_matches(nodes: list[dict], path: str, rule: str) -> bool:
+    if _file_nodes(nodes, path):
+        return True
+    if rule == "strict":
+        return _bash_named(nodes, path, STRICT_COMMANDS, command_only=True)
+    return _bash_named(nodes, path, None, command_only=False)
+
+
 def check_src(src: str, nodes: list[dict]) -> tuple[str, str]:
+    """Widened rule kept for the CSV: file tools, or a bash view of the path."""
     if src.startswith("tool:"):
         matches = _tool_nodes_for(src.removeprefix("tool:"), nodes)
         if len(matches) != 1:
@@ -167,6 +215,17 @@ def check_src(src: str, nodes: list[dict]) -> tuple[str, str]:
     if src.startswith("web:"):
         return "n/a", "n/a"
     return "no", "no"
+
+
+def rule_match(src: str, nodes: list[dict], rule: str) -> str:
+    if src.startswith("tool:"):
+        matches = _tool_nodes_for(src.removeprefix("tool:"), nodes)
+        return "yes" if len(matches) == 1 else "no"
+    if src.startswith("file:"):
+        return "yes" if _file_matches(nodes, src.removeprefix("file:"), rule) else "no"
+    if src.startswith("web:"):
+        return "n/a"
+    return "no"
 
 
 def claims_from_graph(nodes: list[dict]) -> tuple[list[dict], dict]:
@@ -218,6 +277,30 @@ def write_csv(claims: list[dict], dest: Path) -> None:
         writer.writerows(claims)
 
 
+def summarize(graph: Path) -> dict:
+    conn = sqlite3.connect(f"file:{graph}?mode=ro", uri=True)
+    try:
+        nodes = _nodes(conn)
+    finally:
+        conn.close()
+    claims, summary = claims_from_graph(nodes)
+    strict = 0
+    lenient = 0
+    for row in claims:
+        src = row["src"]
+        if rule_match(src, nodes, "strict") == "yes":
+            strict += 1
+        if rule_match(src, nodes, "lenient") == "yes":
+            lenient += 1
+    summary.update(
+        {
+            "strict_match": strict,
+            "lenient_match": lenient,
+        }
+    )
+    return summary
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--graph", required=True)
@@ -231,10 +314,13 @@ def main() -> None:
     write_csv(claims, Path(args.out))
     exists = sum(1 for row in claims if row["exists"] == "yes")
     typed = sum(1 for row in claims if row["type_match"] == "yes")
+    both = summarize(Path(args.graph))
     summary.update(
         {
             "exists_yes": exists,
             "type_match_yes": typed,
+            "strict_match": both["strict_match"],
+            "lenient_match": both["lenient_match"],
             "out": args.out,
         }
     )

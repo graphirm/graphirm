@@ -15,17 +15,23 @@ Single source of truth for planned work. Completed items are recorded in `docs/c
 
 ---
 
+## Surfaces
+
+### Chat reads AgentConfig::default() — P2 · S
+
+`graphirm chat` keeps segments off because it builds `AgentConfig::default()` and only copies `[agent.pi]`. `serve`, `run`, and the web app load `config/default.toml`, where segment JSON is on. Chat should read that full config. This does not block the SWE-bench eval.
+
 ## Reply pieces
 
 ### HTML piece index — P2 · M
 
-Ask Pi for one HTML page with an index of links, then cut that page into Content nodes under the reply: the message contains each part, and each part contains its lines. A part counts only when the link, the id, and a kind word match. One retry, then the reply stays and no piece nodes are created. A later reply that names an earlier part gets its own nodes; a test records that the mention stays in the text and no part-to-part edge is written. Plan: `docs/plans/2026-10-08-html-piece-index.md`.
+Ask Pi for one HTML page with a `nav` index of links, a `section` and `h2` per part, numbered `1.0.0` on each part and `1.0.1` on each line (`ul`, not `ol`; code numbers live in `data-n`), then cut that page into Content nodes under the reply: the message contains each part, and each part contains its lines. A part counts only when the link, the id, and a kind word match. One retry, then the reply stays and no piece nodes are created. A later reply that names an earlier part gets its own nodes; a test records that the mention stays in the text and no part-to-part edge is written. Plan: `docs/plans/2026-10-08-html-piece-index.md`.
 
 ### Reply-piece parser — P2 · M
 
 Split a finished Pi reply into pieces by shape, without using the question. The parser owns the text. A labeler only names the shape. Plan: `docs/plans/2026-10-05-reply-pieces.md`. The HTML index above is the path for a reply Pi writes in that page. This item stays for markdown replies and for the hand-labeled set.
 
-Milestone 1 (parser, splitter, baseline labeler, capped Pi JSONL recording, blind labeling command, range-keyed labels, scorer, version snapshot) is on `feat/reply-pieces`. Still open: the 100-reply hand-labeled set, a grammar-constrained labeler that has to beat the baseline, and cross-turn edges. Guide: `docs/guides/reply-piece-labels.md`.
+Milestone 1 (parser, splitter, baseline labeler, capped Pi JSONL recording, blind labeling command, range-keyed labels, scorer, version snapshot) is on `feat/reply-pieces`. Still open: the 100-reply hand-labeled set, a grammar-constrained labeler that has to beat the baseline, and cross-turn edges. A decision-message envelope stays deferred until that message exists; the evidence rules are in the 2026-10-07 journal entry. Caveat severity and `applies_to` wait until a caveat gates an action. An expected result on steps waits until a verifier exists. Neither adds a kind. Guide: `docs/guides/reply-piece-labels.md`.
 
 ---
 
@@ -723,6 +729,44 @@ handler with `applyNodeChanges` from `@xyflow/react`. Minimap was already render
 **Key files:**
 - `web-app/src/hooks/useGraphData.ts` — import `applyNodeChanges`, replace custom handler
 
+### Decision Card UX
+
+A direction surfaced by design exploration on 2026-04-29 (chat transcript + v0 mockups in
+`/home/krs/.cursor/projects/home-krs-graphirm-repo/assets/`). Inspired by adaptive-quiz UIs
+(cards as the operating layer; the graph is the deck). Goal: make the graph user-facing
+rather than agent-facing — every interaction renders as a typed *card* with options the
+user picks / edits / skips, instead of a free-text chat blob.
+
+**Core principles** worth preserving when work starts:
+- Each card declares the **axis** its options differ on (named, in the header)
+- Options are **one line**; depth lives behind a tap; pencil = inline edit; ❓ = inspect-and-strike sources
+- **Skip is the most important verb** — without it, cards become a tax
+- Cards have a **stake level** (Info / Routine / Consequential / Destructive) + per-session auto-pilot threshold
+- **Empty-state honesty** — when the agent has no good options, say so; never invent distractors
+- Three time horizons in the shell: past (left rail) · present (center card) · future (right rail)
+
+**Measurable per-card signals to instrument from day one:** pick rate of recommended option,
+edit rate, skip rate, time-to-decision. Pair with the option-diversity metric below.
+
+#### Decision Card UX — design exploration — L · P2
+
+Brainstorm artefact (this entry + screenshots). **Not a plan yet** — too big to spec without
+a real prototype, and the principles will shift once the first card type ships. Block on
+completing **First card: Diff card** before opening a `docs/plans/...` for the broader rollout.
+
+#### First card: Diff card in `web-app` — M · P2
+
+Smallest useful surface. Replace the current diff render for `write` / `edit` tool calls
+with a Decision Card: **Apply / Reject / Edit hunks / Ask alternative**. Existing graph
+events (HITL pending, tool result Content node) feed it; no new agent-side scaffolding
+required. This is the proof-of-format — if it doesn't feel right here, the rest of the
+design is wrong.
+
+**Key files:**
+- `web-app/src/components/cards/DiffCard.tsx` — new component
+- `web-app/src/components/ChatPane.tsx` — render `DiffCard` for `write` / `edit` tool calls
+- `web-app/src/components/HitlOverlay.tsx` — generalise to render the same card type
+
 ---
 
 ### ✅ Design system + light/dark theme — P3 · S
@@ -814,6 +858,10 @@ with status indicators (M/A/D/?), click to view diff with syntax-highlighted uni
 
 ## Agent Capability
 
+### Tool-pair atomicity in build_context — P2 · L
+
+A context window must not contain a tool result without its call, or a call without its result. Phase 1 drops orphans during assembly and can ship alone. Phase 2 groups a tool exchange as one budget unit, counts the tail in units, compacts whole exchanges, and checks the assembled request against the selected model's window. Plan: `docs/plans/2026-10-08-tool-pair-atomicity.md`.
+
 ### ✅ Context auto-compaction trigger — P2 · S
 Done 2026-03-21. `select_nodes_for_compaction` in `compact.rs` — walks conversation thread, filters already-compacted nodes, compares token estimate to `compaction_threshold` (default 0.80), skips `guaranteed_recent_turns` newest, returns oldest eligible IDs when `>= min_nodes_to_compact`. Hook in `stream_and_record`: runs selection in `spawn_blocking` then awaits `compact_context` synchronously; non-fatal (errors logged, skipped). `compaction_threshold: f64` added to `ContextConfig`. 4 new unit tests. Enable: `enable_compaction = true` in `[context]` config.
 Plan: `docs/plans/2026-03-22-research-driven-improvements.md`
@@ -883,7 +931,7 @@ small prompt set: greeting, simple question, code task, multi-step task. Score o
 tool-call precision (didn't call tools when unnecessary), response quality, latency, cost.
 Update `[agent.routing]` `cheap` in `config/default.toml` to the winner.
 
-**Candidates:** `deepseek/deepseek-v3.2` (already the smart tier — could also be cheap),
+**Candidates:** `deepseek/deepseek-v4-flash` (pinned Pi model — could also be cheap),
 `anthropic/claude-3.5-haiku`, `google/gemini-2.0-flash-001`, `qwen/qwen-2.5-coder-32b-instruct`.
 
 **Key files:**
@@ -901,6 +949,176 @@ Built-in `trace_analysis` tool (`TraceAnalysisTool`) registered in `build_tool_r
 
 ### ✅ Structured work loop enforcement — P3 · S
 Done 2026-03-27. `enforce_work_loop: bool` config field (default true). When enabled, `create_session` in `crates/server/src/routes.rs` appends a "## Problem-Solving Framework" section to the system prompt: 4-step Plan→Build→Verify→Fix with explicit instruction to transition from Plan to Build after at most 2 messages. 2 new config tests; all agent + server tests pass, clippy clean.
+
+### Option-diversity metric for card generation (Gram determinant) — S · P2
+
+Companion to **First card: Diff card** under UI / Decision Card UX. When the agent generates
+an option set for a Decision Card, embed the options, compute the **Gram determinant** of the
+embedding vectors, and regenerate if below threshold. Provides a machine-checkable quality
+metric for card option sets — the difference between "vibes-driven prompts" and "this format
+provably differentiates choices".
+
+Functional-analytic framing: a 3-option card asks the user to pick a coordinate in a 3-dim
+subspace of decision-space. Linearly dependent options (variations of one direction) collapse
+the Gram volume to zero; spanning options maximise it. Score persisted on each card-emitting
+Interaction node as `option_diversity_score` for offline calibration.
+
+~60 lines. Reuses the existing embedding provider + `KnowledgeRetriever` infra.
+
+**Key files:**
+- `crates/agent/src/cards/option_diversity.rs` — new module: embed → Gram determinant → threshold
+- `crates/agent/src/workflow.rs` — gate option generation on diversity score
+- `crates/agent/src/config.rs` — `min_option_diversity: f64` (default 0.15, 0 disables)
+
+### Banach contraction-based convergence detection — M · P3 (research-y)
+
+Replace the four heuristic loop-control mechanisms — pre-completion verify (Phase 42),
+doom-loop detection (Phase 43), read-loop detection (Phase 48), advisory re-fire fix
+(Phase 49) — with one principled convergence test grounded in fixed-point theory.
+
+A converging loop satisfies `d(state_{t+1}, goal) ≤ q · d(state_t, goal)` for some `q < 1`.
+Define a metric on agent state (candidates: edit distance on touched files, Hamming on
+Knowledge nodes added per turn, embedding distance between consecutive turn summaries).
+Estimate `q` over a sliding window. **`q ≥ 1` sustained over k turns ⇒ divergence detected**
+→ inject the verify-and-stop hook automatically.
+
+**Approach:** start as an `experiments/` probe — instrument existing sessions, compute the
+metric retrospectively, validate that `q` actually correlates with observed doom / read
+loops before replacing the heuristics. If it works, the four phases collapse into one
+config field (`contraction_window`, `divergence_threshold`).
+
+**Key files:**
+- `experiments/contraction-metric/` — new experiment (probe first)
+- (Later) `crates/agent/src/convergence.rs` — replaces parts of `workflow.rs` loop guards
+
+---
+
+## Autoresearch-Inspired (Ratchet Loop)
+
+Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch) — autonomous experiment
+loop with metric-gated keep/discard. Autoresearch optimizes a single scalar (`val_bpb`) via a
+propose→train→evaluate→ratchet cycle. These items generalize the pattern for general-purpose
+software engineering, layered on top of Graphirm's graph memory and harness engineering.
+
+Recommended build order: #2 → #3 → #4 → #1 → #5 → #6.
+
+### Auto-revert on test regression — P1 · S
+
+**Score: 8.5** — High impact, low effort. The "teeth" that doom loop detection (Phase 43) lacks.
+
+After write/edit tool cycles, if the project had passing tests before the agent's changes and
+tests fail after N fix attempts, automatically `git stash` the changes and log a structured
+`TurnOutcome::Reverted` with the diff that caused the regression. The agent moves on to a
+different approach instead of spiraling.
+
+Config: `auto_revert_on_test_fail: bool` (default false), `auto_revert_max_fix_attempts: u32`
+(default 3) in `[agent]`.
+
+**Key files:**
+- `crates/agent/src/workflow.rs` — post-tool-cycle test gate + `git stash` revert path
+- `crates/agent/src/config.rs` — new config fields
+- `config/default.toml` — commented examples
+
+### Results accumulation as Knowledge — P2 · S
+
+**Score: 8.0** — Trivially easy, makes #1 and #2 dramatically more useful over time.
+
+Every ratchet evaluation (pass or fail) writes a Knowledge node with
+`entity_type: "experiment_result"` and structured metadata: commit hash, metric name, metric
+value, status (keep/discard/crash), description, duration. Cross-session knowledge linking
+then surfaces patterns like "removing this optimization always regresses" across sessions.
+
+**Key files:**
+- `crates/agent/src/knowledge/` — new `experiment_result` entity type + persistence
+- `crates/agent/src/workflow.rs` — emit result after ratchet evaluation
+
+### File-level access control — P2 · S
+
+**Score: 7.5** — Modest impact, almost free. Prevents entire classes of agent mistakes.
+
+Per-session `writable_paths` / `readonly_paths` glob arrays in session config. Checked in
+`write`/`edit` tool execution path before HITL. Generalizes autoresearch's "prepare.py is
+read-only" to any file pattern. Agent trying to modify a read-only path gets
+`ExecutionFailed("path matches readonly_paths")`.
+
+Config: `writable_paths: Vec<String>`, `readonly_paths: Vec<String>` in `[agent]` or
+per-session via `POST /api/sessions`.
+
+**Key files:**
+- `crates/tools/src/write.rs`, `crates/tools/src/edit.rs` — path check before execution
+- `crates/tools/src/lib.rs` — `ToolContext` carries path restrictions
+- `crates/agent/src/config.rs` — new config fields
+
+### Metric-gated ratchet (fitness function) — P1 · M
+
+**Score: 9.0** — Highest impact. Converts the agent from "hope it worked" to "prove it worked."
+
+Session-level fitness function: a shell command the user defines that returns a numeric score.
+After each write/edit cycle, the agent loop shells out to the fitness command, compares the
+result to the previous best, and keeps or reverts. The agent doesn't decide whether to
+revert — the metric decides.
+
+Builds on auto-revert (#2) and results-as-Knowledge (#3). What Graphirm adds that
+autoresearch can't: the graph tracks *why* each attempt failed, and cross-session knowledge
+linking learns patterns across experiments.
+
+Config: `fitness_command: Option<String>`, `fitness_direction: "minimize" | "maximize"`
+(default "minimize") in `[agent]` or per-session.
+
+**Key files:**
+- `crates/agent/src/ratchet.rs` — new module: run fitness command, parse score, compare, revert
+- `crates/agent/src/workflow.rs` — post-tool-cycle ratchet gate (after auto-revert, before continue)
+- `crates/agent/src/config.rs` — fitness config fields
+- `crates/server/src/routes.rs` — accept fitness config in `POST /api/sessions`
+
+### Session blueprints (`program.md`-style) — P2 · M
+
+**Score: 7.0** — Good UX simplification, moderate effort due to coexistence with existing config.
+
+A single markdown file that defines everything about a session: goal, metric/fitness command,
+writable/readonly scope, constraints, and instructions. Simpler than TOML config + system
+prompt + repo briefing for users who want a focused autonomous loop.
+
+Parsed at session creation and merged into `AgentConfig`. Coexists with TOML — blueprint
+fields override TOML defaults.
+
+```markdown
+# Session: optimize cold start
+## Goal
+Reduce startup time from 800ms to under 200ms.
+## Metric
+`hyperfine --warmup 3 './target/release/graphirm serve --help'`
+## Scope
+- writable: crates/server/src/**, crates/graph/src/store.rs
+- readonly: everything else
+## Constraints
+- All existing tests must pass
+- No new dependencies
+```
+
+**Key files:**
+- `crates/agent/src/blueprint.rs` — new module: parse markdown → config overlay
+- `crates/server/src/routes.rs` — accept `blueprint` field or `blueprint_path` in `POST /api/sessions`
+- `crates/agent/src/config.rs` — `AgentConfig::apply_blueprint()`
+
+### Experiment mode (structured A/B) — P3 · L
+
+**Score: 6.0** — Highest ceiling, highest effort. Only after #1–#4 are solid.
+
+Formalized experiment mode: user defines goal, metric, and experiment scope. Agent spawns N
+subagents (Phase 19 infrastructure), each tries a different approach in its own workspace.
+Results compared via fitness function, best approach promoted to main workspace. All attempts
+tracked as Task nodes with metric metadata in the graph.
+
+Leverages existing subagent workspaces, Task DAG, Knowledge nodes, and the ratchet (once
+built). The key new logic is the orchestrator that launches parallel attempts, collects
+metrics, and promotes the winner.
+
+**Key files:**
+- `crates/agent/src/experiment.rs` — new module: experiment orchestrator
+- `crates/agent/src/multi.rs` — extend `Coordinator` for experiment-mode subagent spawning
+- `crates/agent/src/workflow.rs` — experiment loop wrapper around ratchet
+- `crates/server/src/routes.rs` — `POST /api/sessions` with `experiment_mode` config
 
 ---
 
@@ -1170,6 +1388,24 @@ re-index on every change.
 - `codebase_health` — validate that analysis results are consistent before persisting
 - `get_impact file_path=crates/graph/src/store.rs` — blast radius of adding `RepoAnalysis` node type
 
+### Spectral risk scoring on dependency graph — S · P3
+
+Phase 22's `GraphImpactProvider` scores risk by **count** of dependents (rg-based
+files-with-matches). That's the L⁰ norm — crudest possible. Upgrade: compute
+**eigenvector centrality / PageRank on the dependency graph** restricted to the changed
+file's neighbourhood. A file's risk is its component in the leading eigenvector —
+naturally weights "depended on by things that are themselves depended on".
+
+Same family of math as Graphirm's existing graph PageRank (`crates/graph/src/scores.rs`)
+and notanyai's curriculum-graph question selection. Power iteration over a sparse adjacency
+matrix; ~30 lines of `petgraph` + iteration loop. Drop-in upgrade for the existing risk
+classifier (LOW / MEDIUM / HIGH). Independent of any UI / card work — pure improvement
+to the impact analyzer.
+
+**Key files:**
+- `crates/agent/src/impact.rs` — `GraphImpactProvider::score` uses spectral centrality
+- `crates/graph/src/scores.rs` — extend or reuse PageRank for dependency-graph subsets
+
 ---
 
 ## Strategic Gaps (derived from competitive scoring 2026-03-22)
@@ -1365,6 +1601,50 @@ feedback seats (server), plan card.
 - `GET /api/graph/{session_id}/tasks` walks `Agent --Produces--> Task`, so a Pi (and
   in-process) delegated Task linked only by `DelegatesTo` / `Interaction --Produces--> Task`
   is missing from the whiteboard task list (S·P2). Surfaced by the A4 live check.
+
+---
+
+## SWE-bench eval findings (T1 analysis, 2026-10-22)
+
+### Cap tool-output bytes before storing and packing — P1 · M
+On `cs-si__eodag-2176` a `grep -rn ... | head -20` matched a 5.6 MB one-line JSON
+(`eodag/resources/ext_collections.json`). The bash tool stored it whole as a Content node and the
+next call packed it: 1.41 M prompt tokens against a 1.05 M model limit, in G-md, G-b16 and
+G-b16-recency alike (the 16k budget did not apply because the newest tool result is always
+packed). mini-swe-agent caps observations at about 10k characters with a head/tail warning.
+Add a byte cap on tool output (store the head and tail, note the omitted bytes) and make the
+packer refuse any single node above the budget. Source: `eval/swebench/analysis/t1_report.py`
+`eodag_2176`.
+
+### Preserve CRLF in captured patches — P1 · S
+`pydap__pydap-624`: `src/pydap/parsers/dmr.py` has CRLF on all 1066 lines. The runner and
+`run_mini` read and write patches through Python text mode, so every arm's patch lost its CR
+bytes and failed to apply under the official grader. All five arms were recorded unresolved
+(prereg §5, harness error after one rerun). Capture diffs as bytes (`docker exec` with
+`capture_output` in binary mode, `read_bytes`/`write_bytes`) in `graphirm_runner.sh`,
+`run_t1.py`, `run_t3.py`, and the T2 driver before T2 starts.
+
+### Graphirm needs its own wall-clock budget and a partial diff on kill — P1 · M
+mini-swe-agent submits its partial work at `wall_time_limit_seconds = 1800`. Graphirm has no
+wall-clock stop, so the runner killed it at 1900 s and the except path wrote an empty patch;
+the kill was classed infrastructure and the arm reran. 38 wall-clock reruns across the four
+Graphirm arms in T1; 14 of them produced the final resolve. The pre-registered H1 holds under
+the all-retries rule (lower bound −2.86 pp) and does not under the first-attempt rule
+(−6.67 pp) or the wall-clock-counts rule (−5.24 pp). Add `--max-wall-seconds` to `graphirm
+run` that stops before the next call and still writes the summary, and make the runner copy
+the diff out even when the process is killed.
+
+### Grade failures must be logged and regraded on resume — P2 · S
+`grade_arms` swallowed per-arm exceptions as `None` with no line. Three tasks
+(`pydap__pydap-624`, `scipy__scipy-24454`, `aws__bedrock-agentcore-sdk-python-279_interface`)
+finished all arms but had no grades until 2026-10-22 because resume counted a task done when
+its arms were done. Print `GRADE_ERR` per arm, and let resume regrade any task whose
+`grades.json` is missing or holds `null`.
+
+### mini cache metric in `closing.py` — P3 · S
+`closing.py` reads cache hits from Graphirm graphs only, so `CACHE arm=M` printed `None`.
+`t1_report.py` reads `usage.prompt_tokens_details.cached_tokens` from `M.traj.json`. Fold
+that into `closing.py` so the end-of-track line covers every arm.
 
 ---
 
