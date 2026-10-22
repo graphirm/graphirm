@@ -46,6 +46,7 @@ class Track:
 TRACKS = [
     Track("t1", "t1-rerun", EVAL / "run_t1.py", 210),
     Track("t3", "t3-memory", EVAL / "run_t3.py", 19),
+    Track("t2", "t2-memory", EVAL / "run_t2.py", 273),
 ]
 
 
@@ -103,6 +104,10 @@ def preflight_image(track: Track) -> str:
         from run_t1 import headline_ids, load_instances
 
         return load_instances(headline_ids())[0]["image_name"]
+    if track.name == "t2":
+        from run_t2 import load_sequences
+
+        return load_sequences()[0]["tasks"][0]["image_name"]
     from validate_clbench import load_instances as load_clbench
 
     return load_clbench()[0]["image_name"]

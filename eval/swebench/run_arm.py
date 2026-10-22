@@ -88,6 +88,69 @@ def strip_test_hunks(patch: str, test_patch: str = "") -> str:
     return "".join(kept)
 
 
+def read_patch(path: Path) -> str:
+    """Read a patch without newline translation, so CR bytes survive."""
+    if not path.is_file():
+        return ""
+    with open(path, "r", encoding="utf-8", errors="surrogateescape", newline="") as handle:
+        return handle.read()
+
+
+def write_patch(path: Path, text: str) -> None:
+    """Write a patch without newline translation."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as handle:
+        handle.write(text)
+
+
+def capture_diff(container_id: str, cwd: str, paths: list[str] | None = None) -> str:
+    """`git diff` from a container as bytes, decoded without newline translation.
+
+    Python text-mode pipes turn CRLF into LF, which made every arm's patch on a
+    CRLF file unapplicable (pydap-624). This path keeps the bytes.
+    """
+    import subprocess
+
+    command = ["docker", "exec", container_id, "git", "-C", cwd, "diff"]
+    if paths:
+        command += ["--", *paths]
+    proc = subprocess.run(command, capture_output=True, timeout=300, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.decode("utf-8", errors="replace")[-400:])
+    return proc.stdout.decode("utf-8", errors="surrogateescape")
+
+
+def patch_paths(patch: str) -> list[str]:
+    """File paths named by `diff --git` headers, in order."""
+    found: list[str] = []
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            parts = line.split()
+            if len(parts) >= 4 and parts[3].startswith("b/"):
+                found.append(parts[3][2:])
+    return found
+
+
+def crlf_safe_submission(submission: str, container_id: str, cwd: str) -> tuple[str, str]:
+    """Return mini-swe-agent's submission with CR bytes restored, and how.
+
+    mini's own `cat patch.txt` goes through a text pipe. If the submission names
+    files, the same `git diff -- <files>` is read from the container as bytes.
+    The byte version is used only when it covers exactly the same files, so the
+    agent's choice of what to submit is unchanged. Otherwise the text is kept.
+    """
+    paths = patch_paths(submission)
+    if not paths or not container_id:
+        return submission, "text"
+    try:
+        binary = capture_diff(container_id, cwd, paths)
+    except Exception:
+        return submission, "text_capture_failed"
+    if patch_paths(binary) != paths:
+        return submission, "text_file_set_differs"
+    return binary, "binary"
+
+
 def main() -> None:
     load_dotenv()
     raise SystemExit(

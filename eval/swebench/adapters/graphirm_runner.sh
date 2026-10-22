@@ -114,13 +114,14 @@ import os
 from pathlib import Path
 import sys
 sys.path.insert(0, "eval/swebench")
-from run_arm import strip_test_hunks
-raw = Path(os.environ["GRAPH_OUT"] + ".diff.raw").read_text()
+from run_arm import read_patch, strip_test_hunks, write_patch
+# newline="" reads keep CR bytes; text-mode reads turned CRLF into LF (pydap-624).
+raw = read_patch(Path(os.environ["GRAPH_OUT"] + ".diff.raw"))
 test_patch = ""
 extra = os.environ.get("TEST_PATCH_FILE")
 if extra:
-    test_patch = Path(extra).read_text()
-Path(os.environ["GRAPH_OUT"] + ".diff").write_text(strip_test_hunks(raw, test_patch))
+    test_patch = read_patch(Path(extra))
+write_patch(Path(os.environ["GRAPH_OUT"] + ".diff"), strip_test_hunks(raw, test_patch))
 PY
 docker cp "$CONTAINER:/tmp/graph.db" "$GRAPH_OUT" || true
 docker cp "$CONTAINER:/tmp/summary.json" "$SUMMARY_OUT" || true

@@ -47,7 +47,15 @@ from durable import (
     runs_dir,
 )
 from failure_class import CONFIG, INFRASTRUCTURE, REQUEST, classify_arm
-from run_arm import load_dotenv, render_notes_task, render_task, strip_test_hunks
+from run_arm import (
+    crlf_safe_submission,
+    load_dotenv,
+    read_patch,
+    render_notes_task,
+    render_task,
+    strip_test_hunks,
+    write_patch,
+)
 from reconstruct_check import sampled as reconstruction_sampled
 from run_t1 import BINARY, MINI_CONFIG, REPO, RUNNER, SWEBENCH_YAML, merge_run_checks
 from run_t1 import preflight as _preflight
@@ -226,8 +234,12 @@ def run_mini(instance: dict, arm: str, out: Path, root: Path) -> dict:
         )
         info = agent.run(text)
         submission = info.get("submission") or ""
+        submission, capture = crlf_safe_submission(
+            submission, getattr(env, "container_id", None) or "", instance.get("workdir", "/testbed")
+        )
+        record["patch_capture"] = capture
         patch = strip_test_hunks(submission, instance.get("test_patch") or "")
-        (out / f"{arm}.patch").write_text(patch)
+        write_patch(out / f"{arm}.patch", patch)
         record["cost_usd"] = float(getattr(agent, "cost", 0.0) or 0.0)
         stats = info.get("model_stats") or {}
         summary = {
@@ -334,7 +346,7 @@ def run_graphirm(instance: dict, arm: str, out: Path, root: Path) -> dict:
         patch_path = Path(str(graph_out) + ".diff")
         if not patch_path.is_file():
             patch_path.write_text("")
-        (out / f"{arm}.patch").write_text(patch_path.read_text())
+        write_patch(out / f"{arm}.patch", read_patch(patch_path))
     except Exception as exc:
         record["diag"] = f"{type(exc).__name__}: {exc}"[:4000]
         record["error"] = record["diag"][:400]
@@ -517,8 +529,7 @@ def walk_arm(arm: str, instances: list[dict], root: Path, arm_ledger: Path, done
                 streaks["request"] = 0
             break
 
-        patch_path = out / f"{arm}.patch"
-        patch = patch_path.read_text() if patch_path.is_file() else ""
+        patch = read_patch(out / f"{arm}.patch")
         if result.get("unresolved"):
             resolved, status, grade_error = False, "unresolved", ""
         elif not patch.strip():

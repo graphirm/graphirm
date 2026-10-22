@@ -60,7 +60,45 @@ def needed_images() -> set[str]:
             "pgasawa2/continual-learning-bench:tablib",
             "pgasawa2/continual-learning-bench:tenacity",
         }
+    # T2: keep the Verified image of any task that has started but not finished
+    # all four arms. The driver removes an image itself once the task is done.
+    if (RUNS.parent / "t2" / "running").is_file():
+        needed |= t2_in_flight_images()
     return needed
+
+
+def t2_in_flight_images() -> set[str]:
+    ledger = RUNS.parent / "t2" / "arms.jsonl"
+    if not ledger.is_file():
+        return set()
+    arms = ("M", "M-notes", "G-fresh", "G-persist")
+    latest: dict[str, dict] = {}
+    for line in ledger.read_text().splitlines():
+        if line.strip():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            latest[row["instance_id"]] = row
+    by: dict[str, dict] = {}
+    for key, row in latest.items():
+        iid = row.get("task") or key.split("::", 1)[0]
+        by.setdefault(iid, {})[row.get("arm")] = row
+    keep = set()
+    for iid, rows in by.items():
+        done = all(
+            arm in rows
+            and (
+                rows[arm].get("request_caused")
+                or (rows[arm].get("complete") is True and not rows[arm].get("error"))
+            )
+            for arm in arms
+        )
+        if not done:
+            image = next((r.get("image") for r in rows.values() if r.get("image")), None)
+            if image:
+                keep.add(image)
+    return keep
 
 
 def _run(args: list[str]) -> str:
