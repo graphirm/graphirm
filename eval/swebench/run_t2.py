@@ -32,7 +32,7 @@ import docker
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from adapters.memory_notes import carry
+from adapters.memory_notes import carry, token_count
 from config_guard import graphirm_problem, mini_problem, provider_error, read_run_metadata
 from durable import (
     append_ledger,
@@ -49,6 +49,7 @@ from reconstruct_check import sampled as reconstruction_sampled
 from run_arm import (
     crlf_safe_submission,
     load_dotenv,
+    mini_costs,
     read_patch,
     render_notes_task,
     render_task,
@@ -127,7 +128,10 @@ def repo_key(repo: str) -> str:
     return repo.replace("/", "__")
 
 
-def spent(path: Path) -> float:
+def spent(path: Path, field: str = "cost_usd_billed") -> float:
+    """Money spent, summed over every ledger row (retries included). The spend
+    limit (prereg §6) is in dollars, so it counts OpenRouter's billed cost;
+    cost_usd (primary formula at frozen prices) is reported alongside."""
     if not path.exists():
         return 0.0
     total = 0.0
@@ -135,8 +139,15 @@ def spent(path: Path) -> float:
         if not line.strip():
             continue
         try:
-            total += float(json.loads(line).get("cost_usd") or 0.0)
-        except (json.JSONDecodeError, TypeError, ValueError):
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        value = row.get(field)
+        if value is None and field == "cost_usd_billed":
+            value = row.get("cost_usd")
+        try:
+            total += float(value or 0.0)
+        except (TypeError, ValueError):
             continue
     return total
 
@@ -242,6 +253,40 @@ def promote_graph(root: Path, instance: dict, out: Path) -> None:
         shutil.copy2(src, dest)
 
 
+def notes_compliance(out: Path, traj: Path) -> dict:
+    """Did the M-notes agent read and write /memory/NOTES.md, and how big is it now?"""
+    import re
+
+    comp = {"notes_read": False, "notes_wrote": False, "notes_bytes": None, "notes_tokens": None}
+    if traj.is_file():
+        try:
+            data = json.loads(traj.read_text())
+        except json.JSONDecodeError:
+            data = {}
+        for msg in data.get("messages", []):
+            if msg.get("role") != "assistant":
+                continue
+            for call in msg.get("tool_calls") or []:
+                args = (call.get("function") or {}).get("arguments")
+                try:
+                    cmd = json.loads(args).get("command", "") if isinstance(args, str) else ""
+                except json.JSONDecodeError:
+                    cmd = args or ""
+                if "/memory" not in cmd and "NOTES.md" not in cmd:
+                    continue
+                if re.search(r"\b(cat|head|tail|less|sed|grep)\b[^|;&]*NOTES\.md", cmd):
+                    comp["notes_read"] = True
+                if re.search(r"(>>?|tee(\s+-a)?)\s*\S*NOTES\.md", cmd) or re.search(
+                    r"open\(['\"][^'\"]*NOTES\.md['\"],\s*['\"][wa]", cmd
+                ):
+                    comp["notes_wrote"] = True
+    notes = out / "M-notes.memory" / "NOTES.md"
+    if notes.is_file():
+        comp["notes_bytes"] = notes.stat().st_size
+        comp["notes_tokens"] = token_count(notes.read_text(errors="replace"))
+    return comp
+
+
 # ---------------------------------------------------------------- arms
 
 
@@ -274,6 +319,7 @@ def run_mini(instance: dict, arm: str, out: Path, root: Path) -> dict:
         "image": instance["image_name"],
         "start_commit": None,
         "cost_usd": 0.0,
+        "cost_usd_billed": 0.0,
         "error": None,
     }
     env = None
@@ -304,17 +350,28 @@ def run_mini(instance: dict, arm: str, out: Path, root: Path) -> dict:
         record["patch_capture"] = capture
         patch = strip_test_hunks(submission, instance.get("test_patch") or "")
         write_patch(out / f"{arm}.patch", patch)
-        record["cost_usd"] = float(getattr(agent, "cost", 0.0) or 0.0)
+        costs = mini_costs(traj)
+        # cost_usd is the primary formula (prereg §4); mini's agent.cost is OpenRouter's bill.
+        record["cost_usd"] = round(costs["cost_usd"], 6)
+        record["cost_usd_billed"] = round(float(getattr(agent, "cost", 0.0) or costs["cost_usd_billed"]), 6)
         stats = info.get("model_stats") or {}
         summary = {
             "arm": arm,
             "start_commit": record["start_commit"],
             "image": instance["image_name"],
             "cost_usd": record["cost_usd"],
+            "cost_usd_billed": record["cost_usd_billed"],
+            "tokens_in": costs["prompt"],
+            "tokens_cached": costs["cached"],
+            "tokens_out": costs["output"],
             "exit_status": info.get("exit_status"),
             "api_calls": stats.get("api_calls"),
             "patch_capture": capture,
         }
+        if arm == "M-notes":
+            comp = notes_compliance(out, traj)
+            record.update(comp)
+            summary.update(comp)
         (out / f"{arm}.summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     except Exception as exc:
         record["diag"] = f"{type(exc).__name__}: {exc}"[:4000]
@@ -337,6 +394,7 @@ def run_graphirm(instance: dict, arm: str, out: Path, root: Path) -> dict:
         "image": instance["image_name"],
         "start_commit": None,
         "cost_usd": 0.0,
+        "cost_usd_billed": 0.0,
         "error": None,
         "http_429": 0,
     }
@@ -402,6 +460,7 @@ def run_graphirm(instance: dict, arm: str, out: Path, root: Path) -> dict:
             summary = json.loads(summary_out.read_text())
             record["start_commit"] = summary.get("start_commit")
             record["cost_usd"] = float(summary.get("cost_usd") or 0.0)
+            record["cost_usd_billed"] = float(summary.get("cost_usd_reported") or 0.0)
         elif Path(str(summary_out) + ".start_commit").is_file():
             record["start_commit"] = Path(str(summary_out) + ".start_commit").read_text().strip()
         if retry_log.is_file():
@@ -533,6 +592,19 @@ def mark_dead(repo: str, arm: str) -> None:
         drift_cv.notify_all()
 
 
+def notes_rate(ledger: Path) -> str:
+    """notes=read/wrote/n plus median NOTES.md tokens over finished M-notes rows."""
+    latest = latest_rows(ledger)
+    rows = [r for r in latest.values() if r.get("arm") == "M-notes" and arm_done(r)]
+    if not rows:
+        return "notes=0/0/0"
+    read = sum(1 for r in rows if r.get("notes_read"))
+    wrote = sum(1 for r in rows if r.get("notes_wrote"))
+    sizes = sorted(int(r.get("notes_tokens") or 0) for r in rows)
+    median = sizes[len(sizes) // 2]
+    return f"notes=read {read}/wrote {wrote}/n {len(rows)} notes_tokens_median={median}"
+
+
 def task_complete(root: Path, instance: dict, client) -> None:
     """Called after each arm; when all four arms are done the image goes."""
     out = root / instance["instance_id"]
@@ -550,8 +622,9 @@ def task_complete(root: Path, instance: dict, client) -> None:
             tasks_finished["reported"] = count
     if due:
         print(
-            f"PROGRESS tasks={count} spend={spent(root / 'arms.jsonl'):.2f} disk={used_pct():.1f} "
-            f"backup_failed={pending_backup_count(TRACK)}",
+            f"PROGRESS tasks={count} spend={spent(root / 'arms.jsonl'):.2f} "
+            f"primary={spent(root / 'arms.jsonl', 'cost_usd'):.2f} disk={used_pct():.1f} "
+            f"backup_failed={pending_backup_count(TRACK)} {notes_rate(root / 'arms.jsonl')}",
             flush=True,
         )
 
@@ -814,9 +887,9 @@ def main() -> None:
     mismatch = sum(int(c.get("mismatch", 0)) for c in results.values())
     unresolved = sum(int(c.get("unresolved", 0)) for c in results.values())
     print(
-        f"PROGRESS tasks={finished} spend={spent(arm_ledger):.2f} disk={used_pct():.1f} "
+        f"PROGRESS tasks={finished} spend={spent(arm_ledger):.2f} primary={spent(arm_ledger, 'cost_usd'):.2f} disk={used_pct():.1f} "
         f"errors={errors} http_429={http_429} commit_mismatch={mismatch} "
-        f"unresolved={unresolved} backup_failed={pending_backup_count(TRACK)}",
+        f"unresolved={unresolved} backup_failed={pending_backup_count(TRACK)} {notes_rate(arm_ledger)}",
         flush=True,
     )
     if finished >= TOTAL or (root / "stop-reason").is_file() or spent(arm_ledger) >= SPEND_CAP:

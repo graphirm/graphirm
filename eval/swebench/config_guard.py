@@ -9,6 +9,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -67,11 +68,23 @@ def mini_problem(model_cfg: dict | None) -> str | None:
     return None
 
 
+_STATUS_404 = re.compile(
+    r"(?:OpenRouter|HTTP|status(?:_code)?|code|Error)\W{0,4}404\b"  # "OpenRouter 404 Not Found: ...", "status_code=404", '"code": 404'
+    r"|\b404 Not Found\b"
+    r"|NotFoundError",  # litellm / openai exception class
+    re.IGNORECASE,
+)
+
+
 def provider_error(text: str) -> bool:
+    """A provider-side refusal: OpenRouter has no allowed provider for the pinned
+    model, or the model endpoint returned 404. Matches the status in its error
+    context only; a bare "404" substring also appears inside container ids and
+    node UUIDs in log tails and must not count (T1 preflight, T2 first start)."""
     lowered = text.lower()
     return (
         "no allowed providers" in lowered
-        or "404" in text
+        or bool(_STATUS_404.search(text))
         or "provider error" in lowered
     )
 

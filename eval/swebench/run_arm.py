@@ -6,6 +6,7 @@ Loads the repo `.env` itself. Does not read a pre-exported shell for the key.
 from __future__ import annotations
 
 import os
+import json
 import re
 from pathlib import Path
 
@@ -39,9 +40,13 @@ def render_task(problem_statement: str, template: Path | None = None) -> str:
     return text.replace("{{problem_statement}}", problem_statement.rstrip()) + "\n"
 
 
-def render_notes_task(problem_statement: str) -> str:
-    """Shared issue text plus the one line that tells M-notes about NOTES.md."""
-    path = Path(__file__).resolve().parent / "adapters" / "notes_task.md"
+def render_notes_task(problem_statement: str, template: str = "notes_task.md") -> str:
+    """Issue text plus the M-notes instruction about /memory/NOTES.md.
+
+    notes_task_v1.md is the one-line "you may read and update" text T3 ran
+    with (0 of 19 tasks wrote a note). notes_task.md is the explicit T2 text.
+    """
+    path = Path(__file__).resolve().parent / "adapters" / template
     text = path.read_text()
     return text.replace("{{problem_statement}}", problem_statement.rstrip()) + "\n"
 
@@ -86,6 +91,42 @@ def strip_test_hunks(patch: str, test_patch: str = "") -> str:
             continue
         kept.append(chunk if chunk.endswith("\n") else chunk + "\n")
     return "".join(kept)
+
+
+def load_prices() -> dict:
+    return json.loads((Path(__file__).resolve().parent / "prices.lock.json").read_text())
+
+
+def mini_costs(traj: Path) -> dict:
+    """Primary cost (frozen prices x provider-reported tokens, prereg §4) and
+    OpenRouter's billed cost from one mini-swe-agent trajectory.
+
+    mini's own `agent.cost` is the billed `usage.cost`, which moved with the
+    upstream price during the study. Graphirm's summary already reports both.
+    """
+    prices = load_prices()
+    out = {"prompt": 0, "cached": 0, "output": 0, "calls": 0, "cost_usd": 0.0, "cost_usd_billed": 0.0}
+    if not traj.is_file():
+        return out
+    data = json.loads(traj.read_text())
+    for msg in data.get("messages", []):
+        if msg.get("role") != "assistant":
+            continue
+        usage = ((msg.get("extra") or {}).get("response") or {}).get("usage") or {}
+        prompt = int(usage.get("prompt_tokens") or 0)
+        cached = int((usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
+        output = int(usage.get("completion_tokens") or 0)
+        out["prompt"] += prompt
+        out["cached"] += cached
+        out["output"] += output
+        out["calls"] += 1
+        out["cost_usd_billed"] += float(usage.get("cost") or 0.0)
+    out["cost_usd"] = (
+        (out["prompt"] - out["cached"]) * prices["input_cost_per_token"]
+        + out["cached"] * prices["input_cache_read_per_token"]
+        + out["output"] * prices["output_cost_per_token"]
+    )
+    return out
 
 
 def read_patch(path: Path) -> str:

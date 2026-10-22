@@ -228,7 +228,7 @@ def run_mini(instance: dict, arm: str, out: Path, root: Path) -> dict:
         record["start_commit"] = (probed.get("output") or "").strip() or None
         agent = get_agent(get_model(config=config.get("model", {})), env, agent_cfg, default_type="default")
         text = (
-            render_notes_task(instance["problem_statement"])
+            render_notes_task(instance["problem_statement"], "notes_task_v1.md")
             if arm == "M-notes"
             else instance["problem_statement"]
         )

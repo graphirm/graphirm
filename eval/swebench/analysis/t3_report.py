@@ -27,6 +27,7 @@ sys.path.insert(0, str(HERE.parent))
 
 from t1_report import classify_retry as _classify_retry  # noqa: E402
 from t1_report import paired_bootstrap_diff, win_tie_loss  # noqa: E402
+from run_arm import mini_costs  # noqa: E402
 
 
 def classify_retry(error: str) -> str:
@@ -44,7 +45,7 @@ SOURCES = Path("/home/krs/graphirm-runs/sources/clbench-codebase.jsonl")
 ARMS = ["M", "M-notes", "G-fresh", "G-persist"]
 MINI_ARMS = {"M", "M-notes"}
 PAIRS = [("G-persist", "G-fresh"), ("M-notes", "M"), ("G-persist", "M-notes")]
-METRICS = ["resolved", "calls", "tokens", "cost"]
+METRICS = ["resolved", "calls", "tokens", "cost", "cost_billed"]
 N_BOOT = 10_000
 SEED = 20261022
 THIRDS = ["first", "middle", "last"]
@@ -232,16 +233,28 @@ def main() -> None:
             else:
                 prior = prior_graph.get(t["repo"]) if arm == "G-persist" else None
                 calls, tokens = graph_usage(out, arm, prior)
-            cost = float(row.get("cost_usd") or 0.0)
+            # Primary cost = frozen prices x provider-reported tokens (prereg §4) for
+            # every arm. The ledger's cost_usd is primary for Graphirm arms but
+            # OpenRouter's bill for mini arms, so mini is recomputed from its trajectory.
+            if arm in MINI_ARMS:
+                mc = mini_costs(out / f"{arm}.traj.json")
+                cost, billed = mc["cost_usd"], mc["cost_usd_billed"]
+            else:
+                summary = json.loads((out / f"{arm}.summary.json").read_text())
+                cost = float(summary.get("cost_usd") or 0.0)
+                billed = float(summary.get("cost_usd_reported") or 0.0)
             metric["resolved"][arm][i] = 1.0 if final[iid][arm] else 0.0
             metric["calls"][arm][i] = np.nan if calls is None else calls
             metric["tokens"][arm][i] = np.nan if tokens is None else tokens
             metric["cost"][arm][i] = cost
+            metric["cost_billed"][arm][i] = billed
             rec["arms"][arm] = {
                 "resolved": final[iid][arm],
                 "calls": calls,
                 "tokens": tokens,
                 "cost_usd": round(cost, 6),
+                "cost_usd_billed": round(billed, 6),
+                "ledger_cost_usd": round(float(row.get("cost_usd") or 0.0), 6),
                 "grade_status": row.get("grade_status"),
                 "graph_in_bytes": row.get("graph_in_bytes"),
                 "patch_bytes": (out / f"{arm}.patch").stat().st_size if (out / f"{arm}.patch").is_file() else None,
@@ -275,7 +288,11 @@ def main() -> None:
         c = metric["calls"][arm]
         tk = metric["tokens"][arm]
         cost = metric["cost"][arm]
+        billed = metric["cost_billed"][arm]
         table[arm] = {
+            "cost_billed_median_usd": round(float(np.nanmedian(billed)), 6),
+            "cost_billed_total_usd": round(float(np.nansum(billed)), 4),
+            "billed_over_primary": round(float(np.nansum(billed) / np.nansum(cost)), 3) if np.nansum(cost) else None,
             "resolved": int(np.nansum(r)),
             "resolve_rate": round(float(np.nanmean(r)), 4),
             "calls_median": float(np.nanmedian(c)),
@@ -295,6 +312,12 @@ def main() -> None:
             },
         }
     report["table"] = table
+    report["cost_note"] = (
+        "cost = primary formula at frozen prices (input 4.2e-8, cache read 9e-9, output 6e-7 USD/token) "
+        "for every arm; cost_billed = OpenRouter's billed cost. The ledger's cost_usd for M and "
+        "M-notes was the billed figure, which is why the first draft of this report showed "
+        "Graphirm cheaper than mini. On the primary formula it is not."
+    )
 
     # ---- H5 forward transfer: pairs × metrics × (overall, thirds)
     h5: dict = {}
@@ -431,8 +454,9 @@ def render_md(r: dict) -> str:
     L.append(f"n = {r['n']} tasks, repos {r['repos']}, thirds {r['thirds']} ({r['third_rule']}). ")
     L.append(f"Paired bootstrap {r['bootstrap']} resamples, seed {r['seed']}.\n")
     L.append("## Per-arm table\n")
-    L.append("| arm | resolved | rate | calls median (mean) | tokens median | tokens total | cost median | cost total | tablib | tenacity |")
-    L.append("|---|---|---|---|---|---|---|---|---|---|")
+    L.append(r["cost_note"] + "\n")
+    L.append("| arm | resolved | rate | calls median (mean) | tokens median | tokens total | cost median | cost total | billed total | tablib | tenacity |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|")
     for arm in r["arms"]:
         t = r["table"][arm]
         br = t["by_repo"]
@@ -441,6 +465,7 @@ def render_md(r: dict) -> str:
         L.append(
             f"| {arm} | {t['resolved']}/{r['n']} | {t['resolve_rate']:.3f} | {t['calls_median']:.0f} ({t['calls_mean']}) | "
             f"{t['tokens_median']:,} | {t['tokens_total']:,} | ${t['cost_median_usd']:.4f} | ${t['cost_total_usd']:.4f} | "
+            f"${t['cost_billed_total_usd']:.4f} ({t['billed_over_primary']}x) | "
             f"{tab.get('resolved')}/{tab.get('n')} | {ten.get('resolved')}/{ten.get('n')} |"
         )
     L.append("")
@@ -455,7 +480,7 @@ def render_md(r: dict) -> str:
                 if "diff" not in e:
                     L.append(f"| {m} | {sl} | {e.get('n', 0)} | – | – | – | – |")
                     continue
-                nd = {"resolved": 2, "calls": 2, "tokens": 0, "cost": 4}[m]
+                nd = {"resolved": 2, "calls": 2, "tokens": 0, "cost": 4, "cost_billed": 4}[m]
                 if m == "resolved":
                     extra = f"{e['win']}/{e['tie']}/{e['loss']}"
                     unit = "pp"

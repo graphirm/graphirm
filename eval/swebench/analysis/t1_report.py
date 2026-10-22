@@ -225,10 +225,28 @@ def main() -> None:
     n = len(ids)
 
     resolved = {arm: np.array([1 if final[iid][arm] else 0 for iid in ids]) for arm in ARMS}
+    # Primary cost (prereg §4) = frozen prices x provider-reported tokens for every arm.
+    # The ledger's cost_usd is primary for Graphirm arms (summary.cost_usd) but for M it
+    # is mini-swe-agent's agent.cost, which is OpenRouter's bill. M is recomputed from
+    # its trajectory; the billed figure is kept alongside for every arm.
+    from run_arm import mini_costs
+
     cost = {
         arm: np.array([float(latest[f"{iid}::{arm}"].get("cost_usd") or 0.0) for iid in ids])
         for arm in ARMS
+        if arm != "M"
     }
+    m_costs = [mini_costs(RUNS / iid / "M.traj.json") for iid in ids]
+    cost["M"] = np.array([c["cost_usd"] for c in m_costs])
+    billed = {"M": np.array([c["cost_usd_billed"] for c in m_costs])}
+    ledger_m = np.array([float(latest[f"{iid}::M"].get("cost_usd") or 0.0) for iid in ids])
+    for arm in GRAPH_ARMS:
+        vals = []
+        for iid in ids:
+            path = RUNS / iid / f"{arm}.summary.json"
+            rep = json.loads(path.read_text()).get("cost_usd_reported") if path.is_file() else None
+            vals.append(float(rep or 0.0))
+        billed[arm] = np.array(vals)
     cache = {}
     for arm in ARMS:
         vals = []
@@ -251,6 +269,8 @@ def main() -> None:
             "resolve_rate": round(float(resolved[arm].mean()), 4),
             "median_cost_usd": round(float(np.median(cost[arm])), 6),
             "total_cost_usd": round(float(cost[arm].sum()), 4),
+            "median_billed_usd": round(float(np.median(billed[arm])), 6),
+            "total_billed_usd": round(float(billed[arm].sum()), 4),
             "median_cache_hit": round(float(np.median(known)), 4) if known else None,
             "cache_hit_n": len(known),
         }
@@ -318,6 +338,15 @@ def main() -> None:
         r, a, b = bootstrap_ratio_of_medians(cost[arm], cost["M"], rng)
         other_ratios[arm] = {"point": round(r, 3), "ci95": [round(a, 3), round(b, 3)]}
     h4["other_arms_over_M_median_ratio"] = other_ratios
+    bratio, blo, bhi = bootstrap_ratio_of_medians(billed["G"], billed["M"], rng)
+    h4["G_over_M_billed_median_ratio"] = {"point": round(bratio, 3), "ci95": [round(blo, 3), round(bhi, 3)]}
+    h4["M_ledger_cost_was_billed"] = {
+        "ledger_total_usd": round(float(ledger_m.sum()), 4),
+        "billed_total_from_traj_usd": round(float(billed["M"].sum()), 4),
+        "primary_total_usd": round(float(cost["M"].sum()), 4),
+        "note": "First report (2026-10-22 morning) used the ledger figure for M, i.e. billed cost "
+        "against primary cost for G; its G/M ratio 1.712 is superseded by G_over_M_median_ratio here.",
+    }
     report["H4"] = h4
 
     # ---- ceiling
@@ -646,6 +675,10 @@ def render_md(r: dict) -> str:
     lines.append(f"- diff {h3['diff_pp']:+.2f} pp, 95% CI [{h3['ci95_pp'][0]:+.2f}, {h3['ci95_pp'][1]:+.2f}] pp; win/tie/loss {h3['win']}/{h3['tie']}/{h3['loss']}")
     h4 = r["H4"]
     lines.append("\n## H4 cost (secondary)")
+    lines.append("Primary cost = frozen prices x provider-reported tokens for every arm (M recomputed from its trajectory; "
+                 "the ledger's M cost_usd was OpenRouter's bill). Billed figures alongside.")
+    lines.append(f"- M ledger (billed) total {h4['M_ledger_cost_was_billed']['ledger_total_usd']}, M primary total {h4['M_ledger_cost_was_billed']['primary_total_usd']}; "
+                 f"G/M median ratio on billed cost {h4['G_over_M_billed_median_ratio']['point']} CI {h4['G_over_M_billed_median_ratio']['ci95']}")
     lines.append(f"- median primary cost per task: " + ", ".join(f"{a} {v:.6f}" for a, v in h4["median_cost_usd"].items()))
     g = h4["G_over_M_median_ratio"]
     lines.append(f"- G/M ratio of medians {g['point']:.3f}, 95% CI [{g['ci95'][0]:.3f}, {g['ci95'][1]:.3f}]")
