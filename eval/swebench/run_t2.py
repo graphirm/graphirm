@@ -475,6 +475,42 @@ def apply_config_guard(arm: str, out: Path, result: dict) -> None:
 # ---------------------------------------------------------------- drift and images
 
 
+heads_lock = threading.Lock()
+image_heads: dict[str, tuple[str | None, str | None]] = {}
+
+
+def expected_starts(client, image: str, base_commit: str) -> tuple[set[str], str | None]:
+    """Verified images carry one extra "SWE-bench" commit on top of base_commit
+    (environment setup). A start at that HEAD whose parent is base_commit is
+    the expected state, not a mismatch."""
+    with heads_lock:
+        cached = image_heads.get(image)
+    if cached is None:
+        head = parent = None
+        try:
+            raw = client.containers.run(
+                image,
+                entrypoint=["git"],
+                command=["-C", "/testbed", "rev-parse", "HEAD", "HEAD^"],
+                remove=True,
+                user="root",
+            )
+            text = raw.decode() if isinstance(raw, bytes) else str(raw)
+            parts = text.split()
+            head = parts[0] if parts else None
+            parent = parts[1] if len(parts) > 1 else None
+        except Exception:
+            pass
+        cached = (head, parent)
+        with heads_lock:
+            image_heads[image] = cached
+    head, parent = cached
+    allowed = {base_commit}
+    if head and parent == base_commit:
+        allowed.add(head)
+    return allowed, head
+
+
 def wait_turn(repo: str, arm: str, index: int) -> None:
     """Arms of one repo stay within DRIFT tasks of the slowest live arm."""
     with drift_cv:
@@ -561,8 +597,10 @@ def walk_job(repo: str, arm: str, tasks: list[dict], root: Path, arm_ledger: Pat
             result["n_tasks"] = instance["n_tasks"]
             result["scored"] = instance["scored"]
             result["base_commit"] = instance["base_commit"]
+            allowed, head = expected_starts(client, instance["image_name"], instance["base_commit"])
+            result["image_head"] = head
             result["commit_mismatch"] = bool(
-                result.get("start_commit") and result["start_commit"] != instance["base_commit"]
+                result.get("start_commit") and result["start_commit"] not in allowed
             )
             apply_config_guard(arm, out, result)
             result["complete"] = not bool(result.get("error"))
