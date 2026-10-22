@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-22 — T3 is at ceiling for every arm, and M-notes never wrote a note
+
+**Context:** H5 on T3 (19 CL-Bench tasks): M, M-notes, G-fresh and G-persist each resolved 19/19 under all three retry rules, so the resolve-rate comparison carries no information on this track. The `/memory/NOTES.md` file carried by M-notes was empty after every task: the agent `cat` it in 12 of 19 tasks and never wrote to it. The pre-registered instruction says the agent *may* read and update the file, and mini-swe-agent's bash-only loop treats it as optional context.
+**Decision:** Report T3 as a ceiling result with the cost and token comparisons as the informative part (G-persist used 3.6× the tokens of G-fresh at 1.8× the median cost with no resolve or call-count gain; M-notes behaved as M plus one prompt line). The M-notes instruction is not changed for T2: T2 started under the same frozen template, and changing it mid-study would make the two memory tracks incomparable. The T2 analysis will add the same read/write accounting so an empty-notes result is visible rather than silently equal to M.
+**Alternatives:** A stronger note-taking instruction ("before submitting, write what you learned to /memory/NOTES.md") would likely produce notes, but it is a different arm and belongs in a follow-up study.
+**Consequences:** H5 on T3 cannot separate the memory arms on resolve rate; any T3 claim about memory rests on T2. The M-notes arm as registered measures "access to a notes file", not "use of notes".
+**Refs:** `eval/swebench/analysis/t3_report.py`, `/home/krs/graphirm-runs/t3/analysis/t3_report.md`.
+
 ## 2026-10-22 — T2 runs 32 (repo, arm) jobs in an 8-worker pool with a two-task drift cap
 
 **Context:** SWE-Bench-CL is 273 Verified tasks in 8 repo sequences, four arms, 1,092 agent runs. T3's "one thread per arm over the whole schedule" would serialize all 273 tasks per arm. Verified images are 2–4 GB each (django-9296 is 2.87 GB) and the host has about 25 GB between its usage and the 78% wait line, so arms cannot drift far apart within a repo without filling the disk with images only the slow arm still needs.
