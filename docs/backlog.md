@@ -1616,13 +1616,18 @@ Add a byte cap on tool output (store the head and tail, note the omitted bytes) 
 packer refuse any single node above the budget. Source: `eval/swebench/analysis/t1_report.py`
 `eodag_2176`.
 
-### Preserve CRLF in captured patches — P1 · S
-`pydap__pydap-624`: `src/pydap/parsers/dmr.py` has CRLF on all 1066 lines. The runner and
-`run_mini` read and write patches through Python text mode, so every arm's patch lost its CR
-bytes and failed to apply under the official grader. All five arms were recorded unresolved
-(prereg §5, harness error after one rerun). Capture diffs as bytes (`docker exec` with
-`capture_output` in binary mode, `read_bytes`/`write_bytes`) in `graphirm_runner.sh`,
-`run_t1.py`, `run_t3.py`, and the T2 driver before T2 starts.
+### ✅ Preserve CRLF in captured patches — P1 · S
+Done 2026-10-22 (`run_arm.read_patch`/`write_patch`/`crlf_safe_submission`; journal entry
+"Patch capture is byte-safe for every arm from T2 on"). T1's pydap-624 result stands.
+
+### T2 analysis script (`analysis/t2_report.py`) — P1 · M
+H5 on T2 as pre-registered, on the T3 script's pattern, plus: notes compliance per task
+(`notes_read`, `notes_wrote`, `notes_tokens`) beside the H5 numbers; a list of every run in
+any arm that exited on a cost cap (`cap_hit`, mini `LimitsExceeded`, Graphirm `max_cost`) with
+its primary and billed cost; primary cost for mini arms from `run_arm.mini_costs`, billed
+alongside; the three retry rules; the three `scored=false` tasks excluded from every statistic
+but listed. Rows before the 11:15 EEST restart (233) ran with mini's per-task cap on billed
+cost — none came within half of either cap, but say so in the report.
 
 ### Graphirm needs its own wall-clock budget and a partial diff on kill — P1 · M
 mini-swe-agent submits its partial work at `wall_time_limit_seconds = 1800`. Graphirm has no

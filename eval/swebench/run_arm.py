@@ -97,6 +97,19 @@ def load_prices() -> dict:
     return json.loads((Path(__file__).resolve().parent / "prices.lock.json").read_text())
 
 
+def usage_cost(usage: dict, prices: dict | None = None) -> float:
+    """Primary cost of one call from an OpenRouter usage block (prereg §4)."""
+    prices = prices or load_prices()
+    prompt = int(usage.get("prompt_tokens") or 0)
+    cached = int((usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
+    output = int(usage.get("completion_tokens") or 0)
+    return (
+        (prompt - cached) * prices["input_cost_per_token"]
+        + cached * prices["input_cache_read_per_token"]
+        + output * prices["output_cost_per_token"]
+    )
+
+
 def mini_costs(traj: Path) -> dict:
     """Primary cost (frozen prices x provider-reported tokens, prereg §4) and
     OpenRouter's billed cost from one mini-swe-agent trajectory.

@@ -49,8 +49,10 @@ from reconstruct_check import sampled as reconstruction_sampled
 from run_arm import (
     crlf_safe_submission,
     load_dotenv,
+    load_prices,
     mini_costs,
     read_patch,
+    usage_cost,
     render_notes_task,
     render_task,
     strip_test_hunks,
@@ -61,7 +63,8 @@ from run_t1 import preflight as _preflight
 
 ARMS = ["M", "M-notes", "G-fresh", "G-persist"]
 TRACK = "t2"
-SPEND_CAP = 40.0
+SPEND_CAP = 40.0  # primary (frozen-price) cost, as T1's limit was measured
+BILLED_STOP = 100.0  # account safety stop on OpenRouter's billed cost
 DISK_LIMIT = 78.0
 TOTAL = 273
 WORKERS = int(os.environ.get("T2_WORKERS", "8"))
@@ -128,10 +131,10 @@ def repo_key(repo: str) -> str:
     return repo.replace("/", "__")
 
 
-def spent(path: Path, field: str = "cost_usd_billed") -> float:
-    """Money spent, summed over every ledger row (retries included). The spend
-    limit (prereg §6) is in dollars, so it counts OpenRouter's billed cost;
-    cost_usd (primary formula at frozen prices) is reported alongside."""
+def spent(path: Path, field: str = "cost_usd") -> float:
+    """Summed over every ledger row (retries included). The $40 track limit is
+    measured on cost_usd, the primary formula at frozen prices, as T1's was.
+    field="cost_usd_billed" gives OpenRouter's bill for the $100 safety stop."""
     if not path.exists():
         return 0.0
     total = 0.0
@@ -306,6 +309,26 @@ def mini_env(instance: dict, run_args: list[str]):
     return config, get_sb_environment(config, instance)
 
 
+def primary_cost_model(model):
+    """Make mini-swe-agent sum primary (frozen-price) cost, not OpenRouter's bill.
+
+    mini's OpenRouter model returns usage.cost from _calculate_cost and the agent
+    applies cost_limit to that sum. Graphirm applies its $0.50 cap to the primary
+    formula, so the same formula is used here; the bill stays in each message's
+    extra.response.usage.cost and is recorded per row as cost_usd_billed.
+    """
+    prices = load_prices()
+    original = model._calculate_cost
+
+    def calculate(response):
+        usage = response.get("usage", {}) or {}
+        billed = original(response)  # keeps mini's "no cost info" error for broken responses
+        return {"cost": usage_cost(usage, prices), "cost_billed": billed.get("cost", 0.0)}
+
+    model._calculate_cost = calculate
+    return model
+
+
 def run_mini(instance: dict, arm: str, out: Path, root: Path) -> dict:
     from minisweagent.agents import get_agent
     from minisweagent.models import get_model
@@ -336,7 +359,8 @@ def run_mini(instance: dict, arm: str, out: Path, root: Path) -> dict:
         }
         probed = env.execute({"command": "git -C /testbed rev-parse HEAD"}, timeout=60)
         record["start_commit"] = (probed.get("output") or "").strip() or None
-        agent = get_agent(get_model(config=config.get("model", {})), env, agent_cfg, default_type="default")
+        model = primary_cost_model(get_model(config=config.get("model", {})))
+        agent = get_agent(model, env, agent_cfg, default_type="default")
         text = (
             render_notes_task(instance["problem_statement"])
             if arm == "M-notes"
@@ -351,9 +375,11 @@ def run_mini(instance: dict, arm: str, out: Path, root: Path) -> dict:
         patch = strip_test_hunks(submission, instance.get("test_patch") or "")
         write_patch(out / f"{arm}.patch", patch)
         costs = mini_costs(traj)
-        # cost_usd is the primary formula (prereg §4); mini's agent.cost is OpenRouter's bill.
-        record["cost_usd"] = round(costs["cost_usd"], 6)
-        record["cost_usd_billed"] = round(float(getattr(agent, "cost", 0.0) or costs["cost_usd_billed"]), 6)
+        # agent.cost is now the primary formula (primary_cost_model); the bill comes
+        # from each call's usage.cost in the trajectory.
+        record["cost_usd"] = round(float(getattr(agent, "cost", 0.0) or costs["cost_usd"]), 6)
+        record["cost_usd_billed"] = round(costs["cost_usd_billed"], 6)
+        record["cap_hit"] = info.get("exit_status") == "LimitsExceeded"
         stats = info.get("model_stats") or {}
         summary = {
             "arm": arm,
@@ -461,6 +487,8 @@ def run_graphirm(instance: dict, arm: str, out: Path, root: Path) -> dict:
             record["start_commit"] = summary.get("start_commit")
             record["cost_usd"] = float(summary.get("cost_usd") or 0.0)
             record["cost_usd_billed"] = float(summary.get("cost_usd_reported") or 0.0)
+            record["cap_hit"] = summary.get("exit_reason") in ("max_cost", "cost_cap", "budget")
+            record["exit_reason"] = summary.get("exit_reason")
         elif Path(str(summary_out) + ".start_commit").is_file():
             record["start_commit"] = Path(str(summary_out) + ".start_commit").read_text().strip()
         if retry_log.is_file():
@@ -622,8 +650,8 @@ def task_complete(root: Path, instance: dict, client) -> None:
             tasks_finished["reported"] = count
     if due:
         print(
-            f"PROGRESS tasks={count} spend={spent(root / 'arms.jsonl'):.2f} "
-            f"primary={spent(root / 'arms.jsonl', 'cost_usd'):.2f} disk={used_pct():.1f} "
+            f"PROGRESS tasks={count} primary={spent(root / 'arms.jsonl'):.2f} "
+            f"billed={spent(root / 'arms.jsonl', 'cost_usd_billed'):.2f} disk={used_pct():.1f} "
             f"backup_failed={pending_backup_count(TRACK)} {notes_rate(root / 'arms.jsonl')}",
             flush=True,
         )
@@ -645,7 +673,12 @@ def walk_job(repo: str, arm: str, tasks: list[dict], root: Path, arm_ledger: Pat
         if stop_event.is_set():
             break
         if spent(arm_ledger) >= SPEND_CAP:
-            print(f"STOP {repo} {arm} spend={spent(arm_ledger):.2f} cap={SPEND_CAP}", flush=True)
+            print(f"STOP {repo} {arm} primary={spent(arm_ledger):.2f} cap={SPEND_CAP}", flush=True)
+            stop_event.set()
+            break
+        if spent(arm_ledger, "cost_usd_billed") >= BILLED_STOP:
+            print(f"STOP {repo} {arm} billed={spent(arm_ledger, 'cost_usd_billed'):.2f} safety={BILLED_STOP}", flush=True)
+            (root / "stop-reason").write_text("billed-safety\n")
             stop_event.set()
             break
         wait_turn(repo, arm, index)
@@ -794,7 +827,7 @@ def walk_job(repo: str, arm: str, tasks: list[dict], root: Path, arm_ledger: Pat
         mark_progress(repo, arm, index + 1)
         task_complete(root, instance, client)
         print(
-            f"DONE {repo_key(repo)} {arm} {counters['finished']}/{len(tasks)} spend={spent(arm_ledger):.2f}",
+            f"DONE {repo_key(repo)} {arm} {counters['finished']}/{len(tasks)} primary={spent(arm_ledger):.2f}",
             flush=True,
         )
     return counters
@@ -838,16 +871,22 @@ def main() -> None:
     )
     print(
         f"START total={TOTAL} done={len(done_tasks)} pending_arms={pending_keys} "
-        f"spend={spent(arm_ledger):.2f} disk={used_pct():.1f} workers={WORKERS} drift={DRIFT}",
+        f"primary={spent(arm_ledger):.2f} billed={spent(arm_ledger, 'cost_usd_billed'):.2f} "
+        f"disk={used_pct():.1f} workers={WORKERS} drift={DRIFT}",
         flush=True,
     )
     if pending_keys == 0:
         (root / "running").unlink(missing_ok=True)
-        print(f"HOLD tasks={len(done_tasks)} spend={spent(arm_ledger):.2f}", flush=True)
+        print(f"HOLD tasks={len(done_tasks)} primary={spent(arm_ledger):.2f} billed={spent(arm_ledger, 'cost_usd_billed'):.2f}", flush=True)
         return
     if spent(arm_ledger) >= SPEND_CAP:
         (root / "running").unlink(missing_ok=True)
-        print(f"STOP spend={spent(arm_ledger):.2f} cap={SPEND_CAP}", flush=True)
+        print(f"STOP primary={spent(arm_ledger):.2f} cap={SPEND_CAP}", flush=True)
+        return
+    if spent(arm_ledger, "cost_usd_billed") >= BILLED_STOP:
+        (root / "running").unlink(missing_ok=True)
+        (root / "stop-reason").write_text("billed-safety\n")
+        print(f"STOP billed={spent(arm_ledger, 'cost_usd_billed'):.2f} safety={BILLED_STOP}", flush=True)
         return
     first_pending = next(
         row for row in instances if any(f"{row['instance_id']}::{arm}" not in done_arms for arm in ARMS)
@@ -887,14 +926,14 @@ def main() -> None:
     mismatch = sum(int(c.get("mismatch", 0)) for c in results.values())
     unresolved = sum(int(c.get("unresolved", 0)) for c in results.values())
     print(
-        f"PROGRESS tasks={finished} spend={spent(arm_ledger):.2f} primary={spent(arm_ledger, 'cost_usd'):.2f} disk={used_pct():.1f} "
+        f"PROGRESS tasks={finished} primary={spent(arm_ledger):.2f} billed={spent(arm_ledger, 'cost_usd_billed'):.2f} disk={used_pct():.1f} "
         f"errors={errors} http_429={http_429} commit_mismatch={mismatch} "
         f"unresolved={unresolved} backup_failed={pending_backup_count(TRACK)} {notes_rate(arm_ledger)}",
         flush=True,
     )
     if finished >= TOTAL or (root / "stop-reason").is_file() or spent(arm_ledger) >= SPEND_CAP:
         (root / "running").unlink(missing_ok=True)
-    print(f"HOLD tasks={finished} spend={spent(arm_ledger):.2f}", flush=True)
+    print(f"HOLD tasks={finished} primary={spent(arm_ledger):.2f} billed={spent(arm_ledger, 'cost_usd_billed'):.2f}", flush=True)
 
 
 if __name__ == "__main__":
