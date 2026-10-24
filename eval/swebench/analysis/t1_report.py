@@ -27,6 +27,8 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
+from metrics import cache_hit, primary_cost_from_calls  # noqa: E402
+
 RUNS = Path("/home/krs/graphirm-runs/t1")
 OUT = RUNS / "analysis"
 LOCK = HERE.parent / "instances.lock.json"
@@ -158,7 +160,7 @@ def cache_hit_graph(graph: Path) -> float | None:
             continue
         inp += int(md.get("usage_input") or 0)
         cached += int(md.get("usage_cache_read") or 0)
-    return cached / inp if inp else None
+    return cache_hit(inp, cached)
 
 
 def cache_hit_mini(traj: Path) -> float | None:
@@ -173,7 +175,7 @@ def cache_hit_mini(traj: Path) -> float | None:
         usage = ((msg.get("extra") or {}).get("response") or {}).get("usage") or {}
         inp += int(usage.get("prompt_tokens") or 0)
         cached += int((usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
-    return cached / inp if inp else None
+    return cache_hit(inp, cached)
 
 
 def dropped_tokens(graph: Path) -> int | None:
@@ -231,11 +233,24 @@ def main() -> None:
     # its trajectory; the billed figure is kept alongside for every arm.
     from run_arm import mini_costs
 
-    cost = {
-        arm: np.array([float(latest[f"{iid}::{arm}"].get("cost_usd") or 0.0) for iid in ids])
-        for arm in ARMS
-        if arm != "M"
-    }
+    cost = {}
+    for arm in GRAPH_ARMS:
+        vals = []
+        for iid in ids:
+            graph = RUNS / iid / f"{arm}.graph.db"
+            calls = []
+            if graph.is_file() and graph.stat().st_size > 0:
+                conn = sqlite3.connect(f"file:{graph}?mode=ro", uri=True)
+                try:
+                    meta_rows = conn.execute(
+                        "SELECT metadata FROM nodes WHERE node_type = 'interaction' "
+                        "AND json_extract(metadata, '$.usage_input') IS NOT NULL"
+                    ).fetchall()
+                finally:
+                    conn.close()
+                calls = [json.loads(meta) for (meta,) in meta_rows]
+            vals.append(primary_cost_from_calls(calls))
+        cost[arm] = np.array(vals)
     m_costs = [mini_costs(RUNS / iid / "M.traj.json") for iid in ids]
     cost["M"] = np.array([c["cost_usd"] for c in m_costs])
     billed = {"M": np.array([c["cost_usd_billed"] for c in m_costs])}

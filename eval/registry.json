@@ -22,7 +22,7 @@
   },
   "metrics": {
     "module": "eval/swebench/metrics.py",
-    "sha256": "16a083420924809daf66b6e58f1cd7e92a1085062f5ecbaa097f2418a177c81d",
+    "sha256": "c42dfb27f8d5b2fa9c52ba9b7cfbd44e2c5652fbc9dc0b5e40d946d477e0426a",
     "resolved": "harness resolved boolean: SWE-bench report.json resolved, or CL-Bench status completed",
     "primary_cost": " (prompt - cached) * input + cached * cache_read + output * output, from metrics.primary_cost",
     "billed_cost": "OpenRouter usage.cost",
@@ -221,7 +221,6 @@
   ],
   "not_backfilled": [
     "Per-run manifests for T1, T2 and T3. The files are on disk; sha256 manifests were not written after the fact.",
-    "Existing analysis scripts still contain their own copies of the metric formulas. New scripts import eval/swebench/metrics.py.",
     "The git commit of prices.lock.json and instances.lock.json.",
     "Toolchain versions for the 12 October binary. Builds from 2026-10-25 use the toolchain field."
   ]

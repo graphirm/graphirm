@@ -94,20 +94,20 @@ def strip_test_hunks(patch: str, test_patch: str = "") -> str:
 
 
 def load_prices() -> dict:
-    return json.loads((Path(__file__).resolve().parent / "prices.lock.json").read_text())
+    from metrics import prices
+
+    return prices()
 
 
 def usage_cost(usage: dict, prices: dict | None = None) -> float:
     """Primary cost of one call from an OpenRouter usage block (prereg §4)."""
+    from metrics import primary_cost
+
     prices = prices or load_prices()
     prompt = int(usage.get("prompt_tokens") or 0)
     cached = int((usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
     output = int(usage.get("completion_tokens") or 0)
-    return (
-        (prompt - cached) * prices["input_cost_per_token"]
-        + cached * prices["input_cache_read_per_token"]
-        + output * prices["output_cost_per_token"]
-    )
+    return primary_cost(prompt, cached, output, prices)
 
 
 def mini_costs(traj: Path) -> dict:
@@ -117,7 +117,9 @@ def mini_costs(traj: Path) -> dict:
     mini's own `agent.cost` is the billed `usage.cost`, which moved with the
     upstream price during the study. Graphirm's summary already reports both.
     """
-    prices = load_prices()
+    from metrics import billed_cost, primary_cost
+
+    table = load_prices()
     out = {"prompt": 0, "cached": 0, "output": 0, "calls": 0, "cost_usd": 0.0, "cost_usd_billed": 0.0}
     if not traj.is_file():
         return out
@@ -133,12 +135,8 @@ def mini_costs(traj: Path) -> dict:
         out["cached"] += cached
         out["output"] += output
         out["calls"] += 1
-        out["cost_usd_billed"] += float(usage.get("cost") or 0.0)
-    out["cost_usd"] = (
-        (out["prompt"] - out["cached"]) * prices["input_cost_per_token"]
-        + out["cached"] * prices["input_cache_read_per_token"]
-        + out["output"] * prices["output_cost_per_token"]
-    )
+        out["cost_usd_billed"] += billed_cost(usage)
+    out["cost_usd"] = primary_cost(out["prompt"], out["cached"], out["output"], table)
     return out
 
 

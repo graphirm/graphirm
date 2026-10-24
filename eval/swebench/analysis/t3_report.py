@@ -25,6 +25,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
+from metrics import primary_cost_from_calls, recorded_billed, tokens as token_total  # noqa: E402
 from t1_report import classify_retry as _classify_retry  # noqa: E402
 from t1_report import paired_bootstrap_diff, win_tie_loss  # noqa: E402
 from run_arm import mini_costs  # noqa: E402
@@ -94,6 +95,28 @@ def assistant_calls(graph: Path) -> int | None:
     return int(count)
 
 
+def graph_call_metadata(path: Path) -> dict[str, dict]:
+    if not path.is_file() or path.stat().st_size == 0:
+        return {}
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT id, metadata FROM nodes WHERE node_type = 'interaction' "
+            "AND json_extract(metadata, '$.usage_input') IS NOT NULL"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {node_id: json.loads(meta) for node_id, meta in rows}
+
+
+def calls_this_run(out: Path, arm: str, prior_graph: Path | None) -> list[dict]:
+    current = graph_call_metadata(out / f"{arm}.graph.db")
+    if prior_graph is None:
+        return list(current.values())
+    known = set(graph_call_metadata(prior_graph))
+    return [meta for node_id, meta in current.items() if node_id not in known]
+
+
 def mini_usage(traj: Path) -> tuple[int | None, int | None]:
     """(api calls, prompt + completion tokens) from the trajectory."""
     if not traj.is_file():
@@ -106,7 +129,10 @@ def mini_usage(traj: Path) -> tuple[int | None, int | None]:
         if msg.get("role") != "assistant":
             continue
         usage = ((msg.get("extra") or {}).get("response") or {}).get("usage") or {}
-        tokens += int(usage.get("prompt_tokens") or 0) + int(usage.get("completion_tokens") or 0)
+        tokens += token_total(
+            int(usage.get("prompt_tokens") or 0),
+            int(usage.get("completion_tokens") or 0),
+        )
         seen += 1
     return (int(calls) if calls is not None else seen), tokens
 
@@ -120,7 +146,7 @@ def graph_usage(out: Path, arm: str, prior_graph: Path | None) -> tuple[int | No
     tokens = None
     if summary_path.is_file():
         s = json.loads(summary_path.read_text())
-        tokens = int(s.get("tokens_in") or 0) + int(s.get("tokens_out") or 0)
+        tokens = token_total(int(s.get("tokens_in") or 0), int(s.get("tokens_out") or 0))
     calls = assistant_calls(out / f"{arm}.graph.db")
     if calls is not None and prior_graph is not None:
         prior = assistant_calls(prior_graph) or 0
@@ -241,8 +267,8 @@ def main() -> None:
                 cost, billed = mc["cost_usd"], mc["cost_usd_billed"]
             else:
                 summary = json.loads((out / f"{arm}.summary.json").read_text())
-                cost = float(summary.get("cost_usd") or 0.0)
-                billed = float(summary.get("cost_usd_reported") or 0.0)
+                cost = primary_cost_from_calls(calls_this_run(out, arm, prior))
+                billed = recorded_billed(summary)
             metric["resolved"][arm][i] = 1.0 if final[iid][arm] else 0.0
             metric["calls"][arm][i] = np.nan if calls is None else calls
             metric["tokens"][arm][i] = np.nan if tokens is None else tokens

@@ -22,6 +22,16 @@ Entry template:
 
 ---
 
+## 2026-10-25 — Report scripts call the shared metric module
+
+**Context:** T1, T2 and T3 each computed primary cost, cache hit and tokens in the report script. Graphirm summaries store primary cost as the sum of per-call costs after rounding each call to the nearest micro-dollar. Summing the float formula once over a task's tokens differs from that stored total, by at most about 5.5e-6 dollars on a T2 G-fresh task.
+**Decision:** `metrics.primary_cost` is the float formula. `metrics.primary_cost_from_calls` is the per-call micro-dollar sum the binary stored. The three report scripts call those functions. Mini arms keep the float formula on summed tokens, which is what their published cost already was. Rerunning the three scripts reproduced the published JSON. The T2 markdown differs only by a hand-written section 4 that the script does not emit; that section was left in place.
+**Alternatives:** Recompute every graph arm with the unrounded float sum and keep both versions. That would change published per-task costs at the sixth decimal without changing a conclusion.
+**Consequences:** A later change to either function is a definition change and has to recompute earlier results, keeping both versions.
+**Refs:** `eval/swebench/metrics.py`. `eval/swebench/analysis/t1_report.py`.
+
+---
+
 ## 2026-10-25 — The 12 October binary source was not recovered
 
 **Context:** Binary sha256 `a4e75be8392e7a6f520618984f9ca17c4c3448ee21d06d19620cbbfa3ae3495c` was built on 12 October 10:17. Editor history for `context.rs` jumps from March to 22 October 15:21. `workflow.rs` has snapshots on 5 October and 19 October, not on the build day. No stash, reflog entry, or dangling commit from 12 October contains the pin. Cursor history has no `.rs` snapshot that day.
