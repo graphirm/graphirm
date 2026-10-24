@@ -1,6 +1,14 @@
 {
   "schema": 1,
   "rules": "eval/DATA_RULES.md",
+  "rules_commit": "589ae55203ef69418cd60ad9c16b4ebcf2d99236",
+  "toolchain": {
+    "rustc": "1.93.0 (254b59607 2026-01-19)",
+    "cargo": "1.93.0 (083ac5135 2025-12-15)",
+    "zig": "0.17.0",
+    "recorded_on": "2026-10-25",
+    "scope": "Every eval build from 2026-10-25 on. The 12 October binary's toolchain stays unknown."
+  },
   "prices": {
     "path": "eval/swebench/prices.lock.json",
     "sha256": "d432b6de916e7f5256a5414f0004af0eaa1c69826d93e1ea9dc27106d07d8c19",
@@ -96,8 +104,10 @@
       ],
       "task_list_key": "memory_tracks.swe_bench_cl",
       "dataset": "thomasjoshi/agents-never-forget",
+      "dataset_file": "/home/krs/graphirm-runs/sources/SWE-Bench-CL-Curriculum.json",
+      "dataset_sha256": "91bc39a769b6218419bd44308650e5d2c846ecd3e6f7a6c086f74a37b6db90f7",
       "dataset_revision": "unknown",
-      "dataset_revision_reason": "The lock URL points at blob/main with no pinned commit.",
+      "dataset_revision_reason": "The local curriculum file is the dataset identity. The upstream revision was not pinned. The driver reads task order from instances.lock.json and instance bodies from princeton-nlp/SWE-bench_Verified.",
       "runs": "/home/krs/graphirm-runs/t2",
       "harness": "swebench report.json under grading/{arm}/attempt*/report.json",
       "spend_cap_usd_primary": 40,
@@ -115,8 +125,10 @@
       ],
       "task_list_key": "memory_tracks.clbench_codebase",
       "dataset": "pgasawa/continual-learning-bench",
+      "dataset_file": "/home/krs/graphirm-runs/sources/clbench-codebase.jsonl",
+      "dataset_sha256": "bac3bf0b4340cf0a9b7168739d9bc5f31018917269b511ad07ce44d6a73fae05",
       "dataset_revision": "unknown",
-      "dataset_revision_reason": "The lock URL points at blob/main. The checkout on this machine on 2026-10-25 is 5f8c50eb1e84b2eda2ef4faff757dfc812a0ea26, which was not recorded at run time.",
+      "dataset_revision_reason": "The local jsonl is the task file the T3 driver loads. The upstream revision was not pinned. The checkout on this machine on 2026-10-25 is 5f8c50eb1e84b2eda2ef4faff757dfc812a0ea26, which was not recorded at run time.",
       "runs": "/home/krs/graphirm-runs/t3",
       "harness": "CL-Bench status on the ledger: completed means the tests exited 0. No report.json.",
       "spend_cap_usd_primary": 5,
@@ -211,6 +223,6 @@
     "Per-run manifests for T1, T2 and T3. The files are on disk; sha256 manifests were not written after the fact.",
     "Existing analysis scripts still contain their own copies of the metric formulas. New scripts import eval/swebench/metrics.py.",
     "The git commit of prices.lock.json and instances.lock.json.",
-    "Toolchain versions for the 12 October binary."
+    "Toolchain versions for the 12 October binary. Builds from 2026-10-25 use the toolchain field."
   ]
 }
