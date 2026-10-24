@@ -1,6 +1,7 @@
 // Agent workflow: async state machine with plan -> act -> observe -> reflect loop
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -125,6 +126,189 @@ fn context_budget_tokens(configured: Option<u32>) -> usize {
     configured.map(|t| t as usize).unwrap_or(100_000)
 }
 
+/// Characters in the messages about to be sent. The pre-call cost check
+/// treats two characters as one token, which sits above the provider counts
+/// seen on the smoke runs, so the check stops before the cap.
+fn request_char_count(messages: &[graphirm_llm::LlmMessage]) -> usize {
+    messages
+        .iter()
+        .map(|message| {
+            message
+                .content
+                .iter()
+                .map(|part| match part {
+                    graphirm_llm::ContentPart::Text { text } => text.len(),
+                    graphirm_llm::ContentPart::ToolCall {
+                        id,
+                        name,
+                        arguments,
+                    } => id.len() + name.len() + arguments.to_string().len(),
+                    graphirm_llm::ContentPart::ToolResult { id, content, .. } => {
+                        id.len() + content.len()
+                    }
+                })
+                .sum::<usize>()
+        })
+        .sum()
+}
+
+fn message_block_text(message: &graphirm_llm::LlmMessage) -> String {
+    message
+        .content
+        .iter()
+        .map(|part| match part {
+            ContentPart::Text { text } => text.clone(),
+            ContentPart::ToolCall {
+                id,
+                name,
+                arguments,
+            } => format!("{id} {name} {arguments}"),
+            ContentPart::ToolResult { id, content, .. } => format!("{id}\n{content}"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn sha256_hex(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(text.as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// One JSON line per call: hash and text of the system block, the tool-schema
+/// block, and each packed message, in send order. Set `GRAPHIRM_PACK_TRACE`.
+fn append_pack_trace(context: &[graphirm_llm::LlmMessage], tools: &[graphirm_llm::ToolDefinition]) {
+    let Ok(path) = std::env::var("GRAPHIRM_PACK_TRACE") else {
+        return;
+    };
+    let mut blocks = Vec::new();
+    if let Some(system) = context.first() {
+        let text = message_block_text(system);
+        blocks.push(serde_json::json!({
+            "kind": "system",
+            "sha256": sha256_hex(&text),
+            "chars": text.chars().count(),
+            "text": text,
+        }));
+    }
+    let schema_text = serde_json::to_string(
+        &tools
+            .iter()
+            .map(|tool| {
+                serde_json::json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_default();
+    blocks.push(serde_json::json!({
+        "kind": "tool_schemas",
+        "sha256": sha256_hex(&schema_text),
+        "chars": schema_text.chars().count(),
+        "text": schema_text,
+    }));
+    for (index, message) in context.iter().skip(1).enumerate() {
+        let text = message_block_text(message);
+        blocks.push(serde_json::json!({
+            "kind": "message",
+            "index": index,
+            "sha256": sha256_hex(&text),
+            "chars": text.chars().count(),
+            "text": text,
+        }));
+    }
+    if let Some(parent) = std::path::Path::new(&path).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let line = serde_json::json!({ "blocks": blocks });
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+/// Put a changing usage note on the final user or tool message.
+///
+/// The note is not stored. The next request rebuilds that message without it
+/// and appends the new note to whatever is last, so every earlier message
+/// stays byte-for-byte the same.
+pub(crate) fn append_budget_note(messages: &mut [graphirm_llm::LlmMessage], note: &str) {
+    use graphirm_llm::{ContentPart, Role};
+
+    let Some(message) = messages.last_mut() else {
+        return;
+    };
+    let suffix = format!("\n\n{note}");
+    match message.role {
+        Role::Human => {
+            if let Some(ContentPart::Text { text }) = message
+                .content
+                .iter_mut()
+                .rev()
+                .find(|part| matches!(part, ContentPart::Text { .. }))
+            {
+                text.push_str(&suffix);
+            } else {
+                message.content.push(ContentPart::text(suffix));
+            }
+        }
+        Role::ToolResult => {
+            if let Some(ContentPart::ToolResult { content, .. }) = message
+                .content
+                .iter_mut()
+                .rev()
+                .find(|part| matches!(part, ContentPart::ToolResult { .. }))
+            {
+                content.push_str(&suffix);
+            }
+        }
+        Role::System | Role::Assistant => {}
+    }
+}
+
+fn note_provider_retry(err: &impl std::fmt::Display) {
+    tracing::warn!(
+        error = %err,
+        "provider error retried; this attempt is not charged to the budget"
+    );
+    let Ok(path) = std::env::var("GRAPHIRM_RETRY_LOG") else {
+        return;
+    };
+    if let Some(parent) = std::path::Path::new(&path).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(file, "{err}");
+    }
+}
+
+fn provider_retry_delay(err: &graphirm_llm::LlmError, try_n: u32) -> std::time::Duration {
+    if let graphirm_llm::LlmError::RateLimited { retry_after_ms } = err {
+        return std::time::Duration::from_millis((*retry_after_ms).clamp(200, 30_000));
+    }
+    let base_ms: u64 = if err.to_string().contains("429") {
+        2_000
+    } else {
+        1_000
+    };
+    std::time::Duration::from_millis(base_ms.saturating_mul(1u64 << try_n.min(4)))
+        .min(std::time::Duration::from_secs(30))
+}
+
 /// Call the LLM with the current conversation context and record the
 /// assistant response as an Interaction node in the graph.
 ///
@@ -147,6 +331,11 @@ pub async fn stream_and_record(
     let system_prompt = if let Some(ref seg_config) = session.agent_config.segments {
         if seg_config.enabled && seg_config.structured_output {
             let seg_prompt = crate::knowledge::segments::build_segment_prompt(&seg_config.labels);
+            tracing::info!(
+                base_chars = system_prompt.len(),
+                segment_chars = seg_prompt.len(),
+                "system prompt parts"
+            );
             format!("{system_prompt}{seg_prompt}")
         } else {
             system_prompt
@@ -154,7 +343,7 @@ pub async fn stream_and_record(
     } else {
         system_prompt
     };
-    let context_config = crate::context::ContextConfig {
+    let mut context_config = crate::context::ContextConfig {
         system_prompt,
         max_tokens: context_budget_tokens(session.agent_config.max_tokens),
         segment_filter: session.agent_config.segment_filter.clone(),
@@ -162,6 +351,13 @@ pub async fn stream_and_record(
         recency_only: session.agent_config.recency_only,
         ..crate::context::ContextConfig::default()
     };
+    context_config.prefix_stable = !session.agent_config.packing_legacy;
+    context_config.dedup_derived = !session.agent_config.packing_legacy;
+    if let Ok(raw) = std::env::var("GRAPHIRM_EXCERPT_AFTER")
+        && let Ok(turns) = raw.parse::<usize>()
+    {
+        context_config.excerpt_after_turns = Some(turns);
+    }
     let graph_ref = session.graph.clone();
     let session_id_ref = session.id.clone();
     // Snapshot compaction settings before context_config is moved into the closure.
@@ -170,12 +366,22 @@ pub async fn stream_and_record(
     let compaction_threshold = context_config.compaction_threshold;
     let guaranteed_recent = context_config.guaranteed_recent_turns;
     let tail_fraction = context_config.tail_max_fraction;
+    context_config.pack_prefix_ids = session.packed_prefix_ids();
 
     let (window, mut context_stats) = tokio::task::spawn_blocking(move || {
         crate::context::build_context_with_stats(&graph_ref, &session_id_ref, &context_config)
     })
     .await
     .map_err(|e| AgentError::Join(e.to_string()))??;
+    let dropped_nodes = window.dropped_nodes;
+    let dropped_tokens = window.dropped_tokens;
+    let task_node_present = window.task_node_present;
+    let dropped_node_ids: Vec<String> = window
+        .dropped_node_ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect();
+    session.note_packed_ids(window.kept_node_ids.clone());
 
     // Auto-compaction: runs after context is built, before LLM call.
     // Non-fatal — errors are logged and skipped.
@@ -239,43 +445,6 @@ pub async fn stream_and_record(
     context.push(window.system);
     context.extend(window.messages);
 
-    // Budget awareness: append a warning to the system message when token usage
-    // crosses a configured threshold. Helps the agent self-manage resource consumption.
-    if max_tok > 0 && !session.agent_config.budget_warning_thresholds.is_empty() {
-        let usage_ratio = window.total_tokens as f64 / max_tok as f64;
-        let highest_crossed = session
-            .agent_config
-            .budget_warning_thresholds
-            .iter()
-            .copied()
-            .filter(|&t| usage_ratio >= t)
-            .fold(f64::NEG_INFINITY, f64::max);
-        if highest_crossed.is_finite() {
-            let pct = (usage_ratio * 100.0) as u32;
-            let warning = if highest_crossed >= 0.9 {
-                format!(
-                    "\n\n[Budget] Token usage at {pct}% of limit. \
-                     Prioritize completing the current step and summarizing — do not start new tasks."
-                )
-            } else {
-                format!(
-                    "\n\n[Budget] Token usage at {pct}% of limit. \
-                     Start wrapping up; avoid long exploratory chains."
-                )
-            };
-            if let Some(system_msg) = context.first_mut() {
-                system_msg
-                    .content
-                    .push(graphirm_llm::ContentPart::text(warning));
-            }
-            tracing::info!(
-                usage_ratio,
-                pct,
-                "Budget warning appended to system message"
-            );
-        }
-    }
-
     let raw_defs = tools.definitions();
     let mut tool_defs: Vec<graphirm_llm::ToolDefinition> = raw_defs
         .into_iter()
@@ -285,6 +454,15 @@ pub async fn stream_and_record(
         })
         .map(|t| graphirm_llm::ToolDefinition::new(t.name, t.description, t.parameters))
         .collect();
+    let tool_schema_chars: usize = tool_defs
+        .iter()
+        .map(|tool| tool.name.len() + tool.description.len() + tool.parameters.to_string().len())
+        .sum();
+    tracing::info!(
+        tool_count = tool_defs.len(),
+        tool_schema_chars,
+        "tool schema size"
+    );
 
     let mut tools_gated = false;
     if session.agent_config.tool_gate_enabled
@@ -299,6 +477,55 @@ pub async fn stream_and_record(
             "tool_gate: omitting tool definitions for conversational user message"
         );
     }
+
+    // The system prompt already asks for segment JSON. Repeat a short version
+    // on that same system message, after the tool gate has read the original
+    // user text. The reminder does not move onto a later human message.
+    if let Some(labels) = session
+        .agent_config
+        .segments
+        .as_ref()
+        .filter(|seg| seg.enabled && seg.structured_output)
+        .map(|seg| seg.labels.clone())
+    {
+        crate::knowledge::segments::append_segment_json_request(&mut context, &labels);
+        tracing::info!("Appended numbered segment JSON request to the system message");
+    }
+
+    // The warning changes with usage, so it stays after the packed nodes.
+    // Putting it on the system message would change the cached prefix.
+    if max_tok > 0 && !session.agent_config.budget_warning_thresholds.is_empty() {
+        let usage_ratio = window.total_tokens as f64 / max_tok as f64;
+        let highest_crossed = session
+            .agent_config
+            .budget_warning_thresholds
+            .iter()
+            .copied()
+            .filter(|&t| usage_ratio >= t)
+            .fold(f64::NEG_INFINITY, f64::max);
+        if highest_crossed.is_finite() {
+            let pct = (usage_ratio * 100.0) as u32;
+            let warning = if highest_crossed >= 0.9 {
+                format!(
+                    "[Budget] Token usage at {pct}% of limit. \
+                     Prioritize completing the current step and summarizing — do not start new tasks."
+                )
+            } else {
+                format!(
+                    "[Budget] Token usage at {pct}% of limit. \
+                     Start wrapping up; avoid long exploratory chains."
+                )
+            };
+            append_budget_note(&mut context, &warning);
+            tracing::info!(
+                usage_ratio,
+                pct,
+                "Budget warning appended to the latest user or tool message"
+            );
+        }
+    }
+
+    append_pack_trace(&context, &tool_defs);
 
     // Model routing: select cheap or smart model based on session signals.
     // Prefer adaptive strategy when configured; fall back to legacy static router.
@@ -471,11 +698,36 @@ pub async fn stream_and_record(
         }
     }
 
+    // Stop before the call when the input alone would cross the cost cap.
+    // The estimate treats the whole prompt as uncached. A failed provider
+    // attempt returns before usage is recorded, so it does not add to the
+    // turn graph or the cost total.
+    if let Some(cap) = session.agent_config.max_session_cost_micro_usd
+        && session.frozen_prices_set()
+    {
+        let message_chars = request_char_count(&context);
+        let est_input = u32::try_from((message_chars + tool_schema_chars) / 2).unwrap_or(u32::MAX);
+        if let Some(next) = session.frozen_cost_micro(est_input, 0, 0) {
+            let spent = session.llm_cost_micro_usd();
+            let projected = spent.saturating_add(next);
+            if projected > cap {
+                info!(
+                    spent,
+                    projected, est_input, cap, "pre-call cost estimate would cross the cap"
+                );
+                return Err(AgentError::SessionCostCapExceeded {
+                    used_micro: spent,
+                    cap_micro: cap,
+                });
+            }
+        }
+    }
+
     let preview_node_id = NodeId::new();
     let mut fallback_chain: Vec<crate::router::FallbackAttempt> = Vec::new();
     let mut response: Option<LlmResponse> = None;
 
-    for (i, model) in fallback_models.iter().enumerate() {
+    'models: for (i, model) in fallback_models.iter().enumerate() {
         let is_last = i == fallback_models.len() - 1;
         let comp_config = CompletionConfig::new(model)
             .with_max_tokens(max_output)
@@ -488,55 +740,69 @@ pub async fn stream_and_record(
             Some(provider) => comp_config.with_provider_only(provider),
             None => comp_config,
         };
-        let start = std::time::Instant::now();
-        match llm.stream(context.clone(), &tool_defs, &comp_config).await {
-            Ok(stream) => {
-                events.emit(AgentEvent::MessageStart {
-                    node_id: preview_node_id.clone(),
-                });
-                match consume_llm_stream(stream, &preview_node_id, events).await {
-                    Ok(resp) => {
-                        if i > 0 {
-                            selected_model = model.clone();
+        let mut same_model_try = 0u32;
+        loop {
+            same_model_try += 1;
+            let start = std::time::Instant::now();
+            match llm.stream(context.clone(), &tool_defs, &comp_config).await {
+                Ok(stream) => {
+                    events.emit(AgentEvent::MessageStart {
+                        node_id: preview_node_id.clone(),
+                    });
+                    match consume_llm_stream(stream, &preview_node_id, events).await {
+                        Ok(resp) => {
+                            if i > 0 {
+                                selected_model = model.clone();
+                            }
+                            // Some models (e.g. DeepSeek via OpenRouter) emit DSML/XML tool blocks in
+                            // assistant text instead of SSE `delta.tool_calls`; normalize so tools run.
+                            let resp = graphirm_llm::augment_embedded_tool_calls(resp);
+                            response = Some(resp);
+                            break 'models;
                         }
-                        // Some models (e.g. DeepSeek via OpenRouter) emit DSML/XML tool blocks in
-                        // assistant text instead of SSE `delta.tool_calls`; normalize so tools run.
-                        let resp = graphirm_llm::augment_embedded_tool_calls(resp);
-                        response = Some(resp);
-                        break;
+                        Err(e) if e.is_retryable() && same_model_try < 5 => {
+                            note_provider_retry(&e);
+                            tokio::time::sleep(provider_retry_delay(&e, same_model_try)).await;
+                        }
+                        Err(e) if e.is_retryable() && !is_last => {
+                            let latency_ms = start.elapsed().as_millis() as u64;
+                            tracing::warn!(
+                                model,
+                                error = %e,
+                                attempt = i + 1,
+                                "LLM stream failed, trying next fallback model"
+                            );
+                            fallback_chain.push(crate::router::FallbackAttempt {
+                                model: model.clone(),
+                                error: e.to_string(),
+                                latency_ms,
+                            });
+                            break;
+                        }
+                        Err(e) => return Err(e.into()),
                     }
-                    Err(e) if e.is_retryable() && !is_last => {
-                        let latency_ms = start.elapsed().as_millis() as u64;
-                        tracing::warn!(
-                            model,
-                            error = %e,
-                            attempt = i + 1,
-                            "LLM stream failed, trying next fallback model"
-                        );
-                        fallback_chain.push(crate::router::FallbackAttempt {
-                            model: model.clone(),
-                            error: e.to_string(),
-                            latency_ms,
-                        });
-                    }
-                    Err(e) => return Err(e.into()),
                 }
+                Err(e) if e.is_retryable() && same_model_try < 5 => {
+                    note_provider_retry(&e);
+                    tokio::time::sleep(provider_retry_delay(&e, same_model_try)).await;
+                }
+                Err(e) if e.is_retryable() && !is_last => {
+                    let latency_ms = start.elapsed().as_millis() as u64;
+                    tracing::warn!(
+                        model,
+                        error = %e,
+                        attempt = i + 1,
+                        "LLM call failed, trying next fallback model"
+                    );
+                    fallback_chain.push(crate::router::FallbackAttempt {
+                        model: model.clone(),
+                        error: e.to_string(),
+                        latency_ms,
+                    });
+                    break;
+                }
+                Err(e) => return Err(e.into()),
             }
-            Err(e) if e.is_retryable() && !is_last => {
-                let latency_ms = start.elapsed().as_millis() as u64;
-                tracing::warn!(
-                    model,
-                    error = %e,
-                    attempt = i + 1,
-                    "LLM call failed, trying next fallback model"
-                );
-                fallback_chain.push(crate::router::FallbackAttempt {
-                    model: model.clone(),
-                    error: e.to_string(),
-                    latency_ms,
-                });
-            }
-            Err(e) => return Err(e.into()),
         }
     }
 
@@ -579,11 +845,48 @@ pub async fn stream_and_record(
         "usage_output".to_string(),
         serde_json::json!(response.usage.output_tokens),
     );
+    metadata.insert(
+        "usage_cache_read".to_string(),
+        serde_json::json!(response.usage.cache_read_tokens.unwrap_or(0)),
+    );
+    if let Some(reported) = response.usage.cost_micro_usd {
+        metadata.insert(
+            "usage_cost_micro_reported".to_string(),
+            serde_json::json!(reported),
+        );
+        session.note_reported_cost(reported);
+    }
+    let billed = session
+        .frozen_cost_micro(
+            response.usage.input_tokens,
+            response.usage.cache_read_tokens.unwrap_or(0),
+            response.usage.output_tokens,
+        )
+        .or(response.usage.cost_micro_usd);
+    if let Some(cost) = billed {
+        metadata.insert("usage_cost_micro".to_string(), serde_json::json!(cost));
+    }
 
     // Add context_stats to metadata
     metadata.insert(
         "context_stats".to_string(),
         serde_json::to_value(&context_stats).unwrap_or(serde_json::Value::Null),
+    );
+    metadata.insert(
+        "context_dropped_nodes".to_string(),
+        serde_json::json!(dropped_nodes),
+    );
+    metadata.insert(
+        "context_dropped_node_ids".to_string(),
+        serde_json::json!(dropped_node_ids),
+    );
+    metadata.insert(
+        "context_dropped_tokens".to_string(),
+        serde_json::json!(dropped_tokens),
+    );
+    metadata.insert(
+        "task_node_present".to_string(),
+        serde_json::json!(task_node_present),
     );
 
     if !fallback_chain.is_empty() {
@@ -631,6 +934,14 @@ pub async fn stream_and_record(
         metadata.insert("tools_gated".to_string(), serde_json::json!(true));
     }
 
+    if response.usage.length_limited {
+        metadata.insert("length_limited".to_string(), serde_json::json!(true));
+        metadata.insert(
+            "flagged_events".to_string(),
+            serde_json::json!(["length_limit"]),
+        );
+    }
+
     let mut interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
         role: "assistant".to_string(),
         content: response.text_content(),
@@ -639,7 +950,11 @@ pub async fn stream_and_record(
     interaction_node.id = preview_node_id.clone();
     interaction_node.metadata = serde_json::Value::Object(metadata);
 
-    session.add_llm_completion_tokens(delta);
+    session.record_llm_usage(
+        response.usage.input_tokens,
+        response.usage.output_tokens,
+        billed,
+    );
 
     let node_id = session.record_interaction(interaction_node).await?;
 
@@ -672,6 +987,21 @@ pub async fn stream_and_record(
         });
     }
 
+    if let Some(cost_cap) = session.agent_config.max_session_cost_micro_usd
+        && billed.is_some()
+        && session.llm_cost_micro_usd() > cost_cap
+    {
+        info!(
+            used = session.llm_cost_micro_usd(),
+            cap = cost_cap,
+            "Session cost cap exceeded"
+        );
+        return Err(AgentError::SessionCostCapExceeded {
+            used_micro: session.llm_cost_micro_usd(),
+            cap_micro: cost_cap,
+        });
+    }
+
     let raw_text = response.text_content();
     // Set when the segment stamp replaces the Interaction body. Otherwise Jev
     // sees `raw_text`, which is what remains stored.
@@ -687,97 +1017,134 @@ pub async fn stream_and_record(
         && seg_config.enabled
         && !response.has_tool_calls()
     {
-        // Try structured JSON first, fall back to GLiNER2 if that fails or is empty.
+        // Numbered JSON (`n` / `items`) is the contract. Markdown headings are
+        // turned into the same blocks in code. Markers and a single JSON blob
+        // are fallbacks, then GLiNER2.
+        let marked =
+            crate::knowledge::segments::parse_marked_segments(&raw_text, &seg_config.labels);
         let structured = crate::knowledge::segments::parse_structured_segments(&raw_text);
+        let numbered = structured.as_ref().ok().and_then(|segs| {
+            let uses_blocks = segs
+                .iter()
+                .any(|s| s.n.is_some() || !s.items.is_empty() || s.title.is_some());
+            (uses_blocks && !segs.is_empty()).then(|| segs.clone())
+        });
+        let outlined = {
+            let from_raw = crate::knowledge::segments::parse_markdown_sections(&raw_text);
+            if from_raw.len() >= 2 {
+                from_raw
+            } else if let Ok(segs) = structured.as_ref()
+                && segs.len() == 1
+                && segs[0].items.is_empty()
+            {
+                crate::knowledge::segments::parse_markdown_sections(&segs[0].content)
+            } else {
+                Vec::new()
+            }
+        };
         let segments_opt: Option<(Vec<crate::knowledge::segments::Segment>, &str)> =
-            match structured {
-                Ok(segs) if !segs.is_empty() => {
-                    tracing::info!(
-                        count = segs.len(),
-                        "Parsed structured segments from LLM response"
-                    );
-                    Some((segs, "structured"))
-                }
-                Ok(_) => {
-                    tracing::debug!(
-                        "Structured segment parse returned empty — trying GLiNER2 fallback"
-                    );
-                    // GLiNER2 fallback
-                    #[cfg(feature = "local-extraction")]
-                    {
-                        let model_dir = session
-                            .agent_config
-                            .extraction
-                            .as_ref()
-                            .filter(|_| seg_config.gliner2_fallback)
-                            .and_then(|e| {
-                                use crate::knowledge::extraction::ExtractionBackend;
-                                match &e.backend {
-                                    ExtractionBackend::Local { model_dir }
-                                    | ExtractionBackend::Hybrid { model_dir } => {
-                                        Some(model_dir.clone())
-                                    }
-                                    _ => None,
-                                }
-                            });
-                        if let Some(dir) = model_dir {
-                            crate::knowledge::segments::try_gliner2_fallback(
-                                &dir,
-                                &raw_text,
-                                &seg_config.labels,
-                                seg_config.min_confidence,
-                                seg_config.label_descriptions.as_ref(),
-                                seg_config.label_min_confidence.as_ref(),
-                            )
-                            .await
-                            .map(|s| (s, "gliner2"))
-                        } else {
-                            None
-                        }
+            if let Some(segs) = numbered {
+                tracing::info!(count = segs.len(), "Parsed numbered segment blocks");
+                Some((segs, "structured"))
+            } else if outlined.len() >= 2 {
+                tracing::info!(
+                    count = outlined.len(),
+                    "Split markdown headings into numbered blocks"
+                );
+                Some((outlined, "markdown"))
+            } else if marked.len() >= 2 {
+                tracing::info!(count = marked.len(), "Split response on segment markers");
+                Some((marked, "markers"))
+            } else {
+                match structured {
+                    Ok(segs) if !segs.is_empty() => {
+                        tracing::info!(
+                            count = segs.len(),
+                            "Parsed structured segments from LLM response"
+                        );
+                        Some((segs, "structured"))
                     }
-                    #[cfg(not(feature = "local-extraction"))]
-                    None
-                }
-                Err(e) => {
-                    tracing::debug!(
-                        error = %e,
-                        "Structured segment parse failed — trying GLiNER2 fallback"
-                    );
-                    // GLiNER2 fallback
-                    #[cfg(feature = "local-extraction")]
-                    {
-                        let model_dir = session
-                            .agent_config
-                            .extraction
-                            .as_ref()
-                            .filter(|_| seg_config.gliner2_fallback)
-                            .and_then(|e| {
-                                use crate::knowledge::extraction::ExtractionBackend;
-                                match &e.backend {
-                                    ExtractionBackend::Local { model_dir }
-                                    | ExtractionBackend::Hybrid { model_dir } => {
-                                        Some(model_dir.clone())
+                    Ok(_) => {
+                        tracing::debug!(
+                            "Structured segment parse returned empty — trying GLiNER2 fallback"
+                        );
+                        // GLiNER2 fallback
+                        #[cfg(feature = "local-extraction")]
+                        {
+                            let model_dir = session
+                                .agent_config
+                                .extraction
+                                .as_ref()
+                                .filter(|_| seg_config.gliner2_fallback)
+                                .and_then(|e| {
+                                    use crate::knowledge::extraction::ExtractionBackend;
+                                    match &e.backend {
+                                        ExtractionBackend::Local { model_dir }
+                                        | ExtractionBackend::Hybrid { model_dir } => {
+                                            Some(model_dir.clone())
+                                        }
+                                        _ => None,
                                     }
-                                    _ => None,
-                                }
-                            });
-                        if let Some(dir) = model_dir {
-                            crate::knowledge::segments::try_gliner2_fallback(
-                                &dir,
-                                &raw_text,
-                                &seg_config.labels,
-                                seg_config.min_confidence,
-                                seg_config.label_descriptions.as_ref(),
-                                seg_config.label_min_confidence.as_ref(),
-                            )
-                            .await
-                            .map(|s| (s, "gliner2"))
-                        } else {
-                            None
+                                });
+                            if let Some(dir) = model_dir {
+                                crate::knowledge::segments::try_gliner2_fallback(
+                                    &dir,
+                                    &raw_text,
+                                    &seg_config.labels,
+                                    seg_config.min_confidence,
+                                    seg_config.label_descriptions.as_ref(),
+                                    seg_config.label_min_confidence.as_ref(),
+                                )
+                                .await
+                                .map(|s| (s, "gliner2"))
+                            } else {
+                                None
+                            }
                         }
+                        #[cfg(not(feature = "local-extraction"))]
+                        None
                     }
-                    #[cfg(not(feature = "local-extraction"))]
-                    None
+                    Err(e) => {
+                        tracing::debug!(
+                            error = %e,
+                            "Structured segment parse failed — trying GLiNER2 fallback"
+                        );
+                        // GLiNER2 fallback
+                        #[cfg(feature = "local-extraction")]
+                        {
+                            let model_dir = session
+                                .agent_config
+                                .extraction
+                                .as_ref()
+                                .filter(|_| seg_config.gliner2_fallback)
+                                .and_then(|e| {
+                                    use crate::knowledge::extraction::ExtractionBackend;
+                                    match &e.backend {
+                                        ExtractionBackend::Local { model_dir }
+                                        | ExtractionBackend::Hybrid { model_dir } => {
+                                            Some(model_dir.clone())
+                                        }
+                                        _ => None,
+                                    }
+                                });
+                            if let Some(dir) = model_dir {
+                                crate::knowledge::segments::try_gliner2_fallback(
+                                    &dir,
+                                    &raw_text,
+                                    &seg_config.labels,
+                                    seg_config.min_confidence,
+                                    seg_config.label_descriptions.as_ref(),
+                                    seg_config.label_min_confidence.as_ref(),
+                                )
+                                .await
+                                .map(|s| (s, "gliner2"))
+                            } else {
+                                None
+                            }
+                        }
+                        #[cfg(not(feature = "local-extraction"))]
+                        None
+                    }
                 }
             };
 
@@ -1064,6 +1431,17 @@ async fn run_tool_calls(
     // safe ones run in parallel without gating.
     // `.copied()` turns `&&ContentPart` (from iterating `&[&ContentPart]`) into
     // `&ContentPart` so the partition buckets are `Vec<&ContentPart>`.
+    let mut tool_paths: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for part in tool_calls {
+        let ContentPart::ToolCall { id, arguments, .. } = part else {
+            continue;
+        };
+        if let Some(path) = arguments.get("path").and_then(|value| value.as_str()) {
+            tool_paths.insert(id.clone(), path.to_string());
+        }
+    }
+
     let (safe_calls, destructive_calls): (Vec<_>, Vec<_>) =
         tool_calls.iter().copied().partition(|part| {
             let ContentPart::ToolCall { name, .. } = part else {
@@ -1175,6 +1553,9 @@ async fn run_tool_calls(
         tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(&call_id));
         tool_metadata.insert("tool_name".to_string(), serde_json::json!(&tool_name));
         tool_metadata.insert("is_error".to_string(), serde_json::json!(is_error));
+        if let Some(path) = tool_paths.get(&call_id) {
+            tool_metadata.insert("path".to_string(), serde_json::json!(path));
+        }
 
         let mut tool_node = GraphNode::new(NodeType::Interaction(InteractionData {
             role: "tool".to_string(),
@@ -1319,6 +1700,9 @@ async fn run_tool_calls(
                 tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(call_id));
                 tool_metadata.insert("tool_name".to_string(), serde_json::json!(&name));
                 tool_metadata.insert("is_error".to_string(), serde_json::json!(is_error));
+                if let Some(path) = tool_paths.get(call_id) {
+                    tool_metadata.insert("path".to_string(), serde_json::json!(path));
+                }
                 if let Some(ref outcome) = judge_outcome {
                     tool_metadata.insert("hitl_judge".to_string(), outcome.to_metadata());
                 }
@@ -1405,6 +1789,9 @@ async fn run_tool_calls(
                 tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(call_id));
                 tool_metadata.insert("tool_name".to_string(), serde_json::json!(name));
                 tool_metadata.insert("is_error".to_string(), serde_json::json!(true));
+                if let Some(path) = tool_paths.get(call_id) {
+                    tool_metadata.insert("path".to_string(), serde_json::json!(path));
+                }
                 let mut tool_node = GraphNode::new(NodeType::Interaction(InteractionData {
                     role: "tool".to_string(),
                     content: format!("rejected by user: {reason}"),
@@ -1696,7 +2083,6 @@ pub async fn run_agent_loop(
     cancel: &CancellationToken,
 ) -> Result<(), AgentError> {
     let max_turns = session.agent_config.max_turns;
-    let max_continuations = session.agent_config.max_continuations;
     let pre_completion_verify = session.agent_config.pre_completion_verify;
     let doom_loop_threshold = session.agent_config.doom_loop_threshold;
     let read_loop_threshold = session.agent_config.read_loop_threshold;
@@ -1705,7 +2091,6 @@ pub async fn run_agent_loop(
     // pre_completion_verify uses this so the checklist fires after actual file changes,
     // not after read-only planning turns.
     let mut had_write_calls = false;
-    let mut continuation_count: u32 = 0;
     // Tracks whether the one-shot verification checklist has already been injected.
     let mut verify_injected = false;
     // Per-file write/edit counts for doom loop detection.
@@ -1944,41 +2329,9 @@ pub async fn run_agent_loop(
 
             // Post-verification exit: once the verification checklist has been injected
             // and the agent responds with a text-only turn (its summary), stop immediately.
-            // Without this guard the auto-continuation below would fire and the agent
-            // would re-read files endlessly in a verification doom loop.
             if verify_injected {
                 tracing::info!(turn, "Post-verification text turn; exiting loop");
                 break;
-            }
-
-            // Auto-continuation: if the agent stopped text-only while implementation was
-            // in progress (evidenced by prior write/edit calls), inject a continuation
-            // nudge so it resumes rather than silently leaving the task unfinished.
-            // Keyed on had_write_calls (not had_tool_calls) so read-only sessions
-            // (Q&A, repo_briefing, graph_query) don't get spurious continuations.
-            if had_write_calls && continuation_count < max_continuations {
-                continuation_count += 1;
-                tracing::info!(
-                    turn,
-                    continuation_count,
-                    max_continuations,
-                    "Text-only turn mid-task; auto-injecting continuation message"
-                );
-                let cont_node = graphirm_graph::nodes::GraphNode::new(
-                    graphirm_graph::nodes::NodeType::Interaction(
-                        graphirm_graph::nodes::InteractionData {
-                            role: "user".to_string(),
-                            content: "Continue with the implementation. What is the next step?"
-                                .to_string(),
-                            token_count: None,
-                        },
-                    ),
-                );
-                if let Err(e) = session.record_interaction(cont_node).await {
-                    tracing::warn!(error = %e, "Failed to inject continuation message (non-fatal)");
-                } else {
-                    continue;
-                }
             }
 
             // Pre-completion verification: fires once per session after tool work ends.
@@ -2468,6 +2821,44 @@ mod tests {
     use graphirm_graph::nodes::NodeType;
     use graphirm_graph::{Direction, GraphStore};
 
+    fn message_body(message: &graphirm_llm::LlmMessage) -> String {
+        message
+            .content
+            .iter()
+            .map(|part| match part {
+                graphirm_llm::ContentPart::Text { text } => text.clone(),
+                graphirm_llm::ContentPart::ToolResult { content, .. } => content.clone(),
+                graphirm_llm::ContentPart::ToolCall { id, name, .. } => format!("{id} {name}"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn budget_note_changes_only_the_final_message() {
+        let base = vec![
+            graphirm_llm::LlmMessage::system("rules"),
+            graphirm_llm::LlmMessage::human("task"),
+            graphirm_llm::LlmMessage::assistant("look"),
+            graphirm_llm::LlmMessage::tool_result("c1", "file contents", false),
+        ];
+        let mut first = base.clone();
+        append_budget_note(&mut first, "[Budget] Token usage at 85% of limit.");
+        let mut second = base.clone();
+        second.push(graphirm_llm::LlmMessage::assistant("next"));
+        second.push(graphirm_llm::LlmMessage::tool_result("c2", "more", false));
+        append_budget_note(&mut second, "[Budget] Token usage at 90% of limit.");
+
+        let kept = first.len() - 1;
+        let first_prefix: Vec<String> = first[..kept].iter().map(message_body).collect();
+        let second_prefix: Vec<String> = second[..kept].iter().map(message_body).collect();
+        assert_eq!(first_prefix, second_prefix);
+        assert!(message_body(first.last().unwrap()).contains("85%"));
+        assert!(!message_body(&second[kept - 1]).contains("85%"));
+        assert!(message_body(second.last().unwrap()).contains("90%"));
+        assert!(!message_body(&second[1]).contains("Budget"));
+    }
+
     #[tokio::test]
     async fn test_stream_and_record_creates_assistant_node() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
@@ -2736,12 +3127,62 @@ mod tests {
         assert!(
             assistant_nodes
                 .iter()
-                .any(|node| node.label() == Some("interaction_1_2_1"))
+                .any(|node| node.label() == Some("interaction_1_2_2"))
         );
         assert!(
             assistant_nodes
                 .iter()
-                .any(|node| node.label() == Some("interaction_1_4_1"))
+                .any(|node| node.label() == Some("interaction_1_4_2"))
+        );
+    }
+
+    /// A text reply after `write` ends the loop. The old rule inserted
+    /// "Continue with the implementation. What is the next step?" as a user message.
+    #[tokio::test]
+    async fn text_after_write_does_not_inject_continuation() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            pre_completion_verify: false,
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session.add_user_message("Add a comment").await.unwrap();
+
+        let provider = Arc::new(MockProvider::new(vec![
+            tool_call_response(vec![(
+                "write",
+                "call_1",
+                serde_json::json!({"path": "a.txt", "content": "hi"}),
+            )]),
+            text_response("Done."),
+            text_response("should not run"),
+        ]));
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(MockTool {
+            tool_name: "write".to_string(),
+            output: "wrote a.txt".to_string(),
+        }));
+        let bus = EventBus::new();
+        let token = CancellationToken::new();
+
+        run_agent_loop(&session, provider.clone(), &tools, &bus, &token)
+            .await
+            .unwrap();
+
+        assert_eq!(provider.call_count(), 2);
+        let chain = graph.get_session_chain(&session.id.0).unwrap();
+        let injected = chain.iter().any(|n| {
+            matches!(
+                &n.node_type,
+                NodeType::Interaction(d)
+                    if d.role == "user"
+                        && d.content.contains("Continue with the implementation")
+            )
+        });
+        assert!(
+            !injected,
+            "continuation nudge must not be stored as a user message"
         );
     }
 
@@ -2916,7 +3357,7 @@ mod tests {
             .collect();
         let first_assistant = assistant_nodes
             .iter()
-            .find(|node| node.label() == Some("interaction_1_2_1"))
+            .find(|node| node.label() == Some("interaction_1_2_2"))
             .unwrap();
 
         let content_nodes = graph
@@ -2986,7 +3427,7 @@ mod tests {
 
         let first_assistant = assistant_nodes
             .iter()
-            .find(|node| node.label() == Some("interaction_1_2_1"))
+            .find(|node| node.label() == Some("interaction_1_2_2"))
             .unwrap();
         let content_nodes = graph
             .neighbors(

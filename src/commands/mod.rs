@@ -7,6 +7,8 @@ pub mod import;
 pub mod knowledge;
 pub mod label_pieces;
 pub mod model;
+pub mod replay_pack;
+pub mod run;
 pub mod score_pieces;
 pub mod serve;
 pub mod trace_analysis;
@@ -58,7 +60,20 @@ pub fn api_key_for_provider(provider_name: &str) -> Result<String, GraphirmError
 
 /// Load `config/default.toml` from the working directory, falling back to
 /// `AgentConfig::default()` (with a warning) when it is missing or invalid.
+///
+/// `GRAPHIRM_DISABLE_BASH=true` (also `1` or `yes`) forces `disable_bash` after
+/// the file is read, so a public deploy can hide `bash` and `delegate_pi`
+/// without changing the committed toml. Unset or any other value leaves the file.
 pub fn load_agent_config() -> graphirm_agent::AgentConfig {
+    let mut config = load_agent_config_file();
+    if env_forces_disable_bash(std::env::var("GRAPHIRM_DISABLE_BASH").ok().as_deref()) {
+        config.disable_bash = true;
+        tracing::info!("bash and delegate_pi hidden (GRAPHIRM_DISABLE_BASH)");
+    }
+    config
+}
+
+fn load_agent_config_file() -> graphirm_agent::AgentConfig {
     let config_path = std::env::var("GRAPHIRM_CONFIG")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -71,12 +86,98 @@ pub fn load_agent_config() -> graphirm_agent::AgentConfig {
         );
         return graphirm_agent::AgentConfig::default();
     }
+    if let Ok(text) = std::fs::read_to_string(&config_path)
+        && let Ok(unknown) = unknown_agent_keys(&text)
+        && !unknown.is_empty()
+    {
+        tracing::warn!(
+            keys = ?unknown,
+            path = %config_path.display(),
+            "ignoring unknown [agent] keys"
+        );
+    }
     graphirm_agent::AgentConfig::from_file(&config_path).unwrap_or_else(|e| {
         tracing::warn!(
             "Failed to load {}: {e}; using defaults",
             config_path.display()
         );
         graphirm_agent::AgentConfig::default()
+    })
+}
+
+/// Keys under `[agent]` that [`graphirm_agent::AgentConfig`] does not read.
+///
+/// `max_iterations` is the example: it used to look like a step cap and was ignored.
+pub fn unknown_agent_keys(toml_text: &str) -> Result<Vec<String>, String> {
+    let value: toml::Value = toml::from_str(toml_text).map_err(|e| e.to_string())?;
+    let Some(agent) = value.get("agent").and_then(|v| v.as_table()) else {
+        return Err("config has no [agent] table".into());
+    };
+    let mut unknown: Vec<String> = agent
+        .keys()
+        .filter(|key| !KNOWN_AGENT_KEYS.contains(&key.as_str()))
+        .cloned()
+        .collect();
+    unknown.sort();
+    Ok(unknown)
+}
+
+const KNOWN_AGENT_KEYS: &[&str] = &[
+    "adaptive_routing",
+    "auto_link_write_to_planning",
+    "budget_warning_thresholds",
+    "default_auto_approve",
+    "description",
+    "disable_bash",
+    "doom_loop_threshold",
+    "embedding_backend",
+    "embedding_dim",
+    "enable_compaction",
+    "enforce_work_loop",
+    "extraction",
+    "fresh_graph_dir",
+    "fresh_graph_per_session",
+    "hitl_judge",
+    "max_context_messages",
+    "max_output_tokens",
+    "max_session_tokens",
+    "max_tokens",
+    "max_turns",
+    "mode",
+    "model",
+    "name",
+    "openrouter_provider",
+    "outline",
+    "pi",
+    "pre_completion_verify",
+    "pre_edit_impact",
+    "read_loop_threshold",
+    "reasoning_effort",
+    "recency_only",
+    "repo_briefing",
+    "routing",
+    "segment_filter",
+    "segments",
+    "soft_escalation_threshold",
+    "soft_escalation_turn",
+    "system_prompt",
+    "temperature",
+    "timeout_seconds",
+    "tool_gate_enabled",
+    "tools",
+    "working_dir",
+    "workspace_name",
+    "workspaces_root",
+];
+
+/// `true` when the env value asks for the public lock-down. Empty, `false`, and
+/// anything else do not.
+pub fn env_forces_disable_bash(value: Option<&str>) -> bool {
+    value.is_some_and(|raw| {
+        let v = raw.trim();
+        v.eq_ignore_ascii_case("1")
+            || v.eq_ignore_ascii_case("true")
+            || v.eq_ignore_ascii_case("yes")
     })
 }
 
@@ -154,6 +255,23 @@ pub fn build_tool_registry() -> ToolRegistry {
     }
 
     registry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::env_forces_disable_bash;
+
+    #[test]
+    fn disable_bash_env_accepts_only_the_lock_down_values() {
+        assert!(env_forces_disable_bash(Some("true")));
+        assert!(env_forces_disable_bash(Some(" TRUE ")));
+        assert!(env_forces_disable_bash(Some("1")));
+        assert!(env_forces_disable_bash(Some("yes")));
+        assert!(!env_forces_disable_bash(None));
+        assert!(!env_forces_disable_bash(Some("")));
+        assert!(!env_forces_disable_bash(Some("false")));
+        assert!(!env_forces_disable_bash(Some("0")));
+    }
 }
 
 /// Initialise a rolling daily log file at `~/.local/share/graphirm/graphirm.log`.

@@ -39,5 +39,6 @@ pub use process::{
 };
 pub use score::{ScoreReport, format_score, score_label_file, score_text};
 pub use tool::{
-    PI_DELEGATE_TOOL_NAME, PiDelegateTool, apply_pi_delegate_system_notice, register_pi_delegate,
+    PI_DELEGATE_TOOL_NAME, PiDelegateTool, apply_pi_delegate_system_notice,
+    html_piece_index_contract, register_pi_delegate,
 };

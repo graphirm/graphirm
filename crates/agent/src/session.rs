@@ -100,12 +100,23 @@ pub struct Session {
     /// traversable DAG (rather than a flat star off the agent node).
     /// Arc-wrapped so the NodeId can be cloned into `spawn_blocking` closures.
     last_interaction_id: Arc<Mutex<Option<NodeId>>>,
+    /// Node ids sent on the previous model call, in send order.
+    packed_prefix: Mutex<Vec<NodeId>>,
     turn_counter: AtomicU32,
     turn_pos_counter: Arc<AtomicU32>,
     /// Cumulative LLM usage tokens (input + output) for this session across
     /// [`crate::workflow::stream_and_record`] completions. Used with
     /// [`AgentConfig::max_session_tokens`].
     pub(crate) llm_tokens_used: Arc<AtomicU64>,
+    llm_input_tokens: Arc<AtomicU64>,
+    llm_output_tokens: Arc<AtomicU64>,
+    llm_cost_micro_usd: Arc<AtomicU64>,
+    llm_cost_reports: Arc<AtomicU64>,
+    llm_reported_cost_micro_usd: Arc<AtomicU64>,
+    llm_reported_cost_reports: Arc<AtomicU64>,
+    frozen_input_per_token: std::sync::Mutex<Option<f64>>,
+    frozen_cache_per_token: std::sync::Mutex<Option<f64>>,
+    frozen_output_per_token: std::sync::Mutex<Option<f64>>,
 }
 
 impl Session {
@@ -134,9 +145,19 @@ impl Session {
             memory_retriever: None,
             runtime_system_suffix: tokio::sync::Mutex::new(String::new()),
             last_interaction_id: Arc::new(Mutex::new(None)),
+            packed_prefix: Mutex::new(Vec::new()),
             turn_counter: AtomicU32::new(0),
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
             llm_tokens_used: Arc::new(AtomicU64::new(0)),
+            llm_input_tokens: Arc::new(AtomicU64::new(0)),
+            llm_output_tokens: Arc::new(AtomicU64::new(0)),
+            llm_cost_micro_usd: Arc::new(AtomicU64::new(0)),
+            llm_cost_reports: Arc::new(AtomicU64::new(0)),
+            llm_reported_cost_micro_usd: Arc::new(AtomicU64::new(0)),
+            llm_reported_cost_reports: Arc::new(AtomicU64::new(0)),
+            frozen_input_per_token: std::sync::Mutex::new(None),
+            frozen_cache_per_token: std::sync::Mutex::new(None),
+            frozen_output_per_token: std::sync::Mutex::new(None),
         })
     }
 
@@ -162,9 +183,19 @@ impl Session {
             memory_retriever: None,
             runtime_system_suffix: tokio::sync::Mutex::new(String::new()),
             last_interaction_id: Arc::new(Mutex::new(None)),
+            packed_prefix: Mutex::new(Vec::new()),
             turn_counter: AtomicU32::new(0),
             turn_pos_counter: Arc::new(AtomicU32::new(0)),
             llm_tokens_used: Arc::new(AtomicU64::new(0)),
+            llm_input_tokens: Arc::new(AtomicU64::new(0)),
+            llm_output_tokens: Arc::new(AtomicU64::new(0)),
+            llm_cost_micro_usd: Arc::new(AtomicU64::new(0)),
+            llm_cost_reports: Arc::new(AtomicU64::new(0)),
+            llm_reported_cost_micro_usd: Arc::new(AtomicU64::new(0)),
+            llm_reported_cost_reports: Arc::new(AtomicU64::new(0)),
+            frozen_input_per_token: std::sync::Mutex::new(None),
+            frozen_cache_per_token: std::sync::Mutex::new(None),
+            frozen_output_per_token: std::sync::Mutex::new(None),
         }
     }
 
@@ -174,8 +205,133 @@ impl Session {
         self.llm_tokens_used.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn add_llm_completion_tokens(&self, delta: u64) {
-        self.llm_tokens_used.fetch_add(delta, Ordering::SeqCst);
+    pub fn llm_input_tokens(&self) -> u64 {
+        self.llm_input_tokens.load(Ordering::Relaxed)
+    }
+
+    pub fn llm_output_tokens(&self) -> u64 {
+        self.llm_output_tokens.load(Ordering::Relaxed)
+    }
+
+    /// Sum of provider-reported costs, in millionths of a US dollar.
+    pub fn llm_cost_micro_usd(&self) -> u64 {
+        self.llm_cost_micro_usd.load(Ordering::Relaxed)
+    }
+
+    /// How many completions included a cost figure.
+    pub fn llm_cost_reports(&self) -> u64 {
+        self.llm_cost_reports.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn record_llm_usage(&self, input: u32, output: u32, cost_micro: Option<u64>) {
+        self.llm_input_tokens
+            .fetch_add(u64::from(input), Ordering::SeqCst);
+        self.llm_output_tokens
+            .fetch_add(u64::from(output), Ordering::SeqCst);
+        self.llm_tokens_used
+            .fetch_add(u64::from(input) + u64::from(output), Ordering::SeqCst);
+        if let Some(cost) = cost_micro {
+            self.llm_cost_micro_usd.fetch_add(cost, Ordering::SeqCst);
+            self.llm_cost_reports.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Per-token prices from `eval/swebench/prices.lock.json`. When set, the
+    /// session cost and `--max-cost-usd` use uncached input, cached input, and
+    /// output at these rates.
+    pub fn set_frozen_prices(
+        &self,
+        input_per_token: f64,
+        cache_read_per_token: f64,
+        output_per_token: f64,
+    ) {
+        *self
+            .frozen_input_per_token
+            .lock()
+            .expect("frozen input price") = Some(input_per_token);
+        *self
+            .frozen_cache_per_token
+            .lock()
+            .expect("frozen cache price") = Some(cache_read_per_token);
+        *self
+            .frozen_output_per_token
+            .lock()
+            .expect("frozen output price") = Some(output_per_token);
+    }
+
+    pub fn frozen_prices_set(&self) -> bool {
+        self.frozen_input_per_token
+            .lock()
+            .expect("frozen input price")
+            .is_some()
+    }
+
+    /// Uncached input, cached input, and output times the frozen rates, in
+    /// millionths of a dollar. Cached tokens are the provider's cache-read
+    /// count, capped at the prompt size.
+    pub fn frozen_cost_micro(&self, input: u32, cache_read: u32, output: u32) -> Option<u64> {
+        let input_rate = (*self
+            .frozen_input_per_token
+            .lock()
+            .expect("frozen input price"))?;
+        let cache_rate = (*self
+            .frozen_cache_per_token
+            .lock()
+            .expect("frozen cache price"))?;
+        let output_rate = (*self
+            .frozen_output_per_token
+            .lock()
+            .expect("frozen output price"))?;
+        Some(Self::priced_micro(
+            input,
+            cache_read,
+            output,
+            input_rate,
+            cache_rate,
+            output_rate,
+        ))
+    }
+
+    pub fn note_reported_cost(&self, cost_micro: u64) {
+        self.llm_reported_cost_micro_usd
+            .fetch_add(cost_micro, Ordering::SeqCst);
+        self.llm_reported_cost_reports
+            .fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn llm_reported_cost_micro_usd(&self) -> u64 {
+        self.llm_reported_cost_micro_usd.load(Ordering::Relaxed)
+    }
+
+    pub fn llm_reported_cost_reports(&self) -> u64 {
+        self.llm_reported_cost_reports.load(Ordering::Relaxed)
+    }
+
+    /// `input_per_token` and `output_per_token` are US dollars per token.
+    /// Every prompt token is billed at the input rate. This is the list price.
+    pub fn tokens_to_micro_usd(input: u32, output: u32, input_rate: f64, output_rate: f64) -> u64 {
+        Self::priced_micro(input, 0, output, input_rate, input_rate, output_rate)
+    }
+
+    /// Uncached prompt tokens use `input_rate`. Cached prompt tokens use
+    /// `cache_rate`. Completion tokens use `output_rate`.
+    pub fn priced_micro(
+        input: u32,
+        cache_read: u32,
+        output: u32,
+        input_rate: f64,
+        cache_rate: f64,
+        output_rate: f64,
+    ) -> u64 {
+        let cached = cache_read.min(input);
+        let uncached = input - cached;
+        let usd = f64::from(uncached) * input_rate
+            + f64::from(cached) * cache_rate
+            + f64::from(output) * output_rate;
+        if usd <= 0.0 {
+            return 0;
+        }
+        usd.mul_add(1_000_000.0, 0.5) as u64
     }
 
     /// Seeds cumulative LLM token usage (crate tests only).
@@ -235,10 +391,68 @@ impl Session {
         None
     }
 
+    /// Node ids sent on the previous model call, in that order.
+    pub fn packed_prefix_ids(&self) -> Vec<NodeId> {
+        self.packed_prefix
+            .lock()
+            .expect("packed_prefix lock poisoned")
+            .clone()
+    }
+
+    /// Remember the ids just sent, so the next pack keeps that order.
+    pub fn note_packed_ids(&self, ids: Vec<NodeId>) {
+        *self
+            .packed_prefix
+            .lock()
+            .expect("packed_prefix lock poisoned") = ids;
+    }
+
+    /// Bind to the oldest Agent already in `graph`, or create one.
+    ///
+    /// A second `graphirm run` on the same file continues that agent's
+    /// conversation. The new task message chains onto the previous leaf.
+    /// Each process opens the store once, so this does not rely on the
+    /// agent-node cache staying fresh inside one process.
+    pub fn open(graph: Arc<GraphStore>, config: AgentConfig) -> Result<Self, AgentError> {
+        let mut agents = graph.get_agent_nodes()?;
+        if agents.is_empty() {
+            return Self::new(graph, config);
+        }
+        agents.sort_by_key(|(node, _)| node.created_at);
+        let (node, _) = agents.into_iter().next().expect("agent list is non-empty");
+        let session = Self::restore(graph.clone(), node.id.clone(), config, node.created_at);
+        let chain = graph.get_session_chain(&session.id.to_string())?;
+        if let Some(leaf) = chain.last() {
+            *session
+                .last_interaction_id
+                .lock()
+                .expect("last_interaction_id lock poisoned") = Some(leaf.id.clone());
+        }
+        Ok(session)
+    }
+
     /// Add a user message to this session's conversation.
     /// Returns the NodeId of the created Interaction node.
     pub async fn add_user_message(&self, content: &str) -> Result<NodeId, AgentError> {
         self.add_user_message_with_context(content, None).await
+    }
+
+    /// Add the user message that states the task for this run.
+    ///
+    /// The `task` mark is what the packer pins. A later retry nudge is an
+    /// ordinary user message and does not take the pin.
+    pub async fn add_task_message(&self, content: &str) -> Result<NodeId, AgentError> {
+        let turn = self.turn_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        self.turn_pos_counter.store(1, Ordering::SeqCst);
+        let mut interaction_node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: content.to_string(),
+            token_count: None,
+        }));
+        interaction_node.metadata["session_id"] = serde_json::json!(self.id.to_string());
+        interaction_node.metadata["task"] = serde_json::json!(true);
+        interaction_node.set_label(format!("interaction_{turn}_1_1"));
+        self.persist_interaction(interaction_node, None).await
     }
 
     /// Add a user message, optionally linking `RespondsTo` to a specific prior node (steer / fork).
@@ -368,6 +582,20 @@ mod tests {
     use graphirm_graph::Direction;
 
     #[test]
+    fn frozen_price_matches_the_openrouter_table() {
+        // 1_000 input at $2/1M and 100 output at $6/1M = $0.0026 = 2600 micro-dollars.
+        assert_eq!(
+            Session::tokens_to_micro_usd(1_000, 100, 0.000002, 0.000006),
+            2_600
+        );
+        // 600 uncached at $2/1M, 400 cached at $0.50/1M, 100 output at $6/1M = $0.0020.
+        assert_eq!(
+            Session::priced_micro(1_000, 400, 100, 0.000002, 0.0000005, 0.000006),
+            2_000
+        );
+    }
+
+    #[test]
     fn test_session_creates_agent_node_in_graph() {
         let graph = Arc::new(GraphStore::open_memory().unwrap());
         let config = AgentConfig::default();
@@ -381,6 +609,48 @@ mod tests {
             }
             _ => panic!("expected Agent node"),
         }
+    }
+
+    #[test]
+    fn open_reuses_the_agent_and_chains_the_next_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("graph.db");
+        let path_str = path.to_str().unwrap().to_string();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        rt.block_on(async {
+            let graph = Arc::new(GraphStore::open(&path_str).unwrap());
+            let session = Session::open(graph, AgentConfig::default()).unwrap();
+            session.add_task_message("TASK-ONE").await.unwrap();
+        });
+
+        rt.block_on(async {
+            let graph = Arc::new(GraphStore::open(&path_str).unwrap());
+            let session = Session::open(graph.clone(), AgentConfig::default()).unwrap();
+            let second = session.add_task_message("TASK-TWO").await.unwrap();
+            let thread = graph.conversation_thread(&second).unwrap();
+            let text = thread
+                .iter()
+                .filter_map(|node| match &node.node_type {
+                    NodeType::Interaction(data) => Some(data.content.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(text.contains("TASK-ONE"));
+            assert!(text.contains("TASK-TWO"));
+            assert_eq!(graph.get_agent_nodes().unwrap().len(), 1);
+            let marked = thread
+                .iter()
+                .filter(|node| {
+                    node.metadata.get("task").and_then(|value| value.as_bool()) == Some(true)
+                })
+                .count();
+            assert_eq!(marked, 2);
+        });
     }
 
     #[test]

@@ -16,20 +16,21 @@
 
 [model]
 provider = "openrouter"
-name = "deepseek/deepseek-v3.2"
+name = "deepseek/deepseek-v4-flash"
 temperature = 0.7
 max_tokens = 8192
 
 [agent]
 name = "graphirm"
-model = "openrouter/deepseek/deepseek-v3.2"
+model = "openrouter/deepseek/deepseek-v4-flash"
 max_iterations = 50
 parallel_tool_calls = true
 max_output_tokens = 4096
 timeout_seconds = 300
 # Public / shared servers: set `disable_bash = true` so bash AND `delegate_pi` are
-# refused and hidden (see `AgentConfig::disable_bash`). Required on app.graphirm.ai
-# before this file is deployed with `[agent.pi] enabled = true`.
+# refused and hidden (see `AgentConfig::disable_bash`). Leave this commented in the
+# committed file. On app.graphirm.ai set GRAPHIRM_DISABLE_BASH=true in Coolify
+# instead — `serve` forces the lock-down when that variable is true, 1, or yes.
 # disable_bash = true
 # When a session is linked to planning (`graph_query` link_session), file writes/edits
 # auto-add relates_to (planning → file) unless disabled:
@@ -115,13 +116,6 @@ and respond immediately. Every tool call must bring you closer to the \
 answer; if the last tool call did not help, stop and answer with what \
 you know.
 
-## Continuity rule
-
-When implementing code or performing multi-step tasks, always include at \
-least one tool call in your response. Never stop with a text-only response \
-while implementation work remains unfinished. If you have more steps to do, \
-use a tool — don't describe what you'll do, do it.
-
 ## Working directory
 
 All file paths are relative to the project root unless the user specifies \
@@ -187,7 +181,6 @@ a closure.
 # segment_filter = ["reasoning", "code"]  # restrict context to these segment types
 workspaces_root = "/data/workspaces"   # persisted on the Docker volume
 enable_compaction = true               # compact old turns when context exceeds threshold
-max_continuations = 2                  # auto-inject continuation after text-only mid-task turns
 pre_completion_verify = true           # force verification pass (tests + lint) before agent declares done
 doom_loop_threshold = 5                # inject advisory after N writes to the same file in one session
 read_loop_threshold = 3                # inject advisory after N reads of same file without editing it
@@ -199,14 +192,14 @@ enforce_work_loop = true               # inject Plan→Build→Verify→Fix fram
 # require per-call approval by default. The TUI has no HITL gate today.
 default_auto_approve = true
 
-# Two-tier model routing — used when [agent.adaptive_routing] strategy = "rules".
-# Both tiers use the same model for now (cost-neutral); rules still record model_tier
-# on turns for analysis. Use the same top-level provider (openrouter/...) for both.
-# Rule order: first match wins; see crates/agent/src/router.rs. To split tiers later,
-# set smart to e.g. openrouter/anthropic/claude-sonnet-4.6 (same openrouter/ prefix).
+# Two-tier model routing — candidate list for Jev, and the rules below when
+# strategy = "rules" or Jev falls back. Both tiers stay on OpenRouter.
+# Cheap follows the moving latest DeepSeek V4 Flash (`~deepseek/deepseek-v4-flash-latest`).
+# Smart is `~z-ai/glm-latest`, which today resolves to GLM 5.3 and moves when a newer GLM flagship ships.
+# Rule order: first match wins; see crates/agent/src/router.rs.
 [agent.routing]
-cheap = ["openrouter/deepseek/deepseek-v3.2"]
-smart = ["openrouter/deepseek/deepseek-v3.2"]
+cheap = ["openrouter/~deepseek/deepseek-v4-flash-latest"]
+smart = ["openrouter/~z-ai/glm-latest"]
 default_tier = "cheap"
 
 [[agent.routing.rules]]

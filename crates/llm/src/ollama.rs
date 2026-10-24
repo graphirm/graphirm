@@ -75,6 +75,8 @@ fn convert_response<T>(response: rig::completion::CompletionResponse<T>) -> LlmR
         output_tokens: response.usage.output_tokens as u32,
         cache_read_tokens: None,
         cache_write_tokens: None,
+        cost_micro_usd: None,
+        length_limited: false,
     };
 
     let stop_reason = if has_tool_calls {

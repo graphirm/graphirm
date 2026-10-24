@@ -8,6 +8,13 @@ pub struct TokenUsage {
     pub cache_read_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_write_tokens: Option<u32>,
+    /// Provider-reported request cost, in millionths of a US dollar.
+    /// `None` when the provider did not send a cost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_micro_usd: Option<u64>,
+    /// The provider stopped because the output token limit was hit.
+    #[serde(default)]
+    pub length_limited: bool,
 }
 
 impl TokenUsage {
@@ -17,6 +24,8 @@ impl TokenUsage {
             output_tokens,
             cache_read_tokens: None,
             cache_write_tokens: None,
+            cost_micro_usd: None,
+            length_limited: false,
         }
     }
 
@@ -42,6 +51,12 @@ impl std::ops::Add for TokenUsage {
                 (Some(a), None) | (None, Some(a)) => Some(a),
                 (None, None) => None,
             },
+            cost_micro_usd: match (self.cost_micro_usd, rhs.cost_micro_usd) {
+                (Some(a), Some(b)) => Some(a.saturating_add(b)),
+                (Some(a), None) | (None, Some(a)) => Some(a),
+                (None, None) => None,
+            },
+            length_limited: self.length_limited || rhs.length_limited,
         }
     }
 }
@@ -132,16 +147,21 @@ mod tests {
             output_tokens: 50,
             cache_read_tokens: Some(10),
             cache_write_tokens: None,
+            cost_micro_usd: None,
+            length_limited: false,
         };
         let b = TokenUsage {
             input_tokens: 200,
             output_tokens: 75,
             cache_read_tokens: Some(20),
             cache_write_tokens: Some(5),
+            cost_micro_usd: Some(4),
+            length_limited: true,
         };
         let combined = a + b;
         assert_eq!(combined.cache_read_tokens, Some(30));
         assert_eq!(combined.cache_write_tokens, Some(5));
+        assert!(combined.length_limited);
     }
 
     #[test]
@@ -157,6 +177,8 @@ mod tests {
             output_tokens: 20,
             cache_read_tokens: Some(5),
             cache_write_tokens: None,
+            cost_micro_usd: None,
+            length_limited: false,
         };
         let json = serde_json::to_string(&usage).unwrap();
         let restored: TokenUsage = serde_json::from_str(&json).unwrap();

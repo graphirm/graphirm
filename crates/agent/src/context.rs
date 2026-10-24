@@ -106,6 +106,22 @@ pub struct ContextConfig {
     /// only the segment types in this list. `None` includes all content (default behavior).
     #[serde(default)]
     pub segment_filter: Option<Vec<String>>,
+    /// Keep each selected node's place. New nodes append. Content that would
+    /// sit between a tool call and its result is moved to just after the result.
+    #[serde(default)]
+    pub prefix_stable: bool,
+    /// After this many later assistant turns, a file read is packed as a
+    /// 40-line excerpt. `None` packs the full text.
+    #[serde(default)]
+    pub excerpt_after_turns: Option<usize>,
+    /// Skip a `content:file` or `content:command_output` node when the tool
+    /// result it was derived from is already in the packed set.
+    #[serde(default)]
+    pub dedup_derived: bool,
+    /// Node ids sent on the previous call, in send order. Survivors stay in
+    /// that order. Nodes that were not sent yet append after them.
+    #[serde(default)]
+    pub pack_prefix_ids: Vec<NodeId>,
 }
 
 fn default_max_tokens() -> usize {
@@ -147,6 +163,10 @@ impl Default for ContextConfig {
             enable_compaction: false,
             compaction_threshold: 0.80,
             segment_filter: None,
+            prefix_stable: false,
+            excerpt_after_turns: None,
+            dedup_derived: false,
+            pack_prefix_ids: Vec::new(),
         }
     }
 }
@@ -163,6 +183,18 @@ pub struct ContextWindow {
     pub system: LlmMessage,
     pub messages: Vec<LlmMessage>,
     pub total_tokens: usize,
+    /// Derived content nodes in this pack whose source tool result is also packed.
+    pub duplicate_derived: usize,
+    /// Thread nodes left out of this pack. The first user message is not droppable.
+    pub dropped_nodes: usize,
+    /// Estimated tokens of those dropped nodes.
+    pub dropped_tokens: usize,
+    /// The current task message is in this pack.
+    pub task_node_present: bool,
+    /// Nodes in this pack, in send order.
+    pub kept_node_ids: Vec<NodeId>,
+    /// Thread nodes left out of this pack, in thread order.
+    pub dropped_node_ids: Vec<NodeId>,
 }
 
 /// Extract the primary text content from any GraphNode variant.
@@ -180,6 +212,13 @@ pub fn get_text_content(node: &GraphNode) -> &str {
 ///
 /// Handles all Interaction roles (user, assistant, assistant+tool_calls, tool results, system)
 /// as well as Content and Knowledge nodes. Returns None for Agent/Task nodes.
+/// Short stable tag for a tool-result node. The model cites `tool:` plus these
+/// eight hex characters. The full id stays on the graph.
+pub fn tool_cite_tag(node_id: &str) -> String {
+    let hex: String = node_id.chars().filter(|c| *c != '-').take(8).collect();
+    format!("[n:{hex}]")
+}
+
 pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
     use graphirm_llm::{ContentPart, Role};
 
@@ -233,11 +272,8 @@ pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
                     .get("is_error")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                Some(LlmMessage::tool_result(
-                    tool_call_id,
-                    data.content.clone(),
-                    is_error,
-                ))
+                let tagged = format!("{}\n{}", tool_cite_tag(&node.id.0), data.content);
+                Some(LlmMessage::tool_result(tool_call_id, tagged, is_error))
             }
             _ => None,
         },
@@ -593,6 +629,12 @@ pub fn build_context_with_stats(
                     system: system_msg,
                     messages: vec![],
                     total_tokens: system_tokens,
+                    duplicate_derived: 0,
+                    dropped_nodes: 0,
+                    dropped_tokens: 0,
+                    task_node_present: false,
+                    kept_node_ids: Vec::new(),
+                    dropped_node_ids: Vec::new(),
                 },
                 stats,
             ));
@@ -628,12 +670,27 @@ pub fn build_context_with_stats(
         }
     }
 
+    // The current task stays in every pack, including when recency scoring
+    // would otherwise drop it. A message marked `task` is one `graphirm run`.
+    // The latest of those is the current task, so a graph carried across
+    // tasks does not keep pinning the first task. With no mark, the oldest
+    // user message is the task, which is the single-task case.
+    let task_id = current_task_user_id(&chrono);
+    let pinned_task = task_id.as_ref().and_then(|id| {
+        older_conversation
+            .iter()
+            .position(|node| &node.id == id)
+            .map(|pos| older_conversation.remove(pos))
+    });
+    let task_tokens = pinned_task.as_ref().map(estimate_tokens).unwrap_or(0);
+
     // Token accounting
     let guaranteed_tokens: usize = guaranteed_recent.iter().map(estimate_tokens).sum();
     let remaining_budget = config
         .max_tokens
         .saturating_sub(system_tokens)
-        .saturating_sub(guaranteed_tokens);
+        .saturating_sub(guaranteed_tokens)
+        .saturating_sub(task_tokens);
 
     // Collect Content/Knowledge nodes reachable from conversation
     let conversation_ids: Vec<NodeId> = thread.iter().map(|n| n.id.clone()).collect();
@@ -673,7 +730,21 @@ pub fn build_context_with_stats(
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+    let already_sent: std::collections::HashSet<&NodeId> = config.pack_prefix_ids.iter().collect();
+    let sent_content: Vec<ScoredNode> = content_scored
+        .iter()
+        .filter(|scored| already_sent.contains(&scored.node.id))
+        .cloned()
+        .collect();
     content_scored.truncate(config.max_content_nodes);
+    for scored in sent_content {
+        if !content_scored
+            .iter()
+            .any(|kept| kept.node.id == scored.node.id)
+        {
+            content_scored.push(scored);
+        }
+    }
     candidates.extend(content_scored);
 
     // Fit into remaining budget
@@ -709,14 +780,38 @@ pub fn build_context_with_stats(
     let mut all_nodes: Vec<GraphNode> = ctx_nodes;
     all_nodes.extend(conv_older);
     all_nodes.extend(recent_chrono);
+    if let Some(task) = pinned_task {
+        let at = all_nodes
+            .iter()
+            .position(|node| node.created_at > task.created_at)
+            .unwrap_or(all_nodes.len());
+        all_nodes.insert(at, task);
+    }
 
     append_pending_approval_results(&thread, &mut all_nodes);
+
+    let duplicate_derived = count_derived_overlaps(&all_nodes, graph);
+    if config.dedup_derived {
+        all_nodes = omit_derived_content(all_nodes, graph, &config.pack_prefix_ids);
+    }
+    if config.prefix_stable {
+        all_nodes = prefix_stable_order(all_nodes);
+    }
+    all_nodes = keep_previous_pack_order(&config.pack_prefix_ids, all_nodes);
+    if let Some(after) = config.excerpt_after_turns {
+        excerpt_stale_file_reads(&mut all_nodes, after);
+    }
 
     let all_nodes = omit_stale_pending_placeholders(&all_nodes);
     let messages = assemble_paired_messages(&all_nodes, graph, config.segment_filter.as_deref());
 
-    let kept_ids: std::collections::HashSet<&NodeId> =
-        all_nodes.iter().map(|node| &node.id).collect();
+    let kept_node_ids: Vec<NodeId> = all_nodes.iter().map(|node| node.id.clone()).collect();
+    let kept_ids: std::collections::HashSet<&NodeId> = kept_node_ids.iter().collect();
+    let dropped_node_ids: Vec<NodeId> = thread
+        .iter()
+        .filter(|node| !kept_ids.contains(&node.id))
+        .map(|node| node.id.clone())
+        .collect();
     let dropped_messages = thread
         .iter()
         .filter(|node| !kept_ids.contains(&node.id))
@@ -729,6 +824,7 @@ pub fn build_context_with_stats(
         .filter(|node| !kept_ids.contains(&node.id))
         .map(estimate_tokens)
         .sum();
+    let task_node_present = task_id.as_ref().is_some_and(|id| kept_ids.contains(id));
     tracing::info!(
         session_id = %agent_id,
         budget = config.max_tokens,
@@ -740,6 +836,7 @@ pub fn build_context_with_stats(
         thread_messages = thread.len(),
         dropped_messages,
         dropped_units,
+        task_node_present,
         "context selection"
     );
 
@@ -750,6 +847,12 @@ pub fn build_context_with_stats(
             system: system_msg,
             messages,
             total_tokens,
+            duplicate_derived,
+            dropped_nodes: dropped_messages,
+            dropped_tokens,
+            task_node_present,
+            kept_node_ids,
+            dropped_node_ids,
         },
         stats,
     ))
@@ -875,6 +978,239 @@ fn tool_call_id_meta(node: &GraphNode) -> Option<String> {
         .and_then(|value| value.as_str())
         .filter(|id| !id.is_empty())
         .map(str::to_string)
+}
+
+/// A `content:file` node is derived from a `read` tool result with the same
+/// path. A `content:command_output` node is derived from a `bash` tool result
+/// whose text contains that body. Both stay in the graph.
+fn derived_source_ids(graph: &GraphStore, node: &GraphNode) -> Vec<NodeId> {
+    let NodeType::Content(data) = &node.node_type else {
+        return Vec::new();
+    };
+    let (edge, tool_name) = match data.content_type.as_str() {
+        "file" => (EdgeType::Reads, "read"),
+        "command_output" => (EdgeType::Produces, "bash"),
+        _ => return Vec::new(),
+    };
+    let Ok(assistants) = graph.neighbors(&node.id, Some(edge), Direction::Incoming) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    for assistant in assistants {
+        let NodeType::Interaction(inter) = &assistant.node_type else {
+            continue;
+        };
+        if inter.role != "assistant" {
+            continue;
+        }
+        let Ok(tools) = graph.neighbors(
+            &assistant.id,
+            Some(EdgeType::RespondsTo),
+            Direction::Incoming,
+        ) else {
+            continue;
+        };
+        for tool in tools {
+            let NodeType::Interaction(tool_data) = &tool.node_type else {
+                continue;
+            };
+            if tool_data.role != "tool" {
+                continue;
+            }
+            if tool
+                .metadata
+                .get("tool_name")
+                .and_then(|value| value.as_str())
+                != Some(tool_name)
+            {
+                continue;
+            }
+            let matched = if tool_name == "read" {
+                data.path.as_deref().is_some()
+                    && tool.metadata.get("path").and_then(|value| value.as_str())
+                        == data.path.as_deref()
+            } else {
+                !data.body.is_empty() && tool_data.content.contains(&data.body)
+            };
+            if matched {
+                ids.push(tool.id);
+            }
+        }
+    }
+    ids
+}
+
+fn count_derived_overlaps(nodes: &[GraphNode], graph: &GraphStore) -> usize {
+    let selected: std::collections::HashSet<&NodeId> = nodes.iter().map(|node| &node.id).collect();
+    nodes
+        .iter()
+        .filter(|node| {
+            derived_source_ids(graph, node)
+                .iter()
+                .any(|id| selected.contains(id))
+        })
+        .count()
+}
+
+fn omit_derived_content(
+    nodes: Vec<GraphNode>,
+    graph: &GraphStore,
+    already_sent: &[NodeId],
+) -> Vec<GraphNode> {
+    let sent: std::collections::HashSet<&NodeId> = already_sent.iter().collect();
+    let selected: std::collections::HashSet<NodeId> =
+        nodes.iter().map(|node| node.id.clone()).collect();
+    nodes
+        .into_iter()
+        .filter(|node| {
+            sent.contains(&node.id)
+                || !derived_source_ids(graph, node)
+                    .iter()
+                    .any(|id| selected.contains(id))
+        })
+        .collect()
+}
+
+/// Survivors of `previous` stay in that order. Newly selected nodes append
+/// in their current order, so a later call does not insert a node into the
+/// prefix that was already sent.
+fn keep_previous_pack_order(previous: &[NodeId], nodes: Vec<GraphNode>) -> Vec<GraphNode> {
+    if previous.is_empty() || nodes.is_empty() {
+        return nodes;
+    }
+    let index: std::collections::HashMap<&NodeId, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(slot, node)| (&node.id, slot))
+        .collect();
+    let mut used = vec![false; nodes.len()];
+    let mut out = Vec::with_capacity(nodes.len());
+    for id in previous {
+        if let Some(&slot) = index.get(id)
+            && !used[slot]
+        {
+            used[slot] = true;
+            out.push(nodes[slot].clone());
+        }
+    }
+    for (slot, node) in nodes.into_iter().enumerate() {
+        if !used[slot] {
+            out.push(node);
+        }
+    }
+    out
+}
+
+/// System text stays outside this list. Pinned nodes come next, sorted by
+/// node id. Everything else stays in creation order, except a content node
+/// that would land between a tool call and its result: that node moves to
+/// just after the result, so a later turn only appends.
+fn prefix_stable_order(nodes: Vec<GraphNode>) -> Vec<GraphNode> {
+    let mut nodes = nodes;
+    nodes.sort_by(|a, b| {
+        a.created_at
+            .cmp(&b.created_at)
+            .then_with(|| a.id.0.cmp(&b.id.0))
+    });
+    let (mut pinned, rest): (Vec<GraphNode>, Vec<GraphNode>) =
+        nodes.into_iter().partition(is_pinned_node);
+    pinned.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+    let mut out = pinned;
+    out.extend(append_context_after_tool_results(rest));
+    out
+}
+
+fn is_pinned_node(node: &GraphNode) -> bool {
+    node.metadata
+        .get("pinned")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn is_interaction_node(node: &GraphNode) -> bool {
+    matches!(node.node_type, NodeType::Interaction(_))
+}
+
+fn is_tool_result_node(node: &GraphNode) -> bool {
+    matches!(&node.node_type, NodeType::Interaction(data) if data.role == "tool")
+}
+
+fn append_context_after_tool_results(nodes: Vec<GraphNode>) -> Vec<GraphNode> {
+    let mut out = Vec::new();
+    let mut pending = Vec::new();
+    let mut open_assistant = false;
+    for node in nodes {
+        if is_tool_result_node(&node) {
+            out.push(node);
+            out.append(&mut pending);
+            open_assistant = false;
+            continue;
+        }
+        if is_interaction_node(&node) {
+            let is_assistant = matches!(
+                &node.node_type,
+                NodeType::Interaction(data) if data.role == "assistant"
+            );
+            if open_assistant {
+                out.push(node);
+            } else {
+                out.append(&mut pending);
+                out.push(node);
+            }
+            open_assistant = is_assistant;
+            continue;
+        }
+        pending.push(node);
+    }
+    out.append(&mut pending);
+    out
+}
+
+fn excerpt_stale_file_reads(nodes: &mut [GraphNode], after_turns: usize) {
+    let assistant_times: Vec<_> = nodes
+        .iter()
+        .filter(|node| {
+            matches!(&node.node_type, NodeType::Interaction(data) if data.role == "assistant")
+        })
+        .map(|node| node.created_at)
+        .collect();
+    for node in nodes.iter_mut() {
+        let later = assistant_times
+            .iter()
+            .filter(|created| **created > node.created_at)
+            .count();
+        if later <= after_turns || !is_file_read_node(node) {
+            continue;
+        }
+        match &mut node.node_type {
+            NodeType::Content(data) => data.body = excerpt_text(&data.body),
+            NodeType::Interaction(data) => data.content = excerpt_text(&data.content),
+            _ => {}
+        }
+    }
+}
+
+fn is_file_read_node(node: &GraphNode) -> bool {
+    match &node.node_type {
+        NodeType::Content(data) => data.content_type == "file",
+        NodeType::Interaction(data) if data.role == "tool" => {
+            node.metadata
+                .get("tool_name")
+                .and_then(|value| value.as_str())
+                == Some("read")
+        }
+        _ => false,
+    }
+}
+
+fn excerpt_text(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() <= 40 {
+        return text.to_string();
+    }
+    let mut out = lines[..40].join("\n");
+    out.push_str("\n[excerpt: older file read; call read for the full file]");
+    out
 }
 
 /// Convert assembled nodes, then drop tool results and tool calls that do not
@@ -1301,6 +1637,34 @@ pub(crate) fn tail_unit_indexes(
     in_tail
 }
 
+/// Oldest user message in a chronological thread.
+fn first_task_user_id(chrono: &[GraphNode]) -> Option<NodeId> {
+    chrono.iter().find_map(|node| match &node.node_type {
+        NodeType::Interaction(data) if data.role == "user" => Some(node.id.clone()),
+        _ => None,
+    })
+}
+
+fn is_task_message(node: &GraphNode) -> bool {
+    match &node.node_type {
+        NodeType::Interaction(data) if data.role == "user" => {
+            node.metadata.get("task").and_then(|value| value.as_bool()) == Some(true)
+        }
+        _ => false,
+    }
+}
+
+/// Latest user message marked as this run's task, or the oldest user message
+/// when the thread has no mark.
+fn current_task_user_id(chrono: &[GraphNode]) -> Option<NodeId> {
+    chrono
+        .iter()
+        .rev()
+        .find(|node| is_task_message(node))
+        .map(|node| node.id.clone())
+        .or_else(|| first_task_user_id(chrono))
+}
+
 /// Units whose members were all left out of the payload. A unit that keeps
 /// any member counts as kept, so a split pair still shows up here as kept
 /// and in the Phase 1 drop warning.
@@ -1606,9 +1970,181 @@ mod tests {
             system: LlmMessage::system("You are helpful."),
             messages: vec![LlmMessage::human("Hi"), LlmMessage::assistant("Hello!")],
             total_tokens: 100,
+            duplicate_derived: 0,
+            dropped_nodes: 0,
+            dropped_tokens: 0,
+            task_node_present: false,
+            kept_node_ids: Vec::new(),
+            dropped_node_ids: Vec::new(),
         };
         assert_eq!(window.messages.len(), 2);
         assert_eq!(window.total_tokens, 100);
+    }
+
+    #[test]
+    fn recency_16k_keeps_the_first_user_message() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+        let issue = format!("ISSUE-PIN {}", "word ".repeat(2250));
+        let filler = "filler ".repeat(2250);
+        let mut nodes = vec![("user", issue, serde_json::json!({}))];
+        for _ in 0..15 {
+            nodes.push(("user", filler.clone(), serde_json::json!({})));
+        }
+        link_chain(&graph, &agent_id, nodes);
+        let config = ContextConfig {
+            max_tokens: 16_000,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            recency_only: true,
+            prefix_stable: true,
+            dedup_derived: true,
+            ..ContextConfig::default()
+        };
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        let packed = std::iter::once(&window.system)
+            .chain(window.messages.iter())
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            packed.contains("ISSUE-PIN"),
+            "recency at 16k dropped the task"
+        );
+        assert!(window.task_node_present);
+        assert!(window.dropped_nodes > 0, "budget did not force a drop");
+    }
+
+    #[test]
+    fn previous_pack_order_keeps_survivors_and_appends_new_nodes() {
+        let mut nodes = Vec::new();
+        for text in ["a", "b", "c"] {
+            nodes.push(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".to_string(),
+                content: text.to_string(),
+                token_count: None,
+            })));
+        }
+        let previous: Vec<NodeId> = nodes.iter().map(|node| node.id.clone()).collect();
+        let new_node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "d".to_string(),
+            token_count: None,
+        }));
+        let current = vec![nodes[2].clone(), nodes[0].clone(), new_node];
+        let ordered = keep_previous_pack_order(&previous, current);
+        let texts: Vec<&str> = ordered.iter().map(get_text_content).collect();
+        assert_eq!(texts, vec!["a", "c", "d"]);
+    }
+
+    #[test]
+    fn sent_derived_content_is_not_deduped_away() {
+        let graph = GraphStore::open_memory().unwrap();
+        let mut assistant = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".into(),
+            content: String::new(),
+            token_count: None,
+        }));
+        assistant.metadata = serde_json::json!({
+            "tool_calls": [{"id": "c1", "name": "bash", "arguments": {}}]
+        });
+        let mut tool = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "tool".into(),
+            content: "HELLO".into(),
+            token_count: None,
+        }));
+        tool.metadata = serde_json::json!({
+            "tool_call_id": "c1",
+            "tool_name": "bash"
+        });
+        let content = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "command_output".into(),
+            path: None,
+            body: "HELLO".into(),
+            language: None,
+        }));
+        graph.add_node(assistant.clone()).unwrap();
+        graph.add_node(tool.clone()).unwrap();
+        graph.add_node(content.clone()).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                assistant.id.clone(),
+                content.id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                tool.id.clone(),
+                assistant.id,
+            ))
+            .unwrap();
+        let nodes = vec![content.clone(), tool];
+        let omitted = omit_derived_content(nodes.clone(), &graph, &[]);
+        assert!(omitted.iter().all(|node| node.id != content.id));
+        let kept = omit_derived_content(nodes, &graph, &[content.id.clone()]);
+        assert!(kept.iter().any(|node| node.id == content.id));
+    }
+
+    #[test]
+    fn recency_16k_pins_the_current_task_not_the_first() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "coder".to_string(),
+            model: "mock".to_string(),
+            system_prompt: Some("S".to_string()),
+            status: "running".to_string(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+        let first = format!("ISSUE-ONE {}", "word ".repeat(6000));
+        let current = format!("ISSUE-TWO {}", "word ".repeat(2250));
+        let filler = "filler ".repeat(2250);
+        let mut nodes = vec![
+            ("user", first, serde_json::json!({"task": true})),
+            ("user", current, serde_json::json!({"task": true})),
+        ];
+        for _ in 0..15 {
+            nodes.push(("user", filler.clone(), serde_json::json!({})));
+        }
+        link_chain(&graph, &agent_id, nodes);
+        let config = ContextConfig {
+            max_tokens: 16_000,
+            system_prompt: "S".to_string(),
+            guaranteed_recent_turns: 4,
+            recency_only: true,
+            prefix_stable: true,
+            dedup_derived: true,
+            ..ContextConfig::default()
+        };
+        let window = build_context(&graph, &agent_id, &config).unwrap();
+        let packed = std::iter::once(&window.system)
+            .chain(window.messages.iter())
+            .flat_map(|message| message.content.iter())
+            .filter_map(|part| match part {
+                graphirm_llm::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(packed.contains("ISSUE-TWO"), "current task was dropped");
+        assert!(
+            !packed.contains("ISSUE-ONE"),
+            "the first task stayed pinned"
+        );
+        assert!(window.task_node_present);
     }
 
     #[test]
@@ -1641,6 +2177,28 @@ mod tests {
             confidence: 0.9,
         }));
         assert_eq!(get_text_content(&node), "Dual-write graph persistence.");
+    }
+
+    #[test]
+    fn tool_result_message_starts_with_cite_tag() {
+        let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "tool".to_string(),
+            content: "total 1\ncalc.py".to_string(),
+            token_count: None,
+        }));
+        node.id = NodeId("652d3a6d-1337-4c06-8656-aa93d658e528".into());
+        node.metadata = serde_json::json!({
+            "tool_call_id": "call_ls",
+            "tool_name": "bash",
+            "is_error": false,
+        });
+        let message = node_to_message(&node).unwrap();
+        let graphirm_llm::ContentPart::ToolResult { content, .. } = &message.content[0] else {
+            panic!("expected a tool result");
+        };
+        assert!(content.starts_with("[n:652d3a6d]\n"));
+        assert!(content.contains("calc.py"));
+        assert_eq!(tool_cite_tag(&node.id.0), "[n:652d3a6d]");
     }
 
     #[test]
@@ -2237,7 +2795,7 @@ mod tests {
                 matches!(
                     part,
                     graphirm_llm::ContentPart::ToolResult { id, content, .. }
-                        if id == "call_1" && content == "awaiting approval"
+                        if id == "call_1" && strip_cite(content) == "awaiting approval"
                 )
             })
         }));
@@ -2249,7 +2807,7 @@ mod tests {
                 matches!(
                     part,
                     graphirm_llm::ContentPart::ToolResult { id, content, .. }
-                        if id == "call_1" && content == "awaiting approval"
+                        if id == "call_1" && strip_cite(content) == "awaiting approval"
                 )
             })
         }));
@@ -2290,7 +2848,13 @@ mod tests {
         };
         let pending = build_context(&graph, &agent_id, &config).unwrap();
         assert_tool_pairing(&pending.messages);
-        assert_eq!(tool_result_contents(&pending), vec!["awaiting approval"]);
+        assert_eq!(
+            tool_result_contents(&pending)
+                .into_iter()
+                .map(strip_cite)
+                .collect::<Vec<_>>(),
+            vec!["awaiting approval"]
+        );
         assert_eq!(pending_approval_count(&graph, &agent_id, "call_1"), 0);
 
         let assistant_id = graph
@@ -2330,7 +2894,13 @@ mod tests {
 
         let approved = build_context(&graph, &agent_id, &config).unwrap();
         assert_tool_pairing(&approved.messages);
-        assert_eq!(tool_result_contents(&approved), vec!["file body"]);
+        assert_eq!(
+            tool_result_contents(&approved)
+                .into_iter()
+                .map(strip_cite)
+                .collect::<Vec<_>>(),
+            vec!["file body"]
+        );
         assert_eq!(pending_approval_count(&graph, &agent_id, "call_1"), 0);
     }
 
@@ -2428,24 +2998,27 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(results, ["file body"]);
+        assert_eq!(
+            results.into_iter().map(strip_cite).collect::<Vec<_>>(),
+            vec!["file body"]
+        );
     }
 
     #[test]
     fn assembled_payloads_are_the_provider_body() {
         let rejected = provider_body(&rejected_call_window());
         let approved = provider_body(&pending_then_approved_window());
+        let rejected_bodies = tool_result_bodies(&rejected);
+        assert_eq!(rejected_bodies.len(), 1);
+        assert_eq!(rejected_bodies[0].0, "call_rejected");
         assert_eq!(
-            tool_result_bodies(&rejected),
-            vec![(
-                "call_rejected".to_string(),
-                "rejected by user: no bash".to_string()
-            )]
+            strip_cite(&rejected_bodies[0].1),
+            "rejected by user: no bash"
         );
-        assert_eq!(
-            tool_result_bodies(&approved),
-            vec![("call_1".to_string(), "file body".to_string())]
-        );
+        let approved_bodies = tool_result_bodies(&approved);
+        assert_eq!(approved_bodies.len(), 1);
+        assert_eq!(approved_bodies[0].0, "call_1");
+        assert_eq!(strip_cite(&approved_bodies[0].1), "file body");
         if let Ok(dir) = std::env::var("GRAPHIRM_DUMP_TOOL_PAYLOADS") {
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(
@@ -2633,6 +3206,15 @@ mod tests {
                 "steer this".to_string(),
             ]
         );
+    }
+
+    fn strip_cite(content: &str) -> &str {
+        let Some(rest) = content.strip_prefix("[n:") else {
+            return content;
+        };
+        rest.split_once('\n')
+            .map(|(_, body)| body)
+            .unwrap_or(content)
     }
 
     fn message_text(window: &ContextWindow) -> String {
@@ -4191,5 +4773,440 @@ mod tests {
         let store = GraphStore::open_memory().unwrap();
         let result = node_to_message_filtered(&node, &store, Some(&["code".to_string()]));
         assert!(result.is_some());
+    }
+
+    fn at(offset_ms: i64, node: GraphNode) -> GraphNode {
+        let mut node = node;
+        node.created_at = Utc::now() + Duration::milliseconds(offset_ms);
+        node
+    }
+
+    #[test]
+    fn prefix_stable_appends_and_keeps_tool_results_together() {
+        let user = at(
+            0,
+            GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".into(),
+                content: "fix it".into(),
+                token_count: None,
+            })),
+        );
+        let assistant = at(
+            1,
+            GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".into(),
+                content: "reading".into(),
+                token_count: None,
+            })),
+        );
+        let file = at(
+            2,
+            GraphNode::new(NodeType::Content(ContentData {
+                content_type: "file".into(),
+                path: Some("a.py".into()),
+                body: "print(1)".into(),
+                language: None,
+            })),
+        );
+        let tool = at(
+            3,
+            GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "tool".into(),
+                content: "print(1)".into(),
+                token_count: None,
+            })),
+        );
+        let ordered = prefix_stable_order(vec![
+            file.clone(),
+            user.clone(),
+            tool.clone(),
+            assistant.clone(),
+        ]);
+        let roles_or_kind: Vec<String> = ordered
+            .iter()
+            .map(|node| match &node.node_type {
+                NodeType::Interaction(data) => data.role.clone(),
+                NodeType::Content(_) => "content".into(),
+                _ => "other".into(),
+            })
+            .collect();
+        assert_eq!(roles_or_kind, vec!["user", "assistant", "tool", "content"]);
+
+        let later = at(
+            4,
+            GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".into(),
+                content: "done".into(),
+                token_count: None,
+            })),
+        );
+        let mut second = ordered.clone();
+        second.push(later);
+        let again = prefix_stable_order(second);
+        let first_bodies: Vec<String> = ordered
+            .iter()
+            .map(|node| match &node.node_type {
+                NodeType::Interaction(data) => data.content.clone(),
+                NodeType::Content(data) => data.body.clone(),
+                _ => String::new(),
+            })
+            .collect();
+        let second_bodies: Vec<String> = again
+            .iter()
+            .take(4)
+            .map(|node| match &node.node_type {
+                NodeType::Interaction(data) => data.content.clone(),
+                NodeType::Content(data) => data.body.clone(),
+                _ => String::new(),
+            })
+            .collect();
+        assert_eq!(first_bodies, second_bodies);
+    }
+
+    #[test]
+    fn excerpt_shortens_a_file_read_after_k_turns() {
+        let mut lines = String::new();
+        for n in 0..50 {
+            lines.push_str(&format!("line {n}\n"));
+        }
+        let mut file = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".into(),
+            path: Some("a.py".into()),
+            body: lines,
+            language: None,
+        }));
+        file.created_at = Utc::now();
+        let mut later = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".into(),
+            content: "next".into(),
+            token_count: None,
+        }));
+        later.created_at = file.created_at + Duration::seconds(1);
+        let mut nodes = vec![file, later];
+        excerpt_stale_file_reads(&mut nodes, 0);
+        match &nodes[0].node_type {
+            NodeType::Content(data) => {
+                assert!(data.body.contains("call read for the full file"));
+                assert_eq!(data.body.lines().count(), 41);
+            }
+            _ => panic!("expected a content node"),
+        }
+    }
+
+    fn pack_config(prefix_stable: bool, dedup_derived: bool) -> ContextConfig {
+        ContextConfig {
+            max_tokens: 100_000,
+            system_prompt: "S".into(),
+            guaranteed_recent_turns: 40,
+            prefix_stable,
+            dedup_derived,
+            ..ContextConfig::default()
+        }
+    }
+
+    struct ReadFixture {
+        graph: GraphStore,
+        agent_id: NodeId,
+    }
+
+    fn read_fixture(link_tool: bool) -> ReadFixture {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "eval".into(),
+            model: "mock".into(),
+            system_prompt: Some("S".into()),
+            status: "running".into(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+        let base = Utc::now();
+        let mut user = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".into(),
+            content: "fix the bug".into(),
+            token_count: None,
+        }));
+        user.created_at = base;
+        let mut assistant = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".into(),
+            content: "reading".into(),
+            token_count: None,
+        }));
+        assistant.created_at = base + Duration::seconds(1);
+        assistant.metadata = serde_json::json!({
+            "tool_calls": [{"id": "call-read", "name": "read", "arguments": {"path": "a.py"}}]
+        });
+        let mut file = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "file".into(),
+            path: Some("a.py".into()),
+            body: "UNIQUEFILEBODY".into(),
+            language: None,
+        }));
+        file.created_at = base + Duration::seconds(2);
+        let mut tool = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "tool".into(),
+            content: "1|UNIQUEFILEBODY".into(),
+            token_count: None,
+        }));
+        tool.created_at = base + Duration::seconds(3);
+        tool.metadata = serde_json::json!({
+            "tool_call_id": "call-read",
+            "tool_name": "read",
+            "path": "a.py"
+        });
+        for node in [&user, &assistant, &file] {
+            graph.add_node(node.clone()).unwrap();
+            if !matches!(node.node_type, NodeType::Content(_)) {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::Produces,
+                        agent_id.clone(),
+                        node.id.clone(),
+                    ))
+                    .unwrap();
+            }
+        }
+        graph.add_node(tool.clone()).unwrap();
+        if link_tool {
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    tool.id.clone(),
+                ))
+                .unwrap();
+        }
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                assistant.id.clone(),
+                user.id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                tool.id.clone(),
+                assistant.id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Reads,
+                assistant.id.clone(),
+                file.id.clone(),
+            ))
+            .unwrap();
+        ReadFixture { graph, agent_id }
+    }
+
+    #[test]
+    fn packed_file_read_appears_once() {
+        let fixture = read_fixture(true);
+        let window =
+            build_context(&fixture.graph, &fixture.agent_id, &pack_config(true, true)).unwrap();
+        let text = message_text(&window);
+        assert_eq!(text.matches("UNIQUEFILEBODY").count(), 1);
+        assert_eq!(window.duplicate_derived, 1);
+    }
+
+    #[test]
+    fn packed_bash_output_appears_once() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "eval".into(),
+            model: "mock".into(),
+            system_prompt: Some("S".into()),
+            status: "running".into(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+        let base = Utc::now();
+        let mut user = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".into(),
+            content: "run it".into(),
+            token_count: None,
+        }));
+        user.created_at = base;
+        let mut assistant = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".into(),
+            content: "running".into(),
+            token_count: None,
+        }));
+        assistant.created_at = base + Duration::seconds(1);
+        assistant.metadata = serde_json::json!({
+            "tool_calls": [{"id": "call-bash", "name": "bash", "arguments": {}}]
+        });
+        let mut output = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "command_output".into(),
+            path: None,
+            body: "UNIQUEBASHBODY".into(),
+            language: None,
+        }));
+        output.created_at = base + Duration::seconds(2);
+        let mut tool = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "tool".into(),
+            content: "UNIQUEBASHBODY".into(),
+            token_count: None,
+        }));
+        tool.created_at = base + Duration::seconds(3);
+        tool.metadata = serde_json::json!({
+            "tool_call_id": "call-bash",
+            "tool_name": "bash"
+        });
+        for node in [&user, &assistant, &tool] {
+            graph.add_node(node.clone()).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    node.id.clone(),
+                ))
+                .unwrap();
+        }
+        graph.add_node(output.clone()).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                assistant.id.clone(),
+                user.id,
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                tool.id,
+                assistant.id.clone(),
+            ))
+            .unwrap();
+        graph
+            .add_edge(GraphEdge::new(EdgeType::Produces, assistant.id, output.id))
+            .unwrap();
+        let window = build_context(&graph, &agent_id, &pack_config(true, true)).unwrap();
+        assert_eq!(message_text(&window).matches("UNIQUEBASHBODY").count(), 1);
+    }
+
+    #[test]
+    fn derived_file_stays_when_its_tool_result_is_not_selected() {
+        let fixture = read_fixture(false);
+        let window =
+            build_context(&fixture.graph, &fixture.agent_id, &pack_config(true, true)).unwrap();
+        assert!(message_text(&window).contains("UNIQUEFILEBODY"));
+    }
+
+    #[test]
+    fn prefix_stable_five_turns_each_start_with_the_previous() {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "eval".into(),
+            model: "mock".into(),
+            system_prompt: Some("S".into()),
+            status: "running".into(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+        let base = Utc::now();
+        let mut user = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".into(),
+            content: "start".into(),
+            token_count: None,
+        }));
+        user.created_at = base;
+        graph.add_node(user.clone()).unwrap();
+        graph
+            .add_edge(GraphEdge::new(
+                EdgeType::Produces,
+                agent_id.clone(),
+                user.id.clone(),
+            ))
+            .unwrap();
+        let mut previous = String::new();
+        let mut prev_id = user.id;
+        for turn in 0..5 {
+            let window = build_context(&graph, &agent_id, &pack_config(true, true)).unwrap();
+            let text = message_text(&window);
+            if turn > 0 {
+                assert!(
+                    text.starts_with(&previous),
+                    "turn {turn} dropped the prefix"
+                );
+            }
+            assert_tool_pairing(&window.messages);
+            previous = text;
+            let mut assistant = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".into(),
+                content: format!("call {turn}"),
+                token_count: None,
+            }));
+            assistant.created_at = base + Duration::seconds(10 * (turn + 1));
+            assistant.metadata = serde_json::json!({
+                "tool_calls": [{"id": format!("c{turn}"), "name": "bash", "arguments": {}}]
+            });
+            let mut note = GraphNode::new(NodeType::Content(ContentData {
+                content_type: "note".into(),
+                path: None,
+                body: format!("NOTE{turn}"),
+                language: None,
+            }));
+            note.created_at = assistant.created_at + Duration::seconds(1);
+            let mut tool = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "tool".into(),
+                content: format!("out {turn}"),
+                token_count: None,
+            }));
+            tool.created_at = assistant.created_at + Duration::seconds(2);
+            tool.metadata = serde_json::json!({
+                "tool_call_id": format!("c{turn}"),
+                "tool_name": "bash"
+            });
+            for node in [&assistant, &tool] {
+                graph.add_node(node.clone()).unwrap();
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::Produces,
+                        agent_id.clone(),
+                        node.id.clone(),
+                    ))
+                    .unwrap();
+            }
+            graph.add_node(note.clone()).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::RespondsTo,
+                    assistant.id.clone(),
+                    prev_id.clone(),
+                ))
+                .unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::RespondsTo,
+                    tool.id.clone(),
+                    assistant.id.clone(),
+                ))
+                .unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    assistant.id.clone(),
+                    note.id,
+                ))
+                .unwrap();
+            prev_id = tool.id;
+        }
+    }
+
+    #[test]
+    fn legacy_packing_puts_content_before_the_conversation() {
+        let fixture = read_fixture(true);
+        let window = build_context(
+            &fixture.graph,
+            &fixture.agent_id,
+            &pack_config(false, false),
+        )
+        .unwrap();
+        let text = message_text(&window);
+        let file_at = text.find("[File: a.py]").expect("file node");
+        let user_at = text.find("fix the bug").expect("user message");
+        assert!(file_at < user_at);
+        assert_eq!(text.matches("UNIQUEFILEBODY").count(), 2);
     }
 }

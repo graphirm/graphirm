@@ -95,6 +95,8 @@ fn convert_response<T>(response: rig::completion::CompletionResponse<T>) -> LlmR
             None
         },
         cache_write_tokens: None,
+        cost_micro_usd: None,
+        length_limited: false,
     };
 
     let stop_reason = if has_tool_calls {
@@ -238,6 +240,14 @@ pub fn build_openai_body(
     body
 }
 
+/// Convert a USD cost to millionths of a dollar. Non-finite and negative values become 0.
+fn usd_to_micro(cost: f64) -> u64 {
+    if !cost.is_finite() || cost <= 0.0 {
+        return 0;
+    }
+    (cost * 1_000_000.0).round() as u64
+}
+
 /// A single SSE chunk from the OpenAI-compatible streaming response.
 #[derive(Debug, Deserialize)]
 struct SseChunk {
@@ -270,10 +280,22 @@ struct SseFunctionDelta {
     arguments: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct PromptTokenDetails {
+    #[serde(default)]
+    cached_tokens: u32,
+}
+
 #[derive(Debug, Deserialize)]
 struct SseUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
+    /// OpenRouter USD cost for this request, when the stream includes usage.
+    #[serde(default)]
+    cost: Option<f64>,
+    /// Cache-read count. OpenRouter sends this under `prompt_tokens_details`.
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptTokenDetails>,
 }
 
 /// Process a single parsed SSE chunk, emitting `StreamEvent`s through the channel.
@@ -289,6 +311,12 @@ async fn process_sse_chunk(
     if let Some(u) = &chunk.usage {
         usage.input_tokens = u.prompt_tokens;
         usage.output_tokens = u.completion_tokens;
+        if let Some(details) = &u.prompt_tokens_details {
+            usage.cache_read_tokens = Some(details.cached_tokens);
+        }
+        if let Some(cost) = u.cost {
+            usage.cost_micro_usd = Some(usd_to_micro(cost));
+        }
     }
 
     for choice in &chunk.choices {
@@ -324,6 +352,11 @@ async fn process_sse_chunk(
             }
         }
 
+        if let Some(reason) = &choice.finish_reason {
+            if reason == "length" {
+                usage.length_limited = true;
+            }
+        }
         if let Some(reason) = &choice.finish_reason
             && (reason == "tool_calls" || reason == "stop")
         {
@@ -596,6 +629,15 @@ mod tests {
         let u = chunk.usage.unwrap();
         assert_eq!(u.prompt_tokens, 100);
         assert_eq!(u.completion_tokens, 50);
+        assert!(u.cost.is_none());
+    }
+
+    #[test]
+    fn test_parse_sse_usage_cost() {
+        let json =
+            r#"{"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"cost":0.00123}}"#;
+        let chunk: SseChunk = serde_json::from_str(json).unwrap();
+        assert_eq!(usd_to_micro(chunk.usage.unwrap().cost.unwrap()), 1230);
     }
 
     #[tokio::test]
@@ -612,6 +654,19 @@ mod tests {
         let ev = rx.recv().await.unwrap();
         assert!(matches!(ev, StreamEvent::TextDelta(t) if t == "tok"));
         assert!(rx.recv().await.is_none());
+        assert!(!usage.length_limited);
+    }
+
+    #[tokio::test]
+    async fn test_process_sse_chunk_length_sets_flag() {
+        let json = r#"{"choices":[{"delta":{},"finish_reason":"length"}]}"#;
+        let chunk: SseChunk = serde_json::from_str(json).unwrap();
+        let (tx, _rx) = mpsc::channel(16);
+        let mut tools = HashMap::new();
+        let mut usage = TokenUsage::default();
+
+        process_sse_chunk(&chunk, &tx, &mut tools, &mut usage).await;
+        assert!(usage.length_limited);
     }
 
     #[tokio::test]

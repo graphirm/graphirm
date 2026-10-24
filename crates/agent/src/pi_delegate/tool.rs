@@ -49,6 +49,12 @@ pub const PI_DELEGATE_TOOL_NAME: &str = "delegate_pi";
 
 /// Appended to the task before spawn. Pi is asked for one HTML index page.
 /// The cutter accepts that page and refuses anything else.
+/// The HTML index page Pi is asked to return. Graphirm's own `run` command
+/// appends the same text when `--reply-format html` is set.
+pub fn html_piece_index_contract() -> &'static str {
+    HTML_PIECE_INDEX_CONTRACT
+}
+
 const HTML_PIECE_INDEX_CONTRACT: &str = "\n\n\
 Reply with only HTML. No markdown.\n\
 Start with <nav id=\"index\"> holding one <ul>. Each entry is one <li> with one link. Point href at that part's id. The order of the links is the order of the parts. There is one index. It is that nav. Do not write a second index.\n\

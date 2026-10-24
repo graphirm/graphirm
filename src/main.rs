@@ -56,6 +56,92 @@ enum Commands {
         action: KnowledgeAction,
     },
 
+    /// Run one task with no prompts and no approval gate, then exit.
+    Run {
+        /// File whose text is the first user message.
+        #[arg(long)]
+        task: PathBuf,
+        /// Directory the tools may read and edit.
+        #[arg(long)]
+        cwd: PathBuf,
+        /// Graph database to create or reuse.
+        #[arg(long)]
+        graph: PathBuf,
+        /// Agent config. `config/default.toml` is not read.
+        #[arg(long)]
+        config: PathBuf,
+        /// `provider/model` override, for example `openrouter/x-ai/grok-4.7`.
+        #[arg(long)]
+        model: Option<String>,
+        /// OpenRouter reasoning effort, for example `high`.
+        #[arg(long)]
+        reasoning_effort: Option<String>,
+        /// `default` keeps the four-term score. `recency` uses recency only.
+        #[arg(long, value_parser = ["default", "recency"], default_value = "default")]
+        scoring: String,
+        /// `segments` is the serve default. `html` is the Pi page. `md` adds no format contract.
+        #[arg(long, value_parser = ["segments", "html", "md"], default_value = "segments")]
+        reply_format: String,
+        /// Stop after this many agent turns.
+        #[arg(long)]
+        max_turns: Option<u32>,
+        /// Stop after this many input plus output tokens.
+        #[arg(long)]
+        max_tokens: Option<u64>,
+        /// Stop after this many US dollars. With `--prices`, tokens times that table.
+        #[arg(long)]
+        max_cost_usd: Option<f64>,
+        /// Frozen per-token prices. Same file mini-swe-agent's registry is built from.
+        #[arg(long)]
+        prices: Option<PathBuf>,
+        /// Where to write the JSON run summary.
+        #[arg(long)]
+        summary: Option<PathBuf>,
+        /// Allow `[agent.routing]` or `[agent.adaptive_routing]` to stay on.
+        #[arg(long)]
+        allow_routing: bool,
+        /// Allow `[agent.pi]` to register `delegate_pi`.
+        #[arg(long)]
+        allow_handoff: bool,
+        /// `stable` appends packed nodes. `legacy` is the old content-first order.
+        #[arg(long, value_parser = ["stable", "legacy"], default_value = "stable")]
+        packing: String,
+    },
+
+    /// Re-pack an existing graph turn by turn. Does not call a model.
+    ReplayPack {
+        /// Graph database from a finished run.
+        #[arg(long)]
+        graph: PathBuf,
+        /// Agent config. Supplies the system prompt.
+        #[arg(long)]
+        config: PathBuf,
+        /// CSV path for one row per call.
+        #[arg(long)]
+        out: PathBuf,
+        /// `stable` appends packed nodes. `legacy` is the old content-first order.
+        #[arg(long, value_parser = ["stable", "legacy"], default_value = "stable")]
+        packing: String,
+        /// Pack derived file and command nodes even when their tool result is packed.
+        #[arg(long)]
+        no_dedup: bool,
+        /// Drop derived file and command nodes when their tool result is packed.
+        #[arg(long)]
+        dedup: bool,
+        /// Excerpt file reads older than this many assistant turns.
+        #[arg(long)]
+        excerpt_after: Option<usize>,
+        /// Packing budget in estimated tokens.
+        #[arg(long)]
+        context_max_tokens: Option<usize>,
+        /// Reset the already-sent list on every turn.
+        ///
+        /// Without this flag, each call's kept node ids are the next call's
+        /// `pack_prefix_ids`, matching the live session.
+        #[arg(long)]
+        stateless: bool,
+    },
+
     /// Start the HTTP API server
     Serve {
         /// Host to bind to
@@ -251,7 +337,15 @@ enum ModelAction {
 async fn main() -> Result<(), GraphirmError> {
     dotenvy::dotenv().ok();
     let cli = Cli::parse();
-    let db_path = commands::resolve_db_path(cli.db)?;
+    // `run` must not create ~/.local/share/graphirm. Other commands still do.
+    let db_path = if matches!(
+        cli.command,
+        Commands::Run { .. } | Commands::ReplayPack { .. }
+    ) {
+        PathBuf::new()
+    } else {
+        commands::resolve_db_path(cli.db.clone())?
+    };
 
     match cli.command {
         Commands::Chat { session: _, model } => {
@@ -368,6 +462,76 @@ async fn main() -> Result<(), GraphirmError> {
         }
         Commands::Serve { host, port } => {
             commands::serve::run(&db_path, host, port).await?;
+        }
+        Commands::Run {
+            task,
+            cwd,
+            graph,
+            config,
+            model,
+            reasoning_effort,
+            scoring,
+            reply_format,
+            max_turns,
+            max_tokens,
+            max_cost_usd,
+            prices,
+            summary,
+            allow_routing,
+            allow_handoff,
+            packing,
+        } => {
+            let code = commands::run::execute(commands::run::RunArgs {
+                task,
+                cwd,
+                graph,
+                config,
+                model,
+                reasoning_effort,
+                scoring: if scoring == "recency" {
+                    commands::run::Scoring::Recency
+                } else {
+                    commands::run::Scoring::Default
+                },
+                reply_format: match reply_format.as_str() {
+                    "html" => commands::run::ReplyFormat::Html,
+                    "md" => commands::run::ReplyFormat::Md,
+                    _ => commands::run::ReplyFormat::Segments,
+                },
+                max_turns,
+                max_tokens,
+                max_cost_usd,
+                prices,
+                summary,
+                allow_routing,
+                allow_handoff,
+                packing_legacy: packing == "legacy",
+            })
+            .await;
+            std::process::exit(code);
+        }
+        Commands::ReplayPack {
+            graph,
+            config,
+            out,
+            packing,
+            no_dedup,
+            dedup,
+            excerpt_after,
+            context_max_tokens,
+            stateless,
+        } => {
+            commands::replay_pack::run(commands::replay_pack::ReplayArgs {
+                graph,
+                config,
+                out,
+                packing,
+                no_dedup,
+                dedup,
+                excerpt_after,
+                context_max_tokens,
+                stateless,
+            })?;
         }
     }
 

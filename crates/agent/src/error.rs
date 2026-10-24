@@ -35,6 +35,10 @@ pub enum AgentError {
         assistant_node_id: Option<graphirm_graph::nodes::NodeId>,
     },
 
+    /// Session dollar cap hit. Cost is in millionths of a US dollar.
+    #[error("Session cost cap exceeded (used {used_micro} micro-usd, cap {cap_micro} micro-usd)")]
+    SessionCostCapExceeded { used_micro: u64, cap_micro: u64 },
+
     #[error("Task join error: {0}")]
     Join(String),
 

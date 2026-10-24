@@ -197,11 +197,6 @@ pub struct AgentConfig {
     /// `compaction_threshold` (default 0.80). Disabled by default; enable in `[agent]` config.
     #[serde(default)]
     pub enable_compaction: bool,
-    /// Maximum number of auto-continuation turns injected after a text-only response when
-    /// the agent has already executed tool calls in this session. Prevents the agent from
-    /// stopping mid-task. 0 disables. Default 2.
-    #[serde(default = "default_max_continuations")]
-    pub max_continuations: u32,
     /// When true, intercept the first text-only turn after tool work and inject a
     /// verification checklist (run tests, check lint, re-read task requirements).
     /// Forces the agent to validate its output before declaring the task complete.
@@ -243,6 +238,13 @@ pub struct AgentConfig {
     /// [`crate::error::AgentError::SessionTokenCapExceeded`].
     #[serde(default)]
     pub max_session_tokens: Option<u64>,
+    /// Maximum provider-reported cost for one session, in millionths of a US dollar.
+    /// `None` disables the cap. Ignored until a completion actually reports a cost.
+    pub max_session_cost_micro_usd: Option<u64>,
+    /// Content-first packing with duplicate file and command bodies. The
+    /// product default is prefix-stable packing with those duplicates omitted.
+    #[serde(default)]
+    pub packing_legacy: bool,
     /// Optional post-hoc outline extraction (markdown headings → graph nodes).
     #[serde(default)]
     pub outline: Option<OutlineConfig>,
@@ -547,10 +549,6 @@ fn default_repo_briefing() -> bool {
     true
 }
 
-fn default_max_continuations() -> u32 {
-    0
-}
-
 fn default_pre_completion_verify() -> bool {
     true
 }
@@ -636,7 +634,6 @@ impl Default for AgentConfig {
             adaptive_routing: None,
             hitl_judge: None,
             enable_compaction: false,
-            max_continuations: default_max_continuations(),
             pre_completion_verify: true,
             doom_loop_threshold: default_doom_loop_threshold(),
             read_loop_threshold: default_read_loop_threshold(),
@@ -645,6 +642,8 @@ impl Default for AgentConfig {
             disable_bash: false,
             auto_link_write_to_planning: true,
             max_session_tokens: None,
+            max_session_cost_micro_usd: None,
+            packing_legacy: false,
             outline: None,
             tool_gate_enabled: default_tool_gate_enabled(),
             pi: None,
@@ -723,8 +722,6 @@ struct AgentConfigSection {
     hitl_judge: Option<HitlJudgeConfig>,
     #[serde(default)]
     enable_compaction: bool,
-    #[serde(default = "default_max_continuations")]
-    max_continuations: u32,
     #[serde(default = "default_pre_completion_verify")]
     pre_completion_verify: bool,
     #[serde(default = "default_doom_loop_threshold")]
@@ -809,7 +806,6 @@ impl AgentConfig {
             adaptive_routing: file.agent.adaptive_routing,
             hitl_judge: file.agent.hitl_judge,
             enable_compaction: file.agent.enable_compaction,
-            max_continuations: file.agent.max_continuations,
             pre_completion_verify: file.agent.pre_completion_verify,
             doom_loop_threshold: file.agent.doom_loop_threshold,
             read_loop_threshold: file.agent.read_loop_threshold,
@@ -818,6 +814,8 @@ impl AgentConfig {
             disable_bash: file.agent.disable_bash,
             auto_link_write_to_planning: file.agent.auto_link_write_to_planning,
             max_session_tokens: file.agent.max_session_tokens,
+            max_session_cost_micro_usd: None,
+            packing_legacy: false,
             outline: file.agent.outline,
             tool_gate_enabled: file.agent.tool_gate_enabled,
             pi: file.agent.pi,

@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-10-25 — Surviving source for the T2 binary a4e75be8
+
+**Context:** `eval/swebench/prereg.md` records commit `4bae8c99` and binary sha256 `a4e75be8392e7a6f520618984f9ca17c4c3448ee21d06d19620cbbfa3ae3495c`. That binary logs `task_node_present` from `context.rs:828` and contains the budget-warning sentences. Commit `4bae8c99` has neither. The copy that does is the uncommitted working tree. `context.rs` on disk is identical to the editor snapshot from 2026-10-22 15:21, ten days after the 2026-10-12 build. The binary's line 828 lists `budget`, `system_tokens`, `thread_tokens`, `kept_tokens`, `dropped_tokens`, `thread_messages`, `dropped_units`, `task_node_present`. The saved file also logs `remaining_budget` and `dropped_messages`.
+**Decision:** Commit that surviving tree on `eval/frozen-binary-source`. Do not edit the pre-registered text. The source for binary `a4e75be8` is that commit, with the mismatch above. A rebuild from the commit uses `cargo build --release --target x86_64-unknown-linux-musl --bin graphirm` in a clean worktree, with `CARGO_TARGET_DIR` outside the repo so the frozen binary is not overwritten.
+**Alternatives:** Leave the tree uncommitted, where the 22 October shutdowns already zeroed git objects. Or call the commit a byte-identical build input, which the log fields rule out.
+**Consequences:** A rebuild hash that differs does not, by itself, prove an unreproducible compiler. The source already differs from the binary. Both hashes belong next to this entry once the rebuild finishes.
+**Refs:** `eval/swebench/prereg.md` frozen-system section. Branch `eval/frozen-binary-source`.
+
 ## 2026-10-22 11:15 EEST — Deviation: T2's caps are measured on primary cost for both agents; $100 billed safety stop
 
 **Context:** Two inconsistencies surfaced from the cost correction earlier today. (a) The T2 driver had been set to count the pre-registered $40 track limit in billed dollars, while T1's limit was measured on the ledger's `cost_usd`, which for Graphirm arms is the primary (frozen-price) formula; at today's bill-to-formula ratio of about 2.6× the billed reading would have stopped T2 near task 150–180 of 273. (b) The $0.50 per-task cap was applied by mini-swe-agent to OpenRouter's `usage.cost` (its bill) and by Graphirm to the primary formula, so at the current ratio mini's effective cap was about $0.18 per task against Graphirm's $0.50.

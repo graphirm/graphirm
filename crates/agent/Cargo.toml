@@ -27,7 +27,7 @@ ort = { version = "=2.0.0-rc.11", features = ["download-binaries", "ndarray"], o
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"], optional = true }
 # ndarray 0.17 is compatible with both ort rc.11 and rc.12.
 ndarray = { version = "0.17", optional = true }
-hf-hub = { version = "0.5", default-features = false, features = ["tokio", "native-tls"], optional = true }
+hf-hub = { version = "0.5", default-features = false, features = ["tokio", "rustls-tls"], optional = true }
 # Unicode features kept (default) — word-boundary regex uses \w which requires unicode support.
 regex = { version = "1", optional = true }
 pulldown-cmark = "0.13"

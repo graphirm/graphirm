@@ -71,6 +71,8 @@ fn convert_response<T>(response: rig::completion::CompletionResponse<T>) -> LlmR
             None
         },
         cache_write_tokens: None,
+        cost_micro_usd: None,
+        length_limited: false,
     };
 
     let stop_reason = if has_tool_calls {

@@ -74,22 +74,37 @@ async fn test_segment_round_trip_with_nesting() {
     use graphirm_agent::knowledge::segments::Segment;
     let segments = vec![
         Segment {
+            item_src: Vec::new(),
+            item_rel: Vec::new(),
             segment_type: "plan".into(),
             content: "overall plan".into(),
             start: 0,
             end: 100,
+            n: None,
+            title: None,
+            items: Vec::new(),
         },
         Segment {
+            item_src: Vec::new(),
+            item_rel: Vec::new(),
             segment_type: "code".into(),
             content: "fn f(){}".into(),
             start: 30,
             end: 60,
+            n: None,
+            title: None,
+            items: Vec::new(),
         },
         Segment {
+            item_src: Vec::new(),
+            item_rel: Vec::new(),
             segment_type: "answer".into(),
             content: "done".into(),
             start: 110,
             end: 130,
+            n: None,
+            title: None,
+            items: Vec::new(),
         },
     ];
 
@@ -172,16 +187,26 @@ async fn test_segment_filter_excludes_non_matching_types() {
     use graphirm_agent::knowledge::segments::Segment;
     let segments = vec![
         Segment {
+            item_src: Vec::new(),
+            item_rel: Vec::new(),
             segment_type: "reasoning".to_string(),
             content: "I think step by step.".to_string(),
             start: 0,
             end: 22,
+            n: None,
+            title: None,
+            items: Vec::new(),
         },
         Segment {
+            item_src: Vec::new(),
+            item_rel: Vec::new(),
             segment_type: "code".to_string(),
             content: "def add(a, b): return a + b".to_string(),
             start: 23,
             end: 50,
+            n: None,
+            title: None,
+            items: Vec::new(),
         },
     ];
     let nesting = detect_nesting(&segments);

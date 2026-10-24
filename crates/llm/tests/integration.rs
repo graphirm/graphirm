@@ -115,6 +115,8 @@ async fn test_token_usage_tracking() {
         output_tokens: 100,
         cache_read_tokens: Some(10),
         cache_write_tokens: None,
+        cost_micro_usd: None,
+        length_limited: false,
     };
     let provider = MockProvider::new(vec![
         MockResponse::text("hi").with_usage(custom_usage.clone()),

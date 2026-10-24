@@ -28,8 +28,20 @@ const AGENT_NODES_CACHE_TTL: Duration = Duration::from_secs(30);
 
 impl GraphStore {
     pub fn open(path: &str) -> Result<Self, GraphError> {
+        // The pool opens max_size connections together. Each of those used to run
+        // `journal_mode=WAL`, and that pragma returns "database is locked" while
+        // another connection is still switching the file. Set WAL once, then only
+        // set the wait and foreign keys on pooled connections.
+        {
+            let setup = rusqlite::Connection::open(path)?;
+            setup.busy_timeout(Duration::from_millis(5000))?;
+            setup.execute_batch(
+                "PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;",
+            )?;
+        }
         let manager = SqliteConnectionManager::file(path).with_init(|conn| {
-            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+            conn.busy_timeout(Duration::from_millis(5000))?;
+            conn.execute_batch("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;")?;
             Ok(())
         });
         let pool = Pool::builder()
@@ -52,7 +64,8 @@ impl GraphStore {
 
     pub fn open_memory() -> Result<Self, GraphError> {
         let manager = SqliteConnectionManager::memory().with_init(|conn| {
-            conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+            conn.busy_timeout(Duration::from_millis(5000))?;
+            conn.execute_batch("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;")?;
             Ok(())
         });
         let pool = Pool::builder()
@@ -1368,37 +1381,51 @@ impl GraphStore {
 
         let damping = 0.85_f64;
         let iterations = 100;
-        let n = graph.node_count() as f64;
-        let initial = 1.0 / n;
-
         let node_indices_vec: Vec<petgraph::graph::NodeIndex> = graph.node_indices().collect();
-        let mut scores: HashMap<petgraph::graph::NodeIndex, f64> =
-            node_indices_vec.iter().map(|&idx| (idx, initial)).collect();
+        let n = node_indices_vec.len();
+        let n_f = n as f64;
+        let initial = 1.0 / n_f;
+        let base = (1.0 - damping) / n_f;
 
+        // Dense slots so each iteration is O(nodes + edges). A dangling node
+        // donates its whole rank, split evenly, which is one add per node after
+        // the dangling mass is summed — not one walk of the node list per sink.
+        let mut slot_of: HashMap<petgraph::graph::NodeIndex, usize> = HashMap::with_capacity(n);
+        for (slot, &idx) in node_indices_vec.iter().enumerate() {
+            slot_of.insert(idx, slot);
+        }
+        let mut out_neighbors: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (slot, &idx) in node_indices_vec.iter().enumerate() {
+            for neighbor in graph.neighbors_directed(idx, petgraph::Direction::Outgoing) {
+                if let Some(&neighbor_slot) = slot_of.get(&neighbor) {
+                    out_neighbors[slot].push(neighbor_slot);
+                }
+            }
+        }
+
+        let mut scores = vec![initial; n];
+        let mut next = vec![base; n];
         for _ in 0..iterations {
-            let mut new_scores: HashMap<petgraph::graph::NodeIndex, f64> = node_indices_vec
-                .iter()
-                .map(|&idx| (idx, (1.0 - damping) / n))
-                .collect();
-
-            for &idx in &node_indices_vec {
-                let out_degree = graph
-                    .neighbors_directed(idx, petgraph::Direction::Outgoing)
-                    .count();
-                if out_degree == 0 {
-                    let share = scores[&idx] / n;
-                    for &other in &node_indices_vec {
-                        *new_scores.get_mut(&other).unwrap() += damping * share;
-                    }
+            next.fill(base);
+            let mut dangling_sum = 0.0;
+            for slot in 0..n {
+                let outs = &out_neighbors[slot];
+                if outs.is_empty() {
+                    dangling_sum += scores[slot];
                 } else {
-                    let share = scores[&idx] / out_degree as f64;
-                    for neighbor in graph.neighbors_directed(idx, petgraph::Direction::Outgoing) {
-                        *new_scores.get_mut(&neighbor).unwrap() += damping * share;
+                    let share = damping * scores[slot] / outs.len() as f64;
+                    for &neighbor in outs {
+                        next[neighbor] += share;
                     }
                 }
             }
-
-            scores = new_scores;
+            if dangling_sum != 0.0 {
+                let share = damping * dangling_sum / n_f;
+                for score in &mut next {
+                    *score += share;
+                }
+            }
+            std::mem::swap(&mut scores, &mut next);
         }
 
         let idx_to_id: HashMap<petgraph::graph::NodeIndex, NodeId> = indices
@@ -1406,14 +1433,94 @@ impl GraphStore {
             .map(|(nid, &idx)| (idx, nid.clone()))
             .collect();
 
-        let mut result: Vec<(NodeId, f64)> = scores
-            .into_iter()
-            .filter_map(|(idx, score)| idx_to_id.get(&idx).map(|nid| (nid.clone(), score)))
+        let mut result: Vec<(NodeId, f64)> = node_indices_vec
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, idx)| idx_to_id.get(idx).map(|nid| (nid.clone(), scores[slot])))
             .collect();
 
         result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         Ok(result)
+    }
+
+    /// Every node, oldest first.
+    pub fn all_nodes(&self) -> Result<Vec<GraphNode>, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, data, metadata, created_at, updated_at FROM nodes ORDER BY created_at",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?;
+        let mut nodes = Vec::new();
+        for row in rows {
+            let (id, data, metadata, created_at, updated_at) = row?;
+            let node_type: NodeType = serde_json::from_str(&data)?;
+            let metadata: serde_json::Value = serde_json::from_str(&metadata)?;
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
+                .map_err(|e| GraphError::NodeNotFound(format!("bad timestamp: {e}")))?
+                .with_timezone(&chrono::Utc);
+            let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at)
+                .map_err(|e| GraphError::NodeNotFound(format!("bad timestamp: {e}")))?
+                .with_timezone(&chrono::Utc);
+            nodes.push(GraphNode {
+                id: NodeId(id),
+                node_type,
+                metadata,
+                created_at,
+                updated_at,
+            });
+        }
+        Ok(nodes)
+    }
+
+    /// Every edge.
+    pub fn all_edges(&self) -> Result<Vec<GraphEdge>, GraphError> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, edge_type, source_id, target_id, weight, metadata, created_at FROM edges",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, f64>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+            ))
+        })?;
+        let mut edges = Vec::new();
+        for row in rows {
+            let (id, edge_type, source, target, weight, metadata, created_at) = row?;
+            let edge_type = crate::edges::EdgeType::all()
+                .iter()
+                .copied()
+                .find(|kind| kind.as_str() == edge_type)
+                .ok_or_else(|| GraphError::NodeNotFound(format!("unknown edge {edge_type}")))?;
+            let metadata: serde_json::Value = serde_json::from_str(&metadata)?;
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
+                .map_err(|e| GraphError::NodeNotFound(format!("bad timestamp: {e}")))?
+                .with_timezone(&chrono::Utc);
+            edges.push(GraphEdge {
+                id: crate::edges::EdgeId(id),
+                edge_type,
+                source: NodeId(source),
+                target: NodeId(target),
+                weight,
+                metadata,
+                created_at,
+            });
+        }
+        Ok(edges)
     }
 }
 
@@ -1958,6 +2065,62 @@ mod tests {
         let store = GraphStore::open_memory().unwrap();
         let scores = store.pagerank().unwrap();
         assert!(scores.is_empty());
+    }
+
+    /// Nodes with no outgoing edge used to donate their rank to every other node
+    /// inside the iteration, so a few thousand sinks took minutes in a debug build
+    /// and the chat turn timed out before the model was called.
+    #[test]
+    fn pagerank_dangling_nodes_stay_fast() {
+        let store = GraphStore::open_memory().unwrap();
+        let hub = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "user".to_string(),
+            content: "hub".to_string(),
+            token_count: None,
+        }));
+        let spoke = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "spoke".to_string(),
+            token_count: None,
+        }));
+        let hub_id = hub.id.clone();
+        let spoke_id = spoke.id.clone();
+        store.add_node(hub).unwrap();
+        store.add_node(spoke).unwrap();
+        store
+            .add_edge(GraphEdge::new(
+                EdgeType::RespondsTo,
+                spoke_id.clone(),
+                hub_id.clone(),
+            ))
+            .unwrap();
+
+        const DANGLING: usize = 400;
+        for i in 0..DANGLING {
+            store
+                .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                    role: "user".to_string(),
+                    content: format!("sink {i}"),
+                    token_count: None,
+                })))
+                .unwrap();
+        }
+
+        let start = std::time::Instant::now();
+        let scores = store.pagerank().unwrap();
+        let elapsed = start.elapsed();
+
+        assert_eq!(scores.len(), DANGLING + 2);
+        let hub_score = scores.iter().find(|(id, _)| *id == hub_id).unwrap().1;
+        let spoke_score = scores.iter().find(|(id, _)| *id == spoke_id).unwrap().1;
+        assert!(
+            hub_score > spoke_score,
+            "hub should rank higher than the node that only links to it"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "pagerank took {elapsed:?} with {DANGLING} dangling nodes"
+        );
     }
 
     #[test]
