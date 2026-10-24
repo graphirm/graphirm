@@ -6,9 +6,17 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use error::GraphirmError;
 
+const BUILD_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " commit=",
+    env!("GRAPHIRM_GIT_COMMIT"),
+    " dirty=",
+    env!("GRAPHIRM_GIT_DIRTY"),
+);
+
 #[derive(Parser)]
 #[command(name = "graphirm")]
-#[command(version, about = "Graph-native coding agent")]
+#[command(version = BUILD_VERSION, about = "Graph-native coding agent")]
 struct Cli {
     /// Path to the graph database (default: ~/.local/share/graphirm/graph.db)
     #[arg(long, global = true)]

@@ -74,6 +74,8 @@ struct RunSummary {
     wall_seconds: u64,
     config_hash: String,
     graphirm_sha: String,
+    git_commit: String,
+    git_dirty: bool,
     packing: String,
 }
 
@@ -432,6 +434,8 @@ fn write_run_metadata(
         "max_cost_usd": args.max_cost_usd,
         "config_hash": prepared.config_hash,
         "graphirm_sha": prepared.git_sha,
+        "git_commit": env!("GRAPHIRM_GIT_COMMIT"),
+        "git_dirty": env!("GRAPHIRM_GIT_DIRTY") == "true",
         "packing": packing_name(args.packing_legacy),
         "started_unix": unix_now(),
     });
@@ -471,6 +475,8 @@ fn write_summary(args: &RunArgs, input: &SummaryInput) {
         wall_seconds: input.wall_seconds,
         config_hash: input.config_hash.clone(),
         graphirm_sha: input.graphirm_sha.clone(),
+        git_commit: env!("GRAPHIRM_GIT_COMMIT").to_string(),
+        git_dirty: env!("GRAPHIRM_GIT_DIRTY") == "true",
         packing: packing_name(args.packing_legacy).to_string(),
     };
     if let Some(parent) = path.parent() {

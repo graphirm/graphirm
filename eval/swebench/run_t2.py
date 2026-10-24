@@ -620,6 +620,36 @@ def mark_dead(repo: str, arm: str) -> None:
         drift_cv.notify_all()
 
 
+def load_grades(path: Path) -> dict:
+    """Read grades.json. A missing or empty file is no grades yet, not a dead arm.
+
+    A crash used to raise JSONDecodeError here, run_job marked the arm dead, and
+    the surviving arm then failed the drift check against nobody and pulled the
+    rest of the images. Those images are only removed when every arm finishes.
+    """
+    for _ in range(3):
+        if not path.is_file():
+            return {}
+        text = path.read_text()
+        if not text.strip():
+            time.sleep(0.05)
+            continue
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            time.sleep(0.05)
+            continue
+        return data if isinstance(data, dict) else {}
+    print(f"GRADES_EMPTY {path}", flush=True)
+    return {}
+
+
+def save_grades(path: Path, grades: dict) -> None:
+    tmp = path.parent / f"{path.name}.tmp"
+    tmp.write_text(json.dumps(grades, indent=2) + "\n")
+    tmp.replace(path)
+
+
 def notes_rate(ledger: Path) -> str:
     """notes=read/wrote/n plus median NOTES.md tokens over finished M-notes rows."""
     latest = latest_rows(ledger)
@@ -638,7 +668,7 @@ def task_complete(root: Path, instance: dict, client) -> None:
     out = root / instance["instance_id"]
     grades_path = out / "grades.json"
     with ledger_lock:
-        grades = json.loads(grades_path.read_text()) if grades_path.is_file() else {}
+        grades = load_grades(grades_path)
     if not all(arm in grades for arm in ARMS):
         return
     remove_task_image(instance, client)
@@ -801,9 +831,9 @@ def walk_job(repo: str, arm: str, tasks: list[dict], root: Path, arm_ledger: Pat
             result["apply_error"] = grade_error
         grades_path = out / "grades.json"
         with ledger_lock:
-            grades = json.loads(grades_path.read_text()) if grades_path.is_file() else {}
+            grades = load_grades(grades_path)
             grades[arm] = resolved
-            grades_path.write_text(json.dumps(grades, indent=2) + "\n")
+            save_grades(grades_path, grades)
             append_ledger(arm_ledger, result)
         if arm == "M-notes":
             promote_notes(root, instance, out)
@@ -834,10 +864,17 @@ def walk_job(repo: str, arm: str, tasks: list[dict], root: Path, arm_ledger: Pat
 
 
 def run_job(repo: str, arm: str, tasks, root, arm_ledger, done_arms) -> dict:
+    # mark_dead only after the arm finishes or the run is stopping. An exception
+    # used to take the same path, which dropped the arm out of wait_turn and let
+    # the others pull every later image.
+    completed = False
     try:
-        return walk_job(repo, arm, tasks, root, arm_ledger, done_arms)
+        result = walk_job(repo, arm, tasks, root, arm_ledger, done_arms)
+        completed = True
+        return result
     finally:
-        mark_dead(repo, arm)
+        if completed or stop_event.is_set():
+            mark_dead(repo, arm)
 
 
 # ---------------------------------------------------------------- main
@@ -932,7 +969,16 @@ def main() -> None:
         flush=True,
     )
     if finished >= TOTAL or (root / "stop-reason").is_file() or spent(arm_ledger) >= SPEND_CAP:
-        (root / "running").unlink(missing_ok=True)
+        from integrity import finish_track
+
+        problems = finish_track(TRACK, root)
+        if problems:
+            print(f"INTEGRITY_FAIL {len(problems)}", flush=True)
+            for line in problems[:30]:
+                print(f"INTEGRITY {line}", flush=True)
+        else:
+            (root / "running").unlink(missing_ok=True)
+            print("INTEGRITY_OK t2", flush=True)
     print(f"HOLD tasks={finished} primary={spent(arm_ledger):.2f} billed={spent(arm_ledger, 'cost_usd_billed'):.2f}", flush=True)
 
 

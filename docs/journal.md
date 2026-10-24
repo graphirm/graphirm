@@ -22,6 +22,22 @@ Entry template:
 
 ---
 
+## 2026-10-25 — The 12 October binary source was not recovered
+
+**Context:** Binary sha256 `a4e75be8392e7a6f520618984f9ca17c4c3448ee21d06d19620cbbfa3ae3495c` was built on 12 October 10:17. Editor history for `context.rs` jumps from March to 22 October 15:21. `workflow.rs` has snapshots on 5 October and 19 October, not on the build day. No stash, reflog entry, or dangling commit from 12 October contains the pin. Cursor history has no `.rs` snapshot that day.
+**Decision:** Record the source commit as `unknown`. The closest surviving tree is `8afb79ee2d5b45177f69802d80442ee6f5197886` (22 October). It logs `remaining_budget` and `dropped_messages` at `context.rs:828`; the binary's log line does not. The binary itself is the artifact: copied to `graphirm-eval-results` commit `7cb375a`, path `frozen/graphirm`. The original build command is `cargo zigbuild --release --target x86_64-unknown-linux-musl --bin graphirm`. A `cargo build` of the 22 October tree failed for lack of `x86_64-linux-musl-gcc` and was the wrong command.
+**Alternatives:** Rebuild the 22 October tree with zigbuild and treat a hash mismatch as proof of an unreproducible compiler. That test is not informative until the source matches.
+**Consequences:** Future eval binaries come from `eval/build_binary.py`, which refuses a dirty tree. `build.rs` embeds the commit and dirty flag.
+**Refs:** `eval/DATA_RULES.md`. `eval/registry.json` binaries entry.
+
+## 2026-10-25 — Eval data rules
+
+**Context:** Results had lived in `/tmp`, the study binary was built from uncommitted code, the backup git repo on this disk was corrupted, one grades file lost an arm, and primary cost and billed cost had been mixed.
+**Decision:** `eval/DATA_RULES.md` is the standing rule. `eval/registry.json` is the source of truth. `eval/swebench/integrity.py` is the post-track check, called from the T1, T2, T3, T4 and exploratory finish paths. A track stays marked running until the check is clean.
+**Alternatives:** Keep the checks as write-up notes after each track.
+**Consequences:** Existing analysis scripts still carry their own copies of the metric formulas. New analysis imports `eval/swebench/metrics.py`. Per-run manifests were not backfilled for T1–T3.
+**Refs:** `eval/DATA_RULES.md`.
+
 ## 2026-10-25 — Surviving source for the T2 binary a4e75be8
 
 **Context:** `eval/swebench/prereg.md` records commit `4bae8c99` and binary sha256 `a4e75be8392e7a6f520618984f9ca17c4c3448ee21d06d19620cbbfa3ae3495c`. That binary logs `task_node_present` from `context.rs:828` and contains the budget-warning sentences. Commit `4bae8c99` has neither. The copy that does is the uncommitted working tree. `context.rs` on disk is identical to the editor snapshot from 2026-10-22 15:21, ten days after the 2026-10-12 build. The binary's line 828 lists `budget`, `system_tokens`, `thread_tokens`, `kept_tokens`, `dropped_tokens`, `thread_messages`, `dropped_units`, `task_node_present`. The saved file also logs `remaining_budget` and `dropped_messages`.

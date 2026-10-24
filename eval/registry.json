@@ -1,0 +1,216 @@
+{
+  "schema": 1,
+  "rules": "eval/DATA_RULES.md",
+  "prices": {
+    "path": "eval/swebench/prices.lock.json",
+    "sha256": "d432b6de916e7f5256a5414f0004af0eaa1c69826d93e1ea9dc27106d07d8c19",
+    "model": "deepseek/deepseek-v4.1-flash",
+    "provider": "morph/fp8",
+    "input_cost_per_token": 4.2e-08,
+    "input_cache_read_per_token": 9e-09,
+    "output_cost_per_token": 6e-07,
+    "git_commit": "unknown",
+    "git_commit_reason": "prices.lock.json was frozen 2026-10-11. The commit that added it was not re-derived for this backfill."
+  },
+  "metrics": {
+    "module": "eval/swebench/metrics.py",
+    "sha256": "16a083420924809daf66b6e58f1cd7e92a1085062f5ecbaa097f2418a177c81d",
+    "resolved": "harness resolved boolean: SWE-bench report.json resolved, or CL-Bench status completed",
+    "primary_cost": " (prompt - cached) * input + cached * cache_read + output * output, from metrics.primary_cost",
+    "billed_cost": "OpenRouter usage.cost",
+    "cache_hit": "cached / prompt, prompt already includes cached",
+    "tokens": "prompt + output"
+  },
+  "task_lists": {
+    "path": "eval/swebench/instances.lock.json",
+    "sha256": "8dd313951adfa4d92cd5779eb57a4854c843657012f30a03fc2f625d781f5289",
+    "git_commit": "unknown",
+    "git_commit_reason": "The lock is the ID list. The commit that froze it was not re-derived for this backfill."
+  },
+  "configs": {
+    "eval_agent": {
+      "path": "eval/swebench/adapters/eval-agent.toml",
+      "sha256": "f791cc2803a1219088716944750698551dd6bd9bb38bbacc76a975e567086487"
+    },
+    "mini": {
+      "path": "eval/swebench/adapters/mini_config.yaml",
+      "sha256": "294ef69c734a99b56c68ceb2ec19620b16e38ed0c0e95d1e7aa55dc80f7c0f3b",
+      "version": "mini-swe-agent 2.4.6"
+    },
+    "issue_template": {
+      "path": "eval/swebench/adapters/task_template.md",
+      "sha256": "ae9b3caebb5a908d4722b57fad76fc0c6bbb18385a62a2a888d28a7ce5d99a2c"
+    },
+    "prereg": {
+      "path": "eval/swebench/prereg.md",
+      "sha256": "b8e73fd43e02c598746a2606dccc29b3244cbe9f5b921fb1a0558a4022692c1c",
+      "git_commit": "4bae8c993af85ffa91524f45ed1ca82f49ee21d0"
+    }
+  },
+  "binaries": {
+    "t2_frozen": {
+      "sha256": "a4e75be8392e7a6f520618984f9ca17c4c3448ee21d06d19620cbbfa3ae3495c",
+      "built": "2026-10-12T10:17:55+03:00",
+      "path_on_study_machine": "target/x86_64-unknown-linux-musl/release/graphirm",
+      "off_machine": {
+        "repo": "https://github.com/consoulhub/graphirm-eval-results.git",
+        "commit": "7cb375a7a43d3ee91348ce2d2782d6d82c13f8b8",
+        "path": "frozen/graphirm"
+      },
+      "source_commit": "unknown",
+      "source_commit_reason": "No editor snapshot, stash, reflog entry, or dangling commit from 12 October contains the pin. Closest tree is 8afb79ee2d5b45177f69802d80442ee6f5197886 from 22 October, whose context.rs:828 log has fields the binary does not.",
+      "closest_source_commit": "8afb79ee2d5b45177f69802d80442ee6f5197886",
+      "build_command": "cargo zigbuild --release --target x86_64-unknown-linux-musl --bin graphirm",
+      "toolchain": "unknown",
+      "toolchain_reason": "rustc and zig versions were not recorded on 12 October."
+    }
+  },
+  "tracks": {
+    "t1": {
+      "name": "Headline",
+      "n": 212,
+      "arms": [
+        "M",
+        "G",
+        "G-md",
+        "G-b16",
+        "G-b16-recency"
+      ],
+      "task_list_key": "headline",
+      "dataset": "nebius/SWE-rebench-leaderboard",
+      "dataset_revision": "34d5a58864acf91613740a09ec5d205228dcfa39",
+      "runs": "/home/krs/graphirm-runs/t1",
+      "harness": "swebench report.json under logs/run_evaluation",
+      "spend_cap_usd_primary": 35,
+      "per_task_cap_usd": 0.5
+    },
+    "t2": {
+      "name": "Memory A",
+      "n": 273,
+      "scored_n": 270,
+      "arms": [
+        "M",
+        "M-notes",
+        "G-fresh",
+        "G-persist"
+      ],
+      "task_list_key": "memory_tracks.swe_bench_cl",
+      "dataset": "thomasjoshi/agents-never-forget",
+      "dataset_revision": "unknown",
+      "dataset_revision_reason": "The lock URL points at blob/main with no pinned commit.",
+      "runs": "/home/krs/graphirm-runs/t2",
+      "harness": "swebench report.json under grading/{arm}/attempt*/report.json",
+      "spend_cap_usd_primary": 40,
+      "billed_safety_usd": 100,
+      "per_task_cap_usd": 0.5
+    },
+    "t3": {
+      "name": "Memory B",
+      "n": 19,
+      "arms": [
+        "M",
+        "M-notes",
+        "G-fresh",
+        "G-persist"
+      ],
+      "task_list_key": "memory_tracks.clbench_codebase",
+      "dataset": "pgasawa/continual-learning-bench",
+      "dataset_revision": "unknown",
+      "dataset_revision_reason": "The lock URL points at blob/main. The checkout on this machine on 2026-10-25 is 5f8c50eb1e84b2eda2ef4faff757dfc812a0ea26, which was not recorded at run time.",
+      "runs": "/home/krs/graphirm-runs/t3",
+      "harness": "CL-Bench status on the ledger: completed means the tests exited 0. No report.json.",
+      "spend_cap_usd_primary": 5,
+      "per_task_cap_usd": 0.5
+    },
+    "t4": {
+      "name": "Robustness",
+      "n": 109,
+      "arms": [
+        "M",
+        "G"
+      ],
+      "task_list_key": "robustness",
+      "dataset": "ibragim-badertdinov/swe-rebench-07-2026",
+      "dataset_revision": "unknown",
+      "dataset_revision_reason": "The dataset is not downloaded yet.",
+      "runs": "/home/krs/graphirm-runs/t4",
+      "status": "not_started",
+      "harness": "Harbor. The integrity check uses the same grade-versus-report rule as T2 once reports exist.",
+      "spend_cap_usd_primary": 25,
+      "per_task_cap_usd": 0.5
+    }
+  },
+  "exclusions": [
+    {
+      "track": "t1",
+      "instance_id": "vyperlang__vyper-4801",
+      "why": "smoke task, removed before the headline run"
+    },
+    {
+      "track": "t1",
+      "instance_id": "keras-team__keras-22316",
+      "why": "smoke task, removed before the headline run"
+    },
+    {
+      "track": "t1",
+      "instance_id": "tox-dev__tox-3931",
+      "why": "smoke task, removed before the headline run"
+    },
+    {
+      "track": "t2",
+      "instance_id": "django__django-10097",
+      "why": "gold patch does not resolve under swebench 4.1.0; the task ran and is not scored"
+    },
+    {
+      "track": "t2",
+      "instance_id": "sphinx-doc__sphinx-9711",
+      "why": "gold patch does not resolve under swebench 4.1.0; the task ran and is not scored"
+    },
+    {
+      "track": "t2",
+      "instance_id": "astropy__astropy-7606",
+      "why": "gold patch does not resolve under swebench 4.1.0; the task ran and is not scored"
+    },
+    {
+      "track": "t4",
+      "instance_id": "HKUDS__nanobot-4048",
+      "why": "smoke task, removed in the pre-registration"
+    },
+    {
+      "track": "t4",
+      "instance_id": "PerryTS__perry-3982",
+      "why": "smoke task, removed in the pre-registration"
+    }
+  ],
+  "decisions": [
+    {
+      "journal": "2026-10-22 11:15 EEST",
+      "affects": "t2 rows after the restart",
+      "what": "primary-cost cap and $100 billed safety stop"
+    },
+    {
+      "journal": "2026-10-22 09:20 EEST",
+      "affects": "t2 M-notes",
+      "what": "explicit notes instruction; T2 restarted from scratch"
+    },
+    {
+      "journal": "2026-10-25",
+      "affects": "t2_frozen binary",
+      "what": "source commit unknown; binary stored at graphirm-eval-results 7cb375a"
+    },
+    {
+      "journal": "2026-10-25",
+      "affects": "t4 and later tracks",
+      "what": "eval data rules and the post-track integrity check"
+    }
+  ],
+  "known_gaps": [
+    "t2 matplotlib__matplotlib-25311 M-notes is missing from grades.json. The harness report says resolved true. The ledger was not edited."
+  ],
+  "not_backfilled": [
+    "Per-run manifests for T1, T2 and T3. The files are on disk; sha256 manifests were not written after the fact.",
+    "Existing analysis scripts still contain their own copies of the metric formulas. New scripts import eval/swebench/metrics.py.",
+    "The git commit of prices.lock.json and instances.lock.json.",
+    "Toolchain versions for the 12 October binary."
+  ]
+}

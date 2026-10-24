@@ -788,7 +788,16 @@ def main() -> None:
         equal, checked = sequential_sample_rate(root)
         print(f"RECONSTRUCTION sequential={equal}/{checked}", flush=True)
         write_report(root)
-        (root / "running").unlink(missing_ok=True)
+        from integrity import finish_track
+
+        problems = finish_track(TRACK, root)
+        if problems:
+            print(f"INTEGRITY_FAIL {len(problems)}", flush=True)
+            for line in problems[:30]:
+                print(f"INTEGRITY {line}", flush=True)
+        else:
+            (root / "running").unlink(missing_ok=True)
+            print("INTEGRITY_OK t1", flush=True)
     print(f"HOLD tasks={finished} spend={spent(arm_ledger):.2f}", flush=True)
 
 

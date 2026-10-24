@@ -653,7 +653,16 @@ def main() -> None:
         flush=True,
     )
     if finished >= TOTAL or (root / "stop-reason").is_file() or spent(arm_ledger) >= SPEND_CAP:
-        (root / "running").unlink(missing_ok=True)
+        from integrity import finish_track
+
+        problems = finish_track(TRACK, root)
+        if problems:
+            print(f"INTEGRITY_FAIL {len(problems)}", flush=True)
+            for line in problems[:30]:
+                print(f"INTEGRITY {line}", flush=True)
+        else:
+            (root / "running").unlink(missing_ok=True)
+            print("INTEGRITY_OK t3", flush=True)
     print(f"HOLD tasks={finished} spend={spent(arm_ledger):.2f}", flush=True)
 
 
