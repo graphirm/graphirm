@@ -2,7 +2,7 @@
 
 Harbor already ships `mini-swe-agent`. This subclass keeps that install, run,
 and trajectory collection, and pins the eval budgets: the same model string,
-reasoning effort, frozen LiteLLM registry, and a 3 USD cost limit. The
+reasoning effort, frozen LiteLLM registry, and a 0.50 USD cost limit. The
 built-in agent also exports `MSWEA_COST_TRACKING=ignore_errors`. With the
 registry in place the price resolves, so the cost limit uses the frozen
 table; ignore_errors only applies if registration fails.
@@ -23,7 +23,7 @@ class EvalMiniSweAgent(MiniSweAgent):
         kwargs.setdefault("litellm_model_registry_file", str(REGISTRY))
         kwargs.setdefault("reasoning_effort", "high")
         if kwargs.get("cost_limit") in (None, "0", 0):
-            kwargs["cost_limit"] = "3"
+            kwargs["cost_limit"] = "0.50"
         super().__init__(*args, **kwargs)
 
     async def exec_as_agent(self, environment, command, env=None, cwd=None, timeout_sec=None):

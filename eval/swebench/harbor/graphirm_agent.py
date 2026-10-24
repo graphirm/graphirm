@@ -27,7 +27,7 @@ class GraphirmAgent(BaseInstalledAgent):
     def __init__(
         self,
         max_turns: int = 100,
-        cost_limit: float = 3.0,
+        cost_limit: float = 0.50,
         binary: str | None = None,
         *args,
         **kwargs,
