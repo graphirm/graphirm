@@ -71,6 +71,23 @@
       "build_command": "cargo zigbuild --release --target x86_64-unknown-linux-musl --bin graphirm",
       "toolchain": "unknown",
       "toolchain_reason": "rustc and zig versions were not recorded on 12 October."
+    },
+    "explore": {
+      "label": "exploratory, not pre-registered",
+      "sha256": "58e6cbfeb54d0fa590177c65ebd5d3a47f4899a12730b8ce04c3b4b954f46dbb",
+      "built": "2026-10-27",
+      "path_on_study_machine": "/home/krs/graphirm-frozen-target/x86_64-unknown-linux-musl/release/graphirm",
+      "source_commit": "53a8b55e58260697b18ef069447fef45ac530f9a",
+      "branch": "eval/explore-switches",
+      "build_command": "cargo zigbuild --release --target x86_64-unknown-linux-musl --bin graphirm",
+      "toolchain": {
+        "rustc": "1.93.0 (254b59607 2026-01-19)",
+        "zig": "0.17.0"
+      },
+      "switches": {
+        "budget_note": "default true; false omits the [Budget] note",
+        "pack_previous_tool_results": "default true; false omits earlier tasks' tool results and derived file or command content"
+      }
     }
   },
   "tracks": {
