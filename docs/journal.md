@@ -22,6 +22,16 @@ Entry template:
 
 ---
 
+## 2026-10-27 — Exploratory memory arms finished on matplotlib and astropy
+
+**Context:** The three arms on the `53a8b55` binary finished all 56 tasks. Integrity reported no problems. Primary cost was $4.17 and the OpenRouter bill was $2.22.
+**Decision:** Score the 55 tasks T2 scores. Leave `astropy__astropy-7606` in the carried graph and out of the resolve count. Publish the comparison as exploratory, not pre-registered.
+**Alternatives:** Scoring the gold-fail was rejected. Its harness result is false on every arm, including the recorded ones.
+**Consequences:** On this binary the control arm solved 43 of 55. The recorded G-persist arm solved 21 of the same 55. Turning the budget note off, or dropping earlier tool results, solved fewer tasks than the control. The report is `explore/analysis/explore_report.md`.
+**Refs:** `eval/swebench/analysis/explore_report.py`.
+
+---
+
 ## 2026-10-27 — The three exploratory memory arms are not pre-registered
 
 **Context:** The binary at `53a8b55` can omit the budget note or earlier tool results. The comparison is matplotlib then astropy, 56 tasks, one graph per arm per repo, empty at the repo switch.
