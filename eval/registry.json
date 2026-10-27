@@ -150,10 +150,32 @@
       "dataset_local_sha256": "a467482574be006c5e0346dfbe620787c130fcd4094455b4bef84959aed829f8",
       "dataset_local_sha256_kind": "sha256 of the sorted sha256sum of every file in the local export",
       "harbor": "0.24.0",
+      "harbor_bin": "/home/krs/.local/bin/harbor",
+      "harbor_env": "/home/krs/.local/share/uv/tools/harbor",
+      "validity": {
+        "ledger": "/home/krs/graphirm-runs/t4/validity/validity.jsonl",
+        "finished": "2026-10-25T10:56:53Z",
+        "oracle_reward_1": 106,
+        "oracle_reward_0": 3,
+        "nop_reward_1": 0,
+        "nop_reward_0": 109,
+        "scored_n": 106
+      },
       "runs": "/home/krs/graphirm-runs/t4",
-      "status": "not_started",
+      "status": "complete",
+      "finished": {
+        "at": "2026-10-26T23:39:11Z",
+        "tasks": 106,
+        "arms": ["M", "G"],
+        "primary_usd": 17.4232,
+        "billed_usd": 33.7395,
+        "errors": 1,
+        "http_429": 21,
+        "integrity": "ok",
+        "analysis": "/home/krs/graphirm-runs/t4/analysis/t4_report.json"
+      },
       "harness": "Harbor. The integrity check uses the same grade-versus-report rule as T2 once reports exist.",
-      "spend_cap_usd_primary": 25,
+      "spend_cap_usd_primary": 35,
       "per_task_cap_usd": 0.5
     }
   },
@@ -197,6 +219,21 @@
       "track": "t4",
       "instance_id": "PerryTS__perry-3982",
       "why": "smoke task, removed in the pre-registration"
+    },
+    {
+      "track": "t4",
+      "instance_id": "langchain4j__langchain4j-5315",
+      "why": "oracle reward 0 on 2026-10-25; the official fix does not pass, so the task is out of both paid arms"
+    },
+    {
+      "track": "t4",
+      "instance_id": "langchain4j__langchain4j-5367",
+      "why": "oracle reward 0 on 2026-10-25; the official fix does not pass, so the task is out of both paid arms"
+    },
+    {
+      "track": "t4",
+      "instance_id": "openrewrite__rewrite-7784",
+      "why": "oracle reward 0 on 2026-10-25; the official fix does not pass, so the task is out of both paid arms"
     }
   ],
   "decisions": [
@@ -219,6 +256,21 @@
       "journal": "2026-10-25",
       "affects": "t4 and later tracks",
       "what": "eval data rules and the post-track integrity check"
+    },
+    {
+      "journal": "2026-10-25",
+      "affects": "t4 langchain4j__langchain4j-5315, langchain4j__langchain4j-5367, and openrewrite__rewrite-7784",
+      "what": "oracle reward 0; excluded from both paid arms"
+    },
+    {
+      "journal": "2026-10-25",
+      "affects": "t4 paid M and G",
+      "what": "one trial at a time; $25 primary stop; $60 billed safety stop; mini $0.50 cap uses the frozen formula"
+    },
+    {
+      "journal": "2026-10-26",
+      "affects": "t4 paid M and G",
+      "what": "primary cap raised from $25 to $35 before per-arm results; billed stop stays $60; restart held because the balance was under $55"
     }
   ],
   "known_gaps": [
