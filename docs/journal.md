@@ -22,6 +22,26 @@ Entry template:
 
 ---
 
+## 2026-10-27 — The three exploratory memory arms are not pre-registered
+
+**Context:** The binary at `53a8b55` can omit the budget note or earlier tool results. The comparison is matplotlib then astropy, 56 tasks, one graph per arm per repo, empty at the repo switch.
+**Decision:** Run `G-persist-control` on the unchanged eval config, `G-persist-nonote` with `budget_note = false`, and `G-persist-nooldtools` with `pack_previous_tool_results = false`. Same model, provider, per-task budgets, test-file filter, and retry guards as T2. Every ledger row carries `exploratory, not pre-registered`. The control config hash stays the pre-registered hash. The other two hashes are the files written under the explore run directory.
+**Alternatives:** Editing `eval-agent.toml` was rejected. That file's hash is the pre-registered pin.
+**Consequences:** A variant arm fails the old config-hash guard on purpose. The explore driver checks each arm against its own file. Recorded T1–T4 rows are not rewritten.
+**Refs:** `eval/swebench/run_explore.py`, `eval/registry.json` binary `explore`.
+
+---
+
+## 2026-10-27 — The tail packing test fails on the pinned task's token count
+
+**Context:** `t4_exchange_is_atomic_when_tail_would_start_on_a_result` fails on the current source and on the source from before the exploratory switches. The assertion says a reserved tail node was paired away. The packed text on that fixture is `ask read`, `tail a`, `tail b`, and `tail c`. The tool call and its result are both absent, so the exchange stayed together. `total_tokens` is 11 and the visible estimate is 14. The 3-token gap is `ask read` (2 words, counted as 3), the user message the packer pins when it is outside the tail.
+**Decision:** Leave the accounting as it is for the exploratory binary. `total_tokens` omits the pinned task even though that message is sent. The budget still reserves those tokens before fitting the rest, so the task is not crowded out. The budget note's percentage is low by the task text alone. Log this and do not revise the recorded T1–T4 numbers.
+**Alternatives:** Changing `total_tokens` to include the pinned task was rejected for this binary. The control arm is meant to keep today's behaviour, including when the note fires.
+**Consequences:** A long issue under-states the note's usage ratio by the task's own estimate. On a 100k budget that is a fraction of a point. On a 16k budget a long issue can move a call across the 90% line. The T2 early stops are still the note firing after old tool output filled the pack.
+**Refs:** `crates/agent/src/context.rs` (`t4_exchange_is_atomic_when_tail_would_start_on_a_result`).
+
+---
+
 ## 2026-10-27 — Exploratory packing switches stay off unless a config sets them
 
 **Context:** The memory comparison needs one binary that can omit the `[Budget]` note, or omit tool results carried in from earlier tasks. The product still appends that note at 70% and 90% of the context budget, and still packs those tool results.
