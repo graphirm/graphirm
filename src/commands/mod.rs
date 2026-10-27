@@ -125,6 +125,7 @@ pub fn unknown_agent_keys(toml_text: &str) -> Result<Vec<String>, String> {
 const KNOWN_AGENT_KEYS: &[&str] = &[
     "adaptive_routing",
     "auto_link_write_to_planning",
+    "budget_note",
     "budget_warning_thresholds",
     "default_auto_approve",
     "description",
@@ -148,6 +149,7 @@ const KNOWN_AGENT_KEYS: &[&str] = &[
     "name",
     "openrouter_provider",
     "outline",
+    "pack_previous_tool_results",
     "pi",
     "pre_completion_verify",
     "pre_edit_impact",

@@ -122,6 +122,15 @@ pub struct ContextConfig {
     /// that order. Nodes that were not sent yet append after them.
     #[serde(default)]
     pub pack_prefix_ids: Vec<NodeId>,
+    /// When false, tool results from earlier tasks, and the file or command
+    /// content derived from them, are left out of the pack. The current task
+    /// is unchanged. Default true, which is the current packing.
+    #[serde(default = "default_pack_previous_tool_results")]
+    pub pack_previous_tool_results: bool,
+}
+
+fn default_pack_previous_tool_results() -> bool {
+    true
 }
 
 fn default_max_tokens() -> usize {
@@ -167,6 +176,7 @@ impl Default for ContextConfig {
             excerpt_after_turns: None,
             dedup_derived: false,
             pack_prefix_ids: Vec::new(),
+            pack_previous_tool_results: true,
         }
     }
 }
@@ -653,6 +663,9 @@ pub fn build_context_with_stats(
     // Group the thread into units, then reserve the newest units that fit the tail cap.
     // `guaranteed_recent` is chronological (oldest reserved unit first).
     let chrono: Vec<GraphNode> = thread.iter().rev().cloned().collect();
+    let task_id = current_task_user_id(&chrono);
+    let previous_tools =
+        previous_task_tool_ids(&chrono, task_id.as_ref(), config.pack_previous_tool_results);
     let units = group_interaction_units(&chrono);
     let in_tail = tail_unit_indexes(
         &units,
@@ -663,10 +676,13 @@ pub fn build_context_with_stats(
     let mut guaranteed_recent: Vec<GraphNode> = Vec::new();
     let mut older_conversation: Vec<GraphNode> = Vec::new();
     for (index, unit) in units.into_iter().enumerate() {
+        let kept = unit
+            .into_iter()
+            .filter(|node| !previous_tools.contains(&node.id));
         if in_tail[index] {
-            guaranteed_recent.extend(unit);
+            guaranteed_recent.extend(kept);
         } else {
-            older_conversation.extend(unit);
+            older_conversation.extend(kept);
         }
     }
 
@@ -675,7 +691,6 @@ pub fn build_context_with_stats(
     // The latest of those is the current task, so a graph carried across
     // tasks does not keep pinning the first task. With no mark, the oldest
     // user message is the task, which is the single-task case.
-    let task_id = current_task_user_id(&chrono);
     let pinned_task = task_id.as_ref().and_then(|id| {
         older_conversation
             .iter()
@@ -694,7 +709,10 @@ pub fn build_context_with_stats(
 
     // Collect Content/Knowledge nodes reachable from conversation
     let conversation_ids: Vec<NodeId> = thread.iter().map(|n| n.id.clone()).collect();
-    let content_nodes = collect_context_nodes(graph, &conversation_ids)?;
+    let content_nodes = collect_context_nodes(graph, &conversation_ids)?
+        .into_iter()
+        .filter(|node| !derived_from_previous(graph, node, &previous_tools))
+        .collect::<Vec<_>>();
 
     // Compute scoring inputs
     let pr_vec = graph
@@ -1133,6 +1151,43 @@ fn is_interaction_node(node: &GraphNode) -> bool {
 
 fn is_tool_result_node(node: &GraphNode) -> bool {
     matches!(&node.node_type, NodeType::Interaction(data) if data.role == "tool")
+}
+
+/// Tool results created before the current task message. An empty set keeps
+/// today's packing, including the single-task case where every tool result
+/// belongs to that task.
+fn previous_task_tool_ids(
+    chrono: &[GraphNode],
+    task_id: Option<&NodeId>,
+    pack_previous: bool,
+) -> std::collections::HashSet<NodeId> {
+    if pack_previous {
+        return std::collections::HashSet::new();
+    }
+    let Some(task_id) = task_id else {
+        return std::collections::HashSet::new();
+    };
+    let Some(task) = chrono.iter().find(|node| &node.id == task_id) else {
+        return std::collections::HashSet::new();
+    };
+    chrono
+        .iter()
+        .filter(|node| is_tool_result_node(node) && node.created_at < task.created_at)
+        .map(|node| node.id.clone())
+        .collect()
+}
+
+fn derived_from_previous(
+    graph: &GraphStore,
+    node: &GraphNode,
+    previous_tools: &std::collections::HashSet<NodeId>,
+) -> bool {
+    if previous_tools.is_empty() {
+        return false;
+    }
+    derived_source_ids(graph, node)
+        .iter()
+        .any(|id| previous_tools.contains(id))
 }
 
 fn append_context_after_tool_results(nodes: Vec<GraphNode>) -> Vec<GraphNode> {
@@ -5208,5 +5263,144 @@ mod tests {
         let user_at = text.find("fix the bug").expect("user message");
         assert!(file_at < user_at);
         assert_eq!(text.matches("UNIQUEFILEBODY").count(), 2);
+    }
+
+    fn two_task_tool_fixture() -> ReadFixture {
+        let graph = GraphStore::open_memory().unwrap();
+        let agent = GraphNode::new(NodeType::Agent(AgentData {
+            name: "eval".into(),
+            model: "mock".into(),
+            system_prompt: Some("S".into()),
+            status: "running".into(),
+        }));
+        let agent_id = agent.id.clone();
+        graph.add_node(agent).unwrap();
+        let base = Utc::now();
+        let mut previous = NodeId::default();
+        let specs = [
+            ("old task", "OLDTOOL", "OLDFILE", "old.py", "call-old"),
+            ("new task", "NEWTOOL", "NEWFILE", "new.py", "call-new"),
+        ];
+        for (index, (task, tool_body, file_body, path, call_id)) in specs.iter().enumerate() {
+            let at = base + Duration::seconds((index * 10) as i64);
+            let mut user = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "user".into(),
+                content: (*task).into(),
+                token_count: None,
+            }));
+            user.created_at = at;
+            user.metadata = serde_json::json!({"task": true});
+            let mut assistant = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".into(),
+                content: format!("reading {path}"),
+                token_count: None,
+            }));
+            assistant.created_at = at + Duration::seconds(1);
+            assistant.metadata = serde_json::json!({
+                "tool_calls": [{"id": call_id, "name": "read", "arguments": {"path": path}}]
+            });
+            let mut file = GraphNode::new(NodeType::Content(ContentData {
+                content_type: "file".into(),
+                path: Some((*path).into()),
+                body: (*file_body).into(),
+                language: None,
+            }));
+            file.created_at = at + Duration::seconds(2);
+            let mut tool = GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "tool".into(),
+                content: (*tool_body).into(),
+                token_count: None,
+            }));
+            tool.created_at = at + Duration::seconds(3);
+            tool.metadata = serde_json::json!({
+                "tool_call_id": call_id,
+                "tool_name": "read",
+                "path": path
+            });
+            for node in [&user, &assistant, &tool] {
+                graph.add_node(node.clone()).unwrap();
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::Produces,
+                        agent_id.clone(),
+                        node.id.clone(),
+                    ))
+                    .unwrap();
+            }
+            graph.add_node(file.clone()).unwrap();
+            let parent = if index == 0 {
+                user.id.clone()
+            } else {
+                previous.clone()
+            };
+            if index == 0 {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        assistant.id.clone(),
+                        user.id.clone(),
+                    ))
+                    .unwrap();
+            } else {
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        user.id.clone(),
+                        parent,
+                    ))
+                    .unwrap();
+                graph
+                    .add_edge(GraphEdge::new(
+                        EdgeType::RespondsTo,
+                        assistant.id.clone(),
+                        user.id.clone(),
+                    ))
+                    .unwrap();
+            }
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::RespondsTo,
+                    tool.id.clone(),
+                    assistant.id.clone(),
+                ))
+                .unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Reads,
+                    assistant.id.clone(),
+                    file.id.clone(),
+                ))
+                .unwrap();
+            previous = tool.id.clone();
+        }
+        ReadFixture { graph, agent_id }
+    }
+
+    #[test]
+    fn default_packing_keeps_previous_task_tool_results() {
+        let fixture = two_task_tool_fixture();
+        let window =
+            build_context(&fixture.graph, &fixture.agent_id, &pack_config(true, false)).unwrap();
+        let text = message_text(&window);
+        assert!(text.contains("OLDTOOL"), "{text}");
+        assert!(text.contains("NEWTOOL"), "{text}");
+        assert!(text.contains("OLDFILE"), "{text}");
+        assert!(text.contains("NEWFILE"), "{text}");
+        assert!(text.contains("old task"), "{text}");
+    }
+
+    #[test]
+    fn omitting_previous_tool_results_leaves_the_current_task() {
+        let fixture = two_task_tool_fixture();
+        let mut config = pack_config(true, false);
+        config.pack_previous_tool_results = false;
+        let window = build_context(&fixture.graph, &fixture.agent_id, &config).unwrap();
+        let text = message_text(&window);
+        assert!(!text.contains("OLDTOOL"), "{text}");
+        assert!(!text.contains("OLDFILE"), "{text}");
+        assert!(text.contains("NEWTOOL"), "{text}");
+        assert!(text.contains("NEWFILE"), "{text}");
+        assert!(text.contains("old task"), "{text}");
+        assert!(text.contains("new task"), "{text}");
     }
 }

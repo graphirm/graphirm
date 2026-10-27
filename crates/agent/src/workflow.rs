@@ -240,6 +240,36 @@ fn append_pack_trace(context: &[graphirm_llm::LlmMessage], tools: &[graphirm_llm
 /// The note is not stored. The next request rebuilds that message without it
 /// and appends the new note to whatever is last, so every earlier message
 /// stays byte-for-byte the same.
+pub(crate) fn budget_note_text(
+    enabled: bool,
+    thresholds: &[f64],
+    usage_ratio: f64,
+) -> Option<String> {
+    if !enabled || thresholds.is_empty() {
+        return None;
+    }
+    let highest_crossed = thresholds
+        .iter()
+        .copied()
+        .filter(|&threshold| usage_ratio >= threshold)
+        .fold(f64::NEG_INFINITY, f64::max);
+    if !highest_crossed.is_finite() {
+        return None;
+    }
+    let pct = (usage_ratio * 100.0) as u32;
+    Some(if highest_crossed >= 0.9 {
+        format!(
+            "[Budget] Token usage at {pct}% of limit. \
+             Prioritize completing the current step and summarizing — do not start new tasks."
+        )
+    } else {
+        format!(
+            "[Budget] Token usage at {pct}% of limit. \
+             Start wrapping up; avoid long exploratory chains."
+        )
+    })
+}
+
 pub(crate) fn append_budget_note(messages: &mut [graphirm_llm::LlmMessage], note: &str) {
     use graphirm_llm::{ContentPart, Role};
 
@@ -353,6 +383,7 @@ pub async fn stream_and_record(
     };
     context_config.prefix_stable = !session.agent_config.packing_legacy;
     context_config.dedup_derived = !session.agent_config.packing_legacy;
+    context_config.pack_previous_tool_results = session.agent_config.pack_previous_tool_results;
     if let Ok(raw) = std::env::var("GRAPHIRM_EXCERPT_AFTER")
         && let Ok(turns) = raw.parse::<usize>()
     {
@@ -494,35 +525,15 @@ pub async fn stream_and_record(
 
     // The warning changes with usage, so it stays after the packed nodes.
     // Putting it on the system message would change the cached prefix.
-    if max_tok > 0 && !session.agent_config.budget_warning_thresholds.is_empty() {
-        let usage_ratio = window.total_tokens as f64 / max_tok as f64;
-        let highest_crossed = session
-            .agent_config
-            .budget_warning_thresholds
-            .iter()
-            .copied()
-            .filter(|&t| usage_ratio >= t)
-            .fold(f64::NEG_INFINITY, f64::max);
-        if highest_crossed.is_finite() {
-            let pct = (usage_ratio * 100.0) as u32;
-            let warning = if highest_crossed >= 0.9 {
-                format!(
-                    "[Budget] Token usage at {pct}% of limit. \
-                     Prioritize completing the current step and summarizing — do not start new tasks."
-                )
-            } else {
-                format!(
-                    "[Budget] Token usage at {pct}% of limit. \
-                     Start wrapping up; avoid long exploratory chains."
-                )
-            };
-            append_budget_note(&mut context, &warning);
-            tracing::info!(
-                usage_ratio,
-                pct,
-                "Budget warning appended to the latest user or tool message"
-            );
-        }
+    if max_tok > 0
+        && let Some(warning) = budget_note_text(
+            session.agent_config.budget_note,
+            &session.agent_config.budget_warning_thresholds,
+            window.total_tokens as f64 / max_tok as f64,
+        )
+    {
+        append_budget_note(&mut context, &warning);
+        tracing::info!("Budget warning appended to the latest user or tool message");
     }
 
     append_pack_trace(&context, &tool_defs);
@@ -2832,6 +2843,15 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn budget_note_off_suppresses_the_warning() {
+        let thresholds = [0.7, 0.9];
+        let on = budget_note_text(true, &thresholds, 0.95).expect("note");
+        assert!(on.contains("[Budget]"));
+        assert!(budget_note_text(false, &thresholds, 0.95).is_none());
+        assert!(budget_note_text(true, &thresholds, 0.5).is_none());
     }
 
     #[test]

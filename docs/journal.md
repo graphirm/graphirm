@@ -22,6 +22,16 @@ Entry template:
 
 ---
 
+## 2026-10-27 — Exploratory packing switches stay off unless a config sets them
+
+**Context:** The memory comparison needs one binary that can omit the `[Budget]` note, or omit tool results carried in from earlier tasks. The product still appends that note at 70% and 90% of the context budget, and still packs those tool results.
+**Decision:** `budget_note` defaults to true, and `pack_previous_tool_results` defaults to true. Setting `budget_note` to false skips the note. Setting `pack_previous_tool_results` to false leaves out tool results created before the current task message, and file or command-output nodes derived from those results. The current task's nodes stay. Three arms on this binary, `G-persist-control`, `G-persist-nonote` and `G-persist-nooldtools`, are exploratory and not pre-registered.
+**Alternatives:** Defaulting both keys to false was rejected. A config that does not mention them would then drop the budget note from every session.
+**Consequences:** An eval config has to set the key to change behaviour. A missing key matches the packing the frozen T4 binary used.
+**Refs:** `crates/agent/src/config.rs`, `crates/agent/src/context.rs`, `crates/agent/src/workflow.rs`.
+
+---
+
 ## 2026-10-27 — T4 launch failures are a harness error and are rerun once
 
 **Context:** Thirteen arms on seven tasks exited before the agent started. The exception was `syntax error near unexpected token ';'`. Those task texts contain quotes, backticks and `$`. Harbor already passes mini's task through `shlex.quote`, and Graphirm already writes the task to `/tmp/issue.md`. Replaying the saved commands showed bash rejects `}; ;`. The test-file filter emitted that empty statement when `T4_TEST_PATCH_PATHS` was empty. Those trials were spawned by the driver that had not yet exported the path list, while the filter shell was already on disk. Removing the empty statement makes all thirteen commands parse, and a stand-in agent is invoked for each.

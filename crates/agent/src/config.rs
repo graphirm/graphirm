@@ -219,6 +219,14 @@ pub struct AgentConfig {
     /// An empty list disables budget warnings. Default: [0.7, 0.9].
     #[serde(default = "default_budget_warning_thresholds")]
     pub budget_warning_thresholds: Vec<f64>,
+    /// When false, the `[Budget]` note is not appended. Default true, so a
+    /// config that does not mention the switch still warns at the thresholds.
+    #[serde(default = "default_true")]
+    pub budget_note: bool,
+    /// When false, tool results from earlier tasks and the file or command
+    /// content derived from them are left out of the pack. Default true.
+    #[serde(default = "default_true")]
+    pub pack_previous_tool_results: bool,
     /// When true, inject a Plan→Build→Verify→Fix problem-solving framework into the
     /// system prompt at session start. Guides the agent from planning directly into
     /// execution without excessive discussion. Default true.
@@ -638,6 +646,8 @@ impl Default for AgentConfig {
             doom_loop_threshold: default_doom_loop_threshold(),
             read_loop_threshold: default_read_loop_threshold(),
             budget_warning_thresholds: default_budget_warning_thresholds(),
+            budget_note: true,
+            pack_previous_tool_results: true,
             enforce_work_loop: default_enforce_work_loop(),
             disable_bash: false,
             auto_link_write_to_planning: true,
@@ -730,6 +740,10 @@ struct AgentConfigSection {
     read_loop_threshold: u32,
     #[serde(default = "default_budget_warning_thresholds")]
     budget_warning_thresholds: Vec<f64>,
+    #[serde(default = "default_true")]
+    budget_note: bool,
+    #[serde(default = "default_true")]
+    pack_previous_tool_results: bool,
     #[serde(default = "default_enforce_work_loop")]
     enforce_work_loop: bool,
     #[serde(default)]
@@ -810,6 +824,8 @@ impl AgentConfig {
             doom_loop_threshold: file.agent.doom_loop_threshold,
             read_loop_threshold: file.agent.read_loop_threshold,
             budget_warning_thresholds: file.agent.budget_warning_thresholds,
+            budget_note: file.agent.budget_note,
+            pack_previous_tool_results: file.agent.pack_previous_tool_results,
             enforce_work_loop: file.agent.enforce_work_loop,
             disable_bash: file.agent.disable_bash,
             auto_link_write_to_planning: file.agent.auto_link_write_to_planning,
@@ -950,6 +966,37 @@ mod tests {
             config.doom_loop_threshold, 3,
             "doom_loop_threshold should read 3 from TOML"
         );
+    }
+
+    #[test]
+    fn each_switch_defaults_to_current_behaviour() {
+        let config = AgentConfig::default();
+        assert!(config.budget_note);
+        assert!(config.pack_previous_tool_results);
+        let note_off = AgentConfig::from_toml(
+            r#"
+            [agent]
+            name = "test"
+            model = "gpt-4"
+            system_prompt = "test"
+            budget_note = false
+            "#,
+        )
+        .unwrap();
+        assert!(!note_off.budget_note);
+        assert!(note_off.pack_previous_tool_results);
+        let pack_off = AgentConfig::from_toml(
+            r#"
+            [agent]
+            name = "test"
+            model = "gpt-4"
+            system_prompt = "test"
+            pack_previous_tool_results = false
+            "#,
+        )
+        .unwrap();
+        assert!(pack_off.budget_note);
+        assert!(!pack_off.pack_previous_tool_results);
     }
 
     #[test]
