@@ -22,6 +22,66 @@ Entry template:
 
 ---
 
+## 2026-10-27 — T4 launch failures are a harness error and are rerun once
+
+**Context:** Thirteen arms on seven tasks exited before the agent started. The exception was `syntax error near unexpected token ';'`. Those task texts contain quotes, backticks and `$`. Harbor already passes mini's task through `shlex.quote`, and Graphirm already writes the task to `/tmp/issue.md`. Replaying the saved commands showed bash rejects `}; ;`. The test-file filter emitted that empty statement when `T4_TEST_PATCH_PATHS` was empty. Those trials were spawned by the driver that had not yet exported the path list, while the filter shell was already on disk. Removing the empty statement makes all thirteen commands parse, and a stand-in agent is invoked for each.
+**Decision:** Treat the thirteen arms as harness failures. The pre-registered rule reruns a harness error once. Rerun both arms of `ivov__lisette-491`, `ivov__lisette-627`, `ivov__lisette-657`, `kenn-io__agentsview-602`, `kestra-io__kestra-16067` and `kestra-io__kestra-16119`, and M of `kestra-io__kestra-16450`. Append correction rows with `rerun: launch`. Leave the original empty_patch rows, `grades.json`, and attempt-1 reports in place so the integrity check still matches them.
+**Alternatives:** Rewriting mini's task onto a file was considered. It lost because `shlex.quote` already kept the seven instructions, including their backticks and quotes, as one shell word. The token bash rejected was the empty statement in the shared filter.
+**Consequences:** The headline after the rerun can move. The published pre-rerun analysis stays in `analysis/before-launch-rerun`. A task with no hidden test paths no longer produces a shell syntax error.
+**Refs:** `eval/swebench/harbor/test_filter.py`, `eval/swebench/harbor/check_launch.py`, `eval/swebench/prereg.md`.
+
+---
+
+## 2026-10-26 — T4 regrade uses the same test-file filter as T1–T3
+
+**Context:** Harbor graded the worktree the agent left behind. T1–T3 pass every model patch through `strip_test_hunks` before grading. A task's `tests/test.sh` then fails with "already exists in working directory" when a new test file was staged. The account was topped up to $148.29 (credits $500). The paid driver was stopped with `stop-reason` set to `restart` before the in-flight trial could write a complete row.
+**Decision:** A Harbor patch-replay agent applies a saved patch after `strip_test_hunks` and then runs the task's normal verifier. It calls no model. It was checked on three tasks: the gold patch scored reward 1 and an empty patch scored reward 0 on `nesquena__hermes-webui-3069`, `agno-agi__agno-8148`, and `teng-lin__notebooklm-py-826`. All 99 arms finished before the restart were regraded from the saved patch, or left unresolved when no patch file exists. Correction rows use `regrade: filter`. Original rows stay. The driver was restarted at the $35 primary cap, two tasks at a time, and both new arms restore test paths before the verifier.
+**Alternatives:** Re-running the agents was rejected. The agent runs are valid; only the grading changed. Forcing a fuzz apply on the three patches that do not apply to a clean tree was rejected, so those originals stay.
+**Consequences:** T4 grading now matches T1–T3 for both arms. Of the 99 pre-restart arms, M had one grade move from unresolved to resolved and one from resolved to unresolved. G had no grade move. Fifteen arms had no saved patch, including the two G wall-clock timeouts, and all fifteen stayed unresolved. Three arms kept their original resolved grade because the filtered patch did not apply. New trials after the restart run the filter in the agent command.
+**Refs:** `eval/swebench/harbor/replay_agent.py`, `eval/swebench/regrade_t4.py`, `eval/swebench/run_arm.py`, `/home/krs/graphirm-runs/t4/regrade-counts.json`.
+
+---
+
+## 2026-10-26 — T4 billed stop is ledger spend, and the test-file filter was missing
+
+**Context:** The next start of the paid driver would have refused while the OpenRouter balance was under $60. That check used the billed safety stop as an account-balance floor. Separately, T1–T3 pass every model patch through `strip_test_hunks` in `run_arm.py` before grading. The Harbor agents saved the patch with `git add -A` and left the worktree as the agent edited it. A task's `tests/test.sh` deletes a path only when it is untracked, then `git apply` fails with "already exists in working directory" and writes no reward file. `apache__pulsar-25793` M is that case, four times. The old classifier also called it infrastructure because the mini command line contains `timeout=3600`.
+**Decision:** The $60 stop applies to T4's cumulative billed spend in the ledger. A start is refused only when the account balance is under $10. On the next start, both Harbor agents record the full patch and then restore test paths before the verifier: the same directory and filename patterns as `is_test_path`, plus every path in that task's hidden test patch. Finished trials were not regraded. The env images are gone, and pulling them again during the live trial was rejected. `apache__pulsar-25793` M stays a harness failure. The classifier for new trials uses the exception class, the process exit code, and an HTTP status in the exception message. Finished rows were rechecked, and class changes were appended as correction rows. Original rows were left in place.
+**Alternatives:** Regrade every finished test-touching patch in a new container now. Rejected while the paid driver is still running. Restarting onto this code now was rejected because the account has not been topped up.
+**Consequences:** The live process still grades without the filter and still stops at $25 primary. The next start applies the filter, the $35 cap, two tasks at a time, and the image-size watch. The earlier consequence that the next start refuses while the balance is under $60 is withdrawn. Thirty-six finished arms have a saved patch the filter would strip. Seven task-arms failed grading with "already exists in working directory". Two finished G rows move from an ordinary unresolved grade to a wall-clock timeout, and `floci-io__floci-1235` G moves from an empty patch to a 429. Those grades were not rewritten.
+**Refs:** `eval/swebench/run_t4.py`, `eval/swebench/harbor/test_filter.py`, `eval/swebench/run_arm.py`.
+
+---
+
+## 2026-10-26 — T4 primary cap raised to $35, restart held
+
+**Context:** At 35 of 106 tasks the projection was about $22 primary against the $25 cap. The tasks cost about $0.21 each, against about $0.02 in T2, so a few heavy tasks could stop the track early. No per-arm result had been read. When the balance was checked the ledger had moved to 40 tasks, $9.07 primary and $17.81 billed, and OpenRouter had $49.27 left.
+**Decision:** The T4 primary cap is $35. The billed safety stop stays $60. The running driver was not restarted, and two-at-a-time was not turned on, because $49.27 is under the $55 check for the rest of T4 plus the exploratory runs.
+**Alternatives:** Restart immediately onto $35 and two tasks at a time. That was rejected until the balance is confirmed.
+**Consequences:** The live process still stops at $25. The next start of `run_t4.py` uses $35, two tasks while disk stays under 75% and recent 429s stay quiet, and it refuses to start while the balance is under the $60 billed stop.
+**Refs:** `eval/registry.json` tracks.t4.spend_cap_usd_primary. `eval/swebench/run_t4.py`.
+
+---
+
+## 2026-10-25 — Paid T4 stops and trial order
+
+**Context:** The pre-registration caps T4 at $25 and runs arms interleaved, with workers starting at 4. Harbor's env images on this set are about 1G to 10G, and the validity pass reached 77% disk on one image before the build cache was removed. Mini-swe-agent's OpenRouter model prices a call from `usage.cost`, which is the bill, while the $0.50 cap for both arms is the frozen formula.
+**Decision:** Paid T4 runs one trial at a time, M then G on each task. The track stops at $25 primary. A billed safety stop at $60 halts it the same way, and a retry's cost does not add to either stop. Inside each Harbor image, mini's `_calculate_cost` is replaced so the $0.50 cap adds the frozen formula; the trajectory still keeps `usage.cost` as the bill. The wall clock is 30 minutes.
+**Alternatives:** Four concurrent trials, as the pre-registration says to start. That was rejected because the validity pass already lost its disk margin on a single image. Leaving mini's cap on the bill was rejected because that cap is then about 2.5 times tighter than Graphirm's.
+**Consequences:** T4 takes longer than a four-worker run. The $60 stop can end the track while primary spend is still under $25. No paid result had been seen when this was written. A first launch passed `--ak`, which this Harbor build rejects on `trial start`; Harbor never started a container. Those five ledger rows were moved to `arms.void-flag.jsonl` before the corrected driver was started.
+**Refs:** `eval/swebench/run_t4.py`. `eval/swebench/harbor/mini_swe_agent.py`. `eval/registry.json` decisions.
+
+---
+
+## 2026-10-25 — Three T4 tasks fail their official fix
+
+**Context:** The Harbor oracle, which applies the dataset's own solution and does not call the model, returned reward 0 on `langchain4j__langchain4j-5315`, `langchain4j__langchain4j-5367`, and `openrewrite__rewrite-7784`. The other finished oracle trials returned reward 1.
+**Decision:** All three tasks are excluded from paid M and from paid G. The same rule excluded a T2 task whose gold patch did not resolve.
+**Alternatives:** Keep them in the scored set and count the oracle failure as an unresolved agent run.
+**Consequences:** The paid T4 count is 106. The empty-patch pass finished on 2026-10-25: all 109 empty patches returned reward 0, so none were excluded.
+**Refs:** `eval/registry.json` exclusions. `/home/krs/graphirm-runs/t4/validity/validity.jsonl`.
+
+---
+
 ## 2026-10-25 — Report scripts call the shared metric module
 
 **Context:** T1, T2 and T3 each computed primary cost, cache hit and tokens in the report script. Graphirm summaries store primary cost as the sum of per-call costs after rounding each call to the nearest micro-dollar. Summing the float formula once over a task's tokens differs from that stored total, by at most about 5.5e-6 dollars on a T2 G-fresh task.

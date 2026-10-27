@@ -172,7 +172,14 @@
         "errors": 1,
         "http_429": 21,
         "integrity": "ok",
-        "analysis": "/home/krs/graphirm-runs/t4/analysis/t4_report.json"
+        "analysis": "/home/krs/graphirm-runs/t4/analysis/t4_report.json",
+        "launch_rerun": {
+          "at": "2026-10-27T10:00:00Z",
+          "arms": 13,
+          "why": "harness: the agent never started, empty statement in the test-file filter",
+          "primary_usd": 0.6049,
+          "billed_usd": 0.3781
+        }
       },
       "harness": "Harbor. The integrity check uses the same grade-versus-report rule as T2 once reports exist.",
       "spend_cap_usd_primary": 35,

@@ -10,12 +10,28 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 from pathlib import Path
+
+import importlib.util
 
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+
+def _graphirm_shell(patch_file: str, model: str, max_turns: int, cost_limit: float) -> str:
+    path = Path(__file__).resolve().parent / "test_filter.py"
+    spec = importlib.util.spec_from_file_location("t4_test_filter", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.graphirm_shell(
+        patch_file,
+        model=model,
+        max_turns=max_turns,
+        cost_limit=cost_limit,
+    )
+
 
 REPO = Path(__file__).resolve().parents[3]
 DEFAULT_BINARY = REPO / "target/x86_64-unknown-linux-musl/release/graphirm"
@@ -66,29 +82,14 @@ class GraphirmAgent(BaseInstalledAgent):
         env = {"OPENROUTER_API_KEY": key} if key else None
         await self.exec_as_agent(
             environment,
-            command=(
-                "set -eu; "
-                "wd=$(pwd); "
-                "mkdir -p /logs/agent; "
-                "set +e; "
-                "graphirm run "
-                "--task /tmp/issue.md "
-                "--cwd \"$wd\" "
-                "--graph /logs/agent/graph.db "
-                "--config /tmp/eval-agent.toml "
-                f"--model {shlex.quote(self.model_name or 'openrouter/deepseek/deepseek-v4.1-flash')} "
-                "--reasoning-effort high "
-                "--reply-format segments "
-                f"--max-turns {self._max_turns} "
-                f"--max-cost-usd {self._cost_limit} "
-                "--prices /tmp/prices.lock.json "
-                "--summary /logs/agent/summary.json; "
-                "code=$?; "
-                "if [ \"$code\" -eq 2 ]; then exit 0; fi; "
-                "exit \"$code\""
+            command=_graphirm_shell(
+                "/logs/agent/G.patch",
+                model=self.model_name or "openrouter/deepseek/deepseek-v4.1-flash",
+                max_turns=self._max_turns,
+                cost_limit=self._cost_limit,
             ),
             env=env,
-            timeout_sec=3600,
+            timeout_sec=1800,
         )
 
     def populate_context_post_run(self, context: AgentContext) -> None:

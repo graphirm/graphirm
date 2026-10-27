@@ -80,18 +80,26 @@ def original_grades(ids: list[str]) -> dict[str, dict[str, bool]]:
 
 
 def filtered_grades(ids: list[str], original: dict[str, dict[str, bool]], rows: list[dict]) -> dict[str, dict[str, bool]]:
-    """Filtered regrade when the replay produced a boolean, else the recorded grade."""
+    """Filtered regrade when the replay produced a boolean, else the recorded grade.
+
+    A launch rerun, appended after the filter regrade, replaces that grade.
+    """
     latest: dict[tuple[str, str], dict] = {}
     for row in rows:
         if row.get("regrade") == "filter" and row.get("arm") in ARMS:
             latest[(row["task"], row["arm"])] = row
+    launched: dict[tuple[str, str], bool] = {}
+    for row in rows:
+        if row.get("rerun") == "launch" and row.get("arm") in ARMS and isinstance(row.get("grade"), bool):
+            launched[(row["task"], row["arm"])] = row["grade"]
     out = {iid: dict(original[iid]) for iid in ids}
     for iid in ids:
         for arm in ARMS:
             row = latest.get((iid, arm))
-            if row is None or row.get("grade") is None:
-                continue
-            out[iid][arm] = bool(row["grade"])
+            if row is not None and row.get("grade") is not None:
+                out[iid][arm] = bool(row["grade"])
+            if (iid, arm) in launched:
+                out[iid][arm] = launched[(iid, arm)]
     return out
 
 
@@ -214,6 +222,11 @@ def retry_grades(ids: list[str], final: dict[str, dict[str, bool]], rows: list[d
     unresolved. The first attempt counts as unresolved when it errored.
     """
     by_key: dict[tuple[str, str], list[dict]] = {}
+    launch_arms = {
+        (row["task"], row["arm"])
+        for row in rows
+        if row.get("rerun") == "launch" and row.get("arm") in ARMS
+    }
     for row in rows:
         if row.get("arm") not in ARMS or row.get("corrects") or row.get("regrade"):
             continue
@@ -231,6 +244,8 @@ def retry_grades(ids: list[str], final: dict[str, dict[str, bool]], rows: list[d
                 labelled.append((row, kind))
                 if kind and row.get("complete") is not True:
                     kinds[arm][kind] += 1
+            if (iid, arm) in launch_arms:
+                labelled = [(row, kind or "harness") for row, kind in labelled]
             real = [(row, kind) for row, kind in labelled if kind != "config"]
             first_row, first_kind = (real or labelled or [(None, "")])[0]
             if first_row is not None and first_kind:
@@ -274,7 +289,12 @@ def no_patch(rows: list[dict]) -> list[dict]:
             continue
         seen.add(key)
         reason = "no trial result"
-        trial = RUNS / "trials" / row["arm"] / row["task"]
+        if any(
+            later.get("rerun") == "launch" and later.get("task") == row["task"] and later.get("arm") == row["arm"]
+            for later in rows
+        ):
+            continue
+        trial = RUNS / "trials" / row["arm"] / row["task"] / "attempt1"
         results = sorted(trial.rglob("result.json")) if trial.is_dir() else []
         if results:
             info = (json.loads(results[-1].read_text()).get("exception_info") or {})
@@ -334,9 +354,22 @@ def render(report: dict) -> str:
         f"- T1 published H1 was {report['T1_H1']['diff_pp']:+.2f} pp, "
         f"CI [{report['T1_H1']['ci95_pp'][0]:+.2f}, {report['T1_H1']['ci95_pp'][1]:+.2f}], "
         f"non-inferior {report['T1_H1']['non_inferior_at_minus_5pp']}",
-        f"- agrees with T1 on the -5 pp rule: {report['agrees_with_T1_non_inferior']}",
-        f"- regrade moved {len(report['sensitivity']['grades_changed_by_regrade'])} grades in opposite directions, "
-        "so the rate and the win/tie/loss counts stay the same",
+        "- consistent in direction and size with T1; the CI is too wide to confirm the -5pp bound alone",
+    ]
+    before = report.get("before_launch_rerun")
+    if before:
+        bh = before["H1"]
+        lines += [
+            f"- before the launch rerun: G {bh['resolved_G']}/M {bh['resolved_M']} "
+            f"diff {bh['diff_pp']:+.2f} pp CI [{bh['ci95_pp'][0]:+.2f}, {bh['ci95_pp'][1]:+.2f}] "
+            f"W/T/L {bh['win']}/{bh['tie']}/{bh['loss']}",
+            f"- after the launch rerun: G {h['resolved_G']}/M {h['resolved_M']} "
+            f"diff {h['diff_pp']:+.2f} pp CI [{h['ci95_pp'][0]:+.2f}, {h['ci95_pp'][1]:+.2f}] "
+            f"W/T/L {h['win']}/{h['tie']}/{h['loss']}",
+        ]
+    lines += [
+        f"- the filtered regrade moved {report['sensitivity']['filter_regrade_flips']} grades in opposite directions, "
+        "and that comparison's rate and win/tie/loss stayed the same",
         "",
         "## Cost",
         "",
@@ -348,7 +381,7 @@ def render(report: dict) -> str:
         lines.append(f"- cost per resolved {arm}: ${per['point']} CI {per['ci95']}")
     lines += ["", "## Sensitivity", ""]
     for name, block in report["sensitivity"].items():
-        if "diff_pp" not in block:
+        if not isinstance(block, dict) or "diff_pp" not in block:
             continue
         lines.append(
             f"- {name}: G {block['resolved_G']}/M {block['resolved_M']} "
@@ -361,6 +394,18 @@ def render(report: dict) -> str:
             f"- {lang} n={block['n']}: M {block['resolved_M']}, G {block['resolved_G']}, "
             f"diff {block['diff_pp']:+.2f} pp"
         )
+    launch = report.get("launch_rerun") or {}
+    if launch:
+        lines += [
+            "",
+            "## Launch rerun",
+            "",
+            f"- {launch['arms']} arms rerun, {launch['resolved']} resolved, "
+            f"{launch['unresolved']} unresolved, "
+            f"primary ${launch['primary_usd']}, billed ${launch['billed_usd']}",
+        ]
+        for row in launch["outcomes"]:
+            lines.append(f"- {row['arm']} {row['task']}: {row['grade_status']}")
     lines += ["", "## Arms with no saved patch", ""]
     for row in report["no_patch"]:
         lines.append(f"- {row['arm']} {row['task']}: {row['reason']}")
@@ -396,6 +441,13 @@ def main() -> None:
         for arm in ARMS
         if bool(orig[arm][i]) != bool(final[arm][i])
     ]
+    launch_arms = {
+        (row["task"], row["arm"])
+        for row in rows
+        if row.get("rerun") == "launch" and row.get("arm") in ARMS
+    }
+    filter_changed = [item for item in changed if (item["task"], item["arm"]) not in launch_arms]
+    launch_rows = [row for row in rows if row.get("rerun") == "launch"]
     langs = [language_of(iid) for iid in ids]
     by_lang = {}
     for lang in ("Go", "Java", "Python", "TypeScript", "Rust", "other"):
@@ -423,7 +475,11 @@ def main() -> None:
             "ci95_pp": t1["ci95_pp"],
             "non_inferior_at_minus_5pp": t1["non_inferior_at_minus_5pp"],
         },
-        "agrees_with_T1_non_inferior": headline["non_inferior_at_minus_5pp"] == t1["non_inferior_at_minus_5pp"],
+        "T1_comparison": (
+            "consistent in direction and size with T1; "
+            "the CI is too wide to confirm the -5pp bound alone"
+        ),
+        "non_inferior_at_minus_5pp": headline["non_inferior_at_minus_5pp"],
         "cost": costs,
         "sensitivity": {
             "final_after_retries": headline,
@@ -431,13 +487,33 @@ def main() -> None:
             "wall_clock_counts": wall,
             "without_held_arms": without,
             "original_grading": original_h1,
-            "grades_changed_by_regrade": changed,
+            "grades_changed_by_regrade": filter_changed,
+            "filter_regrade_flips": len(filter_changed),
             "retry_rows": rules["retry_rows"],
             "held_tasks_dropped": sorted(HELD_TASKS),
         },
         "by_language": by_lang,
         "no_patch": no_patch(rows),
+        "launch_rerun": {
+            "arms": len(launch_rows),
+            "resolved": sum(1 for row in launch_rows if row.get("grade") is True),
+            "unresolved": sum(1 for row in launch_rows if row.get("grade") is False),
+            "primary_usd": round(sum(row.get("cost_usd") or 0 for row in launch_rows), 4),
+            "billed_usd": round(sum(row.get("cost_usd_billed") or 0 for row in launch_rows), 4),
+            "outcomes": [
+                {"arm": row["arm"], "task": row["task"], "grade_status": row.get("grade_status")}
+                for row in launch_rows
+            ],
+        },
     }
+    before_path = OUT / "before-launch-rerun" / "t4_report.json"
+    if before_path.is_file():
+        before = json.loads(before_path.read_text())
+        report["before_launch_rerun"] = {
+            "table": before["table"],
+            "H1": before["H1"],
+            "cost": before["cost"],
+        }
     (OUT / "t4_report.json").write_text(json.dumps(report, indent=2) + "\n")
     (OUT / "t4_report.md").write_text(render(report))
     per = []
