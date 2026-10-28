@@ -3,7 +3,7 @@
 use graphirm_graph::{EdgeType, GraphEdge, GraphNode, GraphStore, KnowledgeData, NodeId, NodeType};
 use graphirm_llm::{CompletionConfig, LlmMessage, LlmProvider};
 
-use crate::context::{estimate_tokens, estimate_tokens_str, get_text_content};
+use crate::context::{estimate_tokens, estimate_tokens_str, get_text_content, window_text};
 use crate::error::AgentError;
 
 #[cfg(test)]
@@ -117,9 +117,9 @@ pub async fn compact_context(
             .get_node(node_id)
             .map_err(|e| AgentError::Context(e.to_string()))?;
         original_tokens += estimate_tokens(&node);
-        let content = get_text_content(&node);
+        let content = window_text(&node);
         if !content.is_empty() {
-            texts.push(content.to_string());
+            texts.push(content.into_owned());
         }
     }
 

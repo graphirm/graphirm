@@ -337,7 +337,8 @@ pub async fn post_turn_extract(
     let mut window: Vec<NodeId> = Vec::new();
     for parent in &parents {
         if let NodeType::Interaction(data) = &parent.node_type {
-            messages.push((data.role.clone(), data.content.clone()));
+            let text = crate::context::window_text(parent).into_owned();
+            messages.push((data.role.clone(), text));
             window.push(parent.id.clone());
         }
     }

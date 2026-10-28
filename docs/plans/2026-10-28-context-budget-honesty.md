@@ -47,10 +47,11 @@ Four tests already fail on this branch before any change here (`t4_exchange_is_a
 
 **Files:** `crates/agent/src/context.rs`.
 
-- [ ] Add `WINDOW_OUTPUT_MAX_BYTES`, `cap_window_text(&str) -> Cow<str>` and `window_text(&GraphNode) -> Cow<str>`.
-- [ ] `node_to_message` uses the capped text for `tool` results and Content bodies. `estimate_tokens` counts `window_text`.
-- [ ] Tests: text at the limit is unchanged; a 1 MB output becomes head + notice + tail under the limit plus the notice; the cut never splits a UTF-8 character; the notice counts the omitted bytes and lines; the graph node is unchanged after `build_context`; `estimate_tokens` of a huge tool node is bounded.
-- [ ] Commit.
+- [x] Add `WINDOW_OUTPUT_MAX_BYTES`, `cap_window_text(&str) -> Cow<str>` and `window_text(&GraphNode) -> Cow<str>`. A cut snaps to a line break only within 2,000 bytes of it, so text with few newlines keeps most of its head and tail.
+- [x] `node_to_message` uses the capped text for `tool` results and Content bodies. `estimate_tokens` counts `window_text`.
+- [x] The two other LLM calls that read stored node text use `window_text` too: the compaction summarizer (`compact.rs`) and knowledge extraction, whose parent message can be a tool result (`knowledge/extraction.rs`).
+- [x] Tests: text at the limit is unchanged; a 50,000-line output keeps its first and last line and the notice's line count adds up; the cut never splits a UTF-8 character; rare newlines do not shrink the head; the tool node is unchanged after `node_to_message`; Content bodies are capped; `estimate_tokens` of a huge tool node is bounded.
+- [x] Commit.
 
 ## Task 3 — Persist the sent context per call
 
