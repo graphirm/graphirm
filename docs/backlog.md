@@ -914,6 +914,10 @@ Done 2026-04-08. Non-destructive `fetch_url` in `crates/tools/src/fetch_url.rs`:
 ### Firecrawl (or search API) wrapper tool — P3 · M
 Optional follow-up: a dedicated tool that calls the Firecrawl API (scrape / search / map) with `FIRECRAWL_API_KEY`, or another web-search provider. Complements `fetch_url` for structured crawl/search results. *Acceptance: one tool, env-gated when key missing, non-destructive default.*
 
+### Context budget honesty — P1 · M
+
+The budget is counted as `words / 0.75`, which undercounts code about 2×, so a 100k budget sends about 200k tokens. Tool outputs reach the window uncapped (a 5.6 MB grep crashed T2 runs). The ordered list of what each call was sent is kept only in memory, so replay can match only about 93% of turns. Count with a real tokenizer, cap tool output in the window, store the packed ids and a request hash on each assistant node, then rerun the T2 G-persist probe. Plan: `docs/plans/2026-10-28-context-budget-honesty.md`.
+
 ### Tool-pair atomicity in build_context — P2 · L
 
 A context window must not contain a tool result without its call, or a call without its result. Phase 1 drops orphans during assembly and can ship alone. Phase 2 groups a tool exchange as one budget unit, counts the tail in units, compacts whole exchanges, and checks the assembled request against the selected model's window. Plan: `docs/plans/2026-10-08-tool-pair-atomicity.md`.
