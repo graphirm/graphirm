@@ -35,7 +35,7 @@ pub use config::{AgentConfig, AgentMode, Permission};
 pub use context::{
     ContextConfig, ContextWindow, EdgeWeights, ScoredNode, build_context, build_context_with_stats,
     build_subagent_context, estimate_tokens, estimate_tokens_str, fit_to_budget, score_node,
-    score_recency,
+    score_recency, warm_token_counter,
 };
 pub use context_stats::ContextStats;
 pub use coordinator::Coordinator;

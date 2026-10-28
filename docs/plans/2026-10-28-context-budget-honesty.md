@@ -35,11 +35,13 @@
 
 **Files:** `crates/agent/Cargo.toml`, `crates/agent/src/context.rs`.
 
-- [ ] Add `tiktoken-rs` to `graphirm-agent`.
-- [ ] Replace the body of `estimate_tokens_str` with an `o200k_base` count. Cache counts for long texts by hash; clear the cache past 100k entries.
-- [ ] Update the tests that assert word-based numbers. New tests: empty string is 0; a known short string has the o200k count; a code sample counts at least 1.5× the old word estimate.
-- [ ] `cargo test -p graphirm-agent`; fix every test that relied on the old numbers by asserting relationships rather than new magic numbers where possible.
-- [ ] Commit.
+- [x] Add `tiktoken-rs` to `graphirm-agent`. (`cargo add` also moved `regex` 1.12.3 → 1.13.1 in the lockfile.)
+- [x] Replace the body of `estimate_tokens_str` with an `o200k_base` count. Cache counts for long texts by hash; clear the cache past 100k entries.
+- [x] Update the tests that assert word-based numbers. New tests: empty string is 0; a known short string has the o200k count; a code sample counts at least 1.5× the old word estimate; a cached count equals the direct count.
+- [x] `cargo test --workspace --no-fail-fast`. Loading the BPE ranks takes about 1.3 s in a debug build (0.23 s release), which broke two server tests that sleep 300–500 ms and expect the turn to be done. Added `warm_token_counter()`, called from `create_router`, so the load happens at startup rather than in the first turn.
+- [x] Commit.
+
+Four tests already fail on this branch before any change here (`t4_exchange_is_atomic_when_tail_would_start_on_a_result`, `test_agent_loop_tool_call_then_text`, `test_agent_loop_real_tool_propagates_turn_to_content_labels`, `test_agent_loop_parallel_safe_tools_keep_dense_labels`). They are in the backlog and are not touched by this plan.
 
 ## Task 2 — Cap tool output in the window
 

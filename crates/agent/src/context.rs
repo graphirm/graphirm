@@ -1451,14 +1451,51 @@ pub fn score_recency(node: &GraphNode, decay: f64) -> f64 {
     (-decay * hours).exp()
 }
 
-/// Estimate token count for a text string using word-based heuristic.
-/// Approximation: tokens ≈ words / 0.75 (1 token ≈ 0.75 words).
+/// Texts shorter than this are tokenized directly; longer ones go through the cache.
+const TOKEN_CACHE_MIN_BYTES: usize = 256;
+/// The cache is cleared when it grows past this many entries.
+const TOKEN_CACHE_MAX_ENTRIES: usize = 100_000;
+
+/// Load the BPE ranks now instead of on the first turn. Takes about 0.2 s in
+/// a release build and about 1.3 s in a debug build.
+pub fn warm_token_counter() {
+    let _ = tiktoken_rs::o200k_base_singleton();
+}
+
+/// Count tokens with the o200k_base BPE.
+///
+/// This is a stand-in for the provider's own tokenizer (see the 2026-10-28
+/// journal entry). The old estimate, words / 0.75, undercounted code by
+/// about 2×. Counts for long texts are cached by content hash, since the
+/// same nodes are counted on every turn.
 pub fn estimate_tokens_str(text: &str) -> usize {
-    let word_count = text.split_whitespace().count();
-    if word_count == 0 {
+    use std::hash::{Hash, Hasher};
+    use std::sync::{Mutex, OnceLock};
+
+    if text.is_empty() {
         return 0;
     }
-    (word_count as f64 / 0.75).ceil() as usize
+    let bpe = tiktoken_rs::o200k_base_singleton();
+    if text.len() < TOKEN_CACHE_MIN_BYTES {
+        return bpe.encode_ordinary(text).len();
+    }
+
+    static CACHE: OnceLock<Mutex<HashMap<u64, usize>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    let key = hasher.finish();
+    if let Some(count) = cache.lock().ok().and_then(|map| map.get(&key).copied()) {
+        return count;
+    }
+    let count = bpe.encode_ordinary(text).len();
+    if let Ok(mut map) = cache.lock() {
+        if map.len() >= TOKEN_CACHE_MAX_ENTRIES {
+            map.clear();
+        }
+        map.insert(key, count);
+    }
+    count
 }
 
 /// Estimate token count for a GraphNode based on its text content.
@@ -1754,20 +1791,39 @@ mod tests {
 
     #[test]
     fn estimate_tokens_str_known_strings() {
-        // "Hello world" = 2 words → 2 / 0.75 = 2.67 → ceil → 3
-        assert_eq!(estimate_tokens_str("Hello world"), 3);
-
-        // Empty string = 0 tokens
+        // o200k_base: each common English word is one token.
+        assert_eq!(estimate_tokens_str("Hello world"), 2);
         assert_eq!(estimate_tokens_str(""), 0);
-
-        // 10 words → 10 / 0.75 = 13.33 → ceil → 14
         assert_eq!(
             estimate_tokens_str("one two three four five six seven eight nine ten"),
-            14
+            10
         );
+        assert_eq!(estimate_tokens_str("hello"), 1);
+    }
 
-        // Single word → 1 / 0.75 = 1.33 → ceil → 2
-        assert_eq!(estimate_tokens_str("hello"), 2);
+    #[test]
+    fn estimate_tokens_str_counts_code_well_above_the_word_estimate() {
+        let code = "fn main() {\n    let x: Vec<u8> = vec![1, 2, 3];\n    \
+                    println!(\"{:?}\", x.iter().map(|b| b * 2).collect::<Vec<_>>());\n}\n";
+        let words = code.split_whitespace().count();
+        let old_estimate = (words as f64 / 0.75).ceil() as usize;
+        assert!(
+            estimate_tokens_str(code) * 2 >= old_estimate * 3,
+            "code count {} should be at least 1.5x the word estimate {}",
+            estimate_tokens_str(code),
+            old_estimate
+        );
+    }
+
+    #[test]
+    fn estimate_tokens_str_cached_count_matches_direct_count() {
+        let long = "let value = compute(input);\n".repeat(40);
+        assert!(long.len() >= TOKEN_CACHE_MIN_BYTES);
+        let direct = tiktoken_rs::o200k_base_singleton()
+            .encode_ordinary(&long)
+            .len();
+        assert_eq!(estimate_tokens_str(&long), direct);
+        assert_eq!(estimate_tokens_str(&long), direct);
     }
 
     #[test]
@@ -1777,8 +1833,7 @@ mod tests {
             content: "What is the meaning of life the universe and everything".to_string(),
             token_count: None,
         }));
-        // 10 words → 14 tokens
-        assert_eq!(estimate_tokens(&node), 14);
+        assert_eq!(estimate_tokens(&node), 10);
     }
 
     #[test]

@@ -918,6 +918,10 @@ Optional follow-up: a dedicated tool that calls the Firecrawl API (scrape / sear
 
 The budget is counted as `words / 0.75`, which undercounts code about 2×, so a 100k budget sends about 200k tokens. Tool outputs reach the window uncapped (a 5.6 MB grep crashed T2 runs). The ordered list of what each call was sent is kept only in memory, so replay can match only about 93% of turns. Count with a real tokenizer, cap tool output in the window, store the packed ids and a request hash on each assistant node, then rerun the T2 G-persist probe. Plan: `docs/plans/2026-10-28-context-budget-honesty.md`.
 
+### Four graphirm-agent lib tests fail on eval/frozen-binary-source — P2 · S
+
+Found 2026-10-28 at commit `41e1dfa`, before any change: `context::tests::t4_exchange_is_atomic_when_tail_would_start_on_a_result` and three `workflow::tests` label tests (`test_agent_loop_tool_call_then_text`, `test_agent_loop_real_tool_propagates_turn_to_content_labels`, `test_agent_loop_parallel_safe_tools_keep_dense_labels`; expected labels such as `interaction_1_2_2` are missing). Decide whether the code or the tests are wrong.
+
 ### Tool-pair atomicity in build_context — P2 · L
 
 A context window must not contain a tool result without its call, or a call without its result. Phase 1 drops orphans during assembly and can ship alone. Phase 2 groups a tool exchange as one budget unit, counts the tail in units, compacts whole exchanges, and checks the assembled request against the selected model's window. Plan: `docs/plans/2026-10-08-tool-pair-atomicity.md`.
