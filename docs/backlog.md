@@ -906,6 +906,10 @@ Done 2026-03-27. `enforce_work_loop: bool` config field (default true). When ena
 
 ## Infrastructure & Quality
 
+### graphirm-eval never runs the cross-session memory tasks — P2 · S
+
+`tasks/memory.rs` defines `cross_session_tasks()` (one task, `single-fact-recall`), but nothing calls it. `all_tasks()` excludes them, `main.rs` has no cross-session runner, and `--filter memory` runs 0 tasks. So no change to memory ranking or knowledge extraction can be checked for memory regressions in the eval. Fix: a two-session runner in `harness.rs` (session 1 prompt → wait for extraction and embedding → session 2 prompt → verifier on session 2), and wire it into `main.rs` under the `memory` tag. Found 2026-11-01 while running the knowledge-extraction baseline (`docs/plans/2026-11-01-knowledge-extraction-fixes.md` §8).
+
 ### ✅ Cross-session knowledge extraction — P2 · L
 Done 2026-03-19. Knowledge nodes now store `session_id` in metadata. After each embedding, `MemoryRetriever.find_cross_session_links` queries HNSW (min 0.7 cosine similarity, top 3) and `persist_cross_session_links` writes `RelatesTo` edges with similarity as weight. Three unit tests added.
 Plan: `docs/plans/2026-03-18-p2-sse-knowledge-plugins.md`

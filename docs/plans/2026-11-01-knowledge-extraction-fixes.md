@@ -206,3 +206,45 @@ parent message plus its response, through both backends. LLM cost was $0.017.
 
 **Done the same day, before any baseline run:** `KnowledgeGrounded` was replaced by
 `KnowledgeCoversWindow`, and 3.3 now links to the whole window for both backends.
+
+## 8. Baseline result (2026-11-01, no extraction changes)
+
+Branch `knowledge/extraction-eval`, commit `f7f01ac`.
+- Two binaries: `target-llm/` (default build, LLM backend) and `target-local/`
+  (`--features local-extraction`, which auto-detects the cached GLiNER2 snapshot).
+- `--filter knowledge`, three runs each, with `RUST_LOG=graphirm_eval=info` so the checks log their
+  numbers.
+- Script: `results/kx-base/run.sh`. Results: `results/experiments/kx-base-<backend>-knowledge-<n>/`.
+  `results/` is gitignored.
+- Agent model `EVAL_MODEL`, extraction model from `[agent.extraction]`.
+
+| Task | LLM backend (3 runs) | Local backend (3 runs) |
+|---|---|---|
+| `entity-recall` | 3/3 pass | 3/3 pass |
+| `multi-entity` | 3/3 pass | 3/3 pass |
+| `repeated-mentions` | 0/3 | 0/3 |
+| `user-only-entity` | 0/3 | 0/3 |
+| `knowledge-summaries` | 3/3 pass (summary rate 1.0) | 0/3 (summary rate 0.0; 13–21 nodes) |
+
+What the check logs show:
+- **Repeated names.**
+  - Local: 5 repeated names in every run (`pin`, `unpin`, `list`, `importcursor`,
+    `graphirmknowledge`), on 13–16 nodes.
+  - LLM: 1 repeat in 2 measured runs (`list_pinned_knowledge` and `list_pinned_knowledge()` in one
+    call), so 3.1 also applies to the LLM backend, though rarely.
+  - In LLM run 1, the extraction call got an OpenRouter 429 and stored no nodes. That made
+    `repeated-mentions` fail on its node count. The harness counts it as a task failure, not an
+    infrastructure error.
+- **Window coverage: 0.0 in every run on both backends.** No node links to the parent message,
+  which is what fix 3.3 changes.
+- **Summaries:** 1.0 on the LLM backend, 0.0 on the local backend, as the replay predicted (§7).
+
+Gate check for the baseline: `repeated-mentions` fails on both backends, so the task detects the
+defect.
+
+**Memory regression is not measured.** `--filter memory` runs 0 tasks. `cross_session_tasks()` in
+`graphirm-eval/src/tasks/memory.rs` is defined but never run. The §4 gate "no memory task
+regresses" therefore cannot be checked with this harness. It is in the backlog under
+Infrastructure & Quality as its own item. Until that lands, the memory part of the gate is
+replaced by a check that `memory.rs` embeds the same `entity`/`summary` text before and after.
+Fixes 3.1–3.3 do not change that text for a given node.
