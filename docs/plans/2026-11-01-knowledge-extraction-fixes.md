@@ -289,3 +289,21 @@ Gate (§4):
 Not caused by these fixes: 4 `graphirm-agent` unit tests (`context::tests::t4_exchange_is_atomic_*`
 and three `workflow::tests::test_agent_loop_*`) fail at `4d5562d` too. They pass on `main`. They are in the backlog.
 
+### 9.1 Rerun on `main` (branch `knowledge/extraction-fixes`)
+
+The runs above used binaries built on `eval/frozen-binary-source`. The fixes were cherry-picked onto
+`main`, which has a different chat model (`google/gemini-3.8-flash`) and no
+`extraction_completion_config`. They were rerun with the same protocol (`results/kx-main/run.sh`):
+
+| Task | LLM backend (3 runs) | Local backend (3 runs) |
+|---|---|---|
+| `entity-recall` | 3/3 | 3/3 |
+| `multi-entity` | 3/3 | 3/3 |
+| `repeated-mentions` | 3/3 (no repeats; 4–6 nodes) | 3/3 (no repeats; 5 nodes) |
+| `user-only-entity` | 3/3 (coverage 1.0) | 3/3 (coverage 1.0) |
+| `knowledge-summaries` | 2/3 (rate 1.0 when measured) | 0/3 (rate 0.0; expected) |
+
+The LLM `knowledge-summaries` failure in run 1 is an OpenRouter 429 on the extraction call
+(`Knowledge extraction failed (non-fatal)`). It stored no nodes, the same failure as baseline LLM
+run 1. Other 429s in these logs are memory-embedding warnings and did not affect any task.
+
