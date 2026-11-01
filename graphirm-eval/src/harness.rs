@@ -417,28 +417,27 @@ impl TestHarness {
                 );
                 Ok(rate.is_some_and(|rate| rate >= *min_fraction))
             }
-            Verifier::KnowledgeGrounded { min_fraction } => {
+            Verifier::KnowledgeCoversWindow { min_fraction } => {
                 let nodes = self.client.get_knowledge(session_id).await?;
                 let distinct = crate::knowledge_checks::distinct(&nodes);
                 if distinct.is_empty() {
                     return Ok(false);
                 }
-                let mut ungrounded = Vec::new();
+                let mut uncovered = Vec::new();
                 for node in &distinct {
                     let id = node["id"].as_str().unwrap_or("");
-                    let name = crate::knowledge_checks::entity(node);
-                    let subgraph = self.client.get_subgraph(session_id, id, 1).await?;
-                    if !crate::knowledge_checks::is_grounded(id, name, &subgraph) {
-                        ungrounded.push(name.to_string());
+                    let subgraph = self.client.get_subgraph(session_id, id, 2).await?;
+                    if !crate::knowledge_checks::covers_window(id, &subgraph) {
+                        uncovered.push(crate::knowledge_checks::entity(node).to_string());
                     }
                 }
-                let rate = 1.0 - ungrounded.len() as f64 / distinct.len() as f64;
+                let rate = 1.0 - uncovered.len() as f64 / distinct.len() as f64;
                 tracing::info!(
                     session_id,
                     nodes = distinct.len(),
                     rate,
-                    ungrounded = ?ungrounded,
-                    "knowledge check: grounded"
+                    uncovered = ?uncovered,
+                    "knowledge check: covers extraction window"
                 );
                 Ok(rate >= *min_fraction)
             }

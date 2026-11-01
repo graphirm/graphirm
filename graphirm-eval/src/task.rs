@@ -72,9 +72,10 @@ pub enum Verifier {
     /// At least `min_fraction` of the session's Knowledge nodes have a non-empty summary.
     /// Fails when there are no Knowledge nodes.
     KnowledgeSummaryRate { min_fraction: f64 },
-    /// At least `min_fraction` of the session's Knowledge nodes have a `derived_from`
-    /// message whose content contains the entity name. Fails when there are none.
-    KnowledgeGrounded { min_fraction: f64 },
+    /// At least `min_fraction` of the session's Knowledge nodes link (`derived_from`) to
+    /// every message their extraction read: the response and its `responds_to` parents.
+    /// Fails when there are none.
+    KnowledgeCoversWindow { min_fraction: f64 },
     /// All verifiers must pass.
     All(Vec<Verifier>),
 }

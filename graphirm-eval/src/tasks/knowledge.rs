@@ -45,7 +45,8 @@ pub fn tasks() -> Vec<EvalTask> {
             // The text is the assistant message that produced nine nodes, three
             // of them repeats, in the March graph (docs/plans/2026-11-01-knowledge-extraction-fixes.md).
             id: "repeated-mentions".to_string(),
-            name: "One knowledge node per name, linked to a message that mentions it".to_string(),
+            name: "One knowledge node per name, linked to every message extraction read"
+                .to_string(),
             tags: vec!["knowledge".to_string()],
             prompts: vec![
                 "Acknowledge this summary in one sentence (no tools needed): I've added the \
@@ -60,7 +61,7 @@ pub fn tasks() -> Vec<EvalTask> {
             verifier: Verifier::All(vec![
                 Verifier::KnowledgeNodeCount { min_count: 3 },
                 Verifier::KnowledgeUniqueNames,
-                Verifier::KnowledgeGrounded { min_fraction: 1.0 },
+                Verifier::KnowledgeCoversWindow { min_fraction: 1.0 },
             ]),
             max_turns: 2,
             timeout_secs: 60,
@@ -69,7 +70,7 @@ pub fn tasks() -> Vec<EvalTask> {
         },
         EvalTask {
             // The entity is only in the user message; the reply is one word. Its
-            // derived_from link must point at the user message, not the reply.
+            // derived_from links must include the user message, not just the reply.
             id: "user-only-entity".to_string(),
             name: "Entity named only by the user links to the user message".to_string(),
             tags: vec!["knowledge".to_string()],
@@ -81,7 +82,7 @@ pub fn tasks() -> Vec<EvalTask> {
             ],
             verifier: Verifier::All(vec![
                 Verifier::KnowledgeNodeCount { min_count: 1 },
-                Verifier::KnowledgeGrounded { min_fraction: 1.0 },
+                Verifier::KnowledgeCoversWindow { min_fraction: 1.0 },
             ]),
             max_turns: 2,
             timeout_secs: 60,

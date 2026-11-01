@@ -83,21 +83,21 @@ This applies to every backend. Nothing stops the LLM backend from returning a na
 - No change to the local backend's empty description. The point is that it becomes visible and
   countable, not filled in by guessing.
 
-### 3.3 Link each entity to the message that mentions it
+### 3.3 Link each entity to every message extraction read (provenance)
 
 Pass the message node ids alongside `messages`: the parent ids from `post_turn_extract` and
-`response_node_id`. For each merged entity:
-- Link `derived_from` to every message whose content contains the name (case-insensitive).
-- If none does, link to the response as today and set `metadata.grounded = false`.
+`response_node_id`. Link every merged entity with `derived_from` to all of them.
 
-This works the same for all three backends, and needs no span offsets from GLiNER2.
+Linking only to the messages that contain the name was considered and dropped (§7). LLM entity
+names are often paraphrases, so a text match misses about a fifth of correct nodes. The same rule
+is used for both backends, so no GLiNER2 span offsets are needed. A per-span link for GLiNER2 can
+be added later.
 
 `GET /api/graph/{session}/knowledge` walks interaction → incoming `derived_from`. A node linked to
 two messages would therefore be listed twice, so this fix also dedupes that route by node id. The
 eval verifiers already dedupe by id, so they score the same before and after.
 
-`extract_knowledge` (the direct, non-hook entry point) keeps its single `source_node_id` and gets
-the same `grounded` check against that one message.
+`extract_knowledge` (the direct, non-hook entry point) keeps its single `source_node_id`.
 
 ## 4. How `graphirm-eval` measures it
 
@@ -110,12 +110,12 @@ harness already fetches: `get_knowledge` and `get_graph`, which return nodes and
 |---|---|---|
 | `KnowledgeUniqueNames` | No two Knowledge nodes in the session share a normalised name | 3.1 |
 | `KnowledgeSummaryRate { min_fraction }` | At least that fraction of Knowledge nodes have a non-empty `summary` | 3.2 |
-| `KnowledgeGrounded { min_fraction }` | At least that fraction of Knowledge nodes have a `derived_from` target whose content contains the entity name | 3.3 |
+| `KnowledgeCoversWindow { min_fraction }` | At least that fraction of Knowledge nodes link with `derived_from` to each assistant message they derive from and to that message's `responds_to` parents. That is the window `post_turn_extract` read | 3.3 |
 
 | New task | Prompt | Verifier |
 |---|---|---|
-| `repeated-mentions` | "Acknowledge (no tools needed):" followed by the `ef95a429` CLI summary text. It names `Pin`, `Unpin` and `List` two or three times each | `All[KnowledgeNodeCount{3}, KnowledgeUniqueNames, KnowledgeGrounded{1.0}]` |
-| `user-only-entity` | A user message that names an entity the assistant is told not to repeat ("acknowledge in one word") | `KnowledgeGrounded{1.0}`. The entity must link to the user message |
+| `repeated-mentions` | "Acknowledge (no tools needed):" followed by the `ef95a429` CLI summary text. It names `Pin`, `Unpin` and `List` two or three times each | `All[KnowledgeNodeCount{3}, KnowledgeUniqueNames, KnowledgeCoversWindow{1.0}]` |
+| `user-only-entity` | A user message that names an entity the assistant is told not to repeat ("acknowledge in one word") | `All[KnowledgeNodeCount{1}, KnowledgeCoversWindow{1.0}]`. The entity must link to the user message as well as the reply |
 | `knowledge-summaries` | The `multi-entity` prompt | `All[KnowledgeNodeCount{1}, KnowledgeSummaryRate{0.9}]` |
 
 `KnowledgeSummaryRate { 0.9 }` is a separate task, `knowledge-summaries`, with the same prompt as
@@ -203,3 +203,6 @@ parent message plus its response, through both backends. LLM cost was $0.017.
     message). As written, it requires the whole name as a substring of a `derived_from` target.
 - **`repeated-mentions` at `min_fraction: 1.0` is flaky on the LLM backend as written.** It needs
   the provenance check before the baseline runs.
+
+**Done the same day, before any baseline run:** `KnowledgeGrounded` was replaced by
+`KnowledgeCoversWindow`, and 3.3 now links to the whole window for both backends.

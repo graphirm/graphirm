@@ -62,29 +62,43 @@ pub fn summary_rate(nodes: &[&Value]) -> Option<f64> {
     Some(with as f64 / nodes.len() as f64)
 }
 
-/// A node is grounded when at least one of its `derived_from` targets is an
-/// Interaction whose content contains the entity name (case-insensitive).
-/// `subgraph` is the depth-1 subgraph rooted at the knowledge node.
-pub fn is_grounded(knowledge_id: &str, name: &str, subgraph: &GraphResponse) -> bool {
-    let needle = name.to_lowercase();
-    if needle.trim().is_empty() {
+/// A node covers its extraction window when its `derived_from` links include every
+/// message the extractor read: each assistant message it links to, plus that message's
+/// `responds_to` parents (what `post_turn_extract` passes to the extractor).
+/// `subgraph` is the depth-2 subgraph rooted at the knowledge node. This checks where the
+/// link points, not whether the name appears in the text, because LLM entity names are
+/// often paraphrases.
+pub fn covers_window(knowledge_id: &str, subgraph: &GraphResponse) -> bool {
+    let targets: HashSet<&str> = edges_from(subgraph, knowledge_id, "derived_from").collect();
+    if targets.is_empty() {
         return false;
     }
-    let targets: HashSet<&str> = subgraph
+    let assistant = |id: &str| {
+        subgraph.nodes.iter().any(|node| {
+            node["id"].as_str() == Some(id)
+                && node["node_type"]["role"].as_str() == Some("assistant")
+        })
+    };
+    targets
+        .iter()
+        .copied()
+        .filter(|id| assistant(id))
+        .flat_map(|id| edges_from(subgraph, id, "responds_to"))
+        .all(|parent| targets.contains(parent))
+}
+
+fn edges_from<'a>(
+    subgraph: &'a GraphResponse,
+    source: &'a str,
+    edge_type: &'a str,
+) -> impl Iterator<Item = &'a str> + 'a {
+    subgraph
         .edges
         .iter()
-        .filter(|edge| {
-            edge["edge_type"].as_str() == Some("derived_from")
-                && edge["source"].as_str() == Some(knowledge_id)
+        .filter(move |edge| {
+            edge["edge_type"].as_str() == Some(edge_type) && edge["source"].as_str() == Some(source)
         })
         .filter_map(|edge| edge["target"].as_str())
-        .collect();
-    subgraph.nodes.iter().any(|node| {
-        node["id"].as_str().is_some_and(|id| targets.contains(id))
-            && node["node_type"]["content"]
-                .as_str()
-                .is_some_and(|content| content.to_lowercase().contains(&needle))
-    })
 }
 
 #[cfg(test)]
@@ -136,25 +150,35 @@ mod tests {
     }
 
     #[test]
-    fn grounded_needs_a_derived_from_target_that_mentions_the_name() {
-        let subgraph = GraphResponse {
+    fn covers_window_needs_the_parent_message_linked_too() {
+        let mut subgraph = GraphResponse {
             nodes: vec![
-                knowledge("k", "Pin", ""),
-                json!({ "id": "m1", "node_type": { "type": "Interaction", "role": "assistant", "content": "Added `/api/health` session_count" } }),
-                json!({ "id": "m2", "node_type": { "type": "Interaction", "role": "user", "content": "The `Pin` subcommand pins a node" } }),
-                json!({ "id": "k2", "node_type": { "type": "Knowledge", "entity": "Pin" } }),
+                knowledge("k", "Retry budget for tool calls", ""),
+                json!({ "id": "u", "node_type": { "type": "Interaction", "role": "user", "content": "the `RetryBudget` struct caps retries" } }),
+                json!({ "id": "a", "node_type": { "type": "Interaction", "role": "assistant", "content": "OK" } }),
+                json!({ "id": "earlier", "node_type": { "type": "Interaction", "role": "assistant", "content": "Hi" } }),
             ],
             edges: vec![
-                json!({ "edge_type": "derived_from", "source": "k", "target": "m1" }),
-                json!({ "edge_type": "relates_to", "source": "k", "target": "m2" }),
+                json!({ "edge_type": "derived_from", "source": "k", "target": "a" }),
+                json!({ "edge_type": "responds_to", "source": "a", "target": "u" }),
+                json!({ "edge_type": "responds_to", "source": "u", "target": "earlier" }),
+                json!({ "edge_type": "relates_to", "source": "k", "target": "u" }),
             ],
         };
-        assert!(!is_grounded("k", "Pin", &subgraph));
-        let mut linked = subgraph;
-        linked
+        assert!(
+            !covers_window("k", &subgraph),
+            "today: only the reply is linked"
+        );
+        subgraph
             .edges
-            .push(json!({ "edge_type": "derived_from", "source": "k", "target": "m2" }));
-        assert!(is_grounded("k", "pin", &linked));
-        assert!(!is_grounded("k", "", &linked));
+            .push(json!({ "edge_type": "derived_from", "source": "k", "target": "u" }));
+        assert!(
+            covers_window("k", &subgraph),
+            "user message linked; earlier turns are outside the window"
+        );
+        assert!(
+            !covers_window("other", &subgraph),
+            "no derived_from links at all"
+        );
     }
 }
