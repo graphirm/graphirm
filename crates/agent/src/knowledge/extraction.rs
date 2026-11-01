@@ -169,27 +169,96 @@ For each entity, provide:
 Only extract entities with confidence >= {min_confidence}.
 
 Respond with ONLY valid JSON in this exact format:
-{{
-  "entities": [
-    {{
-      "entity_type": "pattern",
-      "name": "Example Pattern",
-      "description": "Description of the pattern",
-      "confidence": 0.9,
-      "relationships": [
-        {{ "target_name": "OtherEntity", "relationship": "uses" }}
-      ]
-    }}
-  ]
-}}
+{schema}
 
 CONVERSATION:
 {conversation}
 "#,
         entity_types = entity_types_list,
         min_confidence = config.min_confidence,
+        schema = EXTRACTION_RESPONSE_EXAMPLE,
         conversation = conversation_block,
     )
+}
+
+/// The `ExtractionResponse` shape shown to the model, shared by the LLM and hybrid prompts.
+const EXTRACTION_RESPONSE_EXAMPLE: &str = r#"{
+  "entities": [
+    {
+      "entity_type": "pattern",
+      "name": "Example Pattern",
+      "description": "Description of the pattern",
+      "confidence": 0.9,
+      "relationships": [
+        { "target_name": "OtherEntity", "relationship": "uses" }
+      ]
+    }
+  ]
+}"#;
+
+/// Builds the hybrid backend's enrichment prompt: GLiNER2 found the entity names, the
+/// LLM writes a description for each and adds relationships, in the `ExtractionResponse`
+/// shape.
+pub fn build_enrichment_prompt(
+    entity_names: &[&str],
+    conversation_text: &str,
+    config: &ExtractionConfig,
+) -> String {
+    format!(
+        r#"Given these entities extracted from a conversation: {names}
+
+For each entity, provide a one-sentence description and any relationships between them.
+Keep each name exactly as given. entity_type is one of [{entity_types}]; confidence is
+0.0-1.0 how confident you are this is a real, useful entity.
+
+Conversation:
+{conversation}
+
+Respond with ONLY valid JSON in this exact format:
+{schema}
+"#,
+        names = entity_names.join(", "),
+        entity_types = config.entity_types.join(", "),
+        conversation = conversation_text,
+        schema = EXTRACTION_RESPONSE_EXAMPLE,
+    )
+}
+
+/// Parses an extraction reply, tolerating a markdown code fence or preamble text around
+/// the JSON object.
+fn parse_extraction_response(raw: &str) -> Result<ExtractionResponse, String> {
+    let trimmed = raw.trim();
+    // Strip ```json ... ``` or ``` ... ``` wrappers.
+    let inner = if let Some(rest) = trimmed.strip_prefix("```json") {
+        rest.trim_end_matches("```").trim()
+    } else if let Some(rest) = trimmed.strip_prefix("```") {
+        rest.trim_end_matches("```").trim()
+    } else {
+        trimmed
+    };
+    // Find outermost { ... } in case there's preamble text.
+    let json_str = match (inner.find('{'), inner.rfind('}')) {
+        (Some(start), Some(end)) if end > start => &inner[start..=end],
+        _ => inner,
+    };
+    serde_json::from_str::<ExtractionResponse>(json_str)
+        .map_err(|e| format!("{e}\nRaw: {json_str}"))
+}
+
+/// Hybrid enrichment result: the LLM's entities when its reply parses, otherwise the
+/// GLiNER2 entities with `enrich_failed` set so every node records why it has no summary.
+#[cfg_attr(not(feature = "local-extraction"), allow(dead_code))]
+fn enrichment_outcome(
+    local_result: ExtractionResponse,
+    reply: Result<String, String>,
+) -> (ExtractionResponse, bool) {
+    let error = match reply.map(|text| parse_extraction_response(&text)) {
+        Ok(Ok(enriched)) => return (enriched, false),
+        Ok(Err(parse_error)) => format!("unparseable reply: {parse_error}"),
+        Err(call_error) => call_error,
+    };
+    tracing::warn!(error = %error, "LLM enrichment failed, keeping GLiNER2 entities without summaries");
+    (local_result, true)
 }
 
 /// Extracts knowledge entities from a conversation turn using an LLM call,
@@ -226,6 +295,7 @@ pub async fn extract_knowledge(
             std::slice::from_ref(&source_id),
             &session_id,
             &extraction,
+            false,
             &config_clone,
         )
     })
@@ -318,7 +388,8 @@ pub async fn extract_knowledge_with_backend(
         return Ok(vec![]);
     }
 
-    let extraction = match &config.backend {
+    // `enrich_failed` is true when the hybrid backend fell back to GLiNER2-only entities.
+    let (extraction, enrich_failed) = match &config.backend {
         ExtractionBackend::Llm => {
             let llm = llm.ok_or_else(|| {
                 AgentError::Workflow("LLM backend selected but no LLM provider given".into())
@@ -329,38 +400,21 @@ pub async fn extract_knowledge_with_backend(
                 .complete(vec![LlmMessage::human(prompt)], &[], &completion_config)
                 .await?;
             let raw = response.text_content();
-            // Some providers wrap JSON in markdown code fences. Strip them.
-            let json_str = {
-                let trimmed = raw.trim();
-                if trimmed.is_empty() {
-                    // Empty response — log for debugging and return no entities.
-                    tracing::debug!(
-                        model = %config.model,
-                        stop_reason = ?response.stop_reason,
-                        content_parts = response.content.len(),
-                        "Extraction LLM returned empty text content"
-                    );
-                    return Ok(vec![]);
-                }
-                // Strip ```json ... ``` or ``` ... ``` wrappers.
-                let inner = if let Some(rest) = trimmed.strip_prefix("```json") {
-                    rest.trim_end_matches("```").trim()
-                } else if let Some(rest) = trimmed.strip_prefix("```") {
-                    rest.trim_end_matches("```").trim()
-                } else {
-                    trimmed
-                };
-                // Find outermost { ... } in case there's preamble text.
-                match (inner.find('{'), inner.rfind('}')) {
-                    (Some(start), Some(end)) if end > start => &inner[start..=end],
-                    _ => inner,
-                }
-            };
-            serde_json::from_str::<ExtractionResponse>(json_str).map_err(|e| {
-                AgentError::Workflow(format!(
-                    "Failed to parse extraction response: {e}\nRaw: {json_str}"
-                ))
-            })?
+            if raw.trim().is_empty() {
+                // Empty response — log for debugging and return no entities.
+                tracing::debug!(
+                    model = %config.model,
+                    stop_reason = ?response.stop_reason,
+                    content_parts = response.content.len(),
+                    "Extraction LLM returned empty text content"
+                );
+                return Ok(vec![]);
+            }
+            // Some providers wrap JSON in markdown code fences; the parser strips them.
+            let parsed = parse_extraction_response(&raw).map_err(|e| {
+                AgentError::Workflow(format!("Failed to parse extraction response: {e}"))
+            })?;
+            (parsed, false)
         }
 
         #[cfg(feature = "local-extraction")]
@@ -369,13 +423,14 @@ pub async fn extract_knowledge_with_backend(
             // OnnxExtractor::extract already filters by min_confidence internally.
             let extractor =
                 crate::knowledge::local_extraction::get_or_init_onnx_extractor(model_dir).await?;
-            extractor
+            let local_result = extractor
                 .extract(
                     &format_conversation(messages),
                     &config.entity_types,
                     config.min_confidence,
                 )
-                .await?
+                .await?;
+            (local_result, false)
         }
 
         #[cfg(not(feature = "local-extraction"))]
@@ -406,34 +461,21 @@ pub async fn extract_knowledge_with_backend(
                     .iter()
                     .map(|e| e.name.as_str())
                     .collect();
-                let enrichment_prompt = format!(
-                    "Given these entities extracted from a conversation: {}\n\n\
-                     For each entity, provide a one-sentence description and any relationships between them.\n\n\
-                     Conversation:\n{}\n\n\
-                     Respond with ONLY valid JSON in the ExtractionResponse format.",
-                    entity_names.join(", "),
-                    conversation_text,
-                );
+                let enrichment_prompt =
+                    build_enrichment_prompt(&entity_names, &conversation_text, config);
                 let completion_config = CompletionConfig::new(&config.model);
-                match llm
+                let reply = llm
                     .complete(
                         vec![LlmMessage::human(enrichment_prompt)],
                         &[],
                         &completion_config,
                     )
                     .await
-                {
-                    Ok(response) => {
-                        serde_json::from_str::<ExtractionResponse>(&response.text_content())
-                            .unwrap_or(local_result)
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "LLM enrichment failed, falling back to local-only");
-                        local_result
-                    }
-                }
+                    .map(|response| response.text_content())
+                    .map_err(|e| e.to_string());
+                enrichment_outcome(local_result, reply)
             } else {
-                local_result
+                (local_result, false)
             }
         }
 
@@ -449,7 +491,14 @@ pub async fn extract_knowledge_with_backend(
     let session_id = session_id.clone();
     let config_clone = config.clone();
     tokio::task::spawn_blocking(move || {
-        persist_extracted_entities(&graph, &source_ids, &session_id, &extraction, &config_clone)
+        persist_extracted_entities(
+            &graph,
+            &source_ids,
+            &session_id,
+            &extraction,
+            enrich_failed,
+            &config_clone,
+        )
     })
     .await
     .map_err(|e| AgentError::Join(e.to_string()))?
@@ -522,12 +571,15 @@ fn merge_by_name(entities: &[&ExtractedEntity]) -> Vec<MergedEntity> {
 /// `Knowledge` graph node per name, links it to every source via `DerivedFrom`, and wires
 /// `RelatesTo` edges. `session_id` is stored in each node's metadata so cross-session HNSW
 /// searches can exclude same-session candidates without graph traversal; `mentions` records
-/// how many extracted entities were merged into the node.
+/// how many extracted entities were merged into the node; `summary_source` is `llm` when
+/// the summary was written by a model, `none` when the backend wrote none (GLiNER2 alone),
+/// and `enrich_failed` when hybrid enrichment failed and GLiNER2's entities were kept.
 fn persist_extracted_entities(
     graph: &GraphStore,
     source_node_ids: &[NodeId],
     session_id: &NodeId,
     extraction: &ExtractionResponse,
+    enrich_failed: bool,
     config: &ExtractionConfig,
 ) -> Result<Vec<NodeId>, AgentError> {
     let filtered: Vec<&ExtractedEntity> = extraction
@@ -547,9 +599,17 @@ fn persist_extracted_entities(
             summary: entity.description.clone(),
             confidence: entity.confidence,
         }));
+        let summary_source = if enrich_failed {
+            "enrich_failed"
+        } else if entity.description.trim().is_empty() {
+            "none"
+        } else {
+            "llm"
+        };
         node.metadata = serde_json::json!({
             "session_id": session_id.to_string(),
             "mentions": mentions,
+            "summary_source": summary_source,
         });
         let node_id = graph.add_node(node)?;
 
@@ -1008,6 +1068,92 @@ mod tests {
             name_key("List Pinned Knowledge")
         );
         assert_eq!(name_key("--"), "--");
+    }
+
+    #[tokio::test]
+    async fn every_node_records_where_its_summary_came_from() {
+        let graph = std::sync::Arc::new(GraphStore::open_memory().unwrap());
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.5,
+            ..ExtractionConfig::default()
+        };
+        let llm = MockExtractionProvider {
+            response_json: r#"{ "entities": [
+                { "entity_type": "api", "name": "Pin", "description": "Pins a node",
+                  "confidence": 0.9, "relationships": [] },
+                { "entity_type": "api", "name": "Unpin", "description": " ",
+                  "confidence": 0.9, "relationships": [] } ] }"#
+                .to_string(),
+        };
+        let source_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".to_string(),
+                content: "Pin and Unpin".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let node_ids = extract_knowledge_with_backend(
+            std::sync::Arc::clone(&graph),
+            Some(&llm),
+            None,
+            &[("assistant".to_string(), "Pin and Unpin".to_string())],
+            std::slice::from_ref(&source_id),
+            &NodeId::from("test-session"),
+            &config,
+        )
+        .await
+        .unwrap();
+
+        let sources: Vec<String> = node_ids
+            .iter()
+            .map(|id| graph.get_node(id).unwrap().metadata["summary_source"].to_string())
+            .collect();
+        assert_eq!(sources, [r#""llm""#, r#""none""#]);
+    }
+
+    #[test]
+    fn enrichment_failure_keeps_the_local_entities_and_says_so() {
+        let local = || ExtractionResponse {
+            entities: vec![ExtractedEntity {
+                entity_type: "function".to_string(),
+                name: "Pin".to_string(),
+                description: String::new(),
+                confidence: 0.8,
+                relationships: vec![],
+            }],
+        };
+        let enriched = r#"```json
+{ "entities": [ { "entity_type": "function", "name": "Pin", "description": "Pins a node",
+  "confidence": 0.8, "relationships": [] } ] }
+```"#;
+
+        let (result, failed) = enrichment_outcome(local(), Ok(enriched.to_string()));
+        assert!(!failed);
+        assert_eq!(result.entities[0].description, "Pins a node");
+
+        let (result, failed) = enrichment_outcome(local(), Ok("Here are the entities".into()));
+        assert!(failed, "an unparseable reply is a failure, not silence");
+        assert_eq!(result.entities[0].description, "");
+
+        let (_, failed) = enrichment_outcome(local(), Err("HTTP 429".into()));
+        assert!(failed);
+    }
+
+    #[test]
+    fn enrichment_prompt_shows_the_response_schema() {
+        let prompt = build_enrichment_prompt(
+            &["Pin", "Unpin"],
+            "[user]: pin it",
+            &ExtractionConfig::default(),
+        );
+        assert!(prompt.contains("Pin, Unpin"));
+        assert!(prompt.contains(EXTRACTION_RESPONSE_EXAMPLE));
+        assert!(prompt.contains("[user]: pin it"));
+        let example: ExtractionResponse =
+            serde_json::from_str(EXTRACTION_RESPONSE_EXAMPLE).expect("the example parses");
+        assert_eq!(example.entities.len(), 1);
     }
 
     #[test]
