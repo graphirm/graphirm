@@ -248,3 +248,44 @@ regresses" therefore cannot be checked with this harness. It is in the backlog u
 Infrastructure & Quality as its own item. Until that lands, the memory part of the gate is
 replaced by a check that `memory.rs` embeds the same `entity`/`summary` text before and after.
 Fixes 3.1–3.3 do not change that text for a given node.
+
+## 9. Candidate result (2026-11-01, fixes 3.1, 3.3, 3.2)
+
+Commits on `knowledge/extraction-eval`: `f277cf0` (3.1), `1906ed4` (3.3), `8f57a75` (3.2).
+Same protocol as §8 (`results/kx-fix/run.sh`, ids `kx-fix-<backend>-knowledge-<n>`). The baseline
+binaries are kept as `target-<backend>/graphirm-base`.
+
+| Task | LLM backend (3 runs) | Local backend (3 runs) |
+|---|---|---|
+| `entity-recall` | 3/3 pass | 3/3 pass |
+| `multi-entity` | 3/3 pass | 3/3 pass |
+| `repeated-mentions` | 3/3 pass (was 0/3) | 3/3 pass (was 0/3) |
+| `user-only-entity` | 3/3 pass (was 0/3) | 3/3 pass (was 0/3) |
+| `knowledge-summaries` | 3/3 pass (summary rate 1.0) | 0/3 (summary rate 0.0; expected, not gated) |
+
+What the check logs show:
+- **Repeated names: none in any run.** On `repeated-mentions` the local backend makes 5 nodes per run,
+  down from 13–16 with 5 repeated names. The LLM backend makes 4–6.
+- **Window coverage: 1.0 in every run on both backends**, up from 0.0.
+- **Summaries:** unchanged. The local backend still writes none. That is now recorded as
+  `summary_source: "none"` on each node instead of being silent. The hybrid path (schema in the
+  prompt, logged fallback, `enrich_failed`) is unit-tested only. No eval run uses the hybrid backend.
+- No 429s this time.
+
+Gate (§4):
+- **New tasks pass 3/3 and the baseline failed `repeated-mentions`:** yes, on both backends.
+  `knowledge-summaries` on the local backend is the stated exception.
+- **No existing knowledge task regresses:** `entity-recall` and `multi-entity` pass 3/3 on both,
+  as in the baseline.
+- **Memory:** still not measurable with the harness (§8). The substitute check holds. `memory.rs`
+  embeds `"[type] entity: summary"` from the node's own fields, and the fixes don't change that
+  format. 3.1 changes which nodes exist: one per name, with the highest-confidence spelling.
+- **Extraction cost ≤ +10%:** the LLM and local backends make the same calls as before. The LLM
+  prompt is byte-identical, since the schema block moved into a shared constant unchanged (checked
+  against `4d5562d`). Only the hybrid enrichment prompt grew, by the schema block (about 90 tokens),
+  and no eval run covers it. Token totals were not recorded per run, in either the baseline or the
+  candidate.
+
+Not caused by these fixes: 4 `graphirm-agent` unit tests (`context::tests::t4_exchange_is_atomic_*`
+and three `workflow::tests::test_agent_loop_*`) fail at `4d5562d` too. They pass on `main`. They are in the backlog.
+

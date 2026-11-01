@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-11-01 — Extracted knowledge links to the whole extraction window, and repeats merge by normalised name
+
+**Context:** Fix 3.3 originally linked each entity only to the message that mentions it. The replay (plan §7) found only 60% of LLM entity names appear verbatim in the conversation, because the LLM paraphrases. Separately, a merge rule was needed for 3.1.
+**Decision:** Each node gets `derived_from` to every message `post_turn_extract` read: the parent(s) plus the reply. Same rule for both backends. Repeats within one call merge on lowercase letters and digits (`list_pinned_knowledge()` = `list_pinned_knowledge`). The highest-confidence entity supplies the name, type and confidence. The first non-empty description is kept, and relationships are unioned. The eval checks link targets (`KnowledgeCoversWindow`), not name text.
+**Alternatives:** Mention-only links lost: a text match misses about a fifth of correct LLM nodes, and GLiNER2 span offsets would only cover one backend. Keeping the first spelling instead of the most confident lost: GLiNER2 returns spans in text order, so the first spelling is arbitrary.
+**Consequences:** A node can derive from two messages. Readers that walk `derived_from` from messages see it twice unless they dedupe by id. The session knowledge route does, and nothing else walks that direction today. Merging across messages is still open (plan §6).
+**Refs:** `docs/plans/2026-11-01-knowledge-extraction-fixes.md` §3, §7, §9; commits `f277cf0`, `1906ed4`.
+
 ## 2026-11-01 — Fix Knowledge-node noise in extraction, before building a taxonomy to clean it up
 
 **Context:** The taxonomy experiment treated duplicates and noise as drift that a labelling authority has to manage. The node timestamps say otherwise. 7 of the 8 duplicates were created in the same extraction call, milliseconds apart, from the same message: one node per GLiNER2 span. All 34 extracted nodes have empty summaries. Two nodes link to a message that does not mention them.

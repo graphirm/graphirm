@@ -1,5 +1,13 @@
 # Graphirm Development Progress Log
 
+## 2026-11-01: Knowledge extraction fixes — COMPLETE ✅
+
+- One Knowledge node per normalised name per extraction call (`metadata.mentions`). On the eval's `repeated-mentions` task the local GLiNER2 backend now makes 5 nodes, down from 13–16 with 5 repeated names.
+- Each node links with `derived_from` to every message in the extraction window, so window coverage goes from 0.0 to 1.0. `GET /api/graph/{session}/knowledge` dedupes by id.
+- `metadata.summary_source` (`llm` / `none` / `enrich_failed`) on every node. The hybrid enrichment prompt carries the response schema, and a failed parse logs a warning.
+- Eval (`--filter knowledge`, 3 runs × LLM and local backends): all tasks pass, except `knowledge-summaries` on the local backend (expected). Baseline and candidate are in plan §8–§9.
+- Key files: `crates/agent/src/knowledge/extraction.rs`, `crates/server/src/routes.rs`, `graphirm-eval/src/knowledge_checks.rs`, `graphirm-eval/src/tasks/knowledge.rs`, `docs/plans/2026-11-01-knowledge-extraction-fixes.md`
+
 ## 2026-10-11: Chat model is Gemini 3.8 Flash — COMPLETE ✅
 
 - `[model].name`, `[agent].model`, and both routing tiers are `google/gemini-3.8-flash`. Pi stays on `deepseek/deepseek-v4-flash`. Extraction stays on `deepseek-chat`.
