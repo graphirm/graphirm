@@ -361,6 +361,21 @@ impl GraphirmClient {
         self.json(|| http.get(&url)).await
     }
 
+    /// Subgraph rooted at one node, following outgoing edges up to `depth` hops.
+    pub async fn get_subgraph(
+        &self,
+        session_id: &str,
+        node_id: &str,
+        depth: usize,
+    ) -> anyhow::Result<GraphResponse> {
+        let http = self.http.clone();
+        let url = format!(
+            "{}/api/graph/{session_id}/subgraph/{node_id}?depth={depth}",
+            self.base
+        );
+        self.json(|| http.get(&url)).await
+    }
+
     pub async fn get_graph(&self, session_id: &str) -> anyhow::Result<GraphResponse> {
         let http = self.http.clone();
         let url = format!("{}/api/graph/{session_id}", self.base);

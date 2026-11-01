@@ -1,5 +1,6 @@
 mod client;
 mod harness;
+mod knowledge_checks;
 mod report;
 mod task;
 mod tasks;

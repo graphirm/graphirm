@@ -67,6 +67,14 @@ pub enum Verifier {
     /// GET /api/graph/{session} — pass if at least one Content node exists
     /// with `node_type.content_type` matching the given string.
     GraphContainsContentType { content_type: String },
+    /// No two distinct Knowledge nodes in the session share a normalised name.
+    KnowledgeUniqueNames,
+    /// At least `min_fraction` of the session's Knowledge nodes have a non-empty summary.
+    /// Fails when there are no Knowledge nodes.
+    KnowledgeSummaryRate { min_fraction: f64 },
+    /// At least `min_fraction` of the session's Knowledge nodes have a `derived_from`
+    /// message whose content contains the entity name. Fails when there are none.
+    KnowledgeGrounded { min_fraction: f64 },
     /// All verifiers must pass.
     All(Vec<Verifier>),
 }
