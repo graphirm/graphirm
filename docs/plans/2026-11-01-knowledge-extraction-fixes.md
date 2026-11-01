@@ -177,3 +177,29 @@ verifiers.
   the config.
 - **Hybrid usage.** Which backend produced the March nodes? The logs are gone. After 3.2,
   `summary_source` answers this for new nodes.
+
+## 7. Replay result (2026-11-01, before any eval run)
+
+`/home/krs/pi-play/experiment/extraction-replay/` replays the 7 March source conversations, each
+parent message plus its response, through both backends. LLM cost was $0.017.
+
+| | Entities | Repeated names | Empty descriptions | Only in the parent message |
+|---|---|---|---|---|
+| March nodes | 34 | 13 | 34 | 8 |
+| GLiNER2 (`predict-spans`) | 34 | 13 | 34 | 8 |
+| LLM prompt, 3 runs on Flash | 181 | 0 | 0 | 24 |
+
+- **The March graph is GLiNER2 output.** All 34 nodes are reproduced, with names and confidences
+  matching to 4 decimals.
+- **Fixes 3.1 and 3.2 apply to the local path only.** The LLM backend repeated no names and left no
+  description empty.
+- **Fix 3.3 applies to both backends.** In both, some entities appear only in the parent message.
+- **LLM names are often paraphrases.** Only 60% appear verbatim in the conversation, and 81% if
+  matching every content word is enough. So 3.3 and `KnowledgeGrounded` should not depend on text
+  matching:
+  - For the LLM backend, link `derived_from` to every message in the extraction window.
+  - For GLiNER2, link to the message that contains the span's byte offsets.
+  - `KnowledgeGrounded` should check that the links cover the window (and, for spans, the right
+    message). As written, it requires the whole name as a substring of a `derived_from` target.
+- **`repeated-mentions` at `min_fraction: 1.0` is flaky on the LLM backend as written.** It needs
+  the provenance check before the baseline runs.
