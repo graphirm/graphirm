@@ -443,10 +443,74 @@ pub async fn extract_knowledge_with_backend(
     .map_err(|e| AgentError::Join(e.to_string()))?
 }
 
-/// Shared node-creation logic: persists filtered entities as `Knowledge` graph nodes,
-/// links them to the source via `DerivedFrom`, and wires `RelatesTo` edges.
-/// `session_id` is stored in each node's metadata so cross-session HNSW searches
-/// can exclude same-session candidates without graph traversal.
+/// Lowercase letters and digits only, so `Pin`, `pin` and `list_pinned_knowledge()` /
+/// `list_pinned_knowledge` each count as one name. A name with no letters or digits
+/// keys on its trimmed text.
+fn name_key(name: &str) -> String {
+    let key: String = name
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+    if key.is_empty() {
+        name.trim().to_string()
+    } else {
+        key
+    }
+}
+
+/// One entity per normalised name, with the number of extracted entities folded into it.
+struct MergedEntity {
+    entity: ExtractedEntity,
+    mentions: usize,
+}
+
+/// Groups entities by `name_key`, in order of first appearance. GLiNER2 returns one span
+/// per mention, and the LLM sometimes repeats a name, so without this a name mentioned
+/// three times becomes three nodes. Per group: the highest-confidence entity supplies the
+/// name, type and confidence; the description is the first non-empty one; relationships
+/// are the union, deduped by normalised target and label.
+fn merge_by_name(entities: &[&ExtractedEntity]) -> Vec<MergedEntity> {
+    let mut index: HashMap<String, usize> = HashMap::new();
+    let mut merged: Vec<MergedEntity> = Vec::new();
+    for entity in entities {
+        let key = name_key(&entity.name);
+        let Some(&at) = index.get(&key) else {
+            index.insert(key, merged.len());
+            merged.push(MergedEntity {
+                entity: (*entity).clone(),
+                mentions: 1,
+            });
+            continue;
+        };
+        let group = &mut merged[at];
+        group.mentions += 1;
+        if entity.confidence > group.entity.confidence {
+            group.entity.name = entity.name.clone();
+            group.entity.entity_type = entity.entity_type.clone();
+            group.entity.confidence = entity.confidence;
+        }
+        if group.entity.description.trim().is_empty() && !entity.description.trim().is_empty() {
+            group.entity.description = entity.description.clone();
+        }
+        for rel in &entity.relationships {
+            let seen = group.entity.relationships.iter().any(|r| {
+                name_key(&r.target_name) == name_key(&rel.target_name)
+                    && r.relationship == rel.relationship
+            });
+            if !seen {
+                group.entity.relationships.push(rel.clone());
+            }
+        }
+    }
+    merged
+}
+
+/// Shared node-creation logic: merges filtered entities by normalised name, persists one
+/// `Knowledge` graph node per name, links it to the source via `DerivedFrom`, and wires
+/// `RelatesTo` edges. `session_id` is stored in each node's metadata so cross-session HNSW
+/// searches can exclude same-session candidates without graph traversal; `mentions` records
+/// how many extracted entities were merged into the node.
 fn persist_extracted_entities(
     graph: &GraphStore,
     source_node_id: &NodeId,
@@ -459,18 +523,22 @@ fn persist_extracted_entities(
         .iter()
         .filter(|e| e.confidence >= config.min_confidence)
         .collect();
+    let merged = merge_by_name(&filtered);
 
-    let mut name_to_id: HashMap<String, NodeId> = HashMap::new();
+    let mut key_to_id: HashMap<String, NodeId> = HashMap::new();
     let mut created_ids: Vec<NodeId> = Vec::new();
 
-    for entity in &filtered {
+    for MergedEntity { entity, mentions } in &merged {
         let mut node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
             entity: entity.name.clone(),
             entity_type: entity.entity_type.clone(),
             summary: entity.description.clone(),
             confidence: entity.confidence,
         }));
-        node.metadata = serde_json::json!({ "session_id": session_id.to_string() });
+        node.metadata = serde_json::json!({
+            "session_id": session_id.to_string(),
+            "mentions": mentions,
+        });
         let node_id = graph.add_node(node)?;
 
         graph.add_edge(GraphEdge::new(
@@ -479,26 +547,34 @@ fn persist_extracted_entities(
             source_node_id.clone(),
         ))?;
 
-        name_to_id.insert(entity.name.clone(), node_id.clone());
+        key_to_id.insert(name_key(&entity.name), node_id.clone());
         created_ids.push(node_id);
     }
 
-    for entity in &filtered {
-        if let Some(src) = name_to_id.get(&entity.name) {
-            for rel in &entity.relationships {
-                if let Some(tgt) = name_to_id.get(&rel.target_name) {
-                    graph.add_edge(GraphEdge::new(
-                        EdgeType::RelatesTo,
-                        src.clone(),
-                        tgt.clone(),
-                    ))?;
-                }
+    for MergedEntity { entity, .. } in &merged {
+        let Some(src) = key_to_id.get(&name_key(&entity.name)) else {
+            continue;
+        };
+        let mut linked: Vec<&NodeId> = Vec::new();
+        for rel in &entity.relationships {
+            let Some(tgt) = key_to_id.get(&name_key(&rel.target_name)) else {
+                continue;
+            };
+            if tgt == src || linked.contains(&tgt) {
+                continue;
             }
+            graph.add_edge(GraphEdge::new(
+                EdgeType::RelatesTo,
+                src.clone(),
+                tgt.clone(),
+            ))?;
+            linked.push(tgt);
         }
     }
 
     tracing::info!(
         extracted = filtered.len(),
+        merged = merged.len(),
         total = extraction.entities.len(),
         backend = ?config.backend,
         "Knowledge extraction complete"
@@ -789,6 +865,135 @@ mod tests {
             .neighbors(&node_ids[0], Some(EdgeType::RelatesTo), Direction::Outgoing)
             .unwrap();
         assert_eq!(neighbors.len(), 1);
+    }
+
+    /// The nine entities GLiNER2 returned for the March `ef95a429` turn (Pin CLI summary),
+    /// with two relationships added to check that targets resolve through the merge.
+    #[tokio::test]
+    async fn repeated_names_merge_into_one_node_each() {
+        let graph = std::sync::Arc::new(GraphStore::open_memory().unwrap());
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.7,
+            ..ExtractionConfig::default()
+        };
+        let entity = |name: &str, entity_type: &str, confidence: f64, rels: &str| {
+            format!(
+                r#"{{ "entity_type": "{entity_type}", "name": "{name}", "description": "", "confidence": {confidence}, "relationships": [{rels}] }}"#
+            )
+        };
+        let entities = [
+            entity("Unpin", "function", 0.893, ""),
+            entity(
+                "Unpin",
+                "function",
+                0.838,
+                r#"{ "target_name": "pin", "relationship": "reverses" }"#,
+            ),
+            entity("ImportCursor", "pattern", 0.813, ""),
+            entity("Pin", "function", 0.799, ""),
+            entity(
+                "Pin",
+                "function",
+                0.752,
+                r#"{ "target_name": "list_pinned_knowledge", "relationship": "uses" }"#,
+            ),
+            entity("List", "function", 0.730, ""),
+            entity("list_pinned_knowledge()", "function", 0.727, ""),
+            entity("graphirm_graph", "library", 0.716, ""),
+            entity("List", "function", 0.703, ""),
+        ];
+        let llm = MockExtractionProvider {
+            response_json: format!(r#"{{ "entities": [{}] }}"#, entities.join(",")),
+        };
+        let source_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".to_string(),
+                content: "Pin, Unpin and List subcommands".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let node_ids = extract_knowledge(
+            std::sync::Arc::clone(&graph),
+            &llm,
+            &[("assistant".to_string(), "Pin, Unpin and List".to_string())],
+            &source_id,
+            &NodeId::from("test-session"),
+            &config,
+        )
+        .await
+        .unwrap();
+
+        let nodes: Vec<GraphNode> = node_ids
+            .iter()
+            .map(|id| graph.get_node(id).unwrap())
+            .collect();
+        let names: Vec<(&str, u64, f64)> = nodes
+            .iter()
+            .map(|node| match &node.node_type {
+                NodeType::Knowledge(data) => (
+                    data.entity.as_str(),
+                    node.metadata["mentions"].as_u64().unwrap(),
+                    data.confidence,
+                ),
+                other => panic!("expected Knowledge, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            names
+                .iter()
+                .map(|(name, mentions, _)| (*name, *mentions))
+                .collect::<Vec<_>>(),
+            [
+                ("Unpin", 2),
+                ("ImportCursor", 1),
+                ("Pin", 2),
+                ("List", 2),
+                ("list_pinned_knowledge()", 1),
+                ("graphirm_graph", 1),
+            ]
+        );
+        assert!((names[0].2 - 0.893).abs() < 1e-9, "highest confidence kept");
+
+        let unpin = graph
+            .neighbors(&node_ids[0], Some(EdgeType::RelatesTo), Direction::Outgoing)
+            .unwrap();
+        assert_eq!(unpin.len(), 1);
+        assert_eq!(
+            unpin[0].id, node_ids[2],
+            "`pin` resolves to the merged Pin node"
+        );
+        let pin = graph
+            .neighbors(&node_ids[2], Some(EdgeType::RelatesTo), Direction::Outgoing)
+            .unwrap();
+        assert_eq!(pin.len(), 1);
+        assert_eq!(pin[0].id, node_ids[4]);
+    }
+
+    #[test]
+    fn merge_by_name_keeps_the_first_non_empty_description() {
+        let entity = |description: &str, confidence: f64| ExtractedEntity {
+            entity_type: "function".to_string(),
+            name: "Pin".to_string(),
+            description: description.to_string(),
+            confidence,
+            relationships: vec![],
+        };
+        let (a, b, c) = (
+            entity("", 0.9),
+            entity("pins a node", 0.8),
+            entity("other", 0.7),
+        );
+        let merged = merge_by_name(&[&a, &b, &c]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].entity.description, "pins a node");
+        assert_eq!(merged[0].mentions, 3);
+        assert_eq!(
+            name_key("list_pinned_knowledge()"),
+            name_key("List Pinned Knowledge")
+        );
+        assert_eq!(name_key("--"), "--");
     }
 
     #[test]
