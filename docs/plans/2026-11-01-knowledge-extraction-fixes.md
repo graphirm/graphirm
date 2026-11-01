@@ -92,6 +92,10 @@ Pass the message node ids alongside `messages`: the parent ids from `post_turn_e
 
 This works the same for all three backends, and needs no span offsets from GLiNER2.
 
+`GET /api/graph/{session}/knowledge` walks interaction → incoming `derived_from`. A node linked to
+two messages would therefore be listed twice, so this fix also dedupes that route by node id. The
+eval verifiers already dedupe by id, so they score the same before and after.
+
 `extract_knowledge` (the direct, non-hook entry point) keeps its single `source_node_id` and gets
 the same `grounded` check against that one message.
 
@@ -99,7 +103,7 @@ the same `grounded` check against that one message.
 
 Today the knowledge suite has two tasks (`entity-recall`, `multi-entity`). Both use
 `KnowledgeNodeCount { min_count }`, which cannot detect a duplicate, an empty summary or a wrong
-link. Three verifiers and two tasks are added in `graphirm-eval/src/`. They all use data the
+link. Three verifiers and three tasks are added in `graphirm-eval/src/`. They all use data the
 harness already fetches: `get_knowledge` and `get_graph`, which return nodes and edges.
 
 | Verifier | Passes when | Measures fix |
@@ -112,10 +116,12 @@ harness already fetches: `get_knowledge` and `get_graph`, which return nodes and
 |---|---|---|
 | `repeated-mentions` | "Acknowledge (no tools needed):" followed by the `ef95a429` CLI summary text. It names `Pin`, `Unpin` and `List` two or three times each | `All[KnowledgeNodeCount{3}, KnowledgeUniqueNames, KnowledgeGrounded{1.0}]` |
 | `user-only-entity` | A user message that names an entity the assistant is told not to repeat ("acknowledge in one word") | `KnowledgeGrounded{1.0}`. The entity must link to the user message |
+| `knowledge-summaries` | The `multi-entity` prompt | `All[KnowledgeNodeCount{1}, KnowledgeSummaryRate{0.9}]` |
 
-`KnowledgeSummaryRate` goes on `multi-entity` as an extra `All` arm. The threshold depends on the
-backend: 0.9 for `llm` and `hybrid`, not applied for `local`, where the only check is that
-`summary_source` is present.
+`KnowledgeSummaryRate { 0.9 }` is a separate task, `knowledge-summaries`, with the same prompt as
+`multi-entity`. `multi-entity` itself stays unchanged, so its history stays comparable. On the
+`local` backend this task is expected to fail, because GLiNER2 writes no descriptions. For that
+backend the result is recorded but not gated.
 
 **Protocol:**
 1. Build a baseline binary from the current `main`, and a candidate binary with the three fixes.
