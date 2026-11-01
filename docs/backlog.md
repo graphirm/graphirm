@@ -1170,6 +1170,21 @@ re-index on every change.
 - `codebase_health` — validate that analysis results are consistent before persisting
 - `get_impact file_path=crates/graph/src/store.rs` — blast radius of adding `RepoAnalysis` node type
 
+### Taxonomy MCP server — P3 · L
+
+Make one service the single authority for labels. It seeds a provisional taxonomy from the project description, classifies new content into it, and holds items that fit nowhere until a cluster has enough support to become a new category. It also runs versioned consolidation (merge, split, retire, with an old-ID → new-ID map) and reports health signals. Batch induction over a corpus (TnT-LLM / Clio style, through OpenRouter) is one of its operations. Step 0 comes first and is read-only: it measures Knowledge-node duplication in the saved graphs, and the work stops if that is under ~10%. Prototype as a standalone MCP server; integrate into Graphirm only after a `graphirm-eval` comparison. Design: `docs/plans/2026-10-31-taxonomy-mcp-server-design.md`. **Started 2026-10-31:** Step 0 measured (17/46 noise, exact dedup already finds 8/9 duplicate pairs); step 1 prototype as a Pi extension in `/home/krs/pi-play/experiment/taxonomy/`. Step 3 ran (2 runs, $0.11): noise recall 0.82–0.88 vs 0 for exact dedup, but fewer duplicates found than exact dedup and categories unstable (pair Jaccard 0.28); gate not passed. Step 4 (v2: exact-name step first, `same_as` to pool items, bare identifiers labelled noise, seeded categories; 2 runs, $0.078): noise P/R 0.93–1.00 / 1.00, same-entity recall 0.83–1.00 against B1's 0.83, verdict kappa 0.92. Noise and dedup pass; categories fail (pair Jaccard 0.36), because each seed turn picks a different granularity. Next: a person reviews `labels.json`; then either try a person-written seed tree, or eval a noise + exact-name dedup post-extraction step on its own (§10.2).
+
+### Knowledge extraction fixes — P2 · M
+
+Most Knowledge-node noise is created by extraction itself. GLiNER2 returns one span per mention, and `persist_extracted_entities` makes a node for each span, so one message produced 9 nodes, 3 of them repeats. Summaries are empty with nothing recording why, and `derived_from` always points at the response even when the name was only in the user message.
+
+Three fixes in `crates/agent/src/knowledge/extraction.rs`:
+- Merge entities by normalised name within a call.
+- Set `metadata.summary_source`, and log a hybrid enrichment fallback instead of swallowing it.
+- Link each entity to the message(s) that mention it, or set `grounded: false`.
+
+Measured by three new `graphirm-eval` verifiers (`KnowledgeUniqueNames`, `KnowledgeSummaryRate`, `KnowledgeGrounded`) and two new knowledge tasks. These land and run on the baseline before any extraction change. Gate: the new tasks pass 3/3 on the candidate, no knowledge or memory task regresses, and extraction cost rises at most 10%. Plan: `docs/plans/2026-11-01-knowledge-extraction-fixes.md`. Found by the taxonomy experiment (§10.2), which mostly cleaned up after these defects.
+
 ---
 
 ## Strategic Gaps (derived from competitive scoring 2026-03-22)
