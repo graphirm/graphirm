@@ -221,7 +221,13 @@ pub async fn extract_knowledge(
     let session_id = session_id.clone();
     let config_clone = config.clone();
     tokio::task::spawn_blocking(move || {
-        persist_extracted_entities(&graph, &source_id, &session_id, &extraction, &config_clone)
+        persist_extracted_entities(
+            &graph,
+            std::slice::from_ref(&source_id),
+            &session_id,
+            &extraction,
+            &config_clone,
+        )
     })
     .await
     .map_err(|e| AgentError::Join(e.to_string()))?
@@ -229,7 +235,9 @@ pub async fn extract_knowledge(
 
 /// Called after each agent turn. Gathers the recent conversation from the graph
 /// (the response node and its parent messages via `RespondsTo` edges) and runs
-/// knowledge extraction. Returns the IDs of any newly-created `Knowledge` nodes.
+/// knowledge extraction. Each new node links with `DerivedFrom` to every message in that
+/// window, so an entity named only in the user message still points at a message that
+/// names it. Returns the IDs of any newly-created `Knowledge` nodes.
 ///
 /// Non-fatal by design — callers should log and continue on error.
 pub async fn post_turn_extract(
@@ -256,14 +264,17 @@ pub async fn post_turn_extract(
     .map_err(|e| AgentError::Join(e.to_string()))??;
 
     let mut messages: Vec<(String, String)> = Vec::new();
+    let mut window: Vec<NodeId> = Vec::new();
     for parent in &parents {
         if let NodeType::Interaction(data) = &parent.node_type {
             messages.push((data.role.clone(), data.content.clone()));
+            window.push(parent.id.clone());
         }
     }
     if let NodeType::Interaction(data) = &response_node.node_type {
         messages.push((data.role.clone(), data.content.clone()));
     }
+    window.push(response_node_id.clone());
 
     extract_knowledge_with_backend(
         graph,
@@ -273,7 +284,7 @@ pub async fn post_turn_extract(
         #[cfg(feature = "local-extraction")]
         None,
         &messages,
-        response_node_id,
+        &window,
         session_id,
         config,
     )
@@ -288,6 +299,7 @@ pub async fn post_turn_extract(
 /// - `Hybrid`: GLiNER2 first for entities, then LLM synthesises descriptions and
 ///   discovers higher-order relationships
 ///
+/// `source_node_ids` are the messages in `messages`; every new node links to each of them.
 /// `onnx` is only meaningful when the `local-extraction` feature is enabled;
 /// it is ignored otherwise.
 pub async fn extract_knowledge_with_backend(
@@ -298,7 +310,7 @@ pub async fn extract_knowledge_with_backend(
     >,
     #[cfg(not(feature = "local-extraction"))] _onnx: Option<()>,
     messages: &[(String, String)],
-    source_node_id: &NodeId,
+    source_node_ids: &[NodeId],
     session_id: &NodeId,
     config: &ExtractionConfig,
 ) -> Result<Vec<NodeId>, AgentError> {
@@ -433,11 +445,11 @@ pub async fn extract_knowledge_with_backend(
         }
     };
 
-    let source_id = source_node_id.clone();
+    let source_ids = source_node_ids.to_vec();
     let session_id = session_id.clone();
     let config_clone = config.clone();
     tokio::task::spawn_blocking(move || {
-        persist_extracted_entities(&graph, &source_id, &session_id, &extraction, &config_clone)
+        persist_extracted_entities(&graph, &source_ids, &session_id, &extraction, &config_clone)
     })
     .await
     .map_err(|e| AgentError::Join(e.to_string()))?
@@ -507,13 +519,13 @@ fn merge_by_name(entities: &[&ExtractedEntity]) -> Vec<MergedEntity> {
 }
 
 /// Shared node-creation logic: merges filtered entities by normalised name, persists one
-/// `Knowledge` graph node per name, links it to the source via `DerivedFrom`, and wires
+/// `Knowledge` graph node per name, links it to every source via `DerivedFrom`, and wires
 /// `RelatesTo` edges. `session_id` is stored in each node's metadata so cross-session HNSW
 /// searches can exclude same-session candidates without graph traversal; `mentions` records
 /// how many extracted entities were merged into the node.
 fn persist_extracted_entities(
     graph: &GraphStore,
-    source_node_id: &NodeId,
+    source_node_ids: &[NodeId],
     session_id: &NodeId,
     extraction: &ExtractionResponse,
     config: &ExtractionConfig,
@@ -541,11 +553,13 @@ fn persist_extracted_entities(
         });
         let node_id = graph.add_node(node)?;
 
-        graph.add_edge(GraphEdge::new(
-            EdgeType::DerivedFrom,
-            node_id.clone(),
-            source_node_id.clone(),
-        ))?;
+        for source in source_node_ids {
+            graph.add_edge(GraphEdge::new(
+                EdgeType::DerivedFrom,
+                node_id.clone(),
+                source.clone(),
+            ))?;
+        }
 
         key_to_id.insert(name_key(&entity.name), node_id.clone());
         created_ids.push(node_id);
@@ -1212,6 +1226,72 @@ mod tests {
         assert!(neighbors.iter().any(|n| n.id == assistant_id));
     }
 
+    /// Mirrors the eval's `user-only-entity` task: the entity is named only in the user
+    /// message, so the node must link there as well as to the reply, and not to turns
+    /// before the window.
+    #[tokio::test]
+    async fn post_turn_extract_links_every_message_in_the_window() {
+        let graph = std::sync::Arc::new(GraphStore::open_memory().unwrap());
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.5,
+            ..ExtractionConfig::default()
+        };
+        let llm = MockExtractionProvider {
+            response_json: r#"{ "entities": [ { "entity_type": "api", "name": "RetryBudget",
+                "description": "Caps tool-call retries per turn", "confidence": 0.9,
+                "relationships": [] } ] }"#
+                .to_string(),
+        };
+        let interaction = |role: &str, content: &str| {
+            graph
+                .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                    role: role.to_string(),
+                    content: content.to_string(),
+                    token_count: None,
+                })))
+                .unwrap()
+        };
+        let earlier = interaction("assistant", "Hello");
+        let user = interaction("user", "The `RetryBudget` struct caps retries. Reply OK.");
+        let reply = interaction("assistant", "OK");
+        for (from, to) in [(&user, &earlier), (&reply, &user)] {
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::RespondsTo,
+                    from.clone(),
+                    to.clone(),
+                ))
+                .unwrap();
+        }
+
+        let node_ids = post_turn_extract(
+            std::sync::Arc::clone(&graph),
+            &llm,
+            &config,
+            &reply,
+            &NodeId::from("test-session"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(node_ids.len(), 1);
+        let mut linked: Vec<NodeId> = graph
+            .neighbors(
+                &node_ids[0],
+                Some(EdgeType::DerivedFrom),
+                Direction::Outgoing,
+            )
+            .unwrap()
+            .into_iter()
+            .map(|node| node.id)
+            .collect();
+        linked.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut expected = vec![user, reply];
+        expected.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(linked, expected);
+    }
+
     #[tokio::test]
     async fn test_post_turn_extraction_disabled() {
         let graph = std::sync::Arc::new(GraphStore::open_memory().unwrap());
@@ -1272,7 +1352,7 @@ mod tests {
             #[cfg(feature = "local-extraction")]
             None,
             &messages,
-            &source_id,
+            std::slice::from_ref(&source_id),
             &NodeId::from("test-session"),
             &config,
         )
@@ -1313,7 +1393,7 @@ mod tests {
             #[cfg(feature = "local-extraction")]
             None,
             &messages,
-            &source_id,
+            std::slice::from_ref(&source_id),
             &NodeId::from("test-session"),
             &config,
         )
@@ -1457,7 +1537,7 @@ mod tests {
             #[cfg(feature = "local-extraction")]
             None,
             &messages,
-            &source_id,
+            std::slice::from_ref(&source_id),
             &NodeId::from("test-session"),
             &config,
         )

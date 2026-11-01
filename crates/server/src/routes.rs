@@ -1279,6 +1279,8 @@ async fn get_knowledge(
         )?;
 
         // Hop 2: for each interaction node, find knowledge nodes that derived from it.
+        // A node extracted from a user message and its reply links to both, so keep the
+        // first copy of each id.
         let mut seen = std::collections::HashSet::new();
         let mut knowledge_nodes: Vec<GraphNode> = Vec::new();
         for node in &interaction_nodes {
@@ -3365,6 +3367,91 @@ mod tests {
             .unwrap();
         let knowledge: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
         assert!(knowledge.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_knowledge_lists_a_node_linked_to_two_messages_once() {
+        use graphirm_graph::{InteractionData, KnowledgeData};
+
+        let state = test_app_state();
+        let app = create_router(state.clone());
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(create_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let created: SessionResponse = serde_json::from_slice(&body).unwrap();
+        let agent_id = {
+            let sessions = state.sessions.read().await;
+            sessions
+                .get(&SessionId::from(created.id.as_str()))
+                .unwrap()
+                .session
+                .id
+                .clone()
+        };
+
+        let knowledge = state
+            .graph
+            .add_node(GraphNode::new(NodeType::Knowledge(KnowledgeData {
+                entity: "RetryBudget".to_string(),
+                entity_type: "api".to_string(),
+                summary: String::new(),
+                confidence: 0.9,
+            })))
+            .unwrap();
+        for role in ["user", "assistant"] {
+            let message = state
+                .graph
+                .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                    role: role.to_string(),
+                    content: "RetryBudget".to_string(),
+                    token_count: None,
+                })))
+                .unwrap();
+            state
+                .graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Produces,
+                    agent_id.clone(),
+                    message.clone(),
+                ))
+                .unwrap();
+            state
+                .graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::DerivedFrom,
+                    knowledge.clone(),
+                    message,
+                ))
+                .unwrap();
+        }
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/graph/{}/knowledge", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let listed: Vec<GraphNode> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, knowledge);
     }
 
     #[tokio::test]

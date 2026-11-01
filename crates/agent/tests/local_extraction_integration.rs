@@ -45,7 +45,7 @@ async fn test_local_backend_without_feature_returns_error() {
         #[cfg(feature = "local-extraction")]
         None,
         &messages,
-        &source_id,
+        std::slice::from_ref(&source_id),
         &NodeId::from("test-session"),
         &config,
     )
@@ -80,7 +80,7 @@ async fn test_hybrid_backend_without_feature_returns_error() {
         #[cfg(feature = "local-extraction")]
         None,
         &messages,
-        &source_id,
+        std::slice::from_ref(&source_id),
         &NodeId::from("test-session"),
         &config,
     )
