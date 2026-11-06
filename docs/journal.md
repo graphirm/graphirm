@@ -22,6 +22,46 @@ Entry template:
 
 ---
 
+## 2026-11-01 — Extracted knowledge links to the whole extraction window, and repeats merge by normalised name
+
+**Context:** Fix 3.3 originally linked each entity only to the message that mentions it. The replay (plan §7) found only 60% of LLM entity names appear verbatim in the conversation, because the LLM paraphrases. Separately, a merge rule was needed for 3.1.
+**Decision:** Each node gets `derived_from` to every message `post_turn_extract` read: the parent(s) plus the reply. Same rule for both backends. Repeats within one call merge on lowercase letters and digits (`list_pinned_knowledge()` = `list_pinned_knowledge`). The highest-confidence entity supplies the name, type and confidence. The first non-empty description is kept, and relationships are unioned. The eval checks link targets (`KnowledgeCoversWindow`), not name text.
+**Alternatives:** Mention-only links lost: a text match misses about a fifth of correct LLM nodes, and GLiNER2 span offsets would only cover one backend. Keeping the first spelling instead of the most confident lost: GLiNER2 returns spans in text order, so the first spelling is arbitrary.
+**Consequences:** A node can derive from two messages. Readers that walk `derived_from` from messages see it twice unless they dedupe by id. The session knowledge route does, and nothing else walks that direction today. Merging across messages is still open (plan §6).
+**Refs:** `docs/plans/2026-11-01-knowledge-extraction-fixes.md` §3, §7, §9; commits `f277cf0`, `1906ed4`.
+
+## 2026-11-01 — Fix Knowledge-node noise in extraction, before building a taxonomy to clean it up
+
+**Context:** The taxonomy experiment treated duplicates and noise as drift that a labelling authority has to manage. The node timestamps say otherwise. 7 of the 8 duplicates were created in the same extraction call, milliseconds apart, from the same message: one node per GLiNER2 span. All 34 extracted nodes have empty summaries. Two nodes link to a message that does not mention them.
+**Decision:** Plan three extraction fixes (merge by name within a call, explicit `summary_source`, link to the message that mentions the entity), measured by new `graphirm-eval` verifiers. The verifiers land and run on the baseline first. The taxonomy work stays parked at §10.2.
+**Alternatives:** A taxonomy step after extraction lost. It cleans up after the extractor on every run, and it costs a model call per item. Cross-message dedup and dropping the `function` / `library` entity types were left as separate eval runs, because they change memory-ranking inputs more than the three fixes do.
+**Consequences:** Existing knowledge tasks only count nodes, so they cannot see any of these defects. The eval gains verifiers before the code changes. Fewer nodes per turn is expected and is not a regression.
+**Refs:** `docs/plans/2026-11-01-knowledge-extraction-fixes.md`; `docs/plans/2026-10-31-taxonomy-mcp-server-design.md` §10.2.
+
+## 2026-10-31 — A bare code identifier with no summary is noise in the taxonomy labels
+
+**Context:** Runs a and b rejected `Pin`, `Unpin`, `ImportCursor`, `link_session` and `list_pinned_knowledge()` as "a bare identifier with no description". The v1 labels kept them. The rule had to be set before the v2 runs, not adjusted afterwards to fit them.
+**Decision:** Labels v2 (`labels.json`; v1 kept as `labels-v1.json`): a function, method or type name with no summary is noise. A name that states a rule or concept on its own (`grep-then-targeted-read`, `planning node`, `/api/health`, `graphirm_graph`) is kept. 8 items change from keep/duplicate to noise. That leaves 16 keep, 5 duplicate and 25 noise. The rule is also given to the model in the v2 prompts, since it is the service's policy.
+**Alternatives:** "No summary is noise" lost: extraction never writes summaries, so it drops every real extracted node (B2). Keeping the identifiers lost: an identifier tells a later session nothing that the code doesn't already show, and it fills a briefing slot.
+**Consequences:** Runs a and b are reported under both label sets. Under v2, noise P/R goes from 0.75/0.88 to 0.95/0.76 for a and from 0.58/0.82 to 0.88/0.84 for b. B1's entity recall drops from 0.89 to 0.83, because three duplicate pairs became noise. Part of a and b's gain comes from the label change, not from the method. The labels are still Claude's, and no person has reviewed them. The v2 runs c and d then scored noise P/R 1.00/1.00 and 0.93/1.00, partly because the same rule is in the prompt.
+**Refs:** `/home/krs/pi-play/experiment/taxonomy/labels.json` note; README → Step 4.
+
+## 2026-10-31 — Exact-name dedup runs before the model in the taxonomy, not as a competing baseline
+
+**Context:** Two item-by-item Pi runs over the 46 Knowledge nodes (`/home/krs/pi-play/experiment/taxonomy/runs/a`, `runs/b`) found noise that exact name dedup (B1) cannot: noise recall 0.82–0.88 against 0. They found fewer duplicates than B1: same-entity recall 0.33–0.67 against 0.89. Separate calls gave identical text different verdicts. Categories agreed only 0.28 (pair Jaccard) between the runs.
+**Decision:** The next version makes the deterministic part authoritative. An exact-name match against members, the pool and the discarded list is applied before any model call, and the model judges only new names: noise, synonyms and placement. `same_as` will also accept pool items.
+**Alternatives:** Tuning the prompt so the model remembers to dedup lost, because each call is a fresh process and the store is the only memory. Dropping the model and keeping B1 lost, because B1 has no noise handling, and noise is 17 of 46 items.
+**Consequences:** The taxonomy gate is now about noise and stable grouping, not dedup. The bare-symbol rule (is `Pin` with no summary knowledge?) has to be set in the labels by a person. 6 of the model's 10–11 false noise calls fall on it.
+**Refs:** `docs/plans/2026-10-31-taxonomy-mcp-server-design.md` §10.1; `/home/krs/pi-play/experiment/taxonomy/README.md` → Step 3.
+
+## 2026-10-31 — Taxonomy idea is tested as a Pi extension in pi-play, scored against exact dedup
+
+**Context:** The taxonomy MCP server design assumed Knowledge nodes drift into synonyms. The only graph with Knowledge nodes (`~/.local/share/graphirm/graph.db`, 46 nodes; the T1 graphs have none) shows something else. There are 17 noise nodes, and 8 duplicates, 7 of them exact name repeats. Exact name dedup alone recovers 8 of the 9 duplicate pairs.
+**Decision:** Build the core as a deterministic module plus a Pi extension in `/home/krs/pi-play/experiment/taxonomy/`. Hand-label the 46 nodes. Make "beats exact name dedup (B1)" the gate. MCP and Graphirm integration wait for that result.
+**Alternatives:** Starting with an MCP server lost: it adds transport debugging before the behaviour is known to help. Building inside `crates/agent` lost: knowledge extraction is eval-measured, and the eval freeze holds. An "empty summary is noise" filter was tried as a baseline. It drops every real extracted node, because extraction never writes summaries.
+**Consequences:** On this corpus any taxonomy gain must come from noise handling and grouping, not dedup. The labels are Claude's and still need a person's review. 46 items is small; a larger corpus would come from Knowledge extraction turned on in a real run.
+**Refs:** `docs/plans/2026-10-31-taxonomy-mcp-server-design.md` §1, §8, §10; `/home/krs/pi-play/experiment/taxonomy/README.md`.
+
 ## 2026-10-11 — The image tag is the deploy record
 
 **Context:** The runtime image declared `org.opencontainers.image.revision` from `ARG SOURCE_COMMIT`, default `unknown`. Coolify's "Include Source Commit in Build" was already on. The deploy of `a0dc927` still ran `docker build` without `--build-arg SOURCE_COMMIT`, and the label stayed `unknown`.

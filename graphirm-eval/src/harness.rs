@@ -393,6 +393,54 @@ impl TestHarness {
                     n["node_type"]["content_type"].as_str() == Some(content_type.as_str())
                 }))
             }
+            Verifier::KnowledgeUniqueNames => {
+                let nodes = self.client.get_knowledge(session_id).await?;
+                let distinct = crate::knowledge_checks::distinct(&nodes);
+                let repeated = crate::knowledge_checks::duplicate_names(&distinct);
+                tracing::info!(
+                    session_id,
+                    nodes = distinct.len(),
+                    repeated = ?repeated,
+                    "knowledge check: unique names"
+                );
+                Ok(repeated.is_empty())
+            }
+            Verifier::KnowledgeSummaryRate { min_fraction } => {
+                let nodes = self.client.get_knowledge(session_id).await?;
+                let distinct = crate::knowledge_checks::distinct(&nodes);
+                let rate = crate::knowledge_checks::summary_rate(&distinct);
+                tracing::info!(
+                    session_id,
+                    nodes = distinct.len(),
+                    rate = ?rate,
+                    "knowledge check: summary rate"
+                );
+                Ok(rate.is_some_and(|rate| rate >= *min_fraction))
+            }
+            Verifier::KnowledgeCoversWindow { min_fraction } => {
+                let nodes = self.client.get_knowledge(session_id).await?;
+                let distinct = crate::knowledge_checks::distinct(&nodes);
+                if distinct.is_empty() {
+                    return Ok(false);
+                }
+                let mut uncovered = Vec::new();
+                for node in &distinct {
+                    let id = node["id"].as_str().unwrap_or("");
+                    let subgraph = self.client.get_subgraph(session_id, id, 2).await?;
+                    if !crate::knowledge_checks::covers_window(id, &subgraph) {
+                        uncovered.push(crate::knowledge_checks::entity(node).to_string());
+                    }
+                }
+                let rate = 1.0 - uncovered.len() as f64 / distinct.len() as f64;
+                tracing::info!(
+                    session_id,
+                    nodes = distinct.len(),
+                    rate,
+                    uncovered = ?uncovered,
+                    "knowledge check: covers extraction window"
+                );
+                Ok(rate >= *min_fraction)
+            }
             Verifier::All(_) => {
                 for v in verifier.decisive_checks() {
                     if !Box::pin(self.check_verifier(v, session_id, last_response, workspace_path))

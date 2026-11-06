@@ -169,27 +169,96 @@ For each entity, provide:
 Only extract entities with confidence >= {min_confidence}.
 
 Respond with ONLY valid JSON in this exact format:
-{{
-  "entities": [
-    {{
-      "entity_type": "pattern",
-      "name": "Example Pattern",
-      "description": "Description of the pattern",
-      "confidence": 0.9,
-      "relationships": [
-        {{ "target_name": "OtherEntity", "relationship": "uses" }}
-      ]
-    }}
-  ]
-}}
+{schema}
 
 CONVERSATION:
 {conversation}
 "#,
         entity_types = entity_types_list,
         min_confidence = config.min_confidence,
+        schema = EXTRACTION_RESPONSE_EXAMPLE,
         conversation = conversation_block,
     )
+}
+
+/// The `ExtractionResponse` shape shown to the model, shared by the LLM and hybrid prompts.
+const EXTRACTION_RESPONSE_EXAMPLE: &str = r#"{
+  "entities": [
+    {
+      "entity_type": "pattern",
+      "name": "Example Pattern",
+      "description": "Description of the pattern",
+      "confidence": 0.9,
+      "relationships": [
+        { "target_name": "OtherEntity", "relationship": "uses" }
+      ]
+    }
+  ]
+}"#;
+
+/// Builds the hybrid backend's enrichment prompt: GLiNER2 found the entity names, the
+/// LLM writes a description for each and adds relationships, in the `ExtractionResponse`
+/// shape.
+pub fn build_enrichment_prompt(
+    entity_names: &[&str],
+    conversation_text: &str,
+    config: &ExtractionConfig,
+) -> String {
+    format!(
+        r#"Given these entities extracted from a conversation: {names}
+
+For each entity, provide a one-sentence description and any relationships between them.
+Keep each name exactly as given. entity_type is one of [{entity_types}]; confidence is
+0.0-1.0 how confident you are this is a real, useful entity.
+
+Conversation:
+{conversation}
+
+Respond with ONLY valid JSON in this exact format:
+{schema}
+"#,
+        names = entity_names.join(", "),
+        entity_types = config.entity_types.join(", "),
+        conversation = conversation_text,
+        schema = EXTRACTION_RESPONSE_EXAMPLE,
+    )
+}
+
+/// Parses an extraction reply, tolerating a markdown code fence or preamble text around
+/// the JSON object.
+fn parse_extraction_response(raw: &str) -> Result<ExtractionResponse, String> {
+    let trimmed = raw.trim();
+    // Strip ```json ... ``` or ``` ... ``` wrappers.
+    let inner = if let Some(rest) = trimmed.strip_prefix("```json") {
+        rest.trim_end_matches("```").trim()
+    } else if let Some(rest) = trimmed.strip_prefix("```") {
+        rest.trim_end_matches("```").trim()
+    } else {
+        trimmed
+    };
+    // Find outermost { ... } in case there's preamble text.
+    let json_str = match (inner.find('{'), inner.rfind('}')) {
+        (Some(start), Some(end)) if end > start => &inner[start..=end],
+        _ => inner,
+    };
+    serde_json::from_str::<ExtractionResponse>(json_str)
+        .map_err(|e| format!("{e}\nRaw: {json_str}"))
+}
+
+/// Hybrid enrichment result: the LLM's entities when its reply parses, otherwise the
+/// GLiNER2 entities with `enrich_failed` set so every node records why it has no summary.
+#[cfg_attr(not(feature = "local-extraction"), allow(dead_code))]
+fn enrichment_outcome(
+    local_result: ExtractionResponse,
+    reply: Result<String, String>,
+) -> (ExtractionResponse, bool) {
+    let error = match reply.map(|text| parse_extraction_response(&text)) {
+        Ok(Ok(enriched)) => return (enriched, false),
+        Ok(Err(parse_error)) => format!("unparseable reply: {parse_error}"),
+        Err(call_error) => call_error,
+    };
+    tracing::warn!(error = %error, "LLM enrichment failed, keeping GLiNER2 entities without summaries");
+    (local_result, true)
 }
 
 /// Extracts knowledge entities from a conversation turn using an LLM call,
@@ -221,7 +290,14 @@ pub async fn extract_knowledge(
     let session_id = session_id.clone();
     let config_clone = config.clone();
     tokio::task::spawn_blocking(move || {
-        persist_extracted_entities(&graph, &source_id, &session_id, &extraction, &config_clone)
+        persist_extracted_entities(
+            &graph,
+            std::slice::from_ref(&source_id),
+            &session_id,
+            &extraction,
+            false,
+            &config_clone,
+        )
     })
     .await
     .map_err(|e| AgentError::Join(e.to_string()))?
@@ -229,7 +305,9 @@ pub async fn extract_knowledge(
 
 /// Called after each agent turn. Gathers the recent conversation from the graph
 /// (the response node and its parent messages via `RespondsTo` edges) and runs
-/// knowledge extraction. Returns the IDs of any newly-created `Knowledge` nodes.
+/// knowledge extraction. Each new node links with `DerivedFrom` to every message in that
+/// window, so an entity named only in the user message still points at a message that
+/// names it. Returns the IDs of any newly-created `Knowledge` nodes.
 ///
 /// Non-fatal by design — callers should log and continue on error.
 pub async fn post_turn_extract(
@@ -256,14 +334,17 @@ pub async fn post_turn_extract(
     .map_err(|e| AgentError::Join(e.to_string()))??;
 
     let mut messages: Vec<(String, String)> = Vec::new();
+    let mut window: Vec<NodeId> = Vec::new();
     for parent in &parents {
         if let NodeType::Interaction(data) = &parent.node_type {
             messages.push((data.role.clone(), data.content.clone()));
+            window.push(parent.id.clone());
         }
     }
     if let NodeType::Interaction(data) = &response_node.node_type {
         messages.push((data.role.clone(), data.content.clone()));
     }
+    window.push(response_node_id.clone());
 
     extract_knowledge_with_backend(
         graph,
@@ -273,7 +354,7 @@ pub async fn post_turn_extract(
         #[cfg(feature = "local-extraction")]
         None,
         &messages,
-        response_node_id,
+        &window,
         session_id,
         config,
     )
@@ -288,6 +369,7 @@ pub async fn post_turn_extract(
 /// - `Hybrid`: GLiNER2 first for entities, then LLM synthesises descriptions and
 ///   discovers higher-order relationships
 ///
+/// `source_node_ids` are the messages in `messages`; every new node links to each of them.
 /// `onnx` is only meaningful when the `local-extraction` feature is enabled;
 /// it is ignored otherwise.
 pub async fn extract_knowledge_with_backend(
@@ -298,7 +380,7 @@ pub async fn extract_knowledge_with_backend(
     >,
     #[cfg(not(feature = "local-extraction"))] _onnx: Option<()>,
     messages: &[(String, String)],
-    source_node_id: &NodeId,
+    source_node_ids: &[NodeId],
     session_id: &NodeId,
     config: &ExtractionConfig,
 ) -> Result<Vec<NodeId>, AgentError> {
@@ -306,7 +388,8 @@ pub async fn extract_knowledge_with_backend(
         return Ok(vec![]);
     }
 
-    let extraction = match &config.backend {
+    // `enrich_failed` is true when the hybrid backend fell back to GLiNER2-only entities.
+    let (extraction, enrich_failed) = match &config.backend {
         ExtractionBackend::Llm => {
             let llm = llm.ok_or_else(|| {
                 AgentError::Workflow("LLM backend selected but no LLM provider given".into())
@@ -317,38 +400,21 @@ pub async fn extract_knowledge_with_backend(
                 .complete(vec![LlmMessage::human(prompt)], &[], &completion_config)
                 .await?;
             let raw = response.text_content();
-            // Some providers wrap JSON in markdown code fences. Strip them.
-            let json_str = {
-                let trimmed = raw.trim();
-                if trimmed.is_empty() {
-                    // Empty response — log for debugging and return no entities.
-                    tracing::debug!(
-                        model = %config.model,
-                        stop_reason = ?response.stop_reason,
-                        content_parts = response.content.len(),
-                        "Extraction LLM returned empty text content"
-                    );
-                    return Ok(vec![]);
-                }
-                // Strip ```json ... ``` or ``` ... ``` wrappers.
-                let inner = if let Some(rest) = trimmed.strip_prefix("```json") {
-                    rest.trim_end_matches("```").trim()
-                } else if let Some(rest) = trimmed.strip_prefix("```") {
-                    rest.trim_end_matches("```").trim()
-                } else {
-                    trimmed
-                };
-                // Find outermost { ... } in case there's preamble text.
-                match (inner.find('{'), inner.rfind('}')) {
-                    (Some(start), Some(end)) if end > start => &inner[start..=end],
-                    _ => inner,
-                }
-            };
-            serde_json::from_str::<ExtractionResponse>(json_str).map_err(|e| {
-                AgentError::Workflow(format!(
-                    "Failed to parse extraction response: {e}\nRaw: {json_str}"
-                ))
-            })?
+            if raw.trim().is_empty() {
+                // Empty response — log for debugging and return no entities.
+                tracing::debug!(
+                    model = %config.model,
+                    stop_reason = ?response.stop_reason,
+                    content_parts = response.content.len(),
+                    "Extraction LLM returned empty text content"
+                );
+                return Ok(vec![]);
+            }
+            // Some providers wrap JSON in markdown code fences; the parser strips them.
+            let parsed = parse_extraction_response(&raw).map_err(|e| {
+                AgentError::Workflow(format!("Failed to parse extraction response: {e}"))
+            })?;
+            (parsed, false)
         }
 
         #[cfg(feature = "local-extraction")]
@@ -357,13 +423,14 @@ pub async fn extract_knowledge_with_backend(
             // OnnxExtractor::extract already filters by min_confidence internally.
             let extractor =
                 crate::knowledge::local_extraction::get_or_init_onnx_extractor(model_dir).await?;
-            extractor
+            let local_result = extractor
                 .extract(
                     &format_conversation(messages),
                     &config.entity_types,
                     config.min_confidence,
                 )
-                .await?
+                .await?;
+            (local_result, false)
         }
 
         #[cfg(not(feature = "local-extraction"))]
@@ -394,34 +461,21 @@ pub async fn extract_knowledge_with_backend(
                     .iter()
                     .map(|e| e.name.as_str())
                     .collect();
-                let enrichment_prompt = format!(
-                    "Given these entities extracted from a conversation: {}\n\n\
-                     For each entity, provide a one-sentence description and any relationships between them.\n\n\
-                     Conversation:\n{}\n\n\
-                     Respond with ONLY valid JSON in the ExtractionResponse format.",
-                    entity_names.join(", "),
-                    conversation_text,
-                );
+                let enrichment_prompt =
+                    build_enrichment_prompt(&entity_names, &conversation_text, config);
                 let completion_config = CompletionConfig::new(&config.model);
-                match llm
+                let reply = llm
                     .complete(
                         vec![LlmMessage::human(enrichment_prompt)],
                         &[],
                         &completion_config,
                     )
                     .await
-                {
-                    Ok(response) => {
-                        serde_json::from_str::<ExtractionResponse>(&response.text_content())
-                            .unwrap_or(local_result)
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "LLM enrichment failed, falling back to local-only");
-                        local_result
-                    }
-                }
+                    .map(|response| response.text_content())
+                    .map_err(|e| e.to_string());
+                enrichment_outcome(local_result, reply)
             } else {
-                local_result
+                (local_result, false)
             }
         }
 
@@ -433,25 +487,99 @@ pub async fn extract_knowledge_with_backend(
         }
     };
 
-    let source_id = source_node_id.clone();
+    let source_ids = source_node_ids.to_vec();
     let session_id = session_id.clone();
     let config_clone = config.clone();
     tokio::task::spawn_blocking(move || {
-        persist_extracted_entities(&graph, &source_id, &session_id, &extraction, &config_clone)
+        persist_extracted_entities(
+            &graph,
+            &source_ids,
+            &session_id,
+            &extraction,
+            enrich_failed,
+            &config_clone,
+        )
     })
     .await
     .map_err(|e| AgentError::Join(e.to_string()))?
 }
 
-/// Shared node-creation logic: persists filtered entities as `Knowledge` graph nodes,
-/// links them to the source via `DerivedFrom`, and wires `RelatesTo` edges.
-/// `session_id` is stored in each node's metadata so cross-session HNSW searches
-/// can exclude same-session candidates without graph traversal.
+/// Lowercase letters and digits only, so `Pin`, `pin` and `list_pinned_knowledge()` /
+/// `list_pinned_knowledge` each count as one name. A name with no letters or digits
+/// keys on its trimmed text.
+fn name_key(name: &str) -> String {
+    let key: String = name
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+    if key.is_empty() {
+        name.trim().to_string()
+    } else {
+        key
+    }
+}
+
+/// One entity per normalised name, with the number of extracted entities folded into it.
+struct MergedEntity {
+    entity: ExtractedEntity,
+    mentions: usize,
+}
+
+/// Groups entities by `name_key`, in order of first appearance. GLiNER2 returns one span
+/// per mention, and the LLM sometimes repeats a name, so without this a name mentioned
+/// three times becomes three nodes. Per group: the highest-confidence entity supplies the
+/// name, type and confidence; the description is the first non-empty one; relationships
+/// are the union, deduped by normalised target and label.
+fn merge_by_name(entities: &[&ExtractedEntity]) -> Vec<MergedEntity> {
+    let mut index: HashMap<String, usize> = HashMap::new();
+    let mut merged: Vec<MergedEntity> = Vec::new();
+    for entity in entities {
+        let key = name_key(&entity.name);
+        let Some(&at) = index.get(&key) else {
+            index.insert(key, merged.len());
+            merged.push(MergedEntity {
+                entity: (*entity).clone(),
+                mentions: 1,
+            });
+            continue;
+        };
+        let group = &mut merged[at];
+        group.mentions += 1;
+        if entity.confidence > group.entity.confidence {
+            group.entity.name = entity.name.clone();
+            group.entity.entity_type = entity.entity_type.clone();
+            group.entity.confidence = entity.confidence;
+        }
+        if group.entity.description.trim().is_empty() && !entity.description.trim().is_empty() {
+            group.entity.description = entity.description.clone();
+        }
+        for rel in &entity.relationships {
+            let seen = group.entity.relationships.iter().any(|r| {
+                name_key(&r.target_name) == name_key(&rel.target_name)
+                    && r.relationship == rel.relationship
+            });
+            if !seen {
+                group.entity.relationships.push(rel.clone());
+            }
+        }
+    }
+    merged
+}
+
+/// Shared node-creation logic: merges filtered entities by normalised name, persists one
+/// `Knowledge` graph node per name, links it to every source via `DerivedFrom`, and wires
+/// `RelatesTo` edges. `session_id` is stored in each node's metadata so cross-session HNSW
+/// searches can exclude same-session candidates without graph traversal; `mentions` records
+/// how many extracted entities were merged into the node; `summary_source` is `llm` when
+/// the summary was written by a model, `none` when the backend wrote none (GLiNER2 alone),
+/// and `enrich_failed` when hybrid enrichment failed and GLiNER2's entities were kept.
 fn persist_extracted_entities(
     graph: &GraphStore,
-    source_node_id: &NodeId,
+    source_node_ids: &[NodeId],
     session_id: &NodeId,
     extraction: &ExtractionResponse,
+    enrich_failed: bool,
     config: &ExtractionConfig,
 ) -> Result<Vec<NodeId>, AgentError> {
     let filtered: Vec<&ExtractedEntity> = extraction
@@ -459,46 +587,68 @@ fn persist_extracted_entities(
         .iter()
         .filter(|e| e.confidence >= config.min_confidence)
         .collect();
+    let merged = merge_by_name(&filtered);
 
-    let mut name_to_id: HashMap<String, NodeId> = HashMap::new();
+    let mut key_to_id: HashMap<String, NodeId> = HashMap::new();
     let mut created_ids: Vec<NodeId> = Vec::new();
 
-    for entity in &filtered {
+    for MergedEntity { entity, mentions } in &merged {
         let mut node = GraphNode::new(NodeType::Knowledge(KnowledgeData {
             entity: entity.name.clone(),
             entity_type: entity.entity_type.clone(),
             summary: entity.description.clone(),
             confidence: entity.confidence,
         }));
-        node.metadata = serde_json::json!({ "session_id": session_id.to_string() });
+        let summary_source = if enrich_failed {
+            "enrich_failed"
+        } else if entity.description.trim().is_empty() {
+            "none"
+        } else {
+            "llm"
+        };
+        node.metadata = serde_json::json!({
+            "session_id": session_id.to_string(),
+            "mentions": mentions,
+            "summary_source": summary_source,
+        });
         let node_id = graph.add_node(node)?;
 
-        graph.add_edge(GraphEdge::new(
-            EdgeType::DerivedFrom,
-            node_id.clone(),
-            source_node_id.clone(),
-        ))?;
+        for source in source_node_ids {
+            graph.add_edge(GraphEdge::new(
+                EdgeType::DerivedFrom,
+                node_id.clone(),
+                source.clone(),
+            ))?;
+        }
 
-        name_to_id.insert(entity.name.clone(), node_id.clone());
+        key_to_id.insert(name_key(&entity.name), node_id.clone());
         created_ids.push(node_id);
     }
 
-    for entity in &filtered {
-        if let Some(src) = name_to_id.get(&entity.name) {
-            for rel in &entity.relationships {
-                if let Some(tgt) = name_to_id.get(&rel.target_name) {
-                    graph.add_edge(GraphEdge::new(
-                        EdgeType::RelatesTo,
-                        src.clone(),
-                        tgt.clone(),
-                    ))?;
-                }
+    for MergedEntity { entity, .. } in &merged {
+        let Some(src) = key_to_id.get(&name_key(&entity.name)) else {
+            continue;
+        };
+        let mut linked: Vec<&NodeId> = Vec::new();
+        for rel in &entity.relationships {
+            let Some(tgt) = key_to_id.get(&name_key(&rel.target_name)) else {
+                continue;
+            };
+            if tgt == src || linked.contains(&tgt) {
+                continue;
             }
+            graph.add_edge(GraphEdge::new(
+                EdgeType::RelatesTo,
+                src.clone(),
+                tgt.clone(),
+            ))?;
+            linked.push(tgt);
         }
     }
 
     tracing::info!(
         extracted = filtered.len(),
+        merged = merged.len(),
         total = extraction.entities.len(),
         backend = ?config.backend,
         "Knowledge extraction complete"
@@ -791,6 +941,221 @@ mod tests {
         assert_eq!(neighbors.len(), 1);
     }
 
+    /// The nine entities GLiNER2 returned for the March `ef95a429` turn (Pin CLI summary),
+    /// with two relationships added to check that targets resolve through the merge.
+    #[tokio::test]
+    async fn repeated_names_merge_into_one_node_each() {
+        let graph = std::sync::Arc::new(GraphStore::open_memory().unwrap());
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.7,
+            ..ExtractionConfig::default()
+        };
+        let entity = |name: &str, entity_type: &str, confidence: f64, rels: &str| {
+            format!(
+                r#"{{ "entity_type": "{entity_type}", "name": "{name}", "description": "", "confidence": {confidence}, "relationships": [{rels}] }}"#
+            )
+        };
+        let entities = [
+            entity("Unpin", "function", 0.893, ""),
+            entity(
+                "Unpin",
+                "function",
+                0.838,
+                r#"{ "target_name": "pin", "relationship": "reverses" }"#,
+            ),
+            entity("ImportCursor", "pattern", 0.813, ""),
+            entity("Pin", "function", 0.799, ""),
+            entity(
+                "Pin",
+                "function",
+                0.752,
+                r#"{ "target_name": "list_pinned_knowledge", "relationship": "uses" }"#,
+            ),
+            entity("List", "function", 0.730, ""),
+            entity("list_pinned_knowledge()", "function", 0.727, ""),
+            entity("graphirm_graph", "library", 0.716, ""),
+            entity("List", "function", 0.703, ""),
+        ];
+        let llm = MockExtractionProvider {
+            response_json: format!(r#"{{ "entities": [{}] }}"#, entities.join(",")),
+        };
+        let source_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".to_string(),
+                content: "Pin, Unpin and List subcommands".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let node_ids = extract_knowledge(
+            std::sync::Arc::clone(&graph),
+            &llm,
+            &[("assistant".to_string(), "Pin, Unpin and List".to_string())],
+            &source_id,
+            &NodeId::from("test-session"),
+            &config,
+        )
+        .await
+        .unwrap();
+
+        let nodes: Vec<GraphNode> = node_ids
+            .iter()
+            .map(|id| graph.get_node(id).unwrap())
+            .collect();
+        let names: Vec<(&str, u64, f64)> = nodes
+            .iter()
+            .map(|node| match &node.node_type {
+                NodeType::Knowledge(data) => (
+                    data.entity.as_str(),
+                    node.metadata["mentions"].as_u64().unwrap(),
+                    data.confidence,
+                ),
+                other => panic!("expected Knowledge, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            names
+                .iter()
+                .map(|(name, mentions, _)| (*name, *mentions))
+                .collect::<Vec<_>>(),
+            [
+                ("Unpin", 2),
+                ("ImportCursor", 1),
+                ("Pin", 2),
+                ("List", 2),
+                ("list_pinned_knowledge()", 1),
+                ("graphirm_graph", 1),
+            ]
+        );
+        assert!((names[0].2 - 0.893).abs() < 1e-9, "highest confidence kept");
+
+        let unpin = graph
+            .neighbors(&node_ids[0], Some(EdgeType::RelatesTo), Direction::Outgoing)
+            .unwrap();
+        assert_eq!(unpin.len(), 1);
+        assert_eq!(
+            unpin[0].id, node_ids[2],
+            "`pin` resolves to the merged Pin node"
+        );
+        let pin = graph
+            .neighbors(&node_ids[2], Some(EdgeType::RelatesTo), Direction::Outgoing)
+            .unwrap();
+        assert_eq!(pin.len(), 1);
+        assert_eq!(pin[0].id, node_ids[4]);
+    }
+
+    #[test]
+    fn merge_by_name_keeps_the_first_non_empty_description() {
+        let entity = |description: &str, confidence: f64| ExtractedEntity {
+            entity_type: "function".to_string(),
+            name: "Pin".to_string(),
+            description: description.to_string(),
+            confidence,
+            relationships: vec![],
+        };
+        let (a, b, c) = (
+            entity("", 0.9),
+            entity("pins a node", 0.8),
+            entity("other", 0.7),
+        );
+        let merged = merge_by_name(&[&a, &b, &c]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].entity.description, "pins a node");
+        assert_eq!(merged[0].mentions, 3);
+        assert_eq!(
+            name_key("list_pinned_knowledge()"),
+            name_key("List Pinned Knowledge")
+        );
+        assert_eq!(name_key("--"), "--");
+    }
+
+    #[tokio::test]
+    async fn every_node_records_where_its_summary_came_from() {
+        let graph = std::sync::Arc::new(GraphStore::open_memory().unwrap());
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.5,
+            ..ExtractionConfig::default()
+        };
+        let llm = MockExtractionProvider {
+            response_json: r#"{ "entities": [
+                { "entity_type": "api", "name": "Pin", "description": "Pins a node",
+                  "confidence": 0.9, "relationships": [] },
+                { "entity_type": "api", "name": "Unpin", "description": " ",
+                  "confidence": 0.9, "relationships": [] } ] }"#
+                .to_string(),
+        };
+        let source_id = graph
+            .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                role: "assistant".to_string(),
+                content: "Pin and Unpin".to_string(),
+                token_count: None,
+            })))
+            .unwrap();
+
+        let node_ids = extract_knowledge_with_backend(
+            std::sync::Arc::clone(&graph),
+            Some(&llm),
+            None,
+            &[("assistant".to_string(), "Pin and Unpin".to_string())],
+            std::slice::from_ref(&source_id),
+            &NodeId::from("test-session"),
+            &config,
+        )
+        .await
+        .unwrap();
+
+        let sources: Vec<String> = node_ids
+            .iter()
+            .map(|id| graph.get_node(id).unwrap().metadata["summary_source"].to_string())
+            .collect();
+        assert_eq!(sources, [r#""llm""#, r#""none""#]);
+    }
+
+    #[test]
+    fn enrichment_failure_keeps_the_local_entities_and_says_so() {
+        let local = || ExtractionResponse {
+            entities: vec![ExtractedEntity {
+                entity_type: "function".to_string(),
+                name: "Pin".to_string(),
+                description: String::new(),
+                confidence: 0.8,
+                relationships: vec![],
+            }],
+        };
+        let enriched = r#"```json
+{ "entities": [ { "entity_type": "function", "name": "Pin", "description": "Pins a node",
+  "confidence": 0.8, "relationships": [] } ] }
+```"#;
+
+        let (result, failed) = enrichment_outcome(local(), Ok(enriched.to_string()));
+        assert!(!failed);
+        assert_eq!(result.entities[0].description, "Pins a node");
+
+        let (result, failed) = enrichment_outcome(local(), Ok("Here are the entities".into()));
+        assert!(failed, "an unparseable reply is a failure, not silence");
+        assert_eq!(result.entities[0].description, "");
+
+        let (_, failed) = enrichment_outcome(local(), Err("HTTP 429".into()));
+        assert!(failed);
+    }
+
+    #[test]
+    fn enrichment_prompt_shows_the_response_schema() {
+        let prompt = build_enrichment_prompt(
+            &["Pin", "Unpin"],
+            "[user]: pin it",
+            &ExtractionConfig::default(),
+        );
+        assert!(prompt.contains("Pin, Unpin"));
+        assert!(prompt.contains(EXTRACTION_RESPONSE_EXAMPLE));
+        assert!(prompt.contains("[user]: pin it"));
+        let example: ExtractionResponse =
+            serde_json::from_str(EXTRACTION_RESPONSE_EXAMPLE).expect("the example parses");
+        assert_eq!(example.entities.len(), 1);
+    }
+
     #[test]
     fn test_extraction_config_defaults() {
         let config = ExtractionConfig::default();
@@ -1007,6 +1372,72 @@ mod tests {
         assert!(neighbors.iter().any(|n| n.id == assistant_id));
     }
 
+    /// Mirrors the eval's `user-only-entity` task: the entity is named only in the user
+    /// message, so the node must link there as well as to the reply, and not to turns
+    /// before the window.
+    #[tokio::test]
+    async fn post_turn_extract_links_every_message_in_the_window() {
+        let graph = std::sync::Arc::new(GraphStore::open_memory().unwrap());
+        let config = ExtractionConfig {
+            enabled: true,
+            min_confidence: 0.5,
+            ..ExtractionConfig::default()
+        };
+        let llm = MockExtractionProvider {
+            response_json: r#"{ "entities": [ { "entity_type": "api", "name": "RetryBudget",
+                "description": "Caps tool-call retries per turn", "confidence": 0.9,
+                "relationships": [] } ] }"#
+                .to_string(),
+        };
+        let interaction = |role: &str, content: &str| {
+            graph
+                .add_node(GraphNode::new(NodeType::Interaction(InteractionData {
+                    role: role.to_string(),
+                    content: content.to_string(),
+                    token_count: None,
+                })))
+                .unwrap()
+        };
+        let earlier = interaction("assistant", "Hello");
+        let user = interaction("user", "The `RetryBudget` struct caps retries. Reply OK.");
+        let reply = interaction("assistant", "OK");
+        for (from, to) in [(&user, &earlier), (&reply, &user)] {
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::RespondsTo,
+                    from.clone(),
+                    to.clone(),
+                ))
+                .unwrap();
+        }
+
+        let node_ids = post_turn_extract(
+            std::sync::Arc::clone(&graph),
+            &llm,
+            &config,
+            &reply,
+            &NodeId::from("test-session"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(node_ids.len(), 1);
+        let mut linked: Vec<NodeId> = graph
+            .neighbors(
+                &node_ids[0],
+                Some(EdgeType::DerivedFrom),
+                Direction::Outgoing,
+            )
+            .unwrap()
+            .into_iter()
+            .map(|node| node.id)
+            .collect();
+        linked.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut expected = vec![user, reply];
+        expected.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(linked, expected);
+    }
+
     #[tokio::test]
     async fn test_post_turn_extraction_disabled() {
         let graph = std::sync::Arc::new(GraphStore::open_memory().unwrap());
@@ -1067,7 +1498,7 @@ mod tests {
             #[cfg(feature = "local-extraction")]
             None,
             &messages,
-            &source_id,
+            std::slice::from_ref(&source_id),
             &NodeId::from("test-session"),
             &config,
         )
@@ -1108,7 +1539,7 @@ mod tests {
             #[cfg(feature = "local-extraction")]
             None,
             &messages,
-            &source_id,
+            std::slice::from_ref(&source_id),
             &NodeId::from("test-session"),
             &config,
         )
@@ -1252,7 +1683,7 @@ mod tests {
             #[cfg(feature = "local-extraction")]
             None,
             &messages,
-            &source_id,
+            std::slice::from_ref(&source_id),
             &NodeId::from("test-session"),
             &config,
         )

@@ -906,6 +906,14 @@ Done 2026-03-27. `enforce_work_loop: bool` config field (default true). When ena
 
 ## Infrastructure & Quality
 
+### Four graphirm-agent unit tests fail on eval/frozen-binary-source — P2 · S
+
+`cargo test -p graphirm-agent` fails `context::tests::t4_exchange_is_atomic_when_tail_would_start_on_a_result`, `workflow::tests::test_agent_loop_parallel_safe_tools_keep_dense_labels`, `workflow::tests::test_agent_loop_real_tool_propagates_turn_to_content_labels` and `workflow::tests::test_agent_loop_tool_call_then_text` (context.rs:2576, workflow.rs:3127/3361/3431). They fail on `eval/frozen-binary-source` and on `knowledge/extraction-eval` at `4d5562d`, before any extraction change. They pass on `main` with the extraction fixes applied, so the cause is in the eval branch's commits. A failing lib test also stops `cargo test` before the integration tests unless `--no-fail-fast` is used. Found 2026-11-01.
+
+### graphirm-eval never runs the cross-session memory tasks — P2 · S
+
+`tasks/memory.rs` defines `cross_session_tasks()` (one task, `single-fact-recall`), but nothing calls it. `all_tasks()` excludes them, `main.rs` has no cross-session runner, and `--filter memory` runs 0 tasks. So no change to memory ranking or knowledge extraction can be checked for memory regressions in the eval. Fix: a two-session runner in `harness.rs` (session 1 prompt → wait for extraction and embedding → session 2 prompt → verifier on session 2), and wire it into `main.rs` under the `memory` tag. Found 2026-11-01 while running the knowledge-extraction baseline (`docs/plans/2026-11-01-knowledge-extraction-fixes.md` §8).
+
 ### ✅ Cross-session knowledge extraction — P2 · L
 Done 2026-03-19. Knowledge nodes now store `session_id` in metadata. After each embedding, `MemoryRetriever.find_cross_session_links` queries HNSW (min 0.7 cosine similarity, top 3) and `persist_cross_session_links` writes `RelatesTo` edges with similarity as weight. Three unit tests added.
 Plan: `docs/plans/2026-03-18-p2-sse-knowledge-plugins.md`
@@ -1169,6 +1177,14 @@ re-index on every change.
 **Useful Nodestradamus tools:**
 - `codebase_health` — validate that analysis results are consistent before persisting
 - `get_impact file_path=crates/graph/src/store.rs` — blast radius of adding `RepoAnalysis` node type
+
+### Taxonomy MCP server — P3 · L
+
+Make one service the single authority for labels. It seeds a provisional taxonomy from the project description, classifies new content into it, and holds items that fit nowhere until a cluster has enough support to become a new category. It also runs versioned consolidation (merge, split, retire, with an old-ID → new-ID map) and reports health signals. Batch induction over a corpus (TnT-LLM / Clio style, through OpenRouter) is one of its operations. Step 0 comes first and is read-only: it measures Knowledge-node duplication in the saved graphs, and the work stops if that is under ~10%. Prototype as a standalone MCP server; integrate into Graphirm only after a `graphirm-eval` comparison. Design: `docs/plans/2026-10-31-taxonomy-mcp-server-design.md`. **Started 2026-10-31:** Step 0 measured (17/46 noise, exact dedup already finds 8/9 duplicate pairs); step 1 prototype as a Pi extension in `/home/krs/pi-play/experiment/taxonomy/`. Step 3 ran (2 runs, $0.11): noise recall 0.82–0.88 vs 0 for exact dedup, but fewer duplicates found than exact dedup and categories unstable (pair Jaccard 0.28); gate not passed. Step 4 (v2: exact-name step first, `same_as` to pool items, bare identifiers labelled noise, seeded categories; 2 runs, $0.078): noise P/R 0.93–1.00 / 1.00, same-entity recall 0.83–1.00 against B1's 0.83, verdict kappa 0.92. Noise and dedup pass; categories fail (pair Jaccard 0.36), because each seed turn picks a different granularity. Next: a person reviews `labels.json`; then either try a person-written seed tree, or eval a noise + exact-name dedup post-extraction step on its own (§10.2).
+
+### ✅ Knowledge extraction fixes — P2 · M
+
+**Done (2026-11-01).** `persist_extracted_entities` merges entities by normalised name (one node per name, `metadata.mentions`). Each node links with `derived_from` to every message `post_turn_extract` read, and the session knowledge route dedupes by id. Each node records `metadata.summary_source` (`llm` / `none` / `enrich_failed`). The hybrid enrichment prompt shows the schema, and a failed parse now logs a warning. Measured with `KnowledgeUniqueNames`, `KnowledgeCoversWindow` and `KnowledgeSummaryRate`: `repeated-mentions` and `user-only-entity` went from 0/3 to 3/3 on both backends, with no regression. Plan: `docs/plans/2026-11-01-knowledge-extraction-fixes.md` §9. Still open: cross-message duplicates and the `function`/`library` entity types (plan §6).
 
 ---
 
