@@ -10,7 +10,7 @@ and session management. Everything in graphirm that involves deciding what to do
 | File | What |
 |------|------|
 | `workflow.rs` | `run_agent_loop` — async state machine: receive prompt → build context → call LLM → execute tools → loop until done |
-| `context.rs` | `build_context`, `score_node` — relevance scoring (recency + edge weight + BFS distance + PageRank), greedy token budget fill |
+| `context.rs` | `build_context`, `score_node` — relevance scoring (recency + edge weight + BFS distance + PageRank), greedy token budget fill. Tokens are counted with `tiktoken-rs` `o200k_base` (`estimate_tokens_str`); `window_text` / `cap_window_text` cap tool output and Content bodies at 20 kB (first and last 10 kB) for the window, compaction and extraction |
 | `compact.rs` | `compact_context` — summarizes old turns when context exceeds budget |
 | `session.rs` | `Session`, `SessionMetadata` — persistence, resume by session ID |
 | `coordinator.rs` | `Coordinator` — orchestrates subagent spawning, result collection |

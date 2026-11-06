@@ -75,3 +75,11 @@ Four tests already fail on this branch before any change here (`t4_exchange_is_a
 ## T2 rerun
 
 Filled in at Task 4.
+
+## Port to `main` (2026-11-06)
+
+Branch `feat/context-budget-main` copies tasks 1 and 2 onto `main`. Three changes from the eval-branch version:
+- Tool results get the cap but no citation tag. `tool_cite_tag` is eval-branch only.
+- `compact.rs` keeps `get_text_content` for the compaction-summary lookup that `main` added after this plan.
+- Task 3 is not ported. `request_fingerprint`, the pre-call cost check and `replay-pack` all build on the T2 binary source (`8afb79e`), which is not on `main`. It is open in the backlog under "Context budget honesty".
+

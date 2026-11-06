@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-11-06 — Context budget fixes reach `main` in part, the rest is rebuilt there
+
+**Context:** `feat/context-budget-honesty` and `feat/reply-checker` were cut from `eval/frozen-binary-source`. Tasks 3–4 and the reply checker build on about 4,600 lines from the T2 binary source (`8afb79e`): the pre-call cost check, pack traces and `replay-pack`. None of that is on `main`.
+**Decision:** Copy only the self-contained commits to `main` (the plan, the `o200k_base` count, the 20 kB cap). Record task 3 and the reply checker as backlog items to rebuild for `main`.
+**Alternatives:** Merging the whole eval branch into `main` lost: it brings the experiment tooling, and the 4 tests that fail only there. Rewriting task 3 during the copy lost: the code would differ from what was measured, under the same commit names.
+**Consequences:** `main` and the eval branch now count tokens the same way, but only the eval branch stores per-call packs. Budget-dependent results from before `o200k_base` are not comparable with new runs on `main`.
+**Refs:** `docs/plans/2026-10-28-context-budget-honesty.md` → "Port to `main`"; branch `feat/context-budget-main`.
+
 ## 2026-10-28 — Context budget counted with tiktoken o200k_base, not the provider's tokenizer
 
 **Context:** `estimate_tokens_str` counted `words / 0.75`. On code that is about half the real count, so the configured budget was about 2× what was actually sent. In T2, G-persist prompts reached about 200k tokens under a 100k budget, and "the budget rarely binds" was partly this error. The eval model is DeepSeek V4.1 Flash; the server also runs Anthropic, OpenAI and OpenRouter models.

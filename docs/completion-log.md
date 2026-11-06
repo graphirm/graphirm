@@ -1,5 +1,12 @@
 # Graphirm Development Progress Log
 
+## 2026-11-06: Context budget honesty, tasks 1–2 on main — PARTIAL
+
+- Context tokens are counted with `tiktoken-rs` `o200k_base` instead of `words / 0.75`, which undercounted code about 2×. The same `max_tokens` now selects about half as much context.
+- Tool output and Content bodies are capped at 20 kB (first and last 10 kB, with a notice) when sent to a model: the window, the compaction summarizer and knowledge extraction. The graph keeps the full text.
+- Not on `main` yet: stored per-call packs and replay (task 3), and the reply checker. See the backlog.
+- Key files: `crates/agent/src/context.rs`, `crates/agent/src/compact.rs`, `crates/agent/src/knowledge/extraction.rs`, `docs/plans/2026-10-28-context-budget-honesty.md`
+
 ## 2026-11-01: Knowledge extraction fixes — COMPLETE ✅
 
 - One Knowledge node per normalised name per extraction call (`metadata.mentions`). On the eval's `repeated-mentions` task the local GLiNER2 backend now makes 5 nodes, down from 13–16 with 5 repeated names.
