@@ -230,16 +230,17 @@ pub fn node_to_message(node: &GraphNode) -> Option<LlmMessage> {
                     .unwrap_or(false);
                 Some(LlmMessage::tool_result(
                     tool_call_id,
-                    data.content.clone(),
+                    cap_window_text(&data.content).into_owned(),
                     is_error,
                 ))
             }
             _ => None,
         },
         NodeType::Content(data) => {
+            let body = cap_window_text(&data.body);
             let label = match &data.path {
-                Some(path) => format!("[File: {}]\n{}", path, data.body),
-                None => format!("[Content: {}]\n{}", data.content_type, data.body),
+                Some(path) => format!("[File: {}]\n{}", path, body),
+                None => format!("[Content: {}]\n{}", data.content_type, body),
             };
             Some(LlmMessage::human(label))
         }
@@ -1451,19 +1452,119 @@ pub fn score_recency(node: &GraphNode, decay: f64) -> f64 {
     (-decay * hours).exp()
 }
 
-/// Estimate token count for a text string using word-based heuristic.
-/// Approximation: tokens ≈ words / 0.75 (1 token ≈ 0.75 words).
-pub fn estimate_tokens_str(text: &str) -> usize {
-    let word_count = text.split_whitespace().count();
-    if word_count == 0 {
-        return 0;
-    }
-    (word_count as f64 / 0.75).ceil() as usize
+/// Texts shorter than this are tokenized directly; longer ones go through the cache.
+const TOKEN_CACHE_MIN_BYTES: usize = 256;
+/// The cache is cleared when it grows past this many entries.
+const TOKEN_CACHE_MAX_ENTRIES: usize = 100_000;
+
+/// Load the BPE ranks now instead of on the first turn. Takes about 0.2 s in
+/// a release build and about 1.3 s in a debug build.
+pub fn warm_token_counter() {
+    let _ = tiktoken_rs::o200k_base_singleton();
 }
 
-/// Estimate token count for a GraphNode based on its text content.
+/// Count tokens with the o200k_base BPE.
+///
+/// This is a stand-in for the provider's own tokenizer (see the 2026-10-28
+/// journal entry). The old estimate, words / 0.75, undercounted code by
+/// about 2×. Counts for long texts are cached by content hash, since the
+/// same nodes are counted on every turn.
+pub fn estimate_tokens_str(text: &str) -> usize {
+    use std::hash::{Hash, Hasher};
+    use std::sync::{Mutex, OnceLock};
+
+    if text.is_empty() {
+        return 0;
+    }
+    let bpe = tiktoken_rs::o200k_base_singleton();
+    if text.len() < TOKEN_CACHE_MIN_BYTES {
+        return bpe.encode_ordinary(text).len();
+    }
+
+    static CACHE: OnceLock<Mutex<HashMap<u64, usize>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    let key = hasher.finish();
+    if let Some(count) = cache.lock().ok().and_then(|map| map.get(&key).copied()) {
+        return count;
+    }
+    let count = bpe.encode_ordinary(text).len();
+    if let Ok(mut map) = cache.lock() {
+        if map.len() >= TOKEN_CACHE_MAX_ENTRIES {
+            map.clear();
+        }
+        map.insert(key, count);
+    }
+    count
+}
+
+/// Estimate token count for a GraphNode from the text the window would send.
 pub fn estimate_tokens(node: &GraphNode) -> usize {
-    estimate_tokens_str(get_text_content(node))
+    estimate_tokens_str(&window_text(node))
+}
+
+/// Tool outputs and Content bodies longer than this are cut to a head and a
+/// tail when sent to the model. The graph keeps the full text.
+pub const WINDOW_OUTPUT_MAX_BYTES: usize = 20_000;
+
+/// The text a node contributes to the context window. Tool results and
+/// Content bodies go through [`cap_window_text`]; everything else is sent as
+/// stored.
+pub fn window_text(node: &GraphNode) -> std::borrow::Cow<'_, str> {
+    match &node.node_type {
+        NodeType::Interaction(data) if data.role == "tool" => cap_window_text(&data.content),
+        NodeType::Content(data) => cap_window_text(&data.body),
+        _ => std::borrow::Cow::Borrowed(get_text_content(node)),
+    }
+}
+
+/// Keep the first and last half of [`WINDOW_OUTPUT_MAX_BYTES`], cut at line
+/// breaks where possible, with a notice in between saying how much was left out.
+pub fn cap_window_text(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.len() <= WINDOW_OUTPUT_MAX_BYTES {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let half = WINDOW_OUTPUT_MAX_BYTES / 2;
+    // Snap to a line break only when one is this close to the cut, so a text
+    // with few newlines does not lose most of its head or tail.
+    let snap = half / 5;
+
+    let mut head_end = half;
+    while !text.is_char_boundary(head_end) {
+        head_end -= 1;
+    }
+    let mut snap_start = head_end - snap;
+    while !text.is_char_boundary(snap_start) {
+        snap_start += 1;
+    }
+    if let Some(newline) = text[snap_start..head_end].rfind('\n') {
+        head_end = snap_start + newline + 1;
+    }
+
+    let mut tail_start = text.len() - half;
+    while !text.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+    let mut snap_end = (tail_start + snap).min(text.len());
+    while !text.is_char_boundary(snap_end) {
+        snap_end -= 1;
+    }
+    if let Some(newline) = text[tail_start..snap_end].find('\n') {
+        tail_start += newline + 1;
+    }
+
+    let head = &text[..head_end];
+    let omitted = &text[head_end..tail_start];
+    std::borrow::Cow::Owned(format!(
+        "{}{}[... {} bytes ({} lines) omitted from this view. The full output is stored \
+         in the graph; narrow the command, or read with offset/limit.]\n{}",
+        head,
+        if head.ends_with('\n') { "" } else { "\n" },
+        omitted.len(),
+        omitted.matches('\n').count(),
+        &text[tail_start..]
+    ))
 }
 
 #[cfg(test)]
@@ -1754,20 +1855,39 @@ mod tests {
 
     #[test]
     fn estimate_tokens_str_known_strings() {
-        // "Hello world" = 2 words → 2 / 0.75 = 2.67 → ceil → 3
-        assert_eq!(estimate_tokens_str("Hello world"), 3);
-
-        // Empty string = 0 tokens
+        // o200k_base: each common English word is one token.
+        assert_eq!(estimate_tokens_str("Hello world"), 2);
         assert_eq!(estimate_tokens_str(""), 0);
-
-        // 10 words → 10 / 0.75 = 13.33 → ceil → 14
         assert_eq!(
             estimate_tokens_str("one two three four five six seven eight nine ten"),
-            14
+            10
         );
+        assert_eq!(estimate_tokens_str("hello"), 1);
+    }
 
-        // Single word → 1 / 0.75 = 1.33 → ceil → 2
-        assert_eq!(estimate_tokens_str("hello"), 2);
+    #[test]
+    fn estimate_tokens_str_counts_code_well_above_the_word_estimate() {
+        let code = "fn main() {\n    let x: Vec<u8> = vec![1, 2, 3];\n    \
+                    println!(\"{:?}\", x.iter().map(|b| b * 2).collect::<Vec<_>>());\n}\n";
+        let words = code.split_whitespace().count();
+        let old_estimate = (words as f64 / 0.75).ceil() as usize;
+        assert!(
+            estimate_tokens_str(code) * 2 >= old_estimate * 3,
+            "code count {} should be at least 1.5x the word estimate {}",
+            estimate_tokens_str(code),
+            old_estimate
+        );
+    }
+
+    #[test]
+    fn estimate_tokens_str_cached_count_matches_direct_count() {
+        let long = "let value = compute(input);\n".repeat(40);
+        assert!(long.len() >= TOKEN_CACHE_MIN_BYTES);
+        let direct = tiktoken_rs::o200k_base_singleton()
+            .encode_ordinary(&long)
+            .len();
+        assert_eq!(estimate_tokens_str(&long), direct);
+        assert_eq!(estimate_tokens_str(&long), direct);
     }
 
     #[test]
@@ -1777,8 +1897,119 @@ mod tests {
             content: "What is the meaning of life the universe and everything".to_string(),
             token_count: None,
         }));
-        // 10 words → 14 tokens
-        assert_eq!(estimate_tokens(&node), 14);
+        assert_eq!(estimate_tokens(&node), 10);
+    }
+
+    fn tool_node(content: String) -> GraphNode {
+        let mut node = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "tool".to_string(),
+            content,
+            token_count: None,
+        }));
+        node.metadata = serde_json::json!({ "tool_call_id": "call_1" });
+        node
+    }
+
+    /// Notice length plus the two halves, with room for the line-break snap.
+    fn capped_limit() -> usize {
+        WINDOW_OUTPUT_MAX_BYTES + 200
+    }
+
+    #[test]
+    fn cap_window_text_leaves_text_at_the_limit_unchanged() {
+        let text = "a".repeat(WINDOW_OUTPUT_MAX_BYTES);
+        assert!(matches!(
+            cap_window_text(&text),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn cap_window_text_keeps_head_and_tail_of_a_large_output() {
+        let lines: Vec<String> = (0..50_000).map(|i| format!("line {i}")).collect();
+        let text = lines.join("\n") + "\n";
+        let capped = cap_window_text(&text);
+        assert!(capped.len() <= capped_limit(), "len {}", capped.len());
+        assert!(capped.starts_with("line 0\n"));
+        assert!(capped.ends_with("line 49999\n"));
+        assert!(capped.contains("omitted from this view"));
+
+        let notice_start = capped.find("[... ").unwrap();
+        assert!(capped[..notice_start].ends_with('\n'));
+        let notice = &capped[notice_start..];
+        let open = notice.find('(').unwrap();
+        let omitted_lines: usize = notice[open + 1..]
+            .split(' ')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let kept_lines = capped.lines().count() - 1;
+        assert_eq!(kept_lines + omitted_lines, 50_000);
+    }
+
+    #[test]
+    fn cap_window_text_does_not_split_multibyte_characters() {
+        // 3-byte characters and no newlines, so every cut lands on a raw offset.
+        let text = "€".repeat(WINDOW_OUTPUT_MAX_BYTES);
+        let capped = cap_window_text(&text);
+        assert!(capped.len() <= capped_limit());
+        assert!(capped.starts_with('€') && capped.ends_with('€'));
+    }
+
+    #[test]
+    fn cap_window_text_keeps_most_of_the_head_when_newlines_are_rare() {
+        let text = format!("x\n{}", "y".repeat(100_000));
+        let capped = cap_window_text(&text);
+        let head = &capped[..capped.find("[... ").unwrap()];
+        assert!(
+            head.len() > WINDOW_OUTPUT_MAX_BYTES / 2 - 10,
+            "head {}",
+            head.len()
+        );
+    }
+
+    #[test]
+    fn node_to_message_caps_tool_output_and_leaves_the_node_whole() {
+        let big = "match: src/lib.rs\n".repeat(300_000);
+        let node = tool_node(big.clone());
+        let message = node_to_message(&node).unwrap();
+        let sent: usize = message
+            .content
+            .iter()
+            .map(|part| match part {
+                graphirm_llm::ContentPart::ToolResult { content, .. } => content.len(),
+                _ => 0,
+            })
+            .sum();
+        assert!(sent > 0 && sent < capped_limit() + 20, "sent {sent}");
+        match &node.node_type {
+            NodeType::Interaction(data) => assert_eq!(data.content, big),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn node_to_message_caps_content_bodies() {
+        let node = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "command_output".to_string(),
+            path: None,
+            body: "z".repeat(1_000_000),
+            language: None,
+        }));
+        let message = node_to_message(&node).unwrap();
+        let sent: usize = message
+            .content
+            .iter()
+            .map(|part| serde_json::to_string(part).unwrap().len())
+            .sum();
+        assert!(sent < capped_limit() + 200, "sent {sent}");
+    }
+
+    #[test]
+    fn estimate_tokens_counts_the_capped_text() {
+        let node = tool_node("word ".repeat(1_000_000));
+        assert!(estimate_tokens(&node) < WINDOW_OUTPUT_MAX_BYTES / 2);
     }
 
     #[test]

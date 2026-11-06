@@ -146,6 +146,8 @@ pub(crate) fn governor_error_response(error: GovernorError) -> Response<Body> {
 /// rate-limited per IP. SSE routes are rate-limited but hold long connections (each request
 /// still counts once at connect time).
 pub fn create_router(state: AppState) -> Router {
+    // Load the tokenizer here so the first prompt does not wait for it.
+    graphirm_agent::warm_token_counter();
     let web_dir = state.web_dir.clone();
 
     let cors = build_cors_layer(&state.allowed_origins);

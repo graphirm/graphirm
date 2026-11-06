@@ -21,7 +21,7 @@ The graph stays the record, and a simple loop does the work. Design, evidence an
 
 ### Land the finished fixes — P1 · S
 
-Merge `feat/context-budget-honesty`, then `feat/reply-checker`, and PR #5 once CI passes. Check that replay matches the stored context on every turn.
+PR #5 landed 2026-11-06. `feat/context-budget-honesty` and `feat/reply-checker` were built on eval-branch code that `main` lacks (the pre-call cost check, pack traces, `replay-pack`), so only context-budget tasks 1–2 (real token count, 20 kB output cap) were copied to `main`. The stored packs (task 3) and the reply checker are rebuilt for `main`: see "Context budget honesty" and "Reply checker on main". Check that replay matches the stored context on every turn once task 3 lands.
 
 ### Fix the budget warning and settle the memory question — P1 · S
 
@@ -913,6 +913,16 @@ Done 2026-04-08. Non-destructive `fetch_url` in `crates/tools/src/fetch_url.rs`:
 
 ### Firecrawl (or search API) wrapper tool — P3 · M
 Optional follow-up: a dedicated tool that calls the Firecrawl API (scrape / search / map) with `FIRECRAWL_API_KEY`, or another web-search provider. Complements `fetch_url` for structured crawl/search results. *Acceptance: one tool, env-gated when key missing, non-destructive default.*
+
+### Reply checker on main — P2 · M
+
+`feat/reply-checker` (checks a segment-JSON reply against the numbered-block contract, stamps the result, optional resend) sits on `feat/context-budget-honesty` and the eval branch, so it can't be copied to `main` as is. Its measured result (15/20 clean replies; every failure was a prose lead before fenced JSON, now accepted; resends stay off) carries over. Port the checker and the lenient parser to `main` without the pack-trace dependencies. Plans: `docs/plans/2026-10-30-reply-checker.md` and `docs/plans/2026-10-30-reply-checker-measurement.md` on `feat/reply-checker`.
+
+### Context budget honesty — P1 · M
+
+The budget is counted as `words / 0.75`, which undercounts code about 2×, so a 100k budget sends about 200k tokens. Tool outputs reach the window uncapped (a 5.6 MB grep crashed T2 runs). The ordered list of what each call was sent is kept only in memory, so replay can match only about 93% of turns. Count with a real tokenizer, cap tool output in the window, store the packed ids and a request hash on each assistant node, then rerun the T2 G-persist probe. Plan: `docs/plans/2026-10-28-context-budget-honesty.md`.
+
+**On `main` (2026-11-06):** tasks 1–2 are done: `o200k_base` token count and the 20 kB cap on tool output and Content bodies in the window, the compaction summarizer and extraction. Still open: task 3 (store `context_kept_node_ids`, `context_sha256` and `context_tokens_est` on each assistant node). On the eval branch it relied on `append_pack_trace` and `replay-pack`, which are not on `main`, so it needs a fresh design here. The T2 rerun stays on the eval branch.
 
 ### Tool-pair atomicity in build_context — P2 · L
 

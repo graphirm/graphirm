@@ -22,6 +22,24 @@ Entry template:
 
 ---
 
+## 2026-11-06 — Context budget fixes reach `main` in part, the rest is rebuilt there
+
+**Context:** `feat/context-budget-honesty` and `feat/reply-checker` were cut from `eval/frozen-binary-source`. Tasks 3–4 and the reply checker build on about 4,600 lines from the T2 binary source (`8afb79e`): the pre-call cost check, pack traces and `replay-pack`. None of that is on `main`.
+**Decision:** Copy only the self-contained commits to `main` (the plan, the `o200k_base` count, the 20 kB cap). Record task 3 and the reply checker as backlog items to rebuild for `main`.
+**Alternatives:** Merging the whole eval branch into `main` lost: it brings the experiment tooling, and the 4 tests that fail only there. Rewriting task 3 during the copy lost: the code would differ from what was measured, under the same commit names.
+**Consequences:** `main` and the eval branch now count tokens the same way, but only the eval branch stores per-call packs. Budget-dependent results from before `o200k_base` are not comparable with new runs on `main`.
+**Refs:** `docs/plans/2026-10-28-context-budget-honesty.md` → "Port to `main`"; branch `feat/context-budget-main`.
+
+## 2026-10-28 — Context budget counted with tiktoken o200k_base, not the provider's tokenizer
+
+**Context:** `estimate_tokens_str` counted `words / 0.75`. On code that is about half the real count, so the configured budget was about 2× what was actually sent. In T2, G-persist prompts reached about 200k tokens under a 100k budget, and "the budget rarely binds" was partly this error. The eval model is DeepSeek V4.1 Flash; the server also runs Anthropic, OpenAI and OpenRouter models.
+**Decision:** Count with `tiktoken-rs` `o200k_base` for every provider. Cache counts for long texts by content hash. Record the estimate on each assistant node next to the provider's `usage_input`, so the error can be measured per run.
+**Alternatives:** (a) DeepSeek's own `tokenizer.json` through the `tokenizers` crate — exact for the eval model, but it is a multi-megabyte file per provider, needs a download or an embedded blob, and the crate is only built under `local-extraction` today. Revisit if the measured ratio is outside 0.85–1.15. (b) A chars/4 heuristic — simple, but still wrong on code and JSON by enough to matter. (c) Calibrating against `usage_input` after each call — only works after the first call and still needs a per-node estimate for selection.
+**Consequences:** The same `max_tokens` now selects about half as much context. Every earlier budget-dependent result was measured under the old count, and reruns must name the build. Binary size grows by the embedded BPE ranks.
+**Refs:** `docs/plans/2026-10-28-context-budget-honesty.md`, `crates/agent/src/context.rs`.
+
+---
+
 ## 2026-11-06 — The backlog lives on `main`, as one file
 
 **Context:** `docs/backlog.md` had drifted into three copies. `main` had about 42 open items. `eval/frozen-binary-source` had 18 open items that never reached `main`. The main checkout had an uncommitted "Architecture direction (2026-11-01)" section with 7 items, the current priorities.
