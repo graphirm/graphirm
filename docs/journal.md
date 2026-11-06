@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-11-06 — The backlog lives on `main`, as one file
+
+**Context:** `docs/backlog.md` had drifted into three copies. `main` had about 42 open items. `eval/frozen-binary-source` had 18 open items that never reached `main`. The main checkout had an uncommitted "Architecture direction (2026-11-01)" section with 7 items, the current priorities.
+**Decision:** Merge them into `main`'s file. The Architecture direction section goes at the top, with its plan doc committed. Eval-branch items go into their matching sections, and the 4 sections `main` lacked (Surfaces, Autoresearch-Inspired, Constraints, SWE-bench eval findings) are copied whole. "Knowledge extraction fixes" was left out, because `main` already has it as done. Items whose text differs between branches keep `main`'s wording.
+**Alternatives:** Leaving each branch its own backlog lost: priorities set on one branch were invisible from the others, and the P1 eval items were missing from `main`.
+**Consequences:** Some imported items (ratchet, SWE-bench) concern code that is still only on `eval/frozen-binary-source`. New backlog edits go to `main` (through a PR) rather than to a feature branch.
+**Refs:** branch `chore/backlog-single`; `docs/plans/2026-11-01-architecture-direction.md`.
+
 ## 2026-11-01 — Extracted knowledge links to the whole extraction window, and repeats merge by normalised name
 
 **Context:** Fix 3.3 originally linked each entity only to the message that mentions it. The replay (plan §7) found only 60% of LLM entity names appear verbatim in the conversation, because the LLM paraphrases. Separately, a merge rule was needed for 3.1.
