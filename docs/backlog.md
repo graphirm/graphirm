@@ -23,9 +23,20 @@ The graph stays the record, and a simple loop does the work. Design, evidence an
 
 PR #5 landed 2026-11-06. `feat/context-budget-honesty` and `feat/reply-checker` were built on eval-branch code that `main` lacks (the pre-call cost check, pack traces, `replay-pack`), so only context-budget tasks 1–2 (real token count, 20 kB output cap) were copied to `main`. The stored packs (task 3) and the reply checker are rebuilt for `main`: see "Context budget honesty" and "Reply checker on main". Check that replay matches the stored context on every turn once task 3 lands.
 
-### Fix the budget warning and settle the memory question — P1 · S
+### Settle the memory question — P1 · S
 
-The warning measures window fill, so it told the agent to stop on the first call of a task and caused all 15 one-call quits in `G-persist-budget`. Make it measure session spend, decide on counting tool-call arguments and schemas by default, then rerun that arm (about $1.20). Until then fresh 54/55 against persist 34–36/55 is confounded.
+The warning measures window fill, so it told the agent to stop on the first call of a task and caused all 15 one-call quits in `G-persist-budget`. Until that is removed, fresh 54/55 against persist 34–36/55 is confounded. **Rerun started 2026-11-07:** arm `G-persist-nonote-budget` on `eval/budget-rerun` (`f1c4e65`), the same binary as `G-persist-budget` with `budget_warning_thresholds = []`, so the note never fires. The warning fix itself is the next item. Spend is above the $1.20 estimate (about $6–10), because the agent no longer quits early and the carried graph grows with each task.
+
+### ✅ Budget warning measures session spend — P1 · S
+
+Shipped 2026-11-07. Plan: `docs/plans/2026-11-07-budget-note-spend.md`.
+
+
+The `[Budget]` note in `crates/agent/src/workflow.rs` divides the packed window's tokens by `max_tokens`. A session that starts with a full window is told to wrap up on its first call. Divide the session's spent tokens (`llm_tokens_used`, already kept for the cap) by `max_session_tokens` instead, and show no note when no cap is set. Unit test: a first call with a full window and no spend gets no note.
+
+### Count tool-call arguments and schemas by default — P2 · S
+
+The context count leaves out tool-call arguments and tool schemas, so a 100k window was really 140–155k when sent. Counting them is behind `GRAPHIRM_COUNT_TOOL_ARGS` on `plan/context-organization` only. Count them by default on `main`. Decided 2026-11-07: leave the count unchanged on eval binaries already in use, so reruns stay comparable.
 
 ### Linear working loop behind a flag — P1 · L
 

@@ -214,9 +214,10 @@ pub struct AgentConfig {
     /// context no longer contains that read. 0 disables. Default 3.
     #[serde(default = "default_read_loop_threshold")]
     pub read_loop_threshold: u32,
-    /// Token budget thresholds at which a warning is appended to the system prompt for
-    /// the current turn. Each value is a fraction of `max_tokens` (e.g. 0.7 = 70%).
-    /// An empty list disables budget warnings. Default: [0.7, 0.9].
+    /// Spend thresholds at which a warning is appended to the system prompt for the
+    /// current turn. Each value is a fraction of `max_session_tokens` (e.g. 0.7 = 70%),
+    /// compared with the tokens this session has spent, not with window fill. No
+    /// `max_session_tokens` or an empty list disables the warning. Default: [0.7, 0.9].
     #[serde(default = "default_budget_warning_thresholds")]
     pub budget_warning_thresholds: Vec<f64>,
     /// When true, inject a Plan→Build→Verify→Fix problem-solving framework into the

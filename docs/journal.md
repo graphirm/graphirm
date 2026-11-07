@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-11-07 — The budget warning measures spend against the session cap, and is off without one
+
+**Context:** The note divided window fill by `max_tokens`. A session carrying earlier tasks starts near 99% fill, so the note told the agent to stop on its first call; that caused all 15 one-call quits in `G-persist-budget`. The rerun with the note off (`G-persist-nonote-budget`) matched fresh on the first 32 tasks.
+**Decision:** Divide the session's spent tokens by `max_session_tokens`. No cap, no note. For the eval rerun, switch the note off on the pinned binary (`budget_warning_thresholds = []`) instead of rebuilding.
+**Alternatives:** A new key for a warning-only budget lost: one more number to choose, and the cap is already the limit the session hits. Keeping window fill with higher thresholds lost: fill near 100% is the normal state of a packed window, not a sign of overspend.
+**Consequences:** Default configs show no note. Anyone who relied on it must set `max_session_tokens`. Moving the note off the system message (cache prefix) is still open.
+**Refs:** `docs/plans/2026-11-07-budget-note-spend.md`, `eval/budget-rerun` `f1c4e65`, `/home/krs/graphirm-runs/budget/`.
+
 ## 2026-11-06 — Context budget fixes reach `main` in part, the rest is rebuilt there
 
 **Context:** `feat/context-budget-honesty` and `feat/reply-checker` were cut from `eval/frozen-binary-source`. Tasks 3–4 and the reply checker build on about 4,600 lines from the T2 binary source (`8afb79e`): the pre-call cost check, pack traces and `replay-pack`. None of that is on `main`.
