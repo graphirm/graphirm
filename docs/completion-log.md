@@ -1,5 +1,11 @@
 # Graphirm Development Progress Log
 
+## 2026-11-07: Structure completeness check (0.4) — MEASURED, FAILS
+
+- Script checks finished session databases: reply parts, tool results, `write` / `edit` `Modifies` edges, approval records, Agent `Produces` links. Thresholds fixed before measuring.
+- Eval binaries (T4, budget, replycheck, decide): tool results and file-tool records complete; 0 approval records in headless runs; `bash` file changes unrecorded; persist sessions lose reply parts after two tasks; killed sessions stay `active`. Four fixes added to the backlog.
+- Key files: `eval/structure/completeness.py`, `eval/structure/test_completeness.py`, `docs/plans/2026-11-07-structure-completeness.md`
+
 ## 2026-11-07: Memory question settled — COMPLETE ✅
 
 - Rerun 2026-11-07, `G-persist-nonote-budget` (same binary as `G-persist-budget`, note off): **54/55, the same as fresh**; 0 one-call quits (15 before); 20 paired wins and 0 losses against `G-persist-budget`, 18 and 0 against `G-persist-base`, 0 and 0 against fresh. Cost $5.91 against $0.95 for fresh: the same median calls (29 against 29.5), but about 152k input tokens per call against 21k, because the carried graph fills the window on every call. Exploratory, not pre-registered; fresh is at 54/55, so there is no room on these tasks for memory to show a gain.

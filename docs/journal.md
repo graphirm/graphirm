@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-11-07 — Completeness check 0.4 measured on eval binaries, with fixed thresholds
+
+**Context:** Step 0 of the prove-the-structure plan needs to know what the record misses before building more of it.
+**Decision:** Fix five checks and 100% thresholds in the plan before measuring (commit `4bbf3d1`), then run them on the existing eval databases rather than new `main` sessions. The script lives in `eval/structure/` because `scripts/` is gitignored for local-only research scripts. Persist arms are counted on the largest database per repo, since each carries every earlier task.
+**Alternatives:** Waiting for `main` sessions lost: the eval databases already show the gaps, and the rerun on `main` comes after the fixes. Softer thresholds lost: the point is to list what is missing, not to pass.
+**Consequences:** 0.4 fails. Four fixes are in the backlog (reply format on packed replies, approval source, `bash` file changes, session end reason). The persist parts loss is inferred from missing parts plus the packed plain-text replies; the raw reply is not stored, so it is not directly confirmed.
+**Refs:** `docs/plans/2026-11-07-structure-completeness.md`, `eval/structure/completeness.py`.
+
 ## 2026-11-07 — Carried memory ties fresh at 6× the cost, so fresh stays the default
 
 **Context:** Persist trailed fresh (34–36 against 54 of 55), but the budget warning caused 15 one-call quits. The rerun with the note off removed that.

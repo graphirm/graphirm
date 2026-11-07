@@ -21,7 +21,23 @@ The graph stays the record, and a simple loop does the work. Design, evidence an
 
 ### Prove the structure — P1 · L
 
-The innovation is the linked record of the AI's work, down to the claims in its replies. Prove it in order: (0) the structure is functional — parts labeled right, citations are real edges to the right evidence, the agent can read and find earlier parts, nothing is missing from the record; (1) it beats a notes-file agent; (2) it pays off on large, multi-session work; (3) an auditor can answer what, why, based on what and who approved from the record. Cost is judged against (2) and (3). Plan: `docs/plans/2026-11-07-prove-the-structure.md`. The readable-parts, citation-edges and reply-piece items below are the step 0 builds. Check 0.4 (completeness script): `docs/plans/2026-11-07-structure-completeness.md`.
+The innovation is the linked record of the AI's work, down to the claims in its replies. Prove it in order: (0) the structure is functional — parts labeled right, citations are real edges to the right evidence, the agent can read and find earlier parts, nothing is missing from the record; (1) it beats a notes-file agent; (2) it pays off on large, multi-session work; (3) an auditor can answer what, why, based on what and who approved from the record. Cost is judged against (2) and (3). Plan: `docs/plans/2026-11-07-prove-the-structure.md`. The readable-parts, citation-edges and reply-piece items below are the step 0 builds. Check 0.4 (completeness script): `docs/plans/2026-11-07-structure-completeness.md`. Measured 2026-11-07 on eval binaries: fails; the four items below are its fixes.
+
+### Keep the reply format when earlier replies are packed — P1 · M
+
+0.4 found persist sessions stop writing reply parts after two tasks: earlier replies go back into the window as plain display text while the system prompt asks for JSON segments, so the model copies the plain style and the parse fails. Either pack earlier replies in the asked format, or parse plain replies into parts (the reply-piece parser). Rerun 0.4 on a persist arm. Plan: `docs/plans/2026-11-07-structure-completeness.md`.
+
+### Record how each destructive call was approved — P1 · S
+
+0.4 found no approval record on any `write` / `edit` / `bash` call in headless runs, and `ApprovedBy` does not say human or auto-approve. Write the source on every destructive result: human, auto-approve, judge pause, or no gate attached. Needed for step 3 (who approved this).
+
+### File changes made through `bash` — P1 · M
+
+0.4 found 90–98% of tool calls are `bash`, and file changes made through it have no `Modifies` edge. Record them, for example by diffing the workspace after each `bash` call and writing a `Modifies` edge per changed file. Needed for step 3 (why was this file changed).
+
+### Record why a session ended — P2 · S
+
+0.4 found sessions killed at the time limit keep status `active`, with a tool call that has no result. Write the end reason (completed, cap, timeout, killed, cancelled), and on restart mark interrupted sessions.
 
 ### Land the finished fixes — P1 · S
 
