@@ -21,7 +21,7 @@ The graph stays the record, and a simple loop does the work. Design, evidence an
 
 ### Prove the structure — P1 · L
 
-The innovation is the linked record of the AI's work, down to the claims in its replies. Prove it in order: (0) the structure is functional — parts labeled right, citations are real edges to the right evidence, the agent can read and find earlier parts, nothing is missing from the record; (1) it beats a notes-file agent; (2) it pays off on large, multi-session work; (3) an auditor can answer what, why, based on what and who approved from the record. Cost is judged against (2) and (3). Plan: `docs/plans/2026-11-07-prove-the-structure.md`. The readable-parts, citation-edges and reply-piece items below are the step 0 builds.
+The innovation is the linked record of the AI's work, down to the claims in its replies. Prove it in order: (0) the structure is functional — parts labeled right, citations are real edges to the right evidence, the agent can read and find earlier parts, nothing is missing from the record; (1) it beats a notes-file agent; (2) it pays off on large, multi-session work; (3) an auditor can answer what, why, based on what and who approved from the record. Cost is judged against (2) and (3). Plan: `docs/plans/2026-11-07-prove-the-structure.md`. The readable-parts, citation-edges and reply-piece items below are the step 0 builds. Check 0.4 (completeness script): `docs/plans/2026-11-07-structure-completeness.md`.
 
 ### Land the finished fixes — P1 · S
 

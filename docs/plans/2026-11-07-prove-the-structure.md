@@ -30,6 +30,8 @@ No comparison with a plain AI. Each check reads Graphirm's own output.
 
 Pass thresholds are set and committed here before any 0.x measurement runs.
 
+0.4 thresholds and the script: `docs/plans/2026-11-07-structure-completeness.md` (committed 2026-11-07, before measuring).
+
 ### Builds needed for step 0
 
 - Make reply parts readable, linked and retrievable (backlog, P1 · M): show kind and heading, fetch one part's text, find a part by reply and number. Needed for 0.3.
