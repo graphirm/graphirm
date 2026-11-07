@@ -189,7 +189,7 @@ enable_compaction = true               # compact old turns when context exceeds 
 pre_completion_verify = true           # one checklist after the first finished reply that follows a write or edit; the final reply states what changed and the result
 doom_loop_threshold = 5                # inject advisory after N writes to the same file in one session
 read_loop_threshold = 3                # inject advisory after N reads of same file without editing it
-# budget_warning_thresholds = [0.7, 0.9]  # warn at these fractions of max_tokens (defaults shown)
+# budget_warning_thresholds = [0.7, 0.9]  # warn at these fractions of max_session_tokens spent; no cap, no warning
 enforce_work_loop = true               # inject Plan→Build→Verify→Fix framework into system prompt
 
 # Sessions created via the HTTP API without an explicit `auto_approve` start with

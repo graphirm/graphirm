@@ -246,41 +246,19 @@ pub async fn stream_and_record(
     context.push(window.system);
     context.extend(window.messages);
 
-    // Budget awareness: append a warning to the system message when token usage
-    // crosses a configured threshold. Helps the agent self-manage resource consumption.
-    if max_tok > 0 && !session.agent_config.budget_warning_thresholds.is_empty() {
-        let usage_ratio = window.total_tokens as f64 / max_tok as f64;
-        let highest_crossed = session
-            .agent_config
-            .budget_warning_thresholds
-            .iter()
-            .copied()
-            .filter(|&t| usage_ratio >= t)
-            .fold(f64::NEG_INFINITY, f64::max);
-        if highest_crossed.is_finite() {
-            let pct = (usage_ratio * 100.0) as u32;
-            let warning = if highest_crossed >= 0.9 {
-                format!(
-                    "\n\n[Budget] Token usage at {pct}% of limit. \
-                     Prioritize completing the current step and summarizing — do not start new tasks."
-                )
-            } else {
-                format!(
-                    "\n\n[Budget] Token usage at {pct}% of limit. \
-                     Start wrapping up; avoid long exploratory chains."
-                )
-            };
-            if let Some(system_msg) = context.first_mut() {
-                system_msg
-                    .content
-                    .push(graphirm_llm::ContentPart::text(warning));
-            }
-            tracing::info!(
-                usage_ratio,
-                pct,
-                "Budget warning appended to system message"
-            );
+    // Budget awareness: append a warning to the system message when the session's
+    // spend crosses a configured fraction of `max_session_tokens`.
+    if let Some(warning) = budget_note_text(
+        &session.agent_config.budget_warning_thresholds,
+        session.llm_tokens_used(),
+        session.agent_config.max_session_tokens,
+    ) {
+        if let Some(system_msg) = context.first_mut() {
+            system_msg
+                .content
+                .push(graphirm_llm::ContentPart::text(warning));
         }
+        tracing::info!("Budget warning appended to system message");
     }
 
     let raw_defs = tools.definitions();
@@ -2703,6 +2681,36 @@ pub async fn run_agent_loop(
 
 // ============== Test helpers ==============
 
+/// The `[Budget]` note for the session's spend so far, or `None`.
+///
+/// The ratio is tokens spent in this session over `max_session_tokens`, not how
+/// full the window is: a session that starts with a full window has spent nothing.
+/// No cap, a zero cap or no thresholds gives no note.
+pub(crate) fn budget_note_text(thresholds: &[f64], spent: u64, cap: Option<u64>) -> Option<String> {
+    let cap = cap.filter(|&c| c > 0)?;
+    let usage_ratio = spent as f64 / cap as f64;
+    let highest_crossed = thresholds
+        .iter()
+        .copied()
+        .filter(|&t| usage_ratio >= t)
+        .fold(f64::NEG_INFINITY, f64::max);
+    if !highest_crossed.is_finite() {
+        return None;
+    }
+    let pct = (usage_ratio * 100.0) as u32;
+    Some(if highest_crossed >= 0.9 {
+        format!(
+            "\n\n[Budget] Token usage at {pct}% of limit. \
+             Prioritize completing the current step and summarizing — do not start new tasks."
+        )
+    } else {
+        format!(
+            "\n\n[Budget] Token usage at {pct}% of limit. \
+             Start wrapping up; avoid long exploratory chains."
+        )
+    })
+}
+
 #[cfg(test)]
 pub(crate) mod test_helpers {
     use std::sync::Arc;
@@ -4578,5 +4586,38 @@ mod tests {
             !approved_sources.is_empty(),
             "Should have at least one ApprovedBy edge (auto-approved tool)"
         );
+    }
+}
+
+#[cfg(test)]
+mod budget_note_tests {
+    use super::budget_note_text;
+
+    const THRESHOLDS: [f64; 2] = [0.7, 0.9];
+
+    #[test]
+    fn a_session_that_has_spent_nothing_gets_no_note() {
+        // The window can be full on the first call; spend is what counts.
+        assert!(budget_note_text(&THRESHOLDS, 0, Some(100_000)).is_none());
+    }
+
+    #[test]
+    fn no_cap_or_a_zero_cap_gives_no_note() {
+        assert!(budget_note_text(&THRESHOLDS, 10_000_000, None).is_none());
+        assert!(budget_note_text(&THRESHOLDS, 10_000_000, Some(0)).is_none());
+    }
+
+    #[test]
+    fn spend_past_each_threshold_picks_its_text() {
+        let wrap = budget_note_text(&THRESHOLDS, 75_000, Some(100_000)).expect("note at 75%");
+        assert!(wrap.contains("75% of limit") && wrap.contains("Start wrapping up"));
+        let finish = budget_note_text(&THRESHOLDS, 95_000, Some(100_000)).expect("note at 95%");
+        assert!(finish.contains("95% of limit") && finish.contains("Prioritize completing"));
+        assert!(budget_note_text(&THRESHOLDS, 69_000, Some(100_000)).is_none());
+    }
+
+    #[test]
+    fn no_thresholds_gives_no_note() {
+        assert!(budget_note_text(&[], 99_000, Some(100_000)).is_none());
     }
 }

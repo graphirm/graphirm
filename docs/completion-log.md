@@ -1,5 +1,11 @@
 # Graphirm Development Progress Log
 
+## 2026-11-07: Budget warning measures session spend — COMPLETE ✅
+
+- The `[Budget]` note compares the tokens this session has spent (`llm_tokens_used`) with `max_session_tokens`, instead of the window's fill with `max_tokens`. A session that starts with a full window no longer gets told to wrap up on its first call.
+- No `max_session_tokens` (the committed default) means no note. Text and the 0.7 / 0.9 thresholds are unchanged; the note stays on the system message.
+- Key files: `crates/agent/src/workflow.rs` (`budget_note_text`), `crates/agent/src/config.rs`, `docs/plans/2026-11-07-budget-note-spend.md`
+
 ## 2026-11-06: Context budget honesty, tasks 1–2 on main — PARTIAL
 
 - Context tokens are counted with `tiktoken-rs` `o200k_base` instead of `words / 0.75`, which undercounted code about 2×. The same `max_tokens` now selects about half as much context.
