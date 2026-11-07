@@ -91,7 +91,7 @@ def check(nodes, edges):
 
     tallies = {name: Tally() for name in CHECKS}
     info = {"dangling_edges": 0, "bash_calls": 0, "approvals": 0,
-            "approvals_recording_source": 0, "final_replies": 0, "final_replies_with_parts": 0}
+            "approvals_with_metadata": 0, "final_replies": 0, "final_replies_with_parts": 0}
 
     for e in edges:
         if e["src"] not in nodes or e["dst"] not in nodes:
@@ -99,18 +99,23 @@ def check(nodes, edges):
         if e["type"] == "approved_by":
             info["approvals"] += 1
             if e["meta"]:
-                info["approvals_recording_source"] += 1
+                info["approvals_with_metadata"] += 1
 
     for nid, node in nodes.items():
         if node["type"] == "interaction":
+            session = node["meta"].get("session_id")
             produced = any(e["type"] == "produces"
                            and nodes.get(e["src"], {}).get("type") == "agent"
+                           and (session is None or e["src"] == session)
                            for e in in_edges.get(nid, []))
             tallies["C5_produced_by_agent"].add(produced, nid)
         if role(node) != "assistant":
             continue
         mine = out_edges.get(nid, [])
         calls = tool_calls(node)
+        # Edges carry no call id, so each Modifies edge or rejection node
+        # satisfies one call only: two edits of one file need two edges.
+        used = set()
         if (node["data"].get("content") or "").strip():
             has_parts = any(e["type"] == "contains" for e in mine)
             tallies["C1_reply_parts"].add(has_parts or bool(node["meta"].get("tool_call_leak")), nid)
@@ -124,29 +129,37 @@ def check(nodes, edges):
             if name == "bash":
                 info["bash_calls"] += 1
             if name in FILE_TOOLS and result and not result["meta"].get("is_error"):
-                modified = any(
-                    e["type"] == "modifies"
-                    and nodes.get(e["dst"], {}).get("data", {}).get("content_type") == "file"
-                    and path_matches(nodes[e["dst"]]["data"].get("path"), args.get("path"))
-                    for e in mine)
-                tallies["C3_file_changes"].add(modified, nid)
+                # A HITL Modify decision runs with new arguments; headless runs have none.
+                edge = next((i for i, e in enumerate(mine) if i not in used
+                             and e["type"] == "modifies"
+                             and nodes.get(e["dst"], {}).get("data", {}).get("content_type") == "file"
+                             and path_matches(nodes[e["dst"]]["data"].get("path"),
+                                              args.get("path"))), None)
+                if edge is not None:
+                    used.add(edge)
+                tallies["C3_file_changes"].add(edge is not None, nid)
             if name in GATED_TOOLS:
-                tallies["C4_approvals"].add(approved_or_rejected(result_id, nid, nodes, out_edges),
-                                            nid)
+                tallies["C4_approvals"].add(
+                    approved_or_rejected(result_id, name, mine, nodes, out_edges, used), nid)
     return tallies, info
 
 
-def approved_or_rejected(result_id, assistant_id, nodes, out_edges):
+def approved_or_rejected(result_id, name, mine, nodes, out_edges, used):
     if result_id is None:
         return False
     if any(e["type"] == "approved_by" for e in out_edges.get(result_id, [])):
         return True
-    rejected = (nodes[result_id]["data"].get("content") or "").startswith("rejected by user:")
-    return rejected and any(
-        e["type"] == "produces"
-        and nodes.get(e["dst"], {}).get("data", {}).get("content_type") == "tool_rejection"
-        and any(r["type"] == "rejected_by" for r in out_edges.get(e["dst"], []))
-        for e in out_edges.get(assistant_id, []))
+    if not (nodes[result_id]["data"].get("content") or "").startswith("rejected by user:"):
+        return False
+    for i, e in enumerate(mine):
+        target = nodes.get(e["dst"], {}).get("data", {})
+        if (i not in used and e["type"] == "produces"
+                and target.get("content_type") == "tool_rejection"
+                and f"'{name}'" in (target.get("body") or "")
+                and any(r["type"] == "rejected_by" for r in out_edges.get(e["dst"], []))):
+            used.add(i)
+            return True
+    return False
 
 
 def run(paths, label):

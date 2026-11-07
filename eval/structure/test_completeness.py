@@ -68,7 +68,8 @@ def complete_session():
     f.node("file1", "content", {"content_type": "file", "path": "/work/src/x.py"})
     f.edge("modifies", "a1", "file1")
     f.tool("t2", "c2", content="rejected by user: no")
-    f.node("rej", "content", {"content_type": "tool_rejection"})
+    f.node("rej", "content", {"content_type": "tool_rejection",
+                              "body": "Tool call 'bash' rejected: no"})
     f.edge("produces", "a1", "rej")
     f.edge("rejected_by", "rej", "agent")
     f.assistant("a2", "Done.", meta={"tool_call_leak": True})
@@ -116,6 +117,33 @@ class StructureCompletenessTest(unittest.TestCase):
         f.assistant("a1", calls=[("c1", "write", {"path": "a.txt"})])
         f.tool("t1", "c1", is_error=True)
         self.assertEqual(self.report(f)["checks"]["C3_file_changes"]["total"], 0)
+
+    def test_one_edge_or_rejection_covers_one_call_only(self):
+        f = Fixture()
+        f.node("agent", "agent", {"name": "s"})
+        f.assistant("a1", calls=[("c1", "edit", {"path": "x.py"}), ("c2", "edit", {"path": "x.py"}),
+                                 ("c3", "bash", {}), ("c4", "bash", {})])
+        f.tool("t1", "c1")
+        f.tool("t2", "c2")
+        f.node("file1", "content", {"content_type": "file", "path": "/w/x.py"})
+        f.edge("modifies", "a1", "file1")
+        for t, c in (("t3", "c3"), ("t4", "c4")):
+            f.tool(t, c, content="rejected by user: no")
+        f.node("rej", "content", {"content_type": "tool_rejection",
+                                  "body": "Tool call 'bash' rejected: no"})
+        f.edge("produces", "a1", "rej")
+        f.edge("rejected_by", "rej", "agent")
+        checks = self.report(f)["checks"]
+        self.assertEqual((checks["C3_file_changes"]["ok"], checks["C3_file_changes"]["total"]),
+                         (1, 2))
+        self.assertEqual(checks["C4_approvals"]["ok"], 1)
+
+    def test_interaction_must_be_produced_by_its_own_session(self):
+        f = complete_session()
+        f.node("other", "agent", {"name": "o"})
+        f.node("u1", "interaction", {"role": "user", "content": "hi"}, {"session_id": "agent"})
+        f.edge("produces", "other", "u1")
+        self.assertFalse(self.report(f)["checks"]["C5_produced_by_agent"]["passes"])
 
     def test_path_match_needs_a_whole_component(self):
         self.assertTrue(sc.path_matches("/work/src/x.py", "./src/x.py"))

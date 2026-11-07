@@ -67,14 +67,23 @@ What the misses are:
 - **C4:** these are headless runs with no approval gate (`session.hitl` is `None`), so destructive calls
   run with no approval record and nothing says that no gate was attached.
 - **C1, final replies:** fresh keeps parts on 53/56, T4 73/82, replycheck 18/23. Persist keeps them on
-  15/54: parts stop after the first two tasks in each repo. The packed context shows earlier replies as
+  12/56 (`G-persist-base`), 13/56 (`G-persist-budget`) and 15/54 (`G-persist-nonote-budget`): parts
+  mostly stop after the first two tasks in each repo and come back on a few later ones (matplotlib,
+  nonote arm: replies 1–2 have parts, 3–21 none, then 22, 25, 26 and 30). The packed context shows earlier replies as
   plain display text (`segment_display_text`), while the system prompt asks for JSON segments; from the
-  third task on, the model answers in the plain style of its own earlier replies, the JSON parse fails,
+  third task on, the model mostly answers in the plain style of its own earlier replies, the JSON parse fails,
   and no parts are written. The raw reply text is not stored, so the failed parse is inferred from the
   missing parts plus the plain-text earlier replies in `G-persist-nonote-budget.pack-trace.jsonl`. In
   the decide pilot the `An` arm keeps parts on 17/108 final replies, `Tc` on 90/106.
 - **C1, replies with tool calls:** text written next to tool calls never gets parts and no reason is
-  recorded. 3 of the 303 interim replies across all corpora have parts (all in T4).
+  recorded. 3 of the 303 interim replies across all corpora have parts (all in T4). This is by design:
+  segmentation runs only on replies without tool calls (`workflow.rs` ~659). It is the largest C1 miss.
+- **C1, token-cap replies:** a reply that hits `max_session_tokens` skips segmentation by design and
+  carries `session_token_cap_exceeded`. C1 counts it as a miss with no reason, as the table defines.
+
+Script limits: `Modifies` edges and rejections carry no call id, so the script lets each one satisfy
+one call (two edits of one file need two edges). A HITL `Modify` decision runs with new arguments; C3
+compares against the original `path`, which cannot occur in headless runs.
 
 Fixes are backlog items (see "Prove the structure"). The check is rerun after them, on a `main` binary.
 

@@ -3,7 +3,7 @@
 ## 2026-11-07: Structure completeness check (0.4) — MEASURED, FAILS
 
 - Script checks finished session databases: reply parts, tool results, `write` / `edit` `Modifies` edges, approval records, Agent `Produces` links. Thresholds fixed before measuring.
-- Eval binaries (T4, budget, replycheck, decide): tool results and file-tool records complete; 0 approval records in headless runs; `bash` file changes unrecorded; persist sessions lose reply parts after two tasks; killed sessions stay `active`. Four fixes added to the backlog.
+- Eval binaries (T4, budget, replycheck, decide): tool results and file-tool records complete; 0 approval records in headless runs; `bash` file changes unrecorded; persist sessions mostly lose reply parts after two tasks; text next to tool calls never gets parts; killed sessions stay `active`. Five fixes added to the backlog.
 - Key files: `eval/structure/completeness.py`, `eval/structure/test_completeness.py`, `docs/plans/2026-11-07-structure-completeness.md`
 
 ## 2026-11-07: Memory question settled — COMPLETE ✅
