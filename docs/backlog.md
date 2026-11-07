@@ -33,7 +33,7 @@ The innovation is the linked record of the AI's work, down to the claims in its 
 
 ### File changes made through `bash` — P1 · M
 
-0.4 found 90–98% of tool calls are `bash`, and file changes made through it have no `Modifies` edge. Record them, for example by diffing the workspace after each `bash` call and writing a `Modifies` edge per changed file. Needed for step 3 (why was this file changed).
+0.4 found 82–98% of tool calls are `bash`, and file changes made through it have no `Modifies` edge. Record them, for example by diffing the workspace after each `bash` call and writing a `Modifies` edge per changed file. Needed for step 3 (why was this file changed).
 
 ### Record why a session ended — P2 · S
 

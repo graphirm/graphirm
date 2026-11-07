@@ -62,7 +62,7 @@ What the misses are:
 
 - **C2, C5 (T4, 5 misses):** sessions killed at the time limit in the middle of a call. The Agent node
   still says `active`, so the record does not say why the session ended.
-- **C3:** every `write` / `edit` is recorded. But 90–98% of calls are `bash`, and file changes made
+- **C3:** every `write` / `edit` is recorded. But 82–98% of calls are `bash`, and file changes made
   through `bash` have no `Modifies` edge, so most file changes are outside the record.
 - **C4:** these are headless runs with no approval gate (`session.hitl` is `None`), so destructive calls
   run with no approval record and nothing says that no gate was attached.
@@ -74,7 +74,7 @@ What the misses are:
   missing parts plus the plain-text earlier replies in `G-persist-nonote-budget.pack-trace.jsonl`. In
   the decide pilot the `An` arm keeps parts on 17/108 final replies, `Tc` on 90/106.
 - **C1, replies with tool calls:** text written next to tool calls never gets parts and no reason is
-  recorded. 0 of the interim replies in any corpus have parts.
+  recorded. 3 of the 303 interim replies across all corpora have parts (all in T4).
 
 Fixes are backlog items (see "Prove the structure"). The check is rerun after them, on a `main` binary.
 
