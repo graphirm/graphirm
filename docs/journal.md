@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-11-07 — Carried memory ties fresh at 6× the cost, so fresh stays the default
+
+**Context:** Persist trailed fresh (34–36 against 54 of 55), but the budget warning caused 15 one-call quits. The rerun with the note off removed that.
+**Decision:** Treat the memory question as settled for packing: carrying earlier tasks in the window neither hurts nor helps on these tasks, and costs about 6× (152k against 21k input per call at the same number of calls). Fresh stays the default; past work is reached by lookup, which is what the prove-the-structure plan tests.
+**Alternatives:** Reading the tie as "memory works" lost: fresh is at 54/55, so the tasks leave no room for a gain. Rebuilding the binary with the spend-based warning for the rerun lost: one config line on the pinned binary isolates the warning with nothing else changed.
+**Consequences:** Exploratory, one run, 55 tasks. A memory gain has to be shown on work where fresh fails, which is step 2 of the prove-the-structure plan. Spend on the arm was $5.91 against a $1.20 estimate, because tasks no longer quit early.
+**Refs:** `/home/krs/graphirm-runs/budget/`, `eval/budget-rerun` `f1c4e65`, `docs/plans/2026-11-01-architecture-direction.md`.
+
 ## 2026-11-07 — Prove the structure works before comparing it, and judge cost against its benefit
 
 **Context:** The evals so far are single bug fixes, where a plain agent is at its best. On those, Graphirm ties a plain agent at about 2× the cost. The structure (reply parts, citations, the linked record) is the main innovation, but the agent cannot yet read its parts back and citations are not edges.

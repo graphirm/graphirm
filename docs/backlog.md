@@ -27,9 +27,9 @@ The innovation is the linked record of the AI's work, down to the claims in its 
 
 PR #5 landed 2026-11-06. `feat/context-budget-honesty` and `feat/reply-checker` were built on eval-branch code that `main` lacks (the pre-call cost check, pack traces, `replay-pack`), so only context-budget tasks 1–2 (real token count, 20 kB output cap) were copied to `main`. The stored packs (task 3) and the reply checker are rebuilt for `main`: see "Context budget honesty" and "Reply checker on main". Check that replay matches the stored context on every turn once task 3 lands.
 
-### Settle the memory question — P1 · S
+### ✅ Settle the memory question — P1 · S
 
-The warning measures window fill, so it told the agent to stop on the first call of a task and caused all 15 one-call quits in `G-persist-budget`. Until that is removed, fresh 54/55 against persist 34–36/55 is confounded. **Rerun started 2026-11-07:** arm `G-persist-nonote-budget` on `eval/budget-rerun` (`f1c4e65`), the same binary as `G-persist-budget` with `budget_warning_thresholds = []`, so the note never fires. The warning fix itself is the next item. Spend is above the $1.20 estimate (about $6–10), because the agent no longer quits early and the carried graph grows with each task.
+Settled 2026-11-07. The warning caused the persist losses, not memory. Rerun 2026-11-07, `G-persist-nonote-budget` (same binary as `G-persist-budget`, note off): **54/55, the same as fresh**; 0 one-call quits (15 before); 20 paired wins and 0 losses against `G-persist-budget`, 18 and 0 against `G-persist-base`, 0 and 0 against fresh. Cost $5.91 against $0.95 for fresh: the same median calls (29 against 29.5), but about 152k input tokens per call against 21k, because the carried graph fills the window on every call. Exploratory, not pre-registered; fresh is at 54/55, so there is no room on these tasks for memory to show a gain. Verdict: carrying earlier tasks in the window does not hurt quality, does not help it, and costs about 6×. Fresh stays the default; past work is reached by lookup. Runs: `/home/krs/graphirm-runs/budget/`, driver `eval/budget-rerun` `f1c4e65`.
 
 ### ✅ Budget warning measures session spend — P1 · S
 

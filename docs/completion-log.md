@@ -1,5 +1,11 @@
 # Graphirm Development Progress Log
 
+## 2026-11-07: Memory question settled — COMPLETE ✅
+
+- Rerun 2026-11-07, `G-persist-nonote-budget` (same binary as `G-persist-budget`, note off): **54/55, the same as fresh**; 0 one-call quits (15 before); 20 paired wins and 0 losses against `G-persist-budget`, 18 and 0 against `G-persist-base`, 0 and 0 against fresh. Cost $5.91 against $0.95 for fresh: the same median calls (29 against 29.5), but about 152k input tokens per call against 21k, because the carried graph fills the window on every call. Exploratory, not pre-registered; fresh is at 54/55, so there is no room on these tasks for memory to show a gain.
+- Verdict: memory carried in the window is quality-neutral and about 6× the cost. Fresh is the default; memory goes through lookup.
+- Key files: `eval/swebench/run_budget.py` on `eval/budget-rerun` (`f1c4e65`), `docs/plans/2026-11-01-architecture-direction.md`
+
 ## 2026-11-07: Budget warning measures session spend — COMPLETE ✅
 
 - The `[Budget]` note compares the tokens this session has spent (`llm_tokens_used`) with `max_session_tokens`, instead of the window's fill with `max_tokens`. A session that starts with a full window no longer gets told to wrap up on its first call.

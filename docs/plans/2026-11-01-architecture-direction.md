@@ -29,6 +29,7 @@
 | Graphirm ties a plain agent at about 2× the cost | T1 + T4, 316 tasks: +2.2pp, CI −2.5 to +7.0. | Cost is the problem to fix, not quality. |
 | Carrying earlier tasks in the context does worse than starting fresh | Budget rerun, 55 tasks: fresh 54, persist-base 36, persist-budget 34. Exploratory, not pre-registered. | Fresh is the safe default. |
 | That persist-budget result is confounded | All 15 one-call quits come from the budget warning firing at 99% window fill on the first call of a task. | The memory question stays open until the warning is fixed. |
+| With the warning off, persist ties fresh at about 6× the cost (2026-11-07) | `G-persist-nonote-budget`: 54/55, 0 one-call quits, 152k input per call against 21k for fresh. | Packing earlier tasks costs without helping. Memory goes through lookup. |
 | A plain notes file matches the register on recall | Notes instruction: 14 of 14. At ten sessions and 140 changing facts, notes and register both recall 67 of 68. | Do not adopt the register for recall. |
 | The register beat an agent with no notes instruction | 95.5% vs 9.8%, but the rival above removed this gap. | This is not a reason to adopt it. |
 | Register may cost less | Half the calls in one run each. Not a result. | Needs its own pre-registration if pursued. |
@@ -56,11 +57,13 @@
 
 ### Item 2: Fix the budget warning and settle the memory question — P1 · S
 
-- [ ] Make the warning measure session spend, not window fill. It still measures fill on `main`, `feat/context-budget-honesty` and `plan/context-organization`.
-- [ ] Decide on counting tool-call arguments and schemas by default. Arguments are counted only behind `GRAPHIRM_COUNT_TOOL_ARGS` on `plan/context-organization`. A 100k window was really 140–155k when sent.
-- [ ] Rerun `G-persist-budget` against the existing base and fresh results. Estimated at about $1.20.
+- [x] Make the warning measure session spend, not window fill (PR #9, 2026-11-07). It still measures fill on `main`, `feat/context-budget-honesty` and `plan/context-organization`.
+- [x] Decide on counting tool-call arguments and schemas by default: yes on `main`, unchanged on eval binaries in use (backlog item, 2026-11-07). Arguments are counted only behind `GRAPHIRM_COUNT_TOOL_ARGS` on `plan/context-organization`. A 100k window was really 140–155k when sent.
+- [x] Rerun `G-persist-budget` against the existing base and fresh results: `G-persist-nonote-budget`, 54/55, $5.91 (estimate was $1.20).
 
 **Gate:** no one-call quits caused by the warning. If persist still trails fresh clearly, stop packing earlier tasks into context.
+
+**Result (2026-11-07):** passed. 0 one-call quits, and persist no longer trails fresh (54/55 each). It costs about 6× for no gain on these tasks, so earlier tasks are not packed by default.
 
 ### Item 3: Linear working loop behind a flag — P1 · L
 
