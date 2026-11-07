@@ -36,7 +36,7 @@ so the result describes those binaries. A run on a `main` binary follows once th
 
 ## Tasks
 
-- [ ] Script `scripts/structure_completeness.py` (stdlib only: `sqlite3`, `json`), one JSON report per
+- [ ] Script `eval/structure/completeness.py` (stdlib only: `sqlite3`, `json`), one JSON report per
       database and a pooled summary per corpus
-- [ ] Tests on a small fixture built with the real schema (`scripts/test_structure_completeness.py`)
+- [ ] Tests on a small fixture built with the real schema (`eval/structure/test_completeness.py`)
 - [ ] Run on the corpus, record results in this plan and the parent plan
