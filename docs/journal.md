@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-11-07 — Prove the structure works before comparing it, and judge cost against its benefit
+
+**Context:** The evals so far are single bug fixes, where a plain agent is at its best. On those, Graphirm ties a plain agent at about 2× the cost. The structure (reply parts, citations, the linked record) is the main innovation, but the agent cannot yet read its parts back and citations are not edges.
+**Decision:** Four steps in order, each gated on the last: (0) the structure is functional on its own terms, (1) it beats a notes-file agent, (2) it pays off on large multi-session work, (3) it answers audit questions a chat log cannot. Cost is measured per solved task and per answered audit question, against (2) and (3).
+**Alternatives:** Cutting cost first on the single-task evals lost: it would optimise against the case where the structure cannot show its value. Comparing with a plain agent before step 0 lost: a broken label, link or reader would be measured as "structure does not help".
+**Consequences:** Citations as real edges moves to P1. Step 3 needs stored packs and replay on `main`. The linear loop stays, but its verdict uses this plan's benefit numbers.
+**Refs:** `docs/plans/2026-11-07-prove-the-structure.md`, `docs/plans/2026-11-01-architecture-direction.md`.
+
 ## 2026-11-07 — The budget warning measures spend against the session cap, and is off without one
 
 **Context:** The note divided window fill by `max_tokens`. A session carrying earlier tasks starts near 99% fill, so the note told the agent to stop on its first call; that caused all 15 one-call quits in `G-persist-budget`. The rerun with the note off (`G-persist-nonote-budget`) matched fresh on the first 32 tasks.

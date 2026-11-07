@@ -19,6 +19,10 @@ Single source of truth for planned work. Completed items are recorded in `docs/c
 
 The graph stays the record, and a simple loop does the work. Design, evidence and gates: `docs/plans/2026-11-01-architecture-direction.md`.
 
+### Prove the structure — P1 · L
+
+The innovation is the linked record of the AI's work, down to the claims in its replies. Prove it in order: (0) the structure is functional — parts labeled right, citations are real edges to the right evidence, the agent can read and find earlier parts, nothing is missing from the record; (1) it beats a notes-file agent; (2) it pays off on large, multi-session work; (3) an auditor can answer what, why, based on what and who approved from the record. Cost is judged against (2) and (3). Plan: `docs/plans/2026-11-07-prove-the-structure.md`. The readable-parts, citation-edges and reply-piece items below are the step 0 builds.
+
 ### Land the finished fixes — P1 · S
 
 PR #5 landed 2026-11-06. `feat/context-budget-honesty` and `feat/reply-checker` were built on eval-branch code that `main` lacks (the pre-call cost check, pack traces, `replay-pack`), so only context-budget tasks 1–2 (real token count, 20 kB output cap) were copied to `main`. The stored packs (task 3) and the reply checker are rebuilt for `main`: see "Context budget honesty" and "Reply checker on main". Check that replay matches the stored context on every turn once task 3 lands.
@@ -50,7 +54,7 @@ Remove per-turn PageRank, distance and edge-weight scoring. Do not start this be
 
 The agent cannot read splits today: `graph_query` summaries omit `Content` text. Show kind and heading, fetch one part's text, find a part by reply and number, add an edge when a later reply cites a part. Must beat a notes-file arm, or the HTML page comes out of `delegate_pi`. Related: HTML piece index, below.
 
-### Citations as real edges — P2 · M
+### Citations as real edges — P1 · M
 
 `src` and `rel` stay in metadata and text. Turn them into edges checked when written. Gate: validity at or above 96%, and any claim reaches its evidence in one query.
 
