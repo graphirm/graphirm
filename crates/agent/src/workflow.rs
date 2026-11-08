@@ -634,6 +634,31 @@ pub async fn stream_and_record(
 
     let node_id = session.record_interaction(interaction_node).await?;
 
+    // Reply pieces — every reply with text, final or next to tool calls. The
+    // node keeps the model's own text, so earlier replies go back into the
+    // window in the format the model was asked for. Non-fatal.
+    let mut pieces_recorded = false;
+    // Runs before the token-cap return, so a capped final reply is cut too.
+    let reply_text = response.text_content();
+    if session.agent_config.reply_pieces_enabled() && !reply_text.trim().is_empty() {
+        let graph = session.graph.clone();
+        let parent = node_id.clone();
+        let text = reply_text;
+        let narration = response.has_tool_calls();
+        match tokio::task::spawn_blocking(move || {
+            crate::knowledge::reply_pieces::record_reply_pieces(&graph, &parent, &text, narration)
+        })
+        .await
+        {
+            Ok(Ok(source)) => {
+                pieces_recorded = true;
+                info!(source = source.as_str(), "Recorded reply pieces");
+            }
+            Ok(Err(e)) => tracing::warn!(error = %e, "Failed to record reply pieces (non-fatal)"),
+            Err(e) => tracing::warn!(error = %e, "Reply pieces task panicked (non-fatal)"),
+        }
+    }
+
     if over_cap {
         // Segments never rewrite this node. Judge the raw text that stays stored.
         // A judge failure must not replace the token-cap error below.
@@ -664,29 +689,6 @@ pub async fn stream_and_record(
     }
 
     let raw_text = response.text_content();
-
-    // Reply pieces — every reply with text, final or next to tool calls. The
-    // node keeps the model's own text, so earlier replies go back into the
-    // window in the format the model was asked for. Non-fatal.
-    let mut pieces_recorded = false;
-    if session.agent_config.reply_pieces_enabled() && !raw_text.trim().is_empty() {
-        let graph = session.graph.clone();
-        let parent = node_id.clone();
-        let text = raw_text.clone();
-        let narration = response.has_tool_calls();
-        match tokio::task::spawn_blocking(move || {
-            crate::knowledge::reply_pieces::record_reply_pieces(&graph, &parent, &text, narration)
-        })
-        .await
-        {
-            Ok(Ok(source)) => {
-                pieces_recorded = true;
-                info!(source = source.as_str(), "Recorded reply pieces");
-            }
-            Ok(Err(e)) => tracing::warn!(error = %e, "Failed to record reply pieces (non-fatal)"),
-            Err(e) => tracing::warn!(error = %e, "Reply pieces task panicked (non-fatal)"),
-        }
-    }
 
     // Set when the segment stamp replaces the Interaction body. Otherwise Jev
     // sees `raw_text`, which is what remains stored.

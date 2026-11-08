@@ -71,7 +71,13 @@ pub fn record_reply_pieces(
             (segment.pieces, source)
         }
     };
-    write_pieces(graph, parent, text, &pieces, Some(source))?;
+    if let Err(e) = write_pieces(graph, parent, text, &pieces, Some(source)) {
+        // Some parts may be written; say so on the reply instead of leaving it unstamped.
+        let mut node = graph.get_node(parent)?;
+        node.metadata["pieces_source"] = json!("failed");
+        graph.update_node(parent, node)?;
+        return Err(e);
+    }
     let mut node = graph.get_node(parent)?;
     node.metadata["pieces_source"] = json!(source.as_str());
     node.metadata["pieces_count"] = json!(pieces.len());

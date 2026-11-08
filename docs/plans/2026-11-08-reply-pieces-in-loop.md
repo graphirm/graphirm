@@ -41,6 +41,13 @@ Built for Pi replies in `crates/agent/src/pi_delegate/`:
   the persist arm about $6.
 - Share of replies cut as `html` against `markdown`, overall and by task position in persist runs.
 - Step 0.1 needs a hand-labeled set of 100 replies; labels by a model are not hand labels.
+- Context selection changes with the switch on: `GraphStore::pagerank` is unweighted over the whole
+  graph, so each reply's K `Contains` children dilute the rank it passes back along `RespondsTo`, and
+  every reply adds K + lines nodes (more PageRank work per turn). The paired eval measures the switch
+  as built; leaving `reply_part` / `reply_line` out of PageRank is a separate change, measured on its own.
+- The HTML contract was written for Pi's one-shot task: with the switch on, every turn (greetings,
+  narration) is asked for HTML, earlier HTML replies are packed verbatim, and the TUI and VS Code show raw
+  HTML. Output and input tokens per reply are part of the eval.
 
 ## Tasks
 
@@ -54,4 +61,5 @@ Built for Pi replies in `crates/agent/src/pi_delegate/`:
       Not run yet: starting an agent with the API keys needs the user's go-ahead
 - [ ] Paired eval on the 55 budget tasks (spend reported first)
 
-Not covered: a reply that hits `max_session_tokens` returns before cutting, as with segments.
+A reply that hits `max_session_tokens` is cut before the loop stops. If writing pieces fails partway,
+the reply records `pieces_source = "failed"`.
