@@ -27,9 +27,9 @@ The innovation is the linked record of the AI's work, down to the claims in its 
 
 0.4 found persist sessions mostly stop writing reply parts after two tasks (12–15 of about 55 final replies keep them, against 53/56 fresh): earlier replies go back into the window as plain display text while the system prompt asks for JSON segments, so the model copies the plain style and the parse fails. Either pack earlier replies in the asked format, or parse plain replies into parts (the reply-piece parser). Rerun 0.4 on a persist arm. Plan: `docs/plans/2026-11-07-structure-completeness.md`.
 
-### Record how each destructive call was approved — P1 · S
+### ✅ Record how each destructive call was approved — P1 · S
 
-0.4 found no approval record on any `write` / `edit` / `bash` call in headless runs, and `ApprovedBy` does not say human or auto-approve. Write the source on every destructive result: human, auto-approve, judge pause, or no gate attached. Needed for step 3 (who approved this).
+Done 2026-11-08. Plan: `docs/plans/2026-11-08-approval-and-end-reason.md`.
 
 ### File changes made through `bash` — P1 · M
 
@@ -39,9 +39,9 @@ The innovation is the linked record of the AI's work, down to the claims in its 
 
 0.4 found 300 of 303 interim replies (text next to tool calls) have no parts and no recorded reason: segmentation runs only on replies without tool calls. Either segment that text or stamp a reason on the node, then rerun 0.4.
 
-### Record why a session ended — P2 · S
+### ✅ Record why a session ended — P2 · S
 
-0.4 found sessions killed at the time limit keep status `active`, with a tool call that has no result. Write the end reason (completed, cap, timeout, killed, cancelled), and on restart mark interrupted sessions.
+Done 2026-11-08 for `serve`; SIGKILLed eval databases never reopened by `serve` still say `active`. Plan: `docs/plans/2026-11-08-approval-and-end-reason.md`.
 
 ### Land the finished fixes — P1 · S
 

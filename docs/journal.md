@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-11-08 — Approval source is a field on the result; interrupted sessions are marked by `serve`
+
+**Context:** Check 0.4 found no approval record in headless runs and no way to tell human from auto-approve, and killed sessions left as `active`.
+**Decision:** Store `approval` on the tool result, its approval edge and the rejection node, with `no_gate` when no HITL gate is attached, rather than adding `ApprovedBy` edges for runs no one approved. Mark `active` sessions `interrupted` in `serve` at startup and after shutdown, and set `active` at the start of every run. Restore no longer maps `active` and unknown statuses to `Running`.
+**Alternatives:** An `ApprovedBy` edge for `no_gate` lost: it would claim an approval that never happened. Catching every kill lost: SIGKILL cannot be handled, so the startup sweep is the only reliable point; eval databases never reopened by `serve` keep `active`. Adding a `Cancelled` restore status lost: the agent crate's `SessionStatus` has no such variant and `Idle` is promptable, which is what matters.
+**Consequences:** The restore change fixes a separate bug: restored `Running` handles refused new prompts. Check 0.4's C4 is unchanged (it counts approval edges), so headless runs still fail it, now with `no_gate` stated on each call.
+**Refs:** `docs/plans/2026-11-08-approval-and-end-reason.md`.
+
 ## 2026-11-08 — The project's intent is written down in `docs/intent.md`
 
 **Context:** The README describes the mechanism (everything stored in a graph) and leads with context scoring and cross-session memory, the parts the evals found do not pay. It does not say what the graph is for.
