@@ -10,6 +10,7 @@ pub mod memory;
 pub mod outline;
 #[cfg(feature = "local-extraction")]
 pub mod predict_spans;
+pub mod reply_pieces;
 #[cfg(feature = "local-extraction")]
 pub mod schema_suggest;
 pub mod segments;

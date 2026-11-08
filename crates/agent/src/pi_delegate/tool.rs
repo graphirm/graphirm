@@ -49,7 +49,7 @@ pub const PI_DELEGATE_TOOL_NAME: &str = "delegate_pi";
 
 /// Appended to the task before spawn. Pi is asked for one HTML index page.
 /// The cutter accepts that page and refuses anything else.
-const HTML_PIECE_INDEX_CONTRACT: &str = "\n\n\
+pub(crate) const HTML_PIECE_INDEX_CONTRACT: &str = "\n\n\
 Reply with only HTML. No markdown.\n\
 Each section has exactly one kind. The kind words are:\n\
 statement: a fact that is true no matter what the user decides.\n\

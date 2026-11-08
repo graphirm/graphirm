@@ -113,6 +113,16 @@ pub struct OutlineConfig {
     pub kinds: Vec<String>,
 }
 
+/// Cut every assistant reply into labeled pieces with the HTML index parser
+/// (`[agent.reply_pieces]`). Replaces `[agent.segments]` when enabled.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ReplyPiecesConfig {
+    /// When true, the system prompt asks for the HTML index page and every reply
+    /// with text is cut into `reply_part` / `reply_line` nodes.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
     pub name: String,
@@ -242,6 +252,9 @@ pub struct AgentConfig {
     /// Optional post-hoc outline extraction (markdown headings → graph nodes).
     #[serde(default)]
     pub outline: Option<OutlineConfig>,
+    /// Optional reply pieces (HTML index kinds). When enabled, `segments` is turned off.
+    #[serde(default)]
+    pub reply_pieces: Option<ReplyPiecesConfig>,
     /// When true, short non-technical user messages omit tool definitions on the LLM call
     /// so the model cannot emit tool calls on greetings and small talk. Primary agents only.
     #[serde(default = "default_tool_gate_enabled")]
@@ -622,6 +635,7 @@ impl Default for AgentConfig {
             auto_link_write_to_planning: true,
             max_session_tokens: None,
             outline: None,
+            reply_pieces: None,
             tool_gate_enabled: default_tool_gate_enabled(),
             pi: None,
             default_auto_approve: true,
@@ -716,6 +730,8 @@ struct AgentConfigSection {
     max_session_tokens: Option<u64>,
     #[serde(default)]
     outline: Option<OutlineConfig>,
+    #[serde(default)]
+    reply_pieces: Option<ReplyPiecesConfig>,
     #[serde(default = "default_tool_gate_enabled")]
     tool_gate_enabled: bool,
     #[serde(default)]
@@ -736,7 +752,27 @@ fn default_auto_link_write_to_planning() -> bool {
     true
 }
 
+/// Reply pieces and JSON segments both rewrite the system prompt's reply format,
+/// so only one runs: enabling `[agent.reply_pieces]` turns `[agent.segments]` off.
+fn segments_unless_reply_pieces(
+    segments: Option<SegmentConfig>,
+    reply_pieces: &Option<ReplyPiecesConfig>,
+) -> Option<SegmentConfig> {
+    if reply_pieces.as_ref().is_some_and(|r| r.enabled) {
+        if segments.as_ref().is_some_and(|s| s.enabled) {
+            tracing::info!("[agent.reply_pieces] is enabled; [agent.segments] is turned off");
+        }
+        return None;
+    }
+    segments
+}
+
 impl AgentConfig {
+    /// Whether `[agent.reply_pieces]` is enabled.
+    pub fn reply_pieces_enabled(&self) -> bool {
+        self.reply_pieces.as_ref().is_some_and(|r| r.enabled)
+    }
+
     /// Parse an AgentConfig from TOML with `[agent]` + optional `[permissions]` sections.
     pub fn from_toml(toml_str: &str) -> Result<Self, AgentError> {
         let file: AgentConfigFile =
@@ -767,7 +803,7 @@ impl AgentConfig {
             embedding: file.agent.embedding,
             soft_escalation_turn: file.agent.soft_escalation_turn,
             soft_escalation_threshold: file.agent.soft_escalation_threshold,
-            segments: file.agent.segments,
+            segments: segments_unless_reply_pieces(file.agent.segments, &file.agent.reply_pieces),
             segment_filter: file.agent.segment_filter,
             workspace_name: file.agent.workspace_name,
             workspace_dir: None,
@@ -787,6 +823,7 @@ impl AgentConfig {
             auto_link_write_to_planning: file.agent.auto_link_write_to_planning,
             max_session_tokens: file.agent.max_session_tokens,
             outline: file.agent.outline,
+            reply_pieces: file.agent.reply_pieces,
             tool_gate_enabled: file.agent.tool_gate_enabled,
             pi: file.agent.pi,
             default_auto_approve: file.agent.default_auto_approve,
@@ -1752,5 +1789,28 @@ mod default_toml_tests {
         let config = AgentConfig::from_file(std::path::Path::new(path)).expect("default.toml");
         assert!(!config.pi.expect("pi block present").enabled);
         assert!(config.default_auto_approve);
+    }
+    #[test]
+    fn reply_pieces_turns_segments_off() {
+        let toml = r#"
+[agent]
+name = "t"
+model = "m"
+system_prompt = "s"
+
+[agent.segments]
+enabled = true
+
+[agent.reply_pieces]
+enabled = true
+"#;
+        let config = AgentConfig::from_toml(toml).unwrap();
+        assert!(config.reply_pieces_enabled());
+        assert!(config.segments.is_none());
+        let without =
+            AgentConfig::from_toml(&toml.replace("[agent.reply_pieces]\nenabled = true\n", ""))
+                .unwrap();
+        assert!(!without.reply_pieces_enabled());
+        assert!(without.segments.is_some_and(|s| s.enabled));
     }
 }

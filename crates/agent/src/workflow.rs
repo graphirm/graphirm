@@ -151,13 +151,25 @@ pub async fn stream_and_record(
         format!("{}\n\n{}", session.agent_config.system_prompt, suffix)
     };
     // Append segment format instructions when structured output is requested.
-    let system_prompt = if let Some(ref seg_config) = session.agent_config.segments {
+    // Reply pieces replace JSON segments, even when a session asked for segments.
+    let system_prompt = if let Some(ref seg_config) = session.agent_config.segments
+        && !session.agent_config.reply_pieces_enabled()
+    {
         if seg_config.enabled && seg_config.structured_output {
             let seg_prompt = crate::knowledge::segments::build_segment_prompt(&seg_config.labels);
             format!("{system_prompt}{seg_prompt}")
         } else {
             system_prompt
         }
+    } else {
+        system_prompt
+    };
+    // Ask for the HTML index page; the reply is cut whatever shape it comes in.
+    let system_prompt = if session.agent_config.reply_pieces_enabled() {
+        format!(
+            "{system_prompt}{}",
+            crate::knowledge::reply_pieces::loop_contract()
+        )
     } else {
         system_prompt
     };
@@ -622,6 +634,31 @@ pub async fn stream_and_record(
 
     let node_id = session.record_interaction(interaction_node).await?;
 
+    // Reply pieces — every reply with text, final or next to tool calls. The
+    // node keeps the model's own text, so earlier replies go back into the
+    // window in the format the model was asked for. Non-fatal.
+    let mut pieces_recorded = false;
+    // Runs before the token-cap return, so a capped final reply is cut too.
+    let reply_text = response.text_content();
+    if session.agent_config.reply_pieces_enabled() && !reply_text.trim().is_empty() {
+        let graph = session.graph.clone();
+        let parent = node_id.clone();
+        let text = reply_text;
+        let narration = response.has_tool_calls();
+        match tokio::task::spawn_blocking(move || {
+            crate::knowledge::reply_pieces::record_reply_pieces(&graph, &parent, &text, narration)
+        })
+        .await
+        {
+            Ok(Ok(source)) => {
+                pieces_recorded = true;
+                info!(source = source.as_str(), "Recorded reply pieces");
+            }
+            Ok(Err(e)) => tracing::warn!(error = %e, "Failed to record reply pieces (non-fatal)"),
+            Err(e) => tracing::warn!(error = %e, "Reply pieces task panicked (non-fatal)"),
+        }
+    }
+
     if over_cap {
         // Segments never rewrite this node. Judge the raw text that stays stored.
         // A judge failure must not replace the token-cap error below.
@@ -652,6 +689,7 @@ pub async fn stream_and_record(
     }
 
     let raw_text = response.text_content();
+
     // Set when the segment stamp replaces the Interaction body. Otherwise Jev
     // sees `raw_text`, which is what remains stored.
     let mut stamped_reply: Option<String> = None;
@@ -664,6 +702,7 @@ pub async fn stream_and_record(
     let mut segment_path_persisted = false;
     if let Some(ref seg_config) = session.agent_config.segments
         && seg_config.enabled
+        && !pieces_recorded
         && !response.has_tool_calls()
     {
         // Try structured JSON first, fall back to GLiNER2 if that fails or is empty.
@@ -852,6 +891,7 @@ pub async fn stream_and_record(
         && oc.enabled
         && !response.has_tool_calls()
         && !segment_path_persisted
+        && !pieces_recorded
         && !structured_json_envelope
     {
         let graph = session.graph.clone();
@@ -4248,6 +4288,56 @@ mod tests {
                 node.metadata.get("tool_call_id").and_then(|v| v.as_str()) == Some(call_id)
             })
             .expect("tool result for call")
+    }
+
+    #[tokio::test]
+    async fn test_reply_pieces_cut_final_and_working_replies() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            pre_completion_verify: false,
+            reply_pieces: Some(crate::config::ReplyPiecesConfig { enabled: true }),
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session.add_user_message("Look, then answer").await.unwrap();
+        let html = r##"<nav id="index"><ul><li><a href="#a">1.0.0 [result] Read the file</a></li></ul></nav>
+<section id="a" class="result"><h2>1.0.0 Read the file</h2><p data-n="1.0.1" data-src="read">1.0.1 It has one line.</p></section>"##;
+        let working = LlmResponse {
+            content: vec![
+                ContentPart::text("Let me read the file first."),
+                ContentPart::tool_call("call_r1", "read", serde_json::json!({"path": "a.txt"})),
+            ],
+            usage: TokenUsage::new(100, 50),
+            stop_reason: StopReason::ToolUse,
+        };
+        let provider = Arc::new(MockProvider::new(vec![working, text_response(html)]));
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(MockTool {
+            tool_name: "read".to_string(),
+            output: "one line".to_string(),
+        }));
+
+        let result = run_agent_loop(
+            &session,
+            provider,
+            &tools,
+            &EventBus::new(),
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+
+        let sources: Vec<String> = graph
+            .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap()
+            .into_iter()
+            .filter(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "assistant"))
+            .filter_map(|n| n.metadata["pieces_source"].as_str().map(String::from))
+            .collect();
+        let mut sorted = sources.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec!["html", "markdown"], "got {sources:?}");
     }
 
     #[tokio::test]

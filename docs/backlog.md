@@ -25,7 +25,7 @@ The innovation is the linked record of the AI's work, down to the claims in its 
 
 ### Keep the reply format when earlier replies are packed — P1 · M
 
-0.4 found persist sessions mostly stop writing reply parts after two tasks (12–15 of about 55 final replies keep them, against 53/56 fresh): earlier replies go back into the window as plain display text while the system prompt asks for JSON segments, so the model copies the plain style and the parse fails. Either pack earlier replies in the asked format, or parse plain replies into parts (the reply-piece parser). Rerun 0.4 on a persist arm. Plan: `docs/plans/2026-11-07-structure-completeness.md`.
+0.4 found persist sessions mostly stop writing reply parts after two tasks (12–15 of about 55 final replies keep them, against 53/56 fresh): earlier replies go back into the window as plain display text while the system prompt asks for JSON segments, so the model copies the plain style and the parse fails. Either pack earlier replies in the asked format, or parse plain replies into parts (the reply-piece parser). Rerun 0.4 on a persist arm. Decided 2026-11-08: parse whatever the model writes, with the HTML index kinds. Plan: `docs/plans/2026-11-08-reply-pieces-in-loop.md`.
 
 ### ✅ Record how each destructive call was approved — P1 · S
 
@@ -37,7 +37,11 @@ Done 2026-11-08. Plan: `docs/plans/2026-11-08-approval-and-end-reason.md`.
 
 ### Parts for text written next to tool calls — P2 · S
 
-0.4 found 300 of 303 interim replies (text next to tool calls) have no parts and no recorded reason: segmentation runs only on replies without tool calls. Either segment that text or stamp a reason on the node, then rerun 0.4.
+0.4 found 300 of 303 interim replies (text next to tool calls) have no parts and no recorded reason: segmentation runs only on replies without tool calls. Either segment that text or stamp a reason on the node, then rerun 0.4. Covered by `docs/plans/2026-11-08-reply-pieces-in-loop.md`.
+
+### `database is locked` logged when `serve` opens a new database — P3 · S
+
+Seen 2026-11-08 in both reply-pieces smoke runs: r2d2 logs `ERROR database is locked` once while the pool opens a fresh `graph.db` (before config loads; `PRAGMA journal_mode=WAL` from several pool connections at once). The server then runs normally. Set WAL once before building the pool, or add `busy_timeout`.
 
 ### ✅ Record why a session ended — P2 · S
 
