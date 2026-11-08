@@ -161,6 +161,15 @@ pub async fn stream_and_record(
     } else {
         system_prompt
     };
+    // Ask for the HTML index page; the reply is cut whatever shape it comes in.
+    let system_prompt = if session.agent_config.reply_pieces_enabled() {
+        format!(
+            "{system_prompt}{}",
+            crate::pi_delegate::tool::HTML_PIECE_INDEX_CONTRACT
+        )
+    } else {
+        system_prompt
+    };
     let context_config = crate::context::ContextConfig {
         system_prompt,
         max_tokens: context_budget_tokens(session.agent_config.max_tokens),
@@ -652,6 +661,30 @@ pub async fn stream_and_record(
     }
 
     let raw_text = response.text_content();
+
+    // Reply pieces — every reply with text, final or next to tool calls. The
+    // node keeps the model's own text, so earlier replies go back into the
+    // window in the format the model was asked for. Non-fatal.
+    let mut pieces_recorded = false;
+    if session.agent_config.reply_pieces_enabled() && !raw_text.trim().is_empty() {
+        let graph = session.graph.clone();
+        let parent = node_id.clone();
+        let text = raw_text.clone();
+        let narration = response.has_tool_calls();
+        match tokio::task::spawn_blocking(move || {
+            crate::knowledge::reply_pieces::record_reply_pieces(&graph, &parent, &text, narration)
+        })
+        .await
+        {
+            Ok(Ok(source)) => {
+                pieces_recorded = true;
+                info!(source = source.as_str(), "Recorded reply pieces");
+            }
+            Ok(Err(e)) => tracing::warn!(error = %e, "Failed to record reply pieces (non-fatal)"),
+            Err(e) => tracing::warn!(error = %e, "Reply pieces task panicked (non-fatal)"),
+        }
+    }
+
     // Set when the segment stamp replaces the Interaction body. Otherwise Jev
     // sees `raw_text`, which is what remains stored.
     let mut stamped_reply: Option<String> = None;
@@ -852,6 +885,7 @@ pub async fn stream_and_record(
         && oc.enabled
         && !response.has_tool_calls()
         && !segment_path_persisted
+        && !pieces_recorded
         && !structured_json_envelope
     {
         let graph = session.graph.clone();
@@ -4248,6 +4282,56 @@ mod tests {
                 node.metadata.get("tool_call_id").and_then(|v| v.as_str()) == Some(call_id)
             })
             .expect("tool result for call")
+    }
+
+    #[tokio::test]
+    async fn test_reply_pieces_cut_final_and_working_replies() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            pre_completion_verify: false,
+            reply_pieces: Some(crate::config::ReplyPiecesConfig { enabled: true }),
+            ..AgentConfig::default()
+        };
+        let session = Session::new(graph.clone(), config).unwrap();
+        session.add_user_message("Look, then answer").await.unwrap();
+        let html = r##"<nav id="index"><ul><li><a href="#a">1.0.0 [result] Read the file</a></li></ul></nav>
+<section id="a" class="result"><h2>1.0.0 Read the file</h2><p data-n="1.0.1" data-src="read">1.0.1 It has one line.</p></section>"##;
+        let working = LlmResponse {
+            content: vec![
+                ContentPart::text("Let me read the file first."),
+                ContentPart::tool_call("call_r1", "read", serde_json::json!({"path": "a.txt"})),
+            ],
+            usage: TokenUsage::new(100, 50),
+            stop_reason: StopReason::ToolUse,
+        };
+        let provider = Arc::new(MockProvider::new(vec![working, text_response(html)]));
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(MockTool {
+            tool_name: "read".to_string(),
+            output: "one line".to_string(),
+        }));
+
+        let result = run_agent_loop(
+            &session,
+            provider,
+            &tools,
+            &EventBus::new(),
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+
+        let sources: Vec<String> = graph
+            .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap()
+            .into_iter()
+            .filter(|n| matches!(&n.node_type, NodeType::Interaction(d) if d.role == "assistant"))
+            .filter_map(|n| n.metadata["pieces_source"].as_str().map(String::from))
+            .collect();
+        let mut sorted = sources.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec!["html", "markdown"], "got {sources:?}");
     }
 
     #[tokio::test]

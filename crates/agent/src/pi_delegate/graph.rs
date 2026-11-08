@@ -44,14 +44,14 @@ use std::time::Instant;
 use graphirm_graph::GraphStore;
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{
-    AgentData, ContentData, GraphNode, InteractionData, NodeId, NodeType, TaskData, TaskStatus,
+    AgentData, GraphNode, InteractionData, NodeId, NodeType, TaskData, TaskStatus,
 };
 use graphirm_tools::ToolContext;
 use serde_json::{Map, Value, json};
 
-use super::pieces::{HTML_INDEX_SHAPE_VERSION, Piece, PieceItem, cut_html_index};
 use crate::error::AgentError;
 use crate::hitl_judge::MAX_ARGS_CHARS;
+use crate::knowledge::reply_pieces::attach_html_pieces;
 
 /// Discriminator stored as `metadata.executor` on every node this module writes.
 pub const PI_EXECUTOR: &str = "pi";
@@ -310,7 +310,7 @@ impl PiRun {
             let owned = text.to_string();
             let g = self.graph.clone();
             let parent = id.clone();
-            run_blocking(move || attach_reply_pieces(&g, &parent, &owned)).await?;
+            run_blocking(move || attach_html_pieces(&g, &parent, &owned)).await?;
         }
         self.assistant_messages += 1;
         Ok(id)
@@ -614,78 +614,6 @@ fn mark_failed(
     set_agent_status(g, pi_agent_id, "failed")
 }
 
-/// A clean HTML index becomes `reply_part` and `reply_line` Content nodes.
-/// A failed cut leaves the assistant message as it was recorded.
-fn attach_reply_pieces(graph: &GraphStore, parent: &NodeId, text: &str) -> Result<(), AgentError> {
-    let Ok(pieces) = cut_html_index(text) else {
-        return Ok(());
-    };
-    for piece in pieces {
-        let part_id = graph.add_node(part_node(text, &piece))?;
-        graph.add_edge(GraphEdge::new(
-            EdgeType::Contains,
-            parent.clone(),
-            part_id.clone(),
-        ))?;
-        for item in &piece.items {
-            let line_id = graph.add_node(line_node(item))?;
-            graph.add_edge(GraphEdge::new(EdgeType::Contains, part_id.clone(), line_id))?;
-        }
-    }
-    Ok(())
-}
-
-fn part_node(text: &str, piece: &Piece) -> GraphNode {
-    let slice = text.get(piece.start..piece.end).unwrap_or("");
-    let mut node = GraphNode::new(NodeType::Content(ContentData {
-        content_type: "reply_part".to_string(),
-        path: None,
-        body: piece.heading.clone().unwrap_or_default(),
-        language: None,
-    }));
-    node.metadata = json!({
-        "order": piece.order,
-        "id": element_id(slice).unwrap_or_default(),
-        "kind": piece.kind.as_label(),
-        "heading": piece.heading,
-        "rel": piece.rel,
-        "shape_version": HTML_INDEX_SHAPE_VERSION,
-        "start": piece.start,
-        "end": piece.end,
-    });
-    node
-}
-
-fn line_node(item: &PieceItem) -> GraphNode {
-    let mut node = GraphNode::new(NodeType::Content(ContentData {
-        content_type: "reply_line".to_string(),
-        path: None,
-        body: item.text.clone(),
-        language: None,
-    }));
-    node.metadata = json!({
-        "position": item.position,
-        "src": item.src,
-        "start": item.start,
-        "end": item.end,
-    });
-    node
-}
-
-fn element_id(slice: &str) -> Option<String> {
-    for (mark, quote) in [("id=\"", '"'), ("id='", '\'')] {
-        let Some(at) = slice.find(mark) else {
-            continue;
-        };
-        let rest = &slice[at + mark.len()..];
-        let Some(end) = rest.find(quote) else {
-            continue;
-        };
-        return Some(rest[..end].to_string());
-    }
-    None
-}
-
 /// Runs a synchronous store closure off the runtime, mapping `JoinError` the
 /// same way `Session::persist_interaction` does.
 async fn run_blocking<T, F>(f: F) -> Result<T, AgentError>
@@ -747,6 +675,7 @@ fn truncate_with_notice(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use graphirm_graph::nodes::ContentData;
     use graphirm_graph::{Direction, GraphStore};
     use std::path::PathBuf;
     use std::time::Duration;
