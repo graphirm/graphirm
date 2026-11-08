@@ -168,7 +168,7 @@ pub async fn stream_and_record(
     let system_prompt = if session.agent_config.reply_pieces_enabled() {
         format!(
             "{system_prompt}{}",
-            crate::pi_delegate::tool::HTML_PIECE_INDEX_CONTRACT
+            crate::knowledge::reply_pieces::loop_contract()
         )
     } else {
         system_prompt

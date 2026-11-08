@@ -57,9 +57,29 @@ Built for Pi replies in `crates/agent/src/pi_delegate/`:
 - [x] Cut every reply with text in `workflow.rs`; `pieces_source` and `pieces_count` on the reply node;
       a markdown paragraph's text becomes its one `reply_line`; outline extraction skips cut replies
 - [x] `cargo test --workspace` (1280 pass), clippy clean
-- [ ] Smoke run: `eval/structure/smoke_reply_pieces.py` (three prompts on a tiny repo, then check 0.4).
-      Not run yet: starting an agent with the API keys needs the user's go-ahead
+- [x] Smoke run: `eval/structure/smoke_reply_pieces.py` (three prompts on a tiny repo, then check 0.4),
+      deepseek-v4.1-flash, 2026-11-08. See "Smoke result" below.
 - [ ] Paired eval on the 55 budget tasks (spend reported first)
 
 A reply that hits `max_session_tokens` is cut before the loop stops. If writing pieces fails partway,
 the reply records `pieces_source = "failed"`.
+
+## Smoke result (2026-11-08)
+
+Two runs of `eval/structure/smoke_reply_pieces.py`, one session, three prompts each. Not an eval: one
+tiny repo, one run per prompt version.
+
+| Run | Prompt | Replies with text | Cut as HTML | Check 0.4 | Tokens in / out |
+|---|---|---|---|---|---|
+| 1 | Pi contract only | 4 | 0 (all `markdown`) | passes | 1,006,775 / 4,043 (23 calls) |
+| 2 | Pi contract + example page | 3 | 3 | passes | 57,662 / 2,695 (9 calls) |
+
+- Run 1: the model wrote HTML index pages, but with no kind class on the sections and lines numbered
+  `N.0.0`, so `cut_html_index` refused every page and the markdown fallback labelled them `statement`
+  and `code` only. Adding a three-section example page (`reply_pieces::PAGE_EXAMPLE`) to the loop's
+  prompt fixed it; Pi's prompt is unchanged.
+- Run 2: all three final replies cut as HTML with the model's own kinds (`result`, `statement`).
+- Both runs: every destructive call recorded `approval = auto_approve`; the session ended `completed`
+  after SIGTERM (nothing was mid-run). The model wrote no text next to its tool calls, so the
+  narration path is covered only by unit tests.
+- C3 had no `write` / `edit` calls in run 2: the model changed files through `bash`.

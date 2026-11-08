@@ -14,6 +14,42 @@ use crate::pi_delegate::pieces::{
     cut_html_index, structure_segment,
 };
 
+/// A minimal page in the shape `cut_html_index` accepts. Without it the model
+/// wrote sections with no kind class and numbered lines `N.0.0` (smoke run
+/// 2026-11-08), and every page fell back to the markdown parser.
+const PAGE_EXAMPLE: &str = r##"
+Each <section> has the id its index link points to and class set to its kind. Section N has an <h2> with its number and heading, and its lines are numbered N.0.1, N.0.2, and so on.
+Copy this shape and replace the content with your own:
+<nav id="index">
+<ul>
+<li><a href="#cause">1.0.0 [statement] Why the test fails</a></li>
+<li><a href="#fix">2.0.0 [code] The fix in stats.py</a></li>
+<li><a href="#ran">3.0.0 [result] Test run after the fix</a></li>
+</ul>
+</nav>
+<section id="cause" class="statement">
+<h2>1.0.0 Why the test fails</h2>
+<p data-n="1.0.1" data-src="file:stats.py">1.0.1 median returns the upper middle value for an even-length list.</p>
+</section>
+<section id="fix" class="code">
+<h2>2.0.0 The fix in stats.py</h2>
+<pre data-n="2.0.1"><code>return (xs[n // 2 - 1] + xs[n // 2]) / 2</code></pre>
+</section>
+<section id="ran" class="result">
+<h2>3.0.0 Test run after the fix</h2>
+<p data-n="3.0.1" data-src="tool:bash">3.0.1 Ran pytest; 2 of 2 tests passed.</p>
+</section>
+"##;
+
+/// The reply format Graphirm's own loop asks for: Pi's HTML index contract
+/// plus an example page.
+pub fn loop_contract() -> String {
+    format!(
+        "{}{PAGE_EXAMPLE}",
+        crate::pi_delegate::tool::HTML_PIECE_INDEX_CONTRACT
+    )
+}
+
 /// How a reply's pieces were cut. Stored as `pieces_source` on the reply node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PiecesSource {
@@ -235,6 +271,16 @@ mod tests {
         let node = graph.get_node(&id).unwrap();
         assert_eq!(node.metadata["pieces_source"], "html");
         assert_eq!(node.metadata["pieces_count"], 1);
+    }
+
+    #[test]
+    fn the_example_page_in_the_contract_cuts_cleanly() {
+        let contract = loop_contract();
+        // The contract's prose also names `<nav id="index">`; the page is the last one.
+        let start = contract.rfind("<nav id=\"index\">").expect("example page");
+        let pieces = cut_html_index(&contract[start..]).expect("example cuts");
+        let kinds: Vec<&str> = pieces.iter().map(|p| p.kind.as_label()).collect();
+        assert_eq!(kinds, vec!["statement", "code", "result"]);
     }
 
     #[test]
