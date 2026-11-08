@@ -35,13 +35,12 @@ pub async fn restore_sessions_from_graph(
 
     for (node, agent_data) in agent_nodes {
         // Map agent status string to SessionStatus enum
+        // Nothing is running at startup, so no restored session is `Running`:
+        // a `Running` handle refuses new prompts.
         let status = match agent_data.status.as_str() {
-            "active" => SessionStatus::Running,
-            "idle" => SessionStatus::Idle,
-            "completed" => SessionStatus::Completed,
-            "failed" => SessionStatus::Failed,
-            "token_cap_exceeded" => SessionStatus::Completed,
-            _ => SessionStatus::Running, // Default to Running for unknown statuses
+            "completed" | "token_cap_exceeded" | "limit_reached" => SessionStatus::Completed,
+            "failed" | "error" => SessionStatus::Failed,
+            _ => SessionStatus::Idle,
         };
 
         let workspace = node
@@ -74,6 +73,40 @@ pub async fn restore_sessions_from_graph(
     );
 
     Ok(sessions)
+}
+
+/// Graph status for a session whose run ended without the agent loop recording why.
+pub const INTERRUPTED_STATUS: &str = "interrupted";
+
+/// Mark every user session still `active` in the graph as `interrupted`, with a
+/// `marked_interrupted_at` timestamp (when it was found, not when it stopped).
+/// Called at startup (a previous process was killed mid-run) and after shutdown
+/// (runs still in flight are abandoned). Returns how many sessions were marked.
+///
+/// Limit: every process sharing the database is treated as dead, so a `serve`
+/// started next to a live `graphirm chat` on the same `graph.db` marks the chat's
+/// running session too.
+pub async fn mark_interrupted_sessions(graph: &Arc<GraphStore>) -> Result<usize, GraphError> {
+    let graph = graph.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut marked = 0;
+        for (mut node, data) in director_agents(&graph)? {
+            if data.status != "active" {
+                continue;
+            }
+            if let graphirm_graph::nodes::NodeType::Agent(ref mut agent) = node.node_type {
+                agent.status = INTERRUPTED_STATUS.to_string();
+            }
+            node.metadata["marked_interrupted_at"] =
+                serde_json::json!(chrono::Utc::now().to_rfc3339());
+            let id = node.id.clone();
+            graph.update_node(&id, node)?;
+            marked += 1;
+        }
+        Ok(marked)
+    })
+    .await
+    .unwrap_or(Err(GraphError::LockPoisoned))
 }
 
 /// Agent nodes that are user sessions. A Pi or in-process subagent is
@@ -131,6 +164,52 @@ mod tests {
         assert_eq!(
             meta.workspace_path,
             Some(PathBuf::from("/workspaces/myapp"))
+        );
+    }
+
+    fn add_agent(graph: &GraphStore, status: &str) -> graphirm_graph::NodeId {
+        graph
+            .add_node(GraphNode::new(NodeType::Agent(AgentData {
+                name: "test".to_string(),
+                model: "deepseek-chat".to_string(),
+                system_prompt: None,
+                status: status.to_string(),
+            })))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn active_sessions_are_marked_interrupted_and_restore_idle() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let active = add_agent(&graph, "active");
+        let done = add_agent(&graph, "completed");
+
+        assert_eq!(mark_interrupted_sessions(&graph).await.unwrap(), 1);
+
+        let node = graph.get_node(&active).unwrap();
+        let NodeType::Agent(ref data) = node.node_type else {
+            panic!("agent node");
+        };
+        assert_eq!(data.status, INTERRUPTED_STATUS);
+        assert!(node.metadata.get("marked_interrupted_at").is_some());
+        let sessions = restore_sessions_from_graph(&graph, None).await.unwrap();
+        assert_eq!(sessions[&active.0].status, SessionStatus::Idle);
+        assert_eq!(sessions[&done.0].status, SessionStatus::Completed);
+        assert_eq!(mark_interrupted_sessions(&graph).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn restore_never_reports_a_session_as_running() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        for status in ["active", "cancelled", "error", "limit_reached", "unknown"] {
+            add_agent(&graph, status);
+        }
+        let sessions = restore_sessions_from_graph(&graph, None).await.unwrap();
+        assert_eq!(sessions.len(), 5);
+        assert!(
+            sessions
+                .values()
+                .all(|m| m.status != SessionStatus::Running)
         );
     }
 

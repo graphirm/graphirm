@@ -1,5 +1,11 @@
 # Graphirm Development Progress Log
 
+## 2026-11-08: Approval source and interrupted sessions recorded — COMPLETE ✅
+
+- Every destructive tool result records `approval` (`human`, `human_modified`, `auto_approve`, `gate_dropped`, `no_gate`) on the result node, its `ApprovedBy` / `RejectedBy` edge and the `tool_rejection` node.
+- Each run sets the session `active`; `serve` marks sessions still `active` as `interrupted` at startup and after shutdown (now also on SIGTERM). Restore never reports `Running`, so killed, cancelled or errored sessions can be prompted again after a restart.
+- Key files: `crates/agent/src/workflow.rs` (`ApprovalSource`), `crates/server/src/session.rs` (`mark_interrupted_sessions`), `crates/server/src/lib.rs`, `docs/plans/2026-11-08-approval-and-end-reason.md`
+
 ## 2026-11-07: Structure completeness check (0.4) — MEASURED, FAILS
 
 - Script checks finished session databases: reply parts, tool results, `write` / `edit` `Modifies` edges, approval records, Agent `Produces` links. Thresholds fixed before measuring.

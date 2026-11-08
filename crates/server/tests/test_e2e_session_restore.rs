@@ -47,7 +47,8 @@ mod tests {
         assert_eq!(sessions["session-1"].model, "claude-sonnet-4");
 
         assert_eq!(sessions["session-2"].name, "feature-build");
-        assert_eq!(sessions["session-2"].status, SessionStatus::Running);
+        // Nothing runs at startup; a Running handle would refuse new prompts.
+        assert_eq!(sessions["session-2"].status, SessionStatus::Idle);
         assert_eq!(sessions["session-2"].model, "claude-haiku-4");
 
         assert_eq!(sessions["session-3"].name, "debug-error");
@@ -113,10 +114,10 @@ mod tests {
 
         let status_mappings = vec![
             ("session-idle", "idle", SessionStatus::Idle),
-            ("session-active", "active", SessionStatus::Running),
+            ("session-active", "active", SessionStatus::Idle),
             ("session-completed", "completed", SessionStatus::Completed),
             ("session-failed", "failed", SessionStatus::Failed),
-            ("session-unknown", "unknown_status", SessionStatus::Running), // Unknown maps to Running
+            ("session-unknown", "unknown_status", SessionStatus::Idle), // Unknown maps to Idle
         ];
 
         for (id, status_str, _expected_status) in &status_mappings {

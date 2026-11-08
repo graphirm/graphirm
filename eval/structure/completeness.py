@@ -91,7 +91,7 @@ def check(nodes, edges):
 
     tallies = {name: Tally() for name in CHECKS}
     info = {"dangling_edges": 0, "bash_calls": 0, "approvals": 0,
-            "approvals_with_metadata": 0, "final_replies": 0, "final_replies_with_parts": 0}
+            "approvals_with_metadata": 0, "gated_calls_with_approval_field": 0, "final_replies": 0, "final_replies_with_parts": 0}
 
     for e in edges:
         if e["src"] not in nodes or e["dst"] not in nodes:
@@ -139,6 +139,8 @@ def check(nodes, edges):
                     used.add(edge)
                 tallies["C3_file_changes"].add(edge is not None, nid)
             if name in GATED_TOOLS:
+                info["gated_calls_with_approval_field"] += bool(
+                    result and result["meta"].get("approval"))
                 tallies["C4_approvals"].add(
                     approved_or_rejected(result_id, name, mine, nodes, out_edges, used), nid)
     return tallies, info
