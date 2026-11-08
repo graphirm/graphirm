@@ -39,6 +39,10 @@ Done 2026-11-08. Plan: `docs/plans/2026-11-08-approval-and-end-reason.md`.
 
 0.4 found 300 of 303 interim replies (text next to tool calls) have no parts and no recorded reason: segmentation runs only on replies without tool calls. Either segment that text or stamp a reason on the node, then rerun 0.4. Covered by `docs/plans/2026-11-08-reply-pieces-in-loop.md`.
 
+### `database is locked` logged when `serve` opens a new database — P3 · S
+
+Seen 2026-11-08 in both reply-pieces smoke runs: r2d2 logs `ERROR database is locked` once while the pool opens a fresh `graph.db` (before config loads; `PRAGMA journal_mode=WAL` from several pool connections at once). The server then runs normally. Set WAL once before building the pool, or add `busy_timeout`.
+
 ### ✅ Record why a session ended — P2 · S
 
 Done 2026-11-08 for `serve`; SIGKILLed eval databases never reopened by `serve` still say `active`. Plan: `docs/plans/2026-11-08-approval-and-end-reason.md`.
