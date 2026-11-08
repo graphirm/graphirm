@@ -78,10 +78,14 @@ pub async fn restore_sessions_from_graph(
 /// Graph status for a session whose run ended without the agent loop recording why.
 pub const INTERRUPTED_STATUS: &str = "interrupted";
 
-/// Mark every user session still `active` in the graph as `interrupted`, with an
-/// `interrupted_at` timestamp. Called at startup (a previous process was killed
-/// mid-run) and after shutdown (runs still in flight are abandoned). Returns how
-/// many sessions were marked.
+/// Mark every user session still `active` in the graph as `interrupted`, with a
+/// `marked_interrupted_at` timestamp (when it was found, not when it stopped).
+/// Called at startup (a previous process was killed mid-run) and after shutdown
+/// (runs still in flight are abandoned). Returns how many sessions were marked.
+///
+/// Limit: every process sharing the database is treated as dead, so a `serve`
+/// started next to a live `graphirm chat` on the same `graph.db` marks the chat's
+/// running session too.
 pub async fn mark_interrupted_sessions(graph: &Arc<GraphStore>) -> Result<usize, GraphError> {
     let graph = graph.clone();
     tokio::task::spawn_blocking(move || {
@@ -93,7 +97,8 @@ pub async fn mark_interrupted_sessions(graph: &Arc<GraphStore>) -> Result<usize,
             if let graphirm_graph::nodes::NodeType::Agent(ref mut agent) = node.node_type {
                 agent.status = INTERRUPTED_STATUS.to_string();
             }
-            node.metadata["interrupted_at"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
+            node.metadata["marked_interrupted_at"] =
+                serde_json::json!(chrono::Utc::now().to_rfc3339());
             let id = node.id.clone();
             graph.update_node(&id, node)?;
             marked += 1;
@@ -186,7 +191,7 @@ mod tests {
             panic!("agent node");
         };
         assert_eq!(data.status, INTERRUPTED_STATUS);
-        assert!(node.metadata.get("interrupted_at").is_some());
+        assert!(node.metadata.get("marked_interrupted_at").is_some());
         let sessions = restore_sessions_from_graph(&graph, None).await.unwrap();
         assert_eq!(sessions[&active.0].status, SessionStatus::Idle);
         assert_eq!(sessions[&done.0].status, SessionStatus::Completed);

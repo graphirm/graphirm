@@ -93,7 +93,8 @@ impl Session {
             name: config.name.clone(),
             model: config.model.clone(),
             system_prompt: Some(config.system_prompt.clone()),
-            status: "active".to_string(),
+            // `run_agent_loop` sets `active` while a run is in progress.
+            status: "idle".to_string(),
         }));
         agent_node.set_label("agent_0_1_1");
         agent_node.metadata["session_id"] = serde_json::json!(agent_node.id.to_string());
@@ -318,8 +319,22 @@ impl Session {
         .map_err(|e| AgentError::Join(e.to_string()))?
     }
 
+    /// The Agent node's status field in the graph.
+    pub async fn status(&self) -> Result<String, AgentError> {
+        let graph = self.graph.clone();
+        let agent_id = self.id.clone();
+        tokio::task::spawn_blocking(move || -> Result<String, AgentError> {
+            match graph.get_node(&agent_id)?.node_type {
+                NodeType::Agent(data) => Ok(data.status),
+                _ => Ok(String::new()),
+            }
+        })
+        .await
+        .map_err(|e| AgentError::Join(e.to_string()))?
+    }
+
     /// Update the Agent node's status field in the graph.
-    /// Typical values: `"active"` (a run is in progress), `"completed"`, `"cancelled"`,
+    /// Typical values: `"idle"` (created, never run), `"active"` (a run is in progress), `"completed"`, `"cancelled"`,
     /// `"error"`, `"limit_reached"`, `"token_cap_exceeded"`, and `"interrupted"` (set by the
     /// server when a run ended without the loop recording why).
     pub async fn set_status(&self, status: &str) -> Result<(), AgentError> {

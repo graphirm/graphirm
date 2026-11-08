@@ -25,18 +25,32 @@ The Agent node status already recorded `completed`, `cancelled`, `error`, `limit
 
 - `run_agent_loop` sets the status to `active` at the start of every run, so a later prompt on a finished
   session is also visible while it runs.
-- `graphirm serve` marks every user session still `active` as `interrupted` (with `interrupted_at`) at
+- `graphirm serve` marks every user session still `active` as `interrupted` (with `marked_interrupted_at`) at
   startup and after shutdown. Shutdown now also listens for SIGTERM (`docker stop`, Coolify).
 - Restore never reports a session as `Running`: nothing runs at startup, and a `Running` handle refused new
   prompts, so killed, cancelled or errored sessions came back unpromptable. Unknown statuses restore `Idle`.
 
-Limit: a process killed with SIGKILL cannot mark itself; its sessions are marked at the next `serve` start.
-Eval databases that are never reopened by `serve` keep `active`.
+- New sessions start `idle`, so a session created but never prompted is not marked `interrupted`.
+- A run that exits with an error and set no status of its own (provider error, tool execution failure)
+  is set to `error`, instead of staying `active` and being relabelled `interrupted`.
+
+Limits:
+
+- A process killed with SIGKILL cannot mark itself; its sessions are marked at the next `serve` start.
+  Eval databases that are never reopened by `serve` keep `active`.
+- `serve` treats every process sharing the database as dead: started next to a live `graphirm chat` on the
+  same `graph.db`, it marks the chat's running session too.
+- The first `serve` on an old database marks every old `active` session; the timestamp is
+  `marked_interrupted_at` (when found, not when it stopped).
+- At shutdown, a loop finishing in the same instant can overwrite `interrupted`, or be overwritten by it.
+  The process exits right after, so this is left as is.
+- Pi's own `bash` / `write` / `edit` nodes carry no `approval`; they are observe-only.
 
 ## Tasks
 
 - [x] `ApprovalSource` and `approval` on results, edges and rejections; tests for human, auto-approve,
       rejection, no gate, and the mapping
 - [x] `mark_interrupted_sessions`, startup and shutdown calls, SIGTERM, restore mapping; tests
-- [x] `cargo fmt`, `cargo clippy --workspace --all-targets` (clean), `cargo test --workspace` (1273 pass)
+- [x] Review fixes: sessions start `idle`; error exits record `error`; limits documented
+- [x] `cargo fmt`, `cargo clippy --workspace --all-targets` (clean), `cargo test --workspace` (1274 pass)
 - [ ] Rerun 0.4 on sessions from a binary with these fixes

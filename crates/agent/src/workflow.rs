@@ -2265,6 +2265,23 @@ pub async fn run_agent_loop(
     // Each run starts `active`, so a run killed mid-way (even on a session that
     // finished an earlier prompt) is found and marked `interrupted` at restart.
     let _ = session.set_status("active").await;
+    let result = run_agent_loop_inner(session, llm, tools, events, cancel).await;
+    // An error exit that set no status of its own (provider error, tool
+    // execution failure) would otherwise stay `active` and be relabelled
+    // `interrupted`.
+    if result.is_err() && session.status().await.is_ok_and(|s| s == "active") {
+        let _ = session.set_status("error").await;
+    }
+    result
+}
+
+async fn run_agent_loop_inner(
+    session: &Session,
+    llm: Arc<dyn LlmProvider>,
+    tools: &ToolRegistry,
+    events: &EventBus,
+    cancel: &CancellationToken,
+) -> Result<(), AgentError> {
     let max_turns = session.agent_config.max_turns;
     let pre_completion_verify = session.agent_config.pre_completion_verify;
     let doom_loop_threshold = session.agent_config.doom_loop_threshold;
@@ -4231,6 +4248,31 @@ mod tests {
                 node.metadata.get("tool_call_id").and_then(|v| v.as_str()) == Some(call_id)
             })
             .expect("tool result for call")
+    }
+
+    #[tokio::test]
+    async fn test_failed_run_records_error_not_active() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let session = Session::new(graph.clone(), AgentConfig::default()).unwrap();
+        assert_eq!(session.status().await.unwrap(), "idle");
+        session.add_user_message("Use a tool").await.unwrap();
+        // An unregistered tool makes tool execution fail with `?`.
+        let provider = Arc::new(MockProvider::new(vec![tool_call_response(vec![(
+            "no_such_tool",
+            "call_x",
+            serde_json::json!({}),
+        )])]));
+
+        let result = run_agent_loop(
+            &session,
+            provider,
+            &ToolRegistry::new(),
+            &EventBus::new(),
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(session.status().await.unwrap(), "error");
     }
 
     #[test]
