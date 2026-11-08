@@ -1181,6 +1181,13 @@ async fn run_tool_calls(
         tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(&call_id));
         tool_metadata.insert("tool_name".to_string(), serde_json::json!(&tool_name));
         tool_metadata.insert("is_error".to_string(), serde_json::json!(is_error));
+        // A destructive tool reaches this path only when no HITL gate is attached.
+        if crate::hitl::is_destructive_tool(&tool_name) || tools.is_destructive(&tool_name) {
+            tool_metadata.insert(
+                "approval".to_string(),
+                serde_json::json!(ApprovalSource::NoGate.as_str()),
+            );
+        }
 
         let mut tool_node = GraphNode::new(NodeType::Interaction(InteractionData {
             role: "tool".to_string(),
@@ -1232,6 +1239,7 @@ async fn run_tool_calls(
         let auto_approved =
             hitl.is_auto_approve() && !judge_outcome.as_ref().is_some_and(|o| o.pause);
 
+        let mut gate_dropped = false;
         let decision = if auto_approved {
             HitlDecision::Approve
         } else {
@@ -1248,7 +1256,10 @@ async fn run_tool_calls(
             tokio::select! {
                 result = rx => match result {
                     Ok(d) => d,
-                    Err(_) => HitlDecision::Reject("Gate sender dropped unexpectedly".to_string()),
+                    Err(_) => {
+                        gate_dropped = true;
+                        HitlDecision::Reject("Gate sender dropped unexpectedly".to_string())
+                    }
                 },
                 _ = cancel.cancelled() => {
                     let _ = session.set_status("cancelled").await;
@@ -1256,6 +1267,8 @@ async fn run_tool_calls(
                 }
             }
         };
+
+        let approval = ApprovalSource::of(auto_approved, gate_dropped, &decision);
 
         match decision {
             HitlDecision::Approve | HitlDecision::Modify(_) => {
@@ -1328,6 +1341,7 @@ async fn run_tool_calls(
                 if let Some(ref outcome) = judge_outcome {
                     tool_metadata.insert("hitl_judge".to_string(), outcome.to_metadata());
                 }
+                tool_metadata.insert("approval".to_string(), serde_json::json!(approval.as_str()));
 
                 let mut tool_node = GraphNode::new(NodeType::Interaction(InteractionData {
                     role: "tool".to_string(),
@@ -1342,7 +1356,8 @@ async fn run_tool_calls(
                             EdgeType::ApprovedBy,
                             result_node_id.clone(),
                             session.id.clone(),
-                        );
+                        )
+                        .with_metadata(serde_json::json!({ "approval": approval.as_str() }));
                         let _ = session.graph.add_edge(edge);
 
                         events.emit(AgentEvent::ToolEnd {
@@ -1372,6 +1387,7 @@ async fn run_tool_calls(
                     language: None,
                 }));
                 rejection_node.metadata["session_id"] = serde_json::json!(session.id.to_string());
+                rejection_node.metadata["approval"] = serde_json::json!(approval.as_str());
                 rejection_node.set_label(format!(
                     "content_{}_{}_1",
                     session.current_turn(),
@@ -1385,11 +1401,14 @@ async fn run_tool_calls(
                             response_id.clone(),
                             rejection_id.clone(),
                         ));
-                        let _ = session.graph.add_edge(GraphEdge::new(
-                            EdgeType::RejectedBy,
-                            rejection_id.clone(),
-                            session.id.clone(),
-                        ));
+                        let _ = session.graph.add_edge(
+                            GraphEdge::new(
+                                EdgeType::RejectedBy,
+                                rejection_id.clone(),
+                                session.id.clone(),
+                            )
+                            .with_metadata(serde_json::json!({ "approval": approval.as_str() })),
+                        );
 
                         events.emit(AgentEvent::ToolEnd {
                             node_id: rejection_id.clone(),
@@ -1411,6 +1430,7 @@ async fn run_tool_calls(
                 tool_metadata.insert("tool_call_id".to_string(), serde_json::json!(call_id));
                 tool_metadata.insert("tool_name".to_string(), serde_json::json!(name));
                 tool_metadata.insert("is_error".to_string(), serde_json::json!(true));
+                tool_metadata.insert("approval".to_string(), serde_json::json!(approval.as_str()));
                 let mut tool_node = GraphNode::new(NodeType::Interaction(InteractionData {
                     role: "tool".to_string(),
                     content: format!("rejected by user: {reason}"),
@@ -1436,6 +1456,44 @@ async fn run_tool_calls(
     }
 
     Ok(node_ids)
+}
+
+/// Who decided whether a destructive tool call ran. Stored as `approval` on the
+/// tool result node, on its `ApprovedBy` / `RejectedBy` edge, and on the
+/// `tool_rejection` node, so the record says how each action was approved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ApprovalSource {
+    /// A human approved or rejected the call at the gate.
+    Human,
+    /// A human approved the call with changed arguments.
+    HumanModified,
+    /// Per-session auto-approve ran the call without asking.
+    AutoApprove,
+    /// The gate closed without a decision; the call was rejected.
+    GateDropped,
+    /// No HITL gate was attached to the session.
+    NoGate,
+}
+
+impl ApprovalSource {
+    fn of(auto_approved: bool, gate_dropped: bool, decision: &HitlDecision) -> Self {
+        match (auto_approved, gate_dropped, decision) {
+            (true, _, _) => Self::AutoApprove,
+            (_, true, _) => Self::GateDropped,
+            (_, _, HitlDecision::Modify(_)) => Self::HumanModified,
+            _ => Self::Human,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Human => "human",
+            Self::HumanModified => "human_modified",
+            Self::AutoApprove => "auto_approve",
+            Self::GateDropped => "gate_dropped",
+            Self::NoGate => "no_gate",
+        }
+    }
 }
 
 async fn pre_edit_impact_brief(
@@ -2204,6 +2262,9 @@ pub async fn run_agent_loop(
     events: &EventBus,
     cancel: &CancellationToken,
 ) -> Result<(), AgentError> {
+    // Each run starts `active`, so a run killed mid-way (even on a session that
+    // finished an earlier prompt) is found and marked `interrupted` at restart.
+    let _ = session.set_status("active").await;
     let max_turns = session.agent_config.max_turns;
     let pre_completion_verify = session.agent_config.pre_completion_verify;
     let doom_loop_threshold = session.agent_config.doom_loop_threshold;
@@ -4140,6 +4201,98 @@ mod tests {
             1,
             "Expected exactly one ApprovedBy edge into session"
         );
+        assert_approval(&graph, &approved_sources[0], EdgeType::ApprovedBy, "human");
+    }
+
+    /// The tool result node and its approval edge both say who approved it.
+    fn assert_approval(graph: &GraphStore, node: &GraphNode, edge_type: EdgeType, want: &str) {
+        assert_eq!(
+            node.metadata.get("approval"),
+            Some(&serde_json::json!(want))
+        );
+        let edges = graph.edges_for_node(&node.id).unwrap();
+        let edge = edges
+            .iter()
+            .find(|e| e.edge_type == edge_type && e.source == node.id)
+            .expect("approval edge");
+        assert_eq!(
+            edge.metadata.get("approval"),
+            Some(&serde_json::json!(want))
+        );
+    }
+
+    /// The `tool` Interaction recorded for `call_id`.
+    fn tool_result(graph: &GraphStore, session: &Session, call_id: &str) -> GraphNode {
+        graph
+            .neighbors(&session.id, Some(EdgeType::Produces), Direction::Outgoing)
+            .unwrap()
+            .into_iter()
+            .find(|node| {
+                node.metadata.get("tool_call_id").and_then(|v| v.as_str()) == Some(call_id)
+            })
+            .expect("tool result for call")
+    }
+
+    #[test]
+    fn approval_source_names_who_decided() {
+        let modify = HitlDecision::Modify(serde_json::json!({}));
+        let reject = HitlDecision::Reject("x".to_string());
+        assert_eq!(
+            ApprovalSource::of(true, false, &HitlDecision::Approve).as_str(),
+            "auto_approve"
+        );
+        assert_eq!(
+            ApprovalSource::of(false, false, &HitlDecision::Approve).as_str(),
+            "human"
+        );
+        assert_eq!(
+            ApprovalSource::of(false, false, &modify).as_str(),
+            "human_modified"
+        );
+        assert_eq!(ApprovalSource::of(false, false, &reject).as_str(), "human");
+        assert_eq!(
+            ApprovalSource::of(false, true, &reject).as_str(),
+            "gate_dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hitl_auto_approve_records_its_source() {
+        let graph = Arc::new(GraphStore::open_memory().unwrap());
+        let config = AgentConfig {
+            max_turns: 10,
+            pre_completion_verify: false,
+            ..AgentConfig::default()
+        };
+        let hitl = Arc::new(HitlGate::new());
+        hitl.set_auto_approve(true);
+        let session = Session::new(graph.clone(), config).unwrap().with_hitl(hitl);
+        session.add_user_message("Write a file").await.unwrap();
+        let provider = Arc::new(MockProvider::new(vec![
+            tool_call_response(vec![(
+                "write",
+                "call_w1",
+                serde_json::json!({"path": "/tmp/test.txt", "content": "hello"}),
+            )]),
+            text_response("Done!"),
+        ]));
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(MockTool {
+            tool_name: "write".to_string(),
+            output: "Wrote /tmp/test.txt".to_string(),
+        }));
+
+        let result = run_agent_loop(
+            &session,
+            provider,
+            &tools,
+            &EventBus::new(),
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let node = tool_result(&graph, &session, "call_w1");
+        assert_approval(&graph, &node, EdgeType::ApprovedBy, "auto_approve");
     }
 
     #[tokio::test]
@@ -4245,6 +4398,11 @@ mod tests {
             panic!("rejection must record a tool result for call_w1");
         };
         assert_eq!(data.content, "rejected by user: no bash");
+        assert_eq!(
+            rejection_result.unwrap().metadata.get("approval"),
+            Some(&serde_json::json!("human"))
+        );
+        assert_approval(&graph, rejection_node, EdgeType::RejectedBy, "human");
     }
 
     #[tokio::test]
@@ -4351,6 +4509,14 @@ mod tests {
         let result = run_agent_loop(&session, provider.clone(), &tools, &bus, &token).await;
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
         assert_eq!(provider.call_count(), 2);
+
+        // The record says the destructive call ran with no gate attached.
+        assert_eq!(
+            tool_result(&graph, &session, "call_w1")
+                .metadata
+                .get("approval"),
+            Some(&serde_json::json!("no_gate"))
+        );
     }
 
     #[tokio::test]

@@ -319,7 +319,9 @@ impl Session {
     }
 
     /// Update the Agent node's status field in the graph.
-    /// Typical values: `"active"`, `"completed"`, `"cancelled"`, `"limit_reached"`.
+    /// Typical values: `"active"` (a run is in progress), `"completed"`, `"cancelled"`,
+    /// `"error"`, `"limit_reached"`, `"token_cap_exceeded"`, and `"interrupted"` (set by the
+    /// server when a run ended without the loop recording why).
     pub async fn set_status(&self, status: &str) -> Result<(), AgentError> {
         let graph = self.graph.clone();
         let agent_id = self.id.clone();

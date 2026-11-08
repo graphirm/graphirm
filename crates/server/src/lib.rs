@@ -15,7 +15,7 @@ pub mod sse;
 pub mod state;
 pub mod types;
 
-pub use session::restore_sessions_from_graph;
+pub use session::{mark_interrupted_sessions, restore_sessions_from_graph};
 
 // Re-export the most commonly used types at the crate root.
 pub use error::ServerError;
@@ -155,6 +155,16 @@ pub async fn start_server(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (event_tx, _) = broadcast::channel::<SseEvent>(1024);
 
+    // A session still `active` was killed mid-run by a previous process.
+    match mark_interrupted_sessions(&graph).await {
+        Ok(0) => {}
+        Ok(n) => info!(
+            count = n,
+            "Marked sessions interrupted by a previous process"
+        ),
+        Err(e) => tracing::warn!("Failed to mark interrupted sessions: {e}"),
+    }
+
     // Restore sessions from the graph before accepting connections.
     let restored = restore_sessions_from_graph(&graph, agent_config.workspaces_root.as_deref())
         .await
@@ -189,6 +199,7 @@ pub async fn start_server(
         info!("Web UI serving from {}", dir.display());
     }
 
+    let shutdown_graph = state.graph.clone();
     let app = create_router(state);
     let addr = format!("{}:{}", server_config.host, server_config.port);
 
@@ -202,13 +213,39 @@ pub async fn start_server(
     .with_graceful_shutdown(shutdown_signal())
     .await?;
 
+    // Runs still in flight are abandoned when the process exits.
+    match mark_interrupted_sessions(&shutdown_graph).await {
+        Ok(0) => {}
+        Ok(n) => info!(
+            count = n,
+            "Marked in-flight sessions interrupted at shutdown"
+        ),
+        Err(e) => tracing::warn!("Failed to mark interrupted sessions at shutdown: {e}"),
+    }
+
     info!("Server shutdown complete");
     Ok(())
 }
 
+/// Resolve on Ctrl-C, or on SIGTERM (`docker stop`, Coolify redeploys) on Unix.
 async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to install Ctrl+C handler");
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
     info!("Shutdown signal received");
 }

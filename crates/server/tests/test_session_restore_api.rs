@@ -88,7 +88,7 @@ mod tests {
         let sessions: HashMap<String, _> = restore_sessions_from_graph(&graph, None).await.unwrap();
 
         assert_eq!(sessions.len(), 2);
-        assert_eq!(sessions["session-active"].status, SessionStatus::Running);
+        assert_eq!(sessions["session-active"].status, SessionStatus::Idle);
         assert_eq!(sessions["session-failed"].status, SessionStatus::Failed);
     }
 
@@ -142,7 +142,7 @@ mod tests {
         assert_eq!(sessions["session-api-001"].status, SessionStatus::Completed);
 
         assert_eq!(sessions["session-api-002"].name, "feature-build");
-        assert_eq!(sessions["session-api-002"].status, SessionStatus::Running);
+        assert_eq!(sessions["session-api-002"].status, SessionStatus::Idle);
 
         assert_eq!(sessions["session-api-003"].name, "debug-error");
         assert_eq!(sessions["session-api-003"].status, SessionStatus::Failed);
