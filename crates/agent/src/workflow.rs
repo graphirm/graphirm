@@ -151,7 +151,10 @@ pub async fn stream_and_record(
         format!("{}\n\n{}", session.agent_config.system_prompt, suffix)
     };
     // Append segment format instructions when structured output is requested.
-    let system_prompt = if let Some(ref seg_config) = session.agent_config.segments {
+    // Reply pieces replace JSON segments, even when a session asked for segments.
+    let system_prompt = if let Some(ref seg_config) = session.agent_config.segments
+        && !session.agent_config.reply_pieces_enabled()
+    {
         if seg_config.enabled && seg_config.structured_output {
             let seg_prompt = crate::knowledge::segments::build_segment_prompt(&seg_config.labels);
             format!("{system_prompt}{seg_prompt}")
@@ -697,6 +700,7 @@ pub async fn stream_and_record(
     let mut segment_path_persisted = false;
     if let Some(ref seg_config) = session.agent_config.segments
         && seg_config.enabled
+        && !pieces_recorded
         && !response.has_tool_calls()
     {
         // Try structured JSON first, fall back to GLiNER2 if that fails or is empty.

@@ -44,7 +44,14 @@ Built for Pi replies in `crates/agent/src/pi_delegate/`:
 
 ## Tasks
 
-- [ ] Shared `knowledge/reply_pieces.rs`; Pi path uses it (no behaviour change, Pi tests pass)
-- [ ] Config `[agent.reply_pieces]`, prompt swap, mutual exclusion with `[agent.segments]`
-- [ ] Cut every reply with text in `workflow.rs`; `pieces_source` on the reply node; tests
-- [ ] Rerun check 0.4 on a small local run; then the paired eval (spend reported first)
+- [x] Shared `knowledge/reply_pieces.rs`; Pi path uses it (no behaviour change, Pi tests pass)
+- [x] Config `[agent.reply_pieces]` (off in `config/default.toml`), prompt swap; enabling it drops
+      `[agent.segments]` at load, and the loop also skips segments when a session asks for them
+- [x] Cut every reply with text in `workflow.rs`; `pieces_source` and `pieces_count` on the reply node;
+      a markdown paragraph's text becomes its one `reply_line`; outline extraction skips cut replies
+- [x] `cargo test --workspace` (1280 pass), clippy clean
+- [ ] Smoke run: `eval/structure/smoke_reply_pieces.py` (three prompts on a tiny repo, then check 0.4).
+      Not run yet: starting an agent with the API keys needs the user's go-ahead
+- [ ] Paired eval on the 55 budget tasks (spend reported first)
+
+Not covered: a reply that hits `max_session_tokens` returns before cutting, as with segments.

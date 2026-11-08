@@ -1,5 +1,12 @@
 # Graphirm Development Progress Log
 
+## 2026-11-08: Reply pieces in the loop — BUILT, OFF BY DEFAULT
+
+- `[agent.reply_pieces]` asks for the HTML index page and cuts every reply with text, final or next to tool calls, into `reply_part` / `reply_line` nodes; non-HTML replies go through the markdown parser; `pieces_source` (`html` / `markdown` / `over_cap`) on each reply. Enabling it turns JSON segments off.
+- Pi replies use the same writer, unchanged.
+- Not yet: the smoke run and the paired eval before turning it on.
+- Key files: `crates/agent/src/knowledge/reply_pieces.rs`, `crates/agent/src/workflow.rs`, `crates/agent/src/config.rs` (`ReplyPiecesConfig`), `eval/structure/smoke_reply_pieces.py`, `docs/plans/2026-11-08-reply-pieces-in-loop.md`
+
 ## 2026-11-08: Approval source and interrupted sessions recorded — COMPLETE ✅
 
 - Every destructive tool result records `approval` (`human`, `human_modified`, `auto_approve`, `gate_dropped`, `no_gate`) on the result node, its `ApprovedBy` / `RejectedBy` edge and the `tool_rejection` node.

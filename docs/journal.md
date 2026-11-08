@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-11-08 — Reply pieces in the loop reuse Pi's HTML cutter, with a markdown fallback
+
+**Context:** Check 0.4 showed JSON segments are lost in long sessions (earlier replies are packed as display text, so the model drops the format) and never cover text next to tool calls. Decided: cut whatever the model writes, using the HTML index kinds.
+**Decision:** Move Pi's piece writer to `knowledge/reply_pieces.rs` and call it for every reply with text: `cut_html_index` when the page is an HTML index, else `structure_segment` (narration mode next to tool calls), else one statement over the cap. The reply node keeps the model's own text and records `pieces_source`. Behind `[agent.reply_pieces]`, off by default; enabling it turns JSON segments off.
+**Alternatives:** Packing earlier replies in the asked format only lost: it would not cover text next to tool calls and still depends on the model keeping the format. Writing a new parser lost: Pi's cutter already implements the contract and is tested against the rule file. Keeping segments next to pieces lost: two reply formats in one prompt.
+**Consequences:** Markdown-fallback kinds come from the baseline labeler, so `pieces_source` must be read before trusting a kind. Turning it on by default waits for the paired eval (tasks solved, tokens per reply). Label accuracy is step 0.1 and needs a hand-labeled set.
+**Refs:** `docs/plans/2026-11-08-reply-pieces-in-loop.md`.
+
 ## 2026-11-08 — Approval source is a field on the result; interrupted sessions are marked by `serve`
 
 **Context:** Check 0.4 found no approval record in headless runs and no way to tell human from auto-approve, and killed sessions left as `active`.
