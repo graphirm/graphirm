@@ -2,6 +2,7 @@
 
 **Backlog:** "Prove the structure — P1 · L" in `docs/backlog.md`.
 **Direction:** `docs/plans/2026-11-01-architecture-direction.md`.
+**Intent:** `docs/intent.md`.
 
 ## What we want to prove
 

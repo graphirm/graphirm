@@ -22,6 +22,14 @@ Entry template:
 
 ---
 
+## 2026-11-08 — The project's intent is written down in `docs/intent.md`
+
+**Context:** The README describes the mechanism (everything stored in a graph) and leads with context scoring and cross-session memory, the parts the evals found do not pay. It does not say what the graph is for.
+**Decision:** State the intent in one place: a checkable record of the AI's work — replies split into labeled pieces, each linked to its evidence, every action linked to the reply that justified it. Include what it is not, how it is proved, and where it stands.
+**Alternatives:** Rewriting the README first lost: its feature claims (e.g. "the graph is the audit trail") need to change together with the 0.4 fixes, so the README follows the intent rather than leading it.
+**Consequences:** README, AGENTS.md and the plans should be brought in line with `docs/intent.md`. Its status section is updated when step 0 results change.
+**Refs:** `docs/intent.md`, `docs/plans/2026-11-07-prove-the-structure.md`.
+
 ## 2026-11-07 — Completeness check 0.4 measured on eval binaries, with fixed thresholds
 
 **Context:** Step 0 of the prove-the-structure plan needs to know what the record misses before building more of it.
