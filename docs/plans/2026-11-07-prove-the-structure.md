@@ -2,6 +2,7 @@
 
 **Backlog:** "Prove the structure — P1 · L" in `docs/backlog.md`.
 **Direction:** `docs/plans/2026-11-01-architecture-direction.md`.
+**Intent:** `docs/intent.md`.
 
 ## What we want to prove
 
@@ -26,9 +27,11 @@ No comparison with a plain AI. Each check reads Graphirm's own output.
 | 0.1 Written correctly | Are replies split into parts with the right kind label? | Label accuracy on the hand-labeled set (100 replies, `docs/guides/reply-piece-labels.md`) | Parser and baseline labeler on `feat/reply-pieces`; the set is not labeled |
 | 0.2 Linked correctly | Is each citation a real edge to the right evidence? | Share of citations written as edges; share pointing at the right node on a hand-checked sample | 96% point at a real node of the right type, but are metadata, not edges, and "right node" is not checked |
 | 0.3 Reachable | Can the agent read, fetch and find an earlier part? | Probe tasks that ask for a named earlier part (by reply and number, and by topic); exact-text match rate | Not possible: `graph_query` omits `Content` text, context skips `Contains` |
-| 0.4 Complete | Is anything missing from the record? | Script over finished sessions: every reply has parts or a recorded reason; every tool call has its result; every `write` / `edit` has a `Modifies` edge; every gated action has `ApprovedBy` or `RejectedBy` | Not measured |
+| 0.4 Complete | Is anything missing from the record? | Script over finished sessions: every reply has parts or a recorded reason; every tool call has its result; every `write` / `edit` has a `Modifies` edge; every gated action has `ApprovedBy` or `RejectedBy` | Fails (2026-11-07, eval binaries): tool results and `write` / `edit` records are complete; no approval records; `bash` file changes unrecorded; parts lost on persist and on text next to tool calls |
 
 Pass thresholds are set and committed here before any 0.x measurement runs.
+
+0.4 thresholds and the script: `docs/plans/2026-11-07-structure-completeness.md` (committed 2026-11-07, before measuring).
 
 ### Builds needed for step 0
 
