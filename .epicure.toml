@@ -1,0 +1,13 @@
+# epicure settings. Review the root list: it was filled from what was at the root when
+# epicure init ran. epicure's own entries (.epicure/, .epicure.toml, AGENTS.md, work/, docs/)
+# are always allowed and need not be listed.
+
+[workspace]  # GOV-003, and the bug lane's test files (GOV-004)
+root = [".cursor/", ".dockerignore", ".github/", ".gitignore", "CHANGELOG.md", "Cargo.lock", "Cargo.toml", "Dockerfile", "README.md", "config/", "crates/", "eval/", "examples/", "experiments/", "external/", "graphirm-eval/", "graphirm-site/", "graphirm-vscode/", "opencode.json", "results/", "src/", "web-app/", "web/"]
+tests = ["tests/", "test/", "*_test.*", "test_*.*", "*.test.*"]
+
+[decisions]  # GOV-002
+watch = ["Cargo.toml", "package.json", "pyproject.toml"]
+
+[work]  # ADR-0009: the work repo, which holds the work items
+remote = "git@github.com:graphirm/graphirm-work.git"  # the local clone may use an SSH host alias
