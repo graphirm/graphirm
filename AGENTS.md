@@ -139,19 +139,41 @@ response segments with GLiNER2 fallback, cross-session memory (HNSW),
 planning/tasks, trace analysis, `fetch_url`. Full per-phase table with dates:
 the completion log (bottom). Open work: the backlog.
 
-The backlog, journal and completion log are private. They moved out of this
-repo on 2026-11-09 and live in the work repo checkout at `~/graphirm-work/docs/`
-(`backlog.md`, `journal.md`, `completion-log.md`). Paths below refer to that
-checkout.
-
-**Governance docs — update in the same commit as the work, not afterwards:**
-- Start a backlog item → create `docs/plans/YYYY-MM-DD-<topic>.md`, link it from the item
-- Ship it → `### ✅` one-liner in `docs/backlog.md` + dated entry at the top of `docs/completion-log.md`
-- Make a non-obvious decision (architecture, dependency, convention, rejected alternative) → dated entry in `docs/journal.md`
-- Discover work you don't start → add it to `docs/backlog.md` with size + priority
-
 Where judgement is made in the agent loop, and which of those seats a typed
 decision model (Jev) fits — scored 2026-09-27/28:
 `~/codeporate-connect/docs/evaluations/2026-09-27-jev-where-in-graphirm.md`.
 Do not change context selection, compaction, memory ranking, or knowledge
 extraction on intuition — they are measured by `graphirm-eval`.
+
+---
+
+## How work is tracked (epicure)
+
+Graphirm follows epicure (see `.epicure.toml`): every change is planned, cited and checked. The work items
+live in a private work repo, named in `.epicure.toml` under `[work]`; check it out at
+`~/graphirm-work`, or point `EPICURE_WORK` at your checkout. Nothing private is committed here.
+
+- **Every commit to `main` cites a work item.** The subject starts with its ID, like
+  `T-0042: what changed`. The commit-msg hook checks the message against the work repo and adds an
+  `Epicure-Work: <sha>` trailer naming the work repo commit it was checked against. Do not remove the
+  trailer, and do not commit with `--no-verify`: CI refuses a commit without it.
+- **Build only under an approved plan.** A task's `parent` is a plan with `status: approved`. Small
+  changes use the quick lane (one file, no new dependency, no behaviour change); defects use the bug
+  lane.
+- **Create items in the work repo,** with `python3 .epicure/epicure.py new <type> "<title>"` run
+  there. Never run `new` in this repo. Push the work repo before opening a PR here, since CI refuses
+  a trailer it cannot find.
+- **Finish a task** by committing the code while the task is `open`, then closing it in one commit in
+  the work repo.
+- **Merge PRs with a merge commit or a rebase, never a squash.** A squash can leave two trailers,
+  which epicure refuses. Squash merges are turned off for this repo.
+- **Never approve for the maintainer.** An agent never sets `status: approved`, `approved_by` or
+  `approved_on`, and runs `epicure approve` only as the work repo's `AGENTS.md` allows.
+
+Where the old governance docs went (2026-11-09): plans, backlog, journal and completion log are in the
+work repo. From then on, decisions are ADRs there, open backlog items become feature or bug items,
+and finished work is recorded by closed tasks and plans. Older `docs/plans/` files in a checkout stay
+local and are not converted unless their work is still open.
+
+**Eval code.** See `eval/AGENTS.md`: exploratory eval code is a spike, code a recorded run depends on
+is a task under an approved eval plan, and run outputs never enter either repo.
