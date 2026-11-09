@@ -1,0 +1,1 @@
+Persist the drawer so the balance survives a process restart. Add `save_drawer(path, drawer)` and `load_drawer(path)` to a new module `till/persist.py`. `load_drawer` returns a `Drawer` whose `cents` equal the saved balance. `path` is a filesystem path.

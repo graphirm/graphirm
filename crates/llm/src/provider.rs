@@ -124,6 +124,12 @@ pub struct CompletionConfig {
     pub temperature: Option<f32>,
     #[serde(default)]
     pub stop_sequences: Vec<String>,
+    /// OpenRouter `reasoning.effort` value, sent only when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    /// OpenRouter provider slug pinned with `provider.only` and no fallbacks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_only: Option<String>,
 }
 
 impl CompletionConfig {
@@ -133,6 +139,8 @@ impl CompletionConfig {
             max_tokens: None,
             temperature: None,
             stop_sequences: Vec::new(),
+            reasoning_effort: None,
+            provider_only: None,
         }
     }
 
@@ -149,6 +157,42 @@ impl CompletionConfig {
     pub fn with_stop_sequences(mut self, sequences: Vec<String>) -> Self {
         self.stop_sequences = sequences;
         self
+    }
+
+    pub fn with_reasoning_effort(mut self, effort: impl Into<String>) -> Self {
+        self.reasoning_effort = Some(effort.into());
+        self
+    }
+
+    pub fn with_provider_only(mut self, provider: impl Into<String>) -> Self {
+        self.provider_only = Some(provider.into());
+        self
+    }
+
+    /// Extra JSON fields for an OpenRouter chat request. Empty when neither
+    /// reasoning effort nor a pinned provider is set.
+    pub fn openrouter_extra(&self) -> Option<serde_json::Value> {
+        let mut extra = serde_json::Map::new();
+        if let Some(effort) = &self.reasoning_effort {
+            extra.insert(
+                "reasoning".to_string(),
+                serde_json::json!({ "effort": effort }),
+            );
+        }
+        if let Some(provider) = &self.provider_only {
+            extra.insert(
+                "provider".to_string(),
+                serde_json::json!({
+                    "only": [provider],
+                    "allow_fallbacks": false,
+                }),
+            );
+        }
+        if extra.is_empty() {
+            None
+        } else {
+            Some(serde_json::Value::Object(extra))
+        }
     }
 }
 

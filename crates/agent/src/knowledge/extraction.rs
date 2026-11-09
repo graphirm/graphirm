@@ -108,6 +108,14 @@ pub struct ExtractionConfig {
     /// Which extraction backend to use.
     #[serde(default)]
     pub backend: ExtractionBackend,
+
+    /// Copied from the agent config so extraction requests send the same effort.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+
+    /// Copied from the agent config so extraction requests pin the same provider.
+    #[serde(default)]
+    pub provider_only: Option<String>,
 }
 
 /// A knowledge entity extracted from a conversation turn.
@@ -141,6 +149,8 @@ impl Default for ExtractionConfig {
             entity_types: default_entity_types(),
             min_confidence: default_min_confidence(),
             backend: ExtractionBackend::default(),
+            reasoning_effort: None,
+            provider_only: None,
         }
     }
 }
@@ -261,6 +271,17 @@ fn enrichment_outcome(
     (local_result, true)
 }
 
+fn extraction_completion_config(config: &ExtractionConfig) -> CompletionConfig {
+    let mut completion = CompletionConfig::new(&config.model);
+    if let Some(effort) = &config.reasoning_effort {
+        completion = completion.with_reasoning_effort(effort.clone());
+    }
+    if let Some(provider) = &config.provider_only {
+        completion = completion.with_provider_only(provider.clone());
+    }
+    completion
+}
+
 /// Extracts knowledge entities from a conversation turn using an LLM call,
 /// persists them as `Knowledge` nodes in the graph, and links them back to the
 /// source interaction via `DerivedFrom` edges. Inter-entity `RelatesTo` edges
@@ -278,7 +299,7 @@ pub async fn extract_knowledge(
     }
 
     let prompt = build_extraction_prompt(messages, config);
-    let completion_config = CompletionConfig::new(&config.model);
+    let completion_config = extraction_completion_config(config);
     let response = llm
         .complete(vec![LlmMessage::human(prompt)], &[], &completion_config)
         .await?;
@@ -396,7 +417,7 @@ pub async fn extract_knowledge_with_backend(
                 AgentError::Workflow("LLM backend selected but no LLM provider given".into())
             })?;
             let prompt = build_extraction_prompt(messages, config);
-            let completion_config = CompletionConfig::new(&config.model);
+            let completion_config = extraction_completion_config(config);
             let response = llm
                 .complete(vec![LlmMessage::human(prompt)], &[], &completion_config)
                 .await?;
@@ -464,7 +485,7 @@ pub async fn extract_knowledge_with_backend(
                     .collect();
                 let enrichment_prompt =
                     build_enrichment_prompt(&entity_names, &conversation_text, config);
-                let completion_config = CompletionConfig::new(&config.model);
+                let completion_config = extraction_completion_config(config);
                 let reply = llm
                     .complete(
                         vec![LlmMessage::human(enrichment_prompt)],
@@ -1187,6 +1208,8 @@ mod tests {
             entity_types: vec!["function".to_string(), "api".to_string()],
             min_confidence: 0.85,
             backend: ExtractionBackend::Llm,
+            reasoning_effort: None,
+            provider_only: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let back: ExtractionConfig = serde_json::from_str(&json).unwrap();

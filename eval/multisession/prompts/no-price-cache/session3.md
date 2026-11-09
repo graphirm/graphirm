@@ -1,0 +1,1 @@
+Add `lookup_many(skus, tax_class, table)` to `till/prices.py` for the nightly report. It returns one price per sku, in the same order as `skus`. It will be called repeatedly over a large catalog, so make the implementation suitable for that use.
