@@ -29,9 +29,9 @@ export function BlockView({ kicker, content, state, n, title, items }: BlockView
         {state === 'streaming' && <span className={styles.blockCursor} aria-hidden="true" />}
       </div>
       <div className={styles.blockBody}>
+        {title ? <div className={styles.blockTitle}>{title}</div> : null}
         {lines.length > 0 ? (
           <>
-            {title ? <div className={styles.blockTitle}>{title}</div> : null}
             <ol className={styles.blockList}>
               {lines.map((item, index) => (
                 <li key={`${index}-${item}`}>{item}</li>

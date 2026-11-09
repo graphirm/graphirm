@@ -16,7 +16,8 @@ import {
   type LiveDirector,
 } from '../chat/liveSteps';
 import { parseSegmentPrefix } from '../chat/segmentStream';
-import { segmentPartsForInteraction } from '../utils/chatSegments';
+import { looksLikeHtmlReply, parseHtmlPieces } from '../chat/pieceStream';
+import { piecePartsForInteraction, segmentPartsForInteraction } from '../utils/chatSegments';
 
 interface UseSessionReturn {
   sessions: Session[];
@@ -333,7 +334,15 @@ export function useSession(): UseSessionReturn {
   const messagesWithSegments = useMemo(
     () =>
       messages.map((m) => {
-        if (m.role !== 'assistant' || !m.segmented) return m;
+        if (m.role !== 'assistant') return m;
+        if (m.piecesSource || looksLikeHtmlReply(m.content)) {
+          // Stored parts when the graph has them; otherwise read the HTML page
+          // itself, so a reply is never shown as raw tags.
+          const pieces = piecePartsForInteraction(m.id, graphData)
+            ?? (looksLikeHtmlReply(m.content) ? parseHtmlPieces(m.content, true) : undefined);
+          return pieces?.length ? { ...m, segments: pieces } : m;
+        }
+        if (!m.segmented) return m;
         const segments = segmentPartsForInteraction(m.id, graphData);
         if (!segments?.length) return m;
         return { ...m, segments };

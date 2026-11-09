@@ -142,6 +142,7 @@ export const api = {
         const routingReason = assistantMetaString(nt.role, n.metadata, 'routing_reason');
         const routingConfidence = assistantMetaNumber(nt.role, n.metadata, 'routing_confidence');
         const replyJudge = assistantReplyJudge(nt.role, n.metadata);
+        const piecesSource = assistantMetaString(nt.role, n.metadata, 'pieces_source');
         return {
           id: n.id,
           role: nt.role,
@@ -156,6 +157,7 @@ export const api = {
           ...(routingReason ? { routingReason } : {}),
           ...(routingConfidence !== undefined ? { routingConfidence } : {}),
           ...(replyJudge ? { replyJudge } : {}),
+          ...(piecesSource ? { piecesSource } : {}),
         };
       });
   },
