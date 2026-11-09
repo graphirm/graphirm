@@ -39,7 +39,7 @@ behind it, to the result it relied on, to the test output that showed it.
 ## What it is not
 
 - It is not a claim to be cheaper or smarter on small, single bug fixes. Measured on those, a plain
-  agent with no memory does as well for less (`docs/journal.md`, 2026-11-07).
+  agent with no memory does as well for less (the private journal, 2026-11-07).
 - It is not "memory by packing the past into every call". That was measured: same results, about 6×
   the cost. Earlier work is reached by lookup.
 
@@ -68,5 +68,5 @@ In order, each step only after the one before it passes
   and text written next to tool calls is never split.
 - Statement: links to evidence are stored as metadata, not as graph edges, and whether they point at
   the right evidence is not checked yet.
-- Recommendation: fix these first (`docs/backlog.md`, under "Prove the structure"), then rerun step 0
+- Recommendation: fix these first (the private backlog, under "Prove the structure"), then rerun step 0
   on a `main` binary before any comparison with a plain agent.

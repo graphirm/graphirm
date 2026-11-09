@@ -2,6 +2,8 @@
 
 Welcome to the Graphirm project documentation. This folder contains planning documents, feature documentation, architecture notes, and completion logs.
 
+`backlog.md` and `completion-log.md` moved to the private work repo on 2026-11-09.
+
 ## Structure
 
 ### 📋 **Core Documents**

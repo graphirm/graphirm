@@ -137,7 +137,12 @@ model-tier routing (`strategy/`), multi-agent delegation, PageRank + recency
 context engine, compaction, TUI, HTTP server + phone-first decision chat (whiteboard remains on the Graph tab and in the legacy layout), structured
 response segments with GLiNER2 fallback, cross-session memory (HNSW),
 planning/tasks, trace analysis, `fetch_url`. Full per-phase table with dates:
-`docs/completion-log.md` (bottom). Open work: `docs/backlog.md`.
+the completion log (bottom). Open work: the backlog.
+
+The backlog, journal and completion log are private. They moved out of this
+repo on 2026-11-09 and live in the work repo checkout at `~/graphirm-work/docs/`
+(`backlog.md`, `journal.md`, `completion-log.md`). Paths below refer to that
+checkout.
 
 **Governance docs — update in the same commit as the work, not afterwards:**
 - Start a backlog item → create `docs/plans/YYYY-MM-DD-<topic>.md`, link it from the item
