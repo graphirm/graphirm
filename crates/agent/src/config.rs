@@ -1866,6 +1866,17 @@ mod default_toml_tests {
         assert!(!config.pi.expect("pi block present").enabled);
         assert!(config.default_auto_approve);
     }
+
+    /// Reply pieces are the shipped reply format (ADR-0001 in the work repo);
+    /// segments stay configured but off.
+    #[test]
+    fn shipped_default_toml_uses_reply_pieces() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
+        let config = AgentConfig::from_file(std::path::Path::new(path)).expect("default.toml");
+        assert!(config.reply_pieces_enabled());
+        assert!(config.segments.is_none());
+    }
+
     #[test]
     fn reply_pieces_turns_segments_off() {
         let toml = r#"
