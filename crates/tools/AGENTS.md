@@ -22,7 +22,7 @@ description, JSON schema for parameters, and an async `execute` method. Tools ar
 | `fetch_url.rs` | HTTP(S) GET for public URLs — read-only, no graph writes |
 | `ls.rs` | Directory listing |
 | `graph_diff.rs` | `GraphDiffTool` — non-destructive blast radius: git/paths → dependent files (rg), cross-session stale Knowledge, risk scoring |
-| `graph_query.rs` | Graph query — BFS traversal, node-type enumeration, keyword search, **semantic HNSW search** |
+| `graph_query.rs` | Graph query — BFS traversal, node-type enumeration, keyword search, **semantic HNSW search**, **parts** (a reply's `reply_part` / `reply_line` pieces: list, or one part by number) |
 | `session_trace.rs` | `SessionTraceTool` — cross-session `search` (Knowledge-anchored traces) and per-session `replay`; compact/full output |
 | `diff.rs` | File compare (`diff -u`) and git diff — non-destructive |
 | `read_many.rs` | Read up to 20 files in one call — concatenated output with path headers |
