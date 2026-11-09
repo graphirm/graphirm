@@ -28,11 +28,12 @@ Powers the VS Code/Cursor extension and the `graphirm-eval` harness. Built on `a
 
 New sessions clone **`AppState.default_config`** (`AgentConfig` from `config/default.toml` at startup), including **`disable_bash`**. There is no per-request override; use TOML for public deploys.
 
-`CreateSessionRequest` supports two segment-related fields:
+`CreateSessionRequest` supports three reply-format fields. Reply pieces are the default (`[agent.reply_pieces] enabled = true` in `config/default.toml`):
 
 | Field | Type | Effect |
 |-------|------|--------|
-| `enable_segments` | `bool` (default false) | Activates structured response segmentation for the session |
+| `enable_reply_pieces` | `Option<bool>` (default null = server config) | `true` cuts every reply into `reply_part` / `reply_line` nodes and turns segments off; `false` turns pieces off. Recorded as `reply_pieces` on the Agent node and kept on restore. 400 with `enable_segments: true` |
+| `enable_segments` | `bool` (default false) | Activates structured response segmentation for the session; alone, it also turns reply pieces off |
 | `segment_filter` | `Option<Vec<String>>` (default null) | Restricts context window reconstruction to matching segment types only; no-op if segments were not generated |
 
 Example:

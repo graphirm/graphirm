@@ -353,13 +353,15 @@ min_confidence = 0.5
 # [agent.segments.label_min_confidence]
 # plan = 0.35
 
-# Reply pieces: ask for the HTML index page (kinds from .cursor/rules/html-part-index.mdc) and cut
-# every reply with text — final or next to tool calls — into `reply_part` / `reply_line` nodes.
-# A reply that is not an HTML index is cut by the markdown parser; `pieces_source` on the reply says
-# which. Enabling it turns [agent.segments] off. Off until the paired eval in
-# docs/plans/2026-11-08-reply-pieces-in-loop.md.
+# Reply pieces, the default reply format: ask for the HTML index page (kinds from
+# .cursor/rules/html-part-index.mdc) and cut every reply with text — final or next to tool calls —
+# into numbered `reply_part` / `reply_line` nodes that later turns can cite. A reply that is not an
+# HTML index is cut by the markdown parser; `pieces_source` on the reply says which. While enabled,
+# [agent.segments] above is off. A session can choose with `enable_reply_pieces` or
+# `enable_segments` on `POST /api/sessions`. The SWE-bench eval keeps its own config
+# (eval/swebench/adapters/eval-agent.toml), where pieces stay off until they meet the tuned bar.
 [agent.reply_pieces]
-enabled = false
+enabled = true
 
 # Post-hoc markdown outline → `outline_item` Content nodes (plans, epics, phases).
 # Skips when the assistant emitted structured segment JSON or segment children were persisted.
