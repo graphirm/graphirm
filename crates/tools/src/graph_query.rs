@@ -30,7 +30,7 @@ impl Tool for GraphQueryTool {
     }
 
     fn description(&self) -> &str {
-        "Query the session graph in seven modes:
+        "Query the session graph in eight modes:
 
 • bfs — BFS traversal from a start node following outgoing edges.
   To get a start node_id, call list_type first or use an ID returned by a previous tool call.
@@ -57,10 +57,15 @@ impl Tool for GraphQueryTool {
   - link_task: Link a Task node (delegation / subagent) to a planning Knowledge node via relates_to (same artifact_link metadata as link_content; Task must be DelegatesTo from parent agent or SpawnedBy to subagent agent)
   - update: Update a planning node's status
 
+• parts — Read an assistant reply's pieces (numbered parts and lines).
+  Without part: list the reply's parts with kind, heading and first line.
+  With part (its number, 1-based): that part's kind, heading and every line.
+  node_id is the reply's Interaction id; omit it to read the latest reply in this session that has parts.
+
 • stats — Report overall graph statistics: total nodes, total edges, and breakdown by node type.
   No additional parameters are required.
 
-The tool is read-only for bfs/list_type/search/semantic/neighbors/stats modes; project mode may write to the graph."
+The tool is read-only for bfs/list_type/search/semantic/neighbors/parts/stats modes; project mode may write to the graph."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -69,12 +74,17 @@ The tool is read-only for bfs/list_type/search/semantic/neighbors/stats modes; p
             "properties": {
                 "mode": {
                     "type": "string",
-                    "enum": ["bfs", "list_type", "search", "semantic", "neighbors", "project", "stats"],
+                    "enum": ["bfs", "list_type", "search", "semantic", "neighbors", "parts", "project", "stats"],
                     "description": "Which query mode to run"
                 },
                 "node_id": {
                     "type": "string",
-                    "description": "BFS start node ID (required for bfs mode), or target node for neighbors mode"
+                    "description": "BFS start node ID (required for bfs mode), target node for neighbors mode, or the assistant reply for parts mode"
+                },
+                "part": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Parts mode only — the part number to read in full; omit to list the reply's parts"
                 },
                 "depth": {
                     "type": "integer",
@@ -195,10 +205,11 @@ The tool is read-only for bfs/list_type/search/semantic/neighbors/stats modes; p
             "search" => execute_search(&args, ctx).await,
             "semantic" => execute_semantic(&args, ctx).await,
             "neighbors" => execute_neighbors(&args, ctx).await,
+            "parts" => execute_parts(&args, ctx).await,
             "project" => execute_project(&args, ctx).await,
             "stats" => execute_stats(ctx).await,
             other => Err(ToolError::InvalidArguments(format!(
-                "unknown mode '{other}'; must be one of: bfs, list_type, search, semantic, neighbors, project, stats"
+                "unknown mode '{other}'; must be one of: bfs, list_type, search, semantic, neighbors, parts, project, stats"
             ))),
         }
     }
@@ -989,11 +1000,157 @@ async fn execute_stats(ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
     Ok(ToolOutput::success(lines.join("\n")))
 }
 
+/// `reply_part` / `reply_line` children of a node, ordered by `order_key` in their metadata.
+fn content_children(
+    graph: &graphirm_graph::GraphStore,
+    parent: &NodeId,
+    content_type: &str,
+    order_key: &str,
+) -> Result<Vec<GraphNode>, ToolError> {
+    let mut children: Vec<GraphNode> = graph
+        .neighbors(parent, Some(EdgeType::Contains), Direction::Outgoing)?
+        .into_iter()
+        .filter(|n| matches!(&n.node_type, NodeType::Content(c) if c.content_type == content_type))
+        .collect();
+    children.sort_by_key(|n| n.metadata[order_key].as_u64().unwrap_or(0));
+    Ok(children)
+}
+
+fn content_body(node: &GraphNode) -> &str {
+    match &node.node_type {
+        NodeType::Content(c) => &c.body,
+        _ => "",
+    }
+}
+
+/// The latest assistant reply in this session that was cut into parts.
+fn latest_reply_with_parts(
+    graph: &graphirm_graph::GraphStore,
+    session_id: &NodeId,
+) -> Result<Option<GraphNode>, ToolError> {
+    for node in graph
+        .get_session_interactions(&session_id.0)?
+        .into_iter()
+        .rev()
+    {
+        let assistant =
+            matches!(&node.node_type, NodeType::Interaction(d) if d.role == "assistant");
+        if assistant && !content_children(graph, &node.id, "reply_part", "order")?.is_empty() {
+            return Ok(Some(node));
+        }
+    }
+    Ok(None)
+}
+
+async fn execute_parts(
+    args: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<ToolOutput, ToolError> {
+    let reply_id = args["node_id"].as_str().map(|s| NodeId(s.to_string()));
+    let part_number = match &args["part"] {
+        serde_json::Value::Null => None,
+        v => Some(v.as_u64().filter(|n| *n >= 1).ok_or_else(|| {
+            ToolError::InvalidArguments("'part' must be a part number (1 or more)".into())
+        })? as usize),
+    };
+    let graph = ctx.graph.clone();
+    let session_id = ctx.agent_id.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let reply = match reply_id {
+            Some(id) => graph.get_node(&id).map_err(|_| {
+                ToolError::InvalidArguments(format!("node '{id}' does not exist in the graph"))
+            })?,
+            None => match latest_reply_with_parts(&graph, &session_id)? {
+                Some(node) => node,
+                None => {
+                    return Ok(ToolOutput::success(
+                        "No reply in this session has parts yet.".to_string(),
+                    ));
+                }
+            },
+        };
+        let source = reply.metadata["pieces_source"].as_str().unwrap_or("none");
+        let parts = content_children(&graph, &reply.id, "reply_part", "order")?;
+        if parts.is_empty() {
+            return Ok(ToolOutput::success(format!(
+                "Reply {} has no parts (pieces_source={source}).",
+                reply.id
+            )));
+        }
+
+        let mut lines = Vec::new();
+        match part_number {
+            None => {
+                lines.push(format!(
+                    "Reply {} — {} parts (pieces_source={source}):",
+                    reply.id,
+                    parts.len()
+                ));
+                for (i, part) in parts.iter().enumerate() {
+                    let part_lines = content_children(&graph, &part.id, "reply_line", "position")?;
+                    let first = part_lines.first().map(content_body).unwrap_or("");
+                    lines.push(format!(
+                        "  {}. [{}] {} — {} lines: {} [{}]",
+                        i + 1,
+                        part.metadata["kind"].as_str().unwrap_or("?"),
+                        part.metadata["heading"].as_str().unwrap_or("(no heading)"),
+                        part_lines.len(),
+                        truncate(first, 80),
+                        part.id,
+                    ));
+                }
+            }
+            Some(n) => {
+                let part = parts.get(n - 1).ok_or_else(|| {
+                    ToolError::InvalidArguments(format!(
+                        "reply {} has {} parts; part {n} does not exist",
+                        reply.id,
+                        parts.len()
+                    ))
+                })?;
+                lines.push(format!("Part {n} of reply {} [{}]", reply.id, part.id));
+                lines.push(format!(
+                    "kind: {}",
+                    part.metadata["kind"].as_str().unwrap_or("?")
+                ));
+                if let Some(heading) = part.metadata["heading"].as_str() {
+                    lines.push(format!("heading: {heading}"));
+                }
+                for (k, line) in content_children(&graph, &part.id, "reply_line", "position")?
+                    .iter()
+                    .enumerate()
+                {
+                    let src = line.metadata["src"]
+                        .as_str()
+                        .map(|s| format!(" (src: {s})"))
+                        .unwrap_or_default();
+                    lines.push(format!("{n}.0.{} {}{src}", k + 1, content_body(line)));
+                }
+            }
+        }
+        Ok(ToolOutput::success(lines.join("\n")))
+    })
+    .await
+    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?
+}
+
 fn compact_node_summary(node: &GraphNode) -> String {
     let type_name = node.node_type.type_name();
     let detail = match &node.node_type {
         NodeType::Interaction(d) => format!("role={} content={}", d.role, truncate(&d.content, 60)),
         NodeType::Agent(d) => format!("name={} model={} status={}", d.name, d.model, d.status),
+        NodeType::Content(d) if d.content_type == "reply_part" => format!(
+            "type=reply_part order={} kind={} heading={}",
+            node.metadata["order"].as_u64().unwrap_or(0),
+            node.metadata["kind"].as_str().unwrap_or("?"),
+            node.metadata["heading"].as_str().unwrap_or("(none)"),
+        ),
+        NodeType::Content(d) if d.content_type == "reply_line" => format!(
+            "type=reply_line position={} text={}",
+            node.metadata["position"].as_u64().unwrap_or(0),
+            truncate(&d.body, 80),
+        ),
         NodeType::Content(d) => {
             let path = d.path.as_deref().unwrap_or("(no path)");
             format!("type={} path={}", d.content_type, path)
@@ -2199,6 +2356,162 @@ mod tests {
         assert!(!out.is_error);
         assert!(out.content.contains(&c2_id.to_string()));
         assert!(!out.content.contains(&c1_id.to_string()));
+    }
+
+    /// An assistant reply in the test session with two parts: a statement with
+    /// two lines and a code part with one. Returns the reply id.
+    fn seed_reply_with_parts(ctx: &ToolContext) -> NodeId {
+        let graph = &ctx.graph;
+        let mut reply = GraphNode::new(NodeType::Interaction(InteractionData {
+            role: "assistant".to_string(),
+            content: "<nav id=\"index\">…</nav>".to_string(),
+            token_count: None,
+        }));
+        reply.metadata = json!({ "session_id": ctx.agent_id.0, "pieces_source": "html" });
+        let reply_id = graph.add_node(reply).unwrap();
+        let parts = [
+            (
+                "statement",
+                "Why the test fails",
+                vec!["median returns the upper value.", "The list is even."],
+            ),
+            ("code", "The fix", vec!["return (a + b) / 2"]),
+        ];
+        // Added in reverse so the tool has to sort by `order` / `position`.
+        for (order, (kind, heading, lines)) in parts.iter().enumerate().rev() {
+            let mut part = GraphNode::new(NodeType::Content(ContentData {
+                content_type: "reply_part".to_string(),
+                path: None,
+                body: heading.to_string(),
+                language: None,
+            }));
+            part.metadata = json!({ "order": order + 1, "kind": kind, "heading": heading });
+            let part_id = graph.add_node(part).unwrap();
+            graph
+                .add_edge(GraphEdge::new(
+                    EdgeType::Contains,
+                    reply_id.clone(),
+                    part_id.clone(),
+                ))
+                .unwrap();
+            for (position, text) in lines.iter().enumerate().rev() {
+                let mut line = GraphNode::new(NodeType::Content(ContentData {
+                    content_type: "reply_line".to_string(),
+                    path: None,
+                    body: text.to_string(),
+                    language: None,
+                }));
+                line.metadata = json!({ "position": position + 1, "src": if *kind == "statement" { json!("file:stats.py") } else { json!(null) } });
+                let line_id = graph.add_node(line).unwrap();
+                graph
+                    .add_edge(GraphEdge::new(EdgeType::Contains, part_id.clone(), line_id))
+                    .unwrap();
+            }
+        }
+        reply_id
+    }
+
+    async fn parts(ctx: &ToolContext, args: serde_json::Value) -> ToolOutput {
+        let mut args = args;
+        args["mode"] = json!("parts");
+        GraphQueryTool::new().execute(args, ctx).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn parts_lists_a_replys_parts_in_order() {
+        let ctx = make_test_context();
+        let reply_id = seed_reply_with_parts(&ctx);
+        let out = parts(&ctx, json!({ "node_id": reply_id.0 })).await;
+        assert!(!out.is_error);
+        let text = out.content;
+        assert!(text.contains("2 parts (pieces_source=html)"), "{text}");
+        let first = text
+            .find("1. [statement] Why the test fails — 2 lines: median returns")
+            .unwrap();
+        let second = text
+            .find("2. [code] The fix — 1 lines: return (a + b) / 2")
+            .unwrap();
+        assert!(first < second, "{text}");
+    }
+
+    #[tokio::test]
+    async fn parts_reads_one_part_by_number() {
+        let ctx = make_test_context();
+        let reply_id = seed_reply_with_parts(&ctx);
+        let text = parts(&ctx, json!({ "node_id": reply_id.0, "part": 1 }))
+            .await
+            .content;
+        assert!(text.contains("kind: statement"), "{text}");
+        assert!(text.contains("heading: Why the test fails"), "{text}");
+        assert!(
+            text.contains("1.0.1 median returns the upper value. (src: file:stats.py)"),
+            "{text}"
+        );
+        assert!(text.contains("1.0.2 The list is even."), "{text}");
+        assert!(!text.contains("return (a + b)"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn parts_without_node_id_reads_the_latest_reply_with_parts() {
+        let ctx = make_test_context();
+        seed_reply_with_parts(&ctx);
+        let text = parts(&ctx, json!({ "part": 2 })).await.content;
+        assert!(text.contains("kind: code"), "{text}");
+        assert!(text.contains("2.0.1 return (a + b) / 2"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn parts_reports_missing_parts_and_bad_numbers() {
+        let ctx = make_test_context();
+        let none = parts(&ctx, json!({})).await.content;
+        assert!(
+            none.contains("No reply in this session has parts yet"),
+            "{none}"
+        );
+
+        let plain = parts(&ctx, json!({ "node_id": ctx.interaction_id.0 }))
+            .await
+            .content;
+        assert!(
+            plain.contains("has no parts (pieces_source=none)"),
+            "{plain}"
+        );
+
+        let reply_id = seed_reply_with_parts(&ctx);
+        let err = GraphQueryTool::new()
+            .execute(
+                json!({ "mode": "parts", "node_id": reply_id.0, "part": 3 }),
+                &ctx,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("has 2 parts; part 3 does not exist"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn part_and_line_summaries_show_kind_heading_and_text() {
+        let ctx = make_test_context();
+        let reply_id = seed_reply_with_parts(&ctx);
+        let text = GraphQueryTool::new()
+            .execute(
+                json!({ "mode": "bfs", "node_id": reply_id.0, "depth": 2 }),
+                &ctx,
+            )
+            .await
+            .unwrap()
+            .content;
+        assert!(
+            text.contains("type=reply_part order=1 kind=statement heading=Why the test fails"),
+            "{text}"
+        );
+        assert!(
+            text.contains("type=reply_line position=1 text=median returns the upper value."),
+            "{text}"
+        );
     }
 
     #[tokio::test]
