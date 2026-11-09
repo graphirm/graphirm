@@ -43,12 +43,16 @@ pub async fn run(db_path: &Path, host: String, port: u16) -> Result<(), Graphirm
         .map(|v| v != "0" && v != "false")
         .unwrap_or(true);
     let extraction_backend = resolve_extraction_backend();
+    let reasoning_effort = agent_config.reasoning_effort.clone();
+    let openrouter_provider = agent_config.openrouter_provider.clone();
     let agent_config = graphirm_agent::AgentConfig {
         model: model_name.to_string(),
         extraction: Some(graphirm_agent::knowledge::extraction::ExtractionConfig {
             enabled: extraction_enabled,
             model: model_name.to_string(),
             backend: extraction_backend,
+            reasoning_effort,
+            provider_only: openrouter_provider,
             ..Default::default()
         }),
         ..agent_config

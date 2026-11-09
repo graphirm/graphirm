@@ -1,0 +1,13 @@
+{
+  "model": "deepseek/deepseek-v4.1-flash",
+  "litellm_model": "openrouter/deepseek/deepseek-v4.1-flash",
+  "provider": "Morph",
+  "provider_slug": "morph/fp8",
+  "recorded_on": "2026-10-11",
+  "source_url": "https://openrouter.ai/api/v1/models/deepseek/deepseek-v4.1-flash/endpoints",
+  "input_cost_per_token": 0.000000042,
+  "output_cost_per_token": 0.0000006,
+  "input_cache_read_per_token": 0.000000009,
+  "time_of_day_rules": [],
+  "note": "Frozen from the Morph endpoint (provider_name Morph, tag morph/fp8). The official DeepSeek endpoint was not used: the account privacy setting rejects it as a paid-model-training violation. Morph has no time-of-day price overrides. The catalog field supports_implicit_caching is false for this endpoint; a pinned pair of calls on 2026-10-11 still returned cached_tokens on the second call. Primary cost is uncached prompt tokens times input_cost_per_token, plus cached prompt tokens times input_cache_read_per_token, plus completion tokens times output_cost_per_token. The LiteLLM registry sets cache_read_input_token_cost to input_cache_read_per_token."
+}

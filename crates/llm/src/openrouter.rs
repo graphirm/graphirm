@@ -212,6 +212,11 @@ pub fn build_openai_body(
     if let Some(temp) = config.temperature {
         body["temperature"] = serde_json::json!(temp);
     }
+    if let Some(serde_json::Value::Object(extra)) = config.openrouter_extra() {
+        for (key, value) in extra {
+            body[key] = value;
+        }
+    }
 
     if !tools.is_empty() {
         let oai_tools: Vec<serde_json::Value> = tools
@@ -370,6 +375,9 @@ impl LlmProvider for OpenRouterProvider {
         if let Some(temp) = config.temperature {
             builder = builder.temperature(temp as f64);
         }
+        if let Some(extra) = config.openrouter_extra() {
+            builder = builder.additional_params(extra);
+        }
 
         let request = builder.build();
         let response = model
@@ -506,6 +514,38 @@ mod tests {
         assert_eq!(body["max_tokens"], 1024);
         assert_eq!(body["temperature"], 0.5);
         assert_eq!(body["tools"][0]["function"]["name"], "bash");
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("provider").is_none());
+    }
+
+    #[test]
+    fn test_build_openai_body_sends_reasoning_effort_and_pinned_provider() {
+        let messages = vec![LlmMessage::human("Hello")];
+        let config = CompletionConfig::new("x-ai/grok-4.7")
+            .with_reasoning_effort("high")
+            .with_provider_only("xai");
+        let body = build_openai_body(&messages, &[], &config);
+
+        assert_eq!(body["reasoning"]["effort"], "high");
+        assert_eq!(body["provider"]["only"][0], "xai");
+        assert_eq!(body["provider"]["allow_fallbacks"], false);
+    }
+
+    #[test]
+    fn grok_4_7_request_body_includes_reasoning_effort() {
+        let messages = vec![LlmMessage::human("Remember the decision.")];
+        let config = CompletionConfig::new("x-ai/grok-4.7")
+            .with_max_tokens(4096)
+            .with_temperature(0.7)
+            .with_reasoning_effort("high")
+            .with_provider_only("xai");
+        let body = build_openai_body(&messages, &[], &config);
+        let pretty = serde_json::to_string_pretty(&body).unwrap();
+        eprintln!("{pretty}");
+        assert_eq!(body["model"], "x-ai/grok-4.7");
+        assert_eq!(body["reasoning"]["effort"], "high");
+        assert_eq!(body["provider"]["only"][0], "xai");
+        assert_eq!(body["provider"]["allow_fallbacks"], false);
     }
 
     #[test]

@@ -55,7 +55,7 @@ pub use multi::{
 };
 pub use pi_delegate::{PiDelegateTool, apply_pi_delegate_system_notice, register_pi_delegate};
 pub use router::{ModelRouter, ModelRoutingConfig, ModelTier, RoutingRule, TurnSignals};
-pub use session::{Session, SessionMetadata, SessionStatus};
+pub use session::{Session, SessionMetadata, SessionStatus, open_session_graph};
 pub use strategy::{
     ObjectiveWeights, RoutingDecision, RoutingStrategy, SessionScore, TurnOutcome,
     compute_session_score,

@@ -1,0 +1,9 @@
+[project]
+name = "till"
+version = "0.1.0"
+description = "Small in-process cash drawer and catalog"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
