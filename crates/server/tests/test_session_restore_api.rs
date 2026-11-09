@@ -175,6 +175,41 @@ mod tests {
         graph
     }
 
+    /// A session keeps the reply format it was created with when the server
+    /// restarts with a different `[agent.reply_pieces]` default; a session with
+    /// no recorded flag follows the server.
+    #[tokio::test]
+    async fn test_restored_session_keeps_its_reply_format() {
+        for created_with in [true, false] {
+            let graph = Arc::new(GraphStore::open_memory().unwrap());
+            let mut created = AgentConfig::default();
+            created.set_reply_pieces(created_with);
+            let session = graphirm_agent::Session::new(graph.clone(), created).unwrap();
+
+            let mut server = AgentConfig::default();
+            server.set_reply_pieces(!created_with);
+            let restored = restore_sessions_from_graph(&graph, None).await.unwrap();
+            let handles = build_restored_session_handles(&graph, &server, None, restored);
+            let handle = &handles[&SessionId::from(session.id.0.as_str())];
+            assert_eq!(
+                handle.session.agent_config.reply_pieces_enabled(),
+                created_with
+            );
+        }
+
+        let graph = restored_graph_with_one_agent("session-before-flag");
+        let mut server = AgentConfig::default();
+        server.set_reply_pieces(true);
+        let restored = restore_sessions_from_graph(&graph, None).await.unwrap();
+        let handles = build_restored_session_handles(&graph, &server, None, restored);
+        assert!(
+            handles[&SessionId::from("session-before-flag")]
+                .session
+                .agent_config
+                .reply_pieces_enabled()
+        );
+    }
+
     /// Restored sessions must honour `[agent] default_auto_approve` exactly like
     /// freshly created ones, with a gate attached so the toggle endpoint works.
     #[tokio::test]

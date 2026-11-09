@@ -63,6 +63,7 @@ pub async fn restore_sessions_from_graph(
         );
         metadata.workspace = workspace;
         metadata.workspace_path = workspace_path;
+        metadata.reply_pieces = node.metadata.get("reply_pieces").and_then(|v| v.as_bool());
 
         sessions.insert(node.id.0.clone(), metadata);
     }

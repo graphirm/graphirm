@@ -48,6 +48,10 @@ pub fn build_restored_session_handles(
             .unwrap_or_else(|| agent_config.working_dir.clone());
         config.workspace_dir = meta.workspace_path.clone();
         config.workspace_name = meta.workspace.clone();
+        // A session keeps the reply format it was created with across restarts.
+        if let Some(enabled) = meta.reply_pieces {
+            config.set_reply_pieces(enabled);
+        }
 
         let hitl = Arc::new(match graphirm_agent::build_judge(&config) {
             Some(judge) => HitlGate::new().with_judge(judge),
