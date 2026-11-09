@@ -1,0 +1,55 @@
+# epicure: checks every pull request against the rules, for a project whose work items live in a
+# private work repo (P-0007, ADR-0009). Written by epicure init --work-repo.
+# Secrets needed: EPICURE_WORK_REPO (owner/name of the work repo) and EPICURE_WORK_DEPLOY_KEY (a read-only
+# deploy key for it). A pull request from a fork gets no secrets, so it is reported as "not checked".
+# Local hooks can be skipped with --no-verify; this check is the real gate.
+name: epicure
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Is the work repo readable here?
+        id: readable
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          SECRET_SET: ${{ secrets.EPICURE_WORK_DEPLOY_KEY != '' }}
+        run: |
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ] || [ "$SECRET_SET" != "true" ]; then
+            echo "readable=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=epicure::NOT CHECKED: this pull request cannot read the work repo (a fork, or no deploy key), so the work items were not checked."
+          else
+            echo "readable=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0 # the whole range, and the work items before each commit
+      - uses: actions/checkout@v4
+        if: steps.readable.outputs.readable == 'true'
+        with:
+          repository: ${{ secrets.EPICURE_WORK_REPO }}
+          ssh-key: ${{ secrets.EPICURE_WORK_DEPLOY_KEY }}
+          path: work-repo
+          fetch-depth: 0 # the work items at each commit's Epicure-Work trailer
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12" # epicure needs 3.11 or newer (ADR-0002)
+      - name: epicure check
+        if: steps.readable.outputs.readable == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.base_ref }}
+          MAIN_BRANCH: ${{ github.event.repository.default_branch }}
+          EPICURE_WORK: ${{ github.workspace }}/work-repo
+        run: |
+          into_main=""
+          if [ "$BASE_REF" = "$MAIN_BRANCH" ]; then into_main="--into-main"; fi
+          python3 work-repo/.epicure/epicure.py --root . check --range "$BASE_SHA..$HEAD_SHA" $into_main
