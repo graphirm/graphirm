@@ -121,6 +121,8 @@ export interface Message {
   segmented?: boolean;
   /** Populated from graph Contains children when `segmented` (see `segmentPartsForInteraction`). */
   segments?: SegmentPart[];
+  /** `metadata.pieces_source` when the reply was cut into reply pieces (`html`, `markdown`, `over_cap`, `failed`). */
+  piecesSource?: string;
 }
 
 export interface PendingApproval {

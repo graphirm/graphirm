@@ -6,6 +6,7 @@ import type { StepInput, StepRow } from '../chat/steps';
 import { buildSteps } from '../chat/steps';
 import { formatJevChip } from '../chat/jevChip';
 import { replyHints } from '../chat/replyHints';
+import { looksLikeHtmlReply, parseHtmlPieces } from '../chat/pieceStream';
 import { parseSegmentPrefix } from '../chat/segmentStream';
 import type { Message, PendingApproval } from '../types/graph';
 import { MarkdownBody } from './nodes/MarkdownBody';
@@ -201,6 +202,9 @@ function MessageBody({ message }: { message: Message }) {
 
 function StreamingBody({ message }: { message: Message }) {
   const column = useColumnChrome();
+  if (looksLikeHtmlReply(message.content)) {
+    return <StreamingPieces message={message} />;
+  }
   const parsed = parseSegmentPrefix(message.content);
   const segments = parsed.segments.length > 0 ? parsed.segments : (message.segments ?? []);
   const showPlaceholder =
@@ -233,6 +237,30 @@ function StreamingBody({ message }: { message: Message }) {
       {parsed.showRecovery && <div className={styles.recovery}>Fixing the format…</div>}
       {showPlaceholder && <MarkdownBody content="…" maxHeight={250} bounded={!column} />}
     </>
+  );
+}
+
+/** A reply-pieces HTML page mid-stream: parts as they arrive, never raw tags. */
+function StreamingPieces({ message }: { message: Message }) {
+  const column = useColumnChrome();
+  const parts = parseHtmlPieces(message.content, false);
+  if (parts.length === 0) {
+    return <MarkdownBody content="…" maxHeight={250} bounded={!column} />;
+  }
+  return (
+    <div className={styles.segmentStack}>
+      {parts.map((part, i) => (
+        <BlockView
+          key={`${message.id}-piece-${i}`}
+          kicker={part.type}
+          content={part.content}
+          state={part.state === 'streaming' ? 'streaming' : 'done'}
+          n={part.n}
+          title={part.title}
+          items={part.items}
+        />
+      ))}
+    </div>
   );
 }
 
