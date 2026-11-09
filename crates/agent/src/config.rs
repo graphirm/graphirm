@@ -803,6 +803,17 @@ impl AgentConfig {
         self.reply_pieces.as_ref().is_some_and(|r| r.enabled)
     }
 
+    /// Turn reply pieces on or off for one session. On turns segments off, as
+    /// in the toml; off leaves `segments` as configured.
+    pub fn set_reply_pieces(&mut self, enabled: bool) {
+        if enabled {
+            self.reply_pieces = Some(ReplyPiecesConfig { enabled: true });
+            self.segments = None;
+        } else {
+            self.reply_pieces = None;
+        }
+    }
+
     /// Parse an AgentConfig from TOML with `[agent]` + optional `[permissions]` sections.
     pub fn from_toml(toml_str: &str) -> Result<Self, AgentError> {
         let file: AgentConfigFile =

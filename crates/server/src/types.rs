@@ -164,6 +164,13 @@ pub struct CreateSessionRequest {
     /// persist each segment as a child Content node in the graph.
     #[serde(default)]
     pub enable_segments: Option<bool>,
+    /// Reply pieces on (`true`) or off (`false`) for this session; omitted means
+    /// `[agent.reply_pieces]` from the server config decides. On asks the model
+    /// for the HTML index page and cuts every reply into `reply_part` /
+    /// `reply_line` nodes, and turns segments off, so it cannot be combined
+    /// with `enable_segments: true`. The choice is kept across server restarts.
+    #[serde(default)]
+    pub enable_reply_pieces: Option<bool>,
     /// When set, restricts context window to only the listed segment types.
     /// Only takes effect when the session has segmented assistant responses.
     /// Example: `["reasoning", "code"]`
@@ -577,6 +584,15 @@ mod tests {
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert!(req.agent.is_none());
         assert!(req.model.is_none());
+    }
+
+    #[test]
+    fn create_session_request_enable_reply_pieces() {
+        let req: CreateSessionRequest =
+            serde_json::from_str(r#"{"enable_reply_pieces": false}"#).unwrap();
+        assert_eq!(req.enable_reply_pieces, Some(false));
+        let req: CreateSessionRequest = serde_json::from_str("{}").unwrap();
+        assert_eq!(req.enable_reply_pieces, None);
     }
 
     #[test]

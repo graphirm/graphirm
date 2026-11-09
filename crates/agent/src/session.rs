@@ -59,6 +59,9 @@ pub struct SessionMetadata {
     /// Fully-resolved workspace path (`workspaces_root/workspace`).
     /// `None` when no workspaces root was provided at restore time.
     pub workspace_path: Option<std::path::PathBuf>,
+    /// `reply_pieces` from the Agent node's metadata: whether the session was
+    /// created with reply pieces. `None` for sessions created before it was recorded.
+    pub reply_pieces: Option<bool>,
 }
 
 impl SessionMetadata {
@@ -77,6 +80,7 @@ impl SessionMetadata {
             status,
             workspace: None,
             workspace_path: None,
+            reply_pieces: None,
         }
     }
 }
@@ -125,6 +129,7 @@ impl Session {
         if let Some(ws) = &config.workspace_name {
             agent_node.metadata["workspace"] = serde_json::json!(ws);
         }
+        agent_node.metadata["reply_pieces"] = serde_json::json!(config.reply_pieces_enabled());
         let id = graph.add_node(agent_node)?;
         Ok(Self {
             id,

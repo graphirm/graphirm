@@ -376,6 +376,17 @@ async fn create_session(
             ..graphirm_agent::config::SegmentConfig::default()
         });
     }
+    match (body.enable_reply_pieces, body.enable_segments) {
+        (Some(true), Some(true)) => {
+            return Err(ServerError::BadRequest(
+                "enable_reply_pieces and enable_segments cannot both be true".to_string(),
+            ));
+        }
+        (Some(enabled), _) => config.set_reply_pieces(enabled),
+        // Asking for segments on a server whose default is reply pieces.
+        (None, Some(true)) => config.set_reply_pieces(false),
+        _ => {}
+    }
     config.segment_filter = body.segment_filter;
     if body.enable_outline == Some(true) {
         config.outline = Some(graphirm_agent::config::OutlineConfig {
@@ -2240,6 +2251,90 @@ mod tests {
         assert_eq!(session.model, "gpt-4o");
         assert_eq!(session.status, SessionStatus::Idle);
         assert!(!session.id.is_empty());
+    }
+
+    async fn create_session_with(state: &AppState, body: &str) -> axum::response::Response {
+        create_router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    /// The created session's config and its Agent node's `reply_pieces` flag.
+    async fn reply_format_of(
+        state: &AppState,
+        response: axum::response::Response,
+    ) -> (AgentConfig, serde_json::Value) {
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let session: SessionResponse = serde_json::from_slice(&body).unwrap();
+        let sessions = state.sessions.read().await;
+        let handle = &sessions[&SessionId::from(session.id.as_str())];
+        let node = state.graph.get_node(&handle.session.id).unwrap();
+        (
+            handle.session.agent_config.clone(),
+            node.metadata["reply_pieces"].clone(),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_create_session_enable_reply_pieces() {
+        let state = test_app_state();
+        let response = create_session_with(&state, r#"{"enable_reply_pieces": true}"#).await;
+        let (config, flag) = reply_format_of(&state, response).await;
+        assert!(config.reply_pieces_enabled());
+        assert!(config.segments.is_none());
+        assert_eq!(flag, serde_json::json!(true));
+
+        let response = create_session_with(&state, r#"{}"#).await;
+        let (config, flag) = reply_format_of(&state, response).await;
+        assert!(!config.reply_pieces_enabled());
+        assert_eq!(flag, serde_json::json!(false));
+    }
+
+    #[tokio::test]
+    async fn test_create_session_reply_pieces_off_or_segments_on_a_pieces_server() {
+        let mut state = test_app_state();
+        state.default_config.set_reply_pieces(true);
+
+        let response = create_session_with(&state, r#"{}"#).await;
+        assert!(
+            reply_format_of(&state, response)
+                .await
+                .0
+                .reply_pieces_enabled()
+        );
+
+        let response = create_session_with(&state, r#"{"enable_reply_pieces": false}"#).await;
+        let (config, flag) = reply_format_of(&state, response).await;
+        assert!(!config.reply_pieces_enabled());
+        assert_eq!(flag, serde_json::json!(false));
+
+        let response = create_session_with(&state, r#"{"enable_segments": true}"#).await;
+        let (config, _) = reply_format_of(&state, response).await;
+        assert!(!config.reply_pieces_enabled());
+        assert!(config.segments.as_ref().is_some_and(|s| s.enabled));
+    }
+
+    #[tokio::test]
+    async fn test_create_session_rejects_reply_pieces_with_segments() {
+        let state = test_app_state();
+        let response = create_session_with(
+            &state,
+            r#"{"enable_reply_pieces": true, "enable_segments": true}"#,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(state.sessions.read().await.is_empty());
     }
 
     #[tokio::test]
