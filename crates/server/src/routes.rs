@@ -482,6 +482,19 @@ async fn create_session(
             .await
             .map_err(|e| ServerError::Internal(e.to_string()))?
             .map_err(ServerError::Agent)?;
+    if explicit_model {
+        // Recorded so a restart restores the model; the Agent node alone cannot tell it from the default.
+        let graph_for_flag = state.graph.clone();
+        let session_id = session.id.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), graphirm_graph::GraphError> {
+            let mut node = graph_for_flag.get_node(&session_id)?;
+            node.metadata["explicit_model"] = serde_json::json!(true);
+            graph_for_flag.update_node(&session_id, node)
+        })
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .map_err(|e| ServerError::Internal(e.to_string()))?;
+    }
 
     // The HITL gate is always attached; auto-approve decides whether it pauses.
     // The request's `auto_approve` wins; when omitted, `[agent] default_auto_approve`
