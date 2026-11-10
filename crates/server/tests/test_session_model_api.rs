@@ -13,7 +13,10 @@ use graphirm_agent::AgentConfig;
 use graphirm_graph::GraphStore;
 use graphirm_llm::MockProvider;
 use graphirm_server::types::{SessionResponse, SseEvent};
-use graphirm_server::{AppState, SessionId, create_router, next_test_rate_limit_shard};
+use graphirm_server::{
+    AppState, SessionId, build_restored_session_handles, create_router, next_test_rate_limit_shard,
+    restore_sessions_from_graph,
+};
 use graphirm_tools::ToolRegistry;
 
 fn routed_state() -> AppState {
@@ -83,4 +86,36 @@ async fn no_model_keeps_the_servers_routing() {
     let config = session_config(&state, r#"{}"#).await;
     assert!(config.model_routing.is_some());
     assert!(config.adaptive_routing.is_some());
+}
+
+/// B-0002: after a restart the session is rebuilt from the graph; it must keep its own model.
+#[tokio::test]
+async fn restored_session_keeps_its_explicit_model_and_stays_unrouted() {
+    let state = routed_state();
+    session_config(
+        &state,
+        r#"{"model": "openrouter/deepseek/deepseek-v4.1-flash"}"#,
+    )
+    .await;
+    session_config(&state, r#"{}"#).await;
+
+    let restored = restore_sessions_from_graph(&state.graph, None)
+        .await
+        .unwrap();
+    let handles =
+        build_restored_session_handles(&state.graph, &state.default_config, None, restored);
+    assert_eq!(handles.len(), 2);
+
+    let (explicit, plain): (Vec<_>, Vec<_>) = handles
+        .values()
+        .map(|handle| &handle.session.agent_config)
+        .partition(|config| config.model == "openrouter/deepseek/deepseek-v4.1-flash");
+    assert_eq!(explicit.len(), 1);
+    assert!(explicit[0].model_routing.is_none());
+    assert!(explicit[0].adaptive_routing.is_none());
+
+    // A session created without a model follows the server's config again.
+    assert_eq!(plain[0].model, state.default_config.model);
+    assert!(plain[0].model_routing.is_some());
+    assert!(plain[0].adaptive_routing.is_some());
 }

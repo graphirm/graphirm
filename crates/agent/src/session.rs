@@ -62,6 +62,9 @@ pub struct SessionMetadata {
     /// `reply_pieces` from the Agent node's metadata: whether the session was
     /// created with reply pieces. `None` for sessions created before it was recorded.
     pub reply_pieces: Option<bool>,
+    /// `explicit_model` from the Agent node's metadata: the session was created with a `model`
+    /// of its own, so routing stays off for it. `None` for sessions created before it was recorded.
+    pub explicit_model: Option<bool>,
 }
 
 impl SessionMetadata {
@@ -81,6 +84,7 @@ impl SessionMetadata {
             workspace: None,
             workspace_path: None,
             reply_pieces: None,
+            explicit_model: None,
         }
     }
 }

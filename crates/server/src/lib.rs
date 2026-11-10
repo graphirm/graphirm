@@ -52,6 +52,12 @@ pub fn build_restored_session_handles(
         if let Some(enabled) = meta.reply_pieces {
             config.set_reply_pieces(enabled);
         }
+        // So does a session that was created with a model of its own (B-0001, B-0002).
+        if meta.explicit_model == Some(true) {
+            config.model = meta.model.clone();
+            config.model_routing = None;
+            config.adaptive_routing = None;
+        }
 
         let hitl = Arc::new(match graphirm_agent::build_judge(&config) {
             Some(judge) => HitlGate::new().with_judge(judge),
