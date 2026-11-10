@@ -363,6 +363,9 @@ async fn create_session(
         .agent
         .clone()
         .unwrap_or_else(|| state.default_config.name.clone());
+    // A model named in the request is the model this session runs on: routing would otherwise
+    // pick a tier model every turn and ignore it (B-0001).
+    let explicit_model = body.model.is_some();
     let mut config = AgentConfig {
         name: agent_name,
         model: body
@@ -370,6 +373,10 @@ async fn create_session(
             .unwrap_or_else(|| state.default_config.model.clone()),
         ..state.default_config.clone()
     };
+    if explicit_model {
+        config.model_routing = None;
+        config.adaptive_routing = None;
+    }
     if body.enable_segments == Some(true) {
         config.segments = Some(graphirm_agent::config::SegmentConfig {
             enabled: true,
@@ -2323,6 +2330,34 @@ mod tests {
         let (config, _) = reply_format_of(&state, response).await;
         assert!(!config.reply_pieces_enabled());
         assert!(config.segments.as_ref().is_some_and(|s| s.enabled));
+    }
+
+    /// B-0001: the shipped config routes every turn (static tiers plus the Jev router), and a
+    /// session created with its own `model` used to run on the routing tiers instead.
+    #[tokio::test]
+    async fn test_create_session_explicit_model_turns_routing_off() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
+        let mut state = test_app_state();
+        state.default_config =
+            AgentConfig::from_file(std::path::Path::new(path)).expect("default.toml");
+        assert!(state.default_config.model_routing.is_some());
+        assert!(state.default_config.adaptive_routing.is_some());
+
+        let response = create_session_with(
+            &state,
+            r#"{"model": "openrouter/deepseek/deepseek-v4.1-flash"}"#,
+        )
+        .await;
+        let (config, _) = reply_format_of(&state, response).await;
+        assert_eq!(config.model, "openrouter/deepseek/deepseek-v4.1-flash");
+        assert!(config.model_routing.is_none());
+        assert!(config.adaptive_routing.is_none());
+
+        // No model in the request: the server's routing stays on.
+        let response = create_session_with(&state, r#"{}"#).await;
+        let (config, _) = reply_format_of(&state, response).await;
+        assert!(config.model_routing.is_some());
+        assert!(config.adaptive_routing.is_some());
     }
 
     #[tokio::test]

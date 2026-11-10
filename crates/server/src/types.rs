@@ -152,7 +152,8 @@ impl std::fmt::Display for SseEventType {
 pub struct CreateSessionRequest {
     /// Optional agent profile name (defaults to `default_config.name`).
     pub agent: Option<String>,
-    /// Optional model override (e.g. `"claude-opus-4-5"`).
+    /// Optional model override (e.g. `"claude-opus-4-5"`). When set, routing is off for this
+    /// session and every turn runs on this model.
     pub model: Option<String>,
     /// When true, skip the HITL approval gate so bash/write/edit run without
     /// human confirmation. When omitted, falls back to `[agent] default_auto_approve`
