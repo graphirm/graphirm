@@ -19,14 +19,9 @@ pub async fn run(model: String, db_path: &Path) -> Result<(), GraphirmError> {
         db_path.to_str().unwrap_or("graph.db"),
     )?);
 
-    // The TUI runs on `AgentConfig::default()` (it has never read
-    // `config/default.toml`; see backlog). Only `[agent.pi]` is lifted from the
-    // file so `delegate_pi` can be enabled here without changing anything else.
-    let config = graphirm_agent::AgentConfig {
-        model: model_name.to_string(),
-        pi: super::load_agent_config().pi,
-        ..graphirm_agent::AgentConfig::default()
-    };
+    // The TUI reads the config file (like `graphirm serve`) and only the
+    // model name comes from the CLI argument.
+    let config = super::tui_agent_config(super::load_agent_config(), model_name);
     let mut registry = super::build_tool_registry();
     graphirm_agent::register_pi_delegate(&mut registry, &config).await;
     let tools = Arc::new(registry);
