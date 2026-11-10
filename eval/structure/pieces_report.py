@@ -17,7 +17,7 @@ from collections import defaultdict
 
 SOURCES = ("html", "markdown", "over_cap", "failed", "none")
 TSV_COLUMNS = (
-    "session", "model", "status", "workspace", "turns", "user_msgs", "input_tokens", "output_tokens",
+    "session", "model", "ran", "status", "workspace", "turns", "user_msgs", "input_tokens", "output_tokens",
     "cost_usd", "replies_with_text", "html", "markdown", "over_cap", "failed", "none",
     "cite_ok", "cite_bad",
 )
@@ -32,7 +32,7 @@ def sessions_in(path):
         agents[nid] = {"model": data.get("model", ""), "status": data.get("status", "")}
     for nid, meta in con.execute("SELECT id, metadata FROM nodes WHERE node_type = 'agent'"):
         agents[nid]["workspace"] = json.loads(meta).get("workspace", "")
-    sessions = defaultdict(lambda: defaultdict(int))
+    sessions = defaultdict(lambda: defaultdict(int, ran=defaultdict(int)))
     rows = con.execute(
         "SELECT json_extract(metadata,'$.session_id'), data, metadata FROM nodes "
         "WHERE node_type = 'interaction'"
@@ -46,6 +46,8 @@ def sessions_in(path):
         if data.get("role") != "assistant":
             continue
         s["turns"] += 1
+        if meta.get("model_selected"):
+            s["ran"][meta["model_selected"]] += 1
         s["input_tokens"] += meta.get("usage_input") or 0
         s["output_tokens"] += meta.get("usage_output") or 0
         s["cost_micro"] += meta.get("usage_cost_micro") or 0
@@ -69,10 +71,15 @@ def collect(paths, prefix=None):
     return sorted(out, key=lambda r: (str(r[0]), str(r[1])))
 
 
+def ran(s):
+    """The model(s) the replies actually ran on: routing can differ from the agent node's model."""
+    return ",".join(sorted(s["ran"])) or "unknown"
+
+
 def tsv_row(session, s):
     info = s["info"]
     values = (
-        session, info.get("model", ""), info.get("status", ""), info.get("workspace", ""),
+        session, info.get("model", ""), ran(s), info.get("status", ""), info.get("workspace", ""),
         s["turns"], s["user_msgs"], s["input_tokens"], s["output_tokens"],
         f"{s['cost_micro'] / 1e6:.4f}" if s["costed"] else "", s["replies"], *(s[k] for k in SOURCES),
         s["resolved"], s["unresolved"],
@@ -93,7 +100,7 @@ def table(found):
               + " ".join(f"{s[k]:>8}" for k in SOURCES)
               + f" {s['resolved']:>8} {s['unresolved']:>8} {cost(s):>8}")
         for k, v in s.items():
-            if k != "info":
+            if k not in ("info", "ran"):
                 total[k] += v
     n = total["replies"]
     cites = total["resolved"] + total["unresolved"]

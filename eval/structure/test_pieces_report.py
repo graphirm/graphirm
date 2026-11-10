@@ -30,7 +30,7 @@ def make_db(path):
         ("a1", "interaction", {"role": "assistant", "content": ""},
          {"session_id": "s1", "usage_input": 100, "usage_output": 10, "usage_cost_micro": 500}),
         ("a2", "interaction", {"role": "assistant", "content": "<p>done</p>"},
-         {"session_id": "s1", "usage_input": 200, "usage_output": 20, "usage_cost_micro": 1500,
+         {"session_id": "s1", "model_selected": "google/gemini", "usage_input": 200, "usage_output": 20, "usage_cost_micro": 1500,
           "pieces_source": "html", "citations_resolved": 2, "citations_unresolved": 1}),
         ("a3", "interaction", {"role": "assistant", "content": "plain"},
          {"session_id": "s1", "pieces_source": "failed"}),
@@ -59,6 +59,7 @@ class PiecesReportTest(unittest.TestCase):
         self.assertEqual((s["input_tokens"], s["output_tokens"], s["cost_micro"]), (300, 30, 2000))
         self.assertEqual((s["html"], s["failed"], s["resolved"], s["unresolved"]), (1, 1, 2, 1))
         self.assertEqual(s["info"], {"model": "deepseek/x", "status": "completed", "workspace": "t-1"})
+        self.assertEqual(dict(s["ran"]), {"google/gemini": 1})
         self.assertEqual(o["info"], {})  # no agent node: no model, and nothing crashes
 
     def test_no_recorded_cost_is_blank_not_zero(self):
@@ -78,7 +79,7 @@ class PiecesReportTest(unittest.TestCase):
         header, row = out.getvalue().splitlines()
         self.assertEqual(header.split("\t"), list(pr.TSV_COLUMNS))
         cells = dict(zip(pr.TSV_COLUMNS, row.split("\t")))
-        self.assertEqual(cells["model"], "deepseek/x")
+        self.assertEqual((cells["model"], cells["ran"]), ("deepseek/x", "google/gemini"))
         self.assertEqual(cells["cost_usd"], "0.0020")
         self.assertEqual((cells["html"], cells["failed"], cells["cite_ok"]), ("1", "1", "2"))
 
