@@ -28,8 +28,16 @@ const AGENT_NODES_CACHE_TTL: Duration = Duration::from_secs(30);
 
 impl GraphStore {
     pub fn open(path: &str) -> Result<Self, GraphError> {
+        // Set WAL journal mode once on a single connection before the pool is built,
+        // avoiding concurrent PRAGMA journal_mode contention across new pool connections.
+        {
+            let conn = rusqlite::Connection::open(path)?;
+            conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        }
+
         let manager = SqliteConnectionManager::file(path).with_init(|conn| {
-            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+            conn.busy_timeout(Duration::from_secs(5))?;
+            conn.execute_batch("PRAGMA foreign_keys=ON;")?;
             Ok(())
         });
         let pool = Pool::builder()
@@ -2431,6 +2439,19 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn open_file_sets_wal_journal_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("new_wal_test.db");
+        let store = GraphStore::open(db_path.to_str().unwrap()).unwrap();
+        let conn = store.pool.get().unwrap();
+
+        let journal_mode: String = conn
+            .query_row("PRAGMA journal_mode;", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(journal_mode.to_lowercase(), "wal");
     }
 
     use crate::nodes::{TaskData, TaskStatus};
