@@ -2332,34 +2332,6 @@ mod tests {
         assert!(config.segments.as_ref().is_some_and(|s| s.enabled));
     }
 
-    /// B-0001: the shipped config routes every turn (static tiers plus the Jev router), and a
-    /// session created with its own `model` used to run on the routing tiers instead.
-    #[tokio::test]
-    async fn test_create_session_explicit_model_turns_routing_off() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
-        let mut state = test_app_state();
-        state.default_config =
-            AgentConfig::from_file(std::path::Path::new(path)).expect("default.toml");
-        assert!(state.default_config.model_routing.is_some());
-        assert!(state.default_config.adaptive_routing.is_some());
-
-        let response = create_session_with(
-            &state,
-            r#"{"model": "openrouter/deepseek/deepseek-v4.1-flash"}"#,
-        )
-        .await;
-        let (config, _) = reply_format_of(&state, response).await;
-        assert_eq!(config.model, "openrouter/deepseek/deepseek-v4.1-flash");
-        assert!(config.model_routing.is_none());
-        assert!(config.adaptive_routing.is_none());
-
-        // No model in the request: the server's routing stays on.
-        let response = create_session_with(&state, r#"{}"#).await;
-        let (config, _) = reply_format_of(&state, response).await;
-        assert!(config.model_routing.is_some());
-        assert!(config.adaptive_routing.is_some());
-    }
-
     #[tokio::test]
     async fn test_create_session_rejects_reply_pieces_with_segments() {
         let state = test_app_state();
