@@ -59,7 +59,8 @@ impl Tool for GraphQueryTool {
 
 • parts — Read an assistant reply's pieces (numbered parts and lines).
   Without part: list the reply's parts with kind, heading and first line.
-  With part (its number, 1-based): that part's kind, heading and every line.
+  With part (its number, 1-based): that part's kind, heading, every line, and the later lines that cite it.
+  To cite a part in a reply, copy its address from this output: part:<part id> or reply:<reply id>#<part number>.
   node_id is the reply's Interaction id; omit it to read the latest reply in this session that has parts.
 
 • stats — Report overall graph statistics: total nodes, total edges, and breakdown by node type.
@@ -1126,6 +1127,27 @@ async fn execute_parts(
                         .map(|s| format!(" (src: {s})"))
                         .unwrap_or_default();
                     lines.push(format!("{n}.0.{} {}{src}", k + 1, content_body(line)));
+                }
+                // Lines of later replies that cite this part (ADR-0002).
+                let mut citing = Vec::new();
+                for edge in graph.edges_for_node(&part.id)? {
+                    if edge.edge_type == EdgeType::DerivedFrom
+                        && edge.target == part.id
+                        && edge.metadata["citation"] == true
+                    {
+                        citing.push(graph.get_node(&edge.source)?);
+                    }
+                }
+                if !citing.is_empty() {
+                    citing.sort_by_key(|line| line.created_at);
+                    lines.push(format!("cited by {} lines:", citing.len()));
+                    for line in &citing {
+                        lines.push(format!(
+                            "  {} [{}]",
+                            truncate(content_body(line), 80),
+                            line.id
+                        ));
+                    }
                 }
             }
         }
@@ -2449,6 +2471,38 @@ mod tests {
         );
         assert!(text.contains("1.0.2 The list is even."), "{text}");
         assert!(!text.contains("return (a + b)"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn parts_lists_the_lines_that_cite_a_part() {
+        let ctx = make_test_context();
+        let reply_id = seed_reply_with_parts(&ctx);
+        let part = content_children(&ctx.graph, &reply_id, "reply_part", "order")
+            .unwrap()
+            .remove(0);
+        let mut line = GraphNode::new(NodeType::Content(ContentData {
+            content_type: "reply_line".to_string(),
+            path: None,
+            body: "Same cause as before.".to_string(),
+            language: None,
+        }));
+        line.metadata = json!({ "position": 1 });
+        let line_id = ctx.graph.add_node(line).unwrap();
+        ctx.graph
+            .add_edge(
+                GraphEdge::new(EdgeType::DerivedFrom, line_id.clone(), part.id.clone())
+                    .with_metadata(json!({ "citation": true })),
+            )
+            .unwrap();
+
+        let out = parts(&ctx, json!({ "node_id": reply_id.0, "part": 1 })).await;
+        assert!(out.content.contains("cited by 1 lines:"), "{}", out.content);
+        assert!(
+            out.content
+                .contains(&format!("Same cause as before. [{line_id}]"))
+        );
+        let other = parts(&ctx, json!({ "node_id": reply_id.0, "part": 2 })).await;
+        assert!(!other.content.contains("cited by"));
     }
 
     #[tokio::test]
