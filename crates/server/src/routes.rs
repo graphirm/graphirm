@@ -363,6 +363,9 @@ async fn create_session(
         .agent
         .clone()
         .unwrap_or_else(|| state.default_config.name.clone());
+    // A model named in the request is the model this session runs on: routing would otherwise
+    // pick a tier model every turn and ignore it (B-0001).
+    let explicit_model = body.model.is_some();
     let mut config = AgentConfig {
         name: agent_name,
         model: body
@@ -370,6 +373,10 @@ async fn create_session(
             .unwrap_or_else(|| state.default_config.model.clone()),
         ..state.default_config.clone()
     };
+    if explicit_model {
+        config.model_routing = None;
+        config.adaptive_routing = None;
+    }
     if body.enable_segments == Some(true) {
         config.segments = Some(graphirm_agent::config::SegmentConfig {
             enabled: true,
