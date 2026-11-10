@@ -3,9 +3,9 @@
 //! Shared by Pi replies (`pi_delegate::graph`) and Graphirm's own loop
 //! (`[agent.reply_pieces]`). The cutting lives in `pi_delegate::pieces`.
 
-use graphirm_graph::GraphStore;
 use graphirm_graph::edges::{EdgeType, GraphEdge};
 use graphirm_graph::nodes::{ContentData, GraphNode, NodeId, NodeType};
+use graphirm_graph::{Direction, GraphStore};
 use serde_json::json;
 
 use crate::error::AgentError;
@@ -39,6 +39,7 @@ Copy this shape and replace the content with your own:
 <h2>3.0.0 Test run after the fix</h2>
 <p data-n="3.0.1" data-src="tool:bash">3.0.1 Ran pytest; 2 of 2 tests passed.</p>
 </section>
+To cite a part of an earlier reply, set data-src on the citing line to part:<part id> or reply:<reply id>#<part number>, with the ids exactly as graph_query mode "parts" prints them. Never guess an id.
 "##;
 
 /// The reply format Graphirm's own loop asks for: Pi's HTML index contract
@@ -82,7 +83,7 @@ pub fn attach_html_pieces(
     let Ok(pieces) = cut_html_index(text) else {
         return Ok(());
     };
-    write_pieces(graph, parent, text, &pieces, None)
+    write_pieces(graph, parent, text, &pieces, None).map(|_| ())
 }
 
 /// Cut any reply with text: the HTML index when the page is one, otherwise the
@@ -107,28 +108,93 @@ pub fn record_reply_pieces(
             (segment.pieces, source)
         }
     };
-    if let Err(e) = write_pieces(graph, parent, text, &pieces, Some(source)) {
-        // Some parts may be written; say so on the reply instead of leaving it unstamped.
-        let mut node = graph.get_node(parent)?;
-        node.metadata["pieces_source"] = json!("failed");
-        graph.update_node(parent, node)?;
-        return Err(e);
-    }
+    let citations = match write_pieces(graph, parent, text, &pieces, Some(source)) {
+        Ok(citations) => citations,
+        Err(e) => {
+            // Some parts may be written; say so on the reply instead of leaving it unstamped.
+            let mut node = graph.get_node(parent)?;
+            node.metadata["pieces_source"] = json!("failed");
+            graph.update_node(parent, node)?;
+            return Err(e);
+        }
+    };
     let mut node = graph.get_node(parent)?;
     node.metadata["pieces_source"] = json!(source.as_str());
     node.metadata["pieces_count"] = json!(pieces.len());
+    node.metadata["citations_resolved"] = json!(citations.resolved);
+    node.metadata["citations_unresolved"] = json!(citations.unresolved);
     graph.update_node(parent, node)?;
     Ok(source)
 }
 
-/// `source` is `None` for Pi replies, which keep their original part metadata.
+/// How many of a reply's citations found their part (ADR-0002).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct CitationCounts {
+    resolved: usize,
+    unresolved: usize,
+}
+
+/// What a line's `data-src` says about an earlier reply part.
+enum Citation {
+    /// Not a citation: no `data-src`, or one like `file:…` / `tool:…`.
+    None,
+    Resolved(NodeId),
+    Unresolved,
+}
+
+fn is_reply_part(node: &GraphNode) -> bool {
+    matches!(&node.node_type, NodeType::Content(c) if c.content_type == "reply_part")
+}
+
+/// `part:<part id>` or `reply:<reply id>#<N>`, checked against the graph: the
+/// target must exist and be a `reply_part`.
+fn resolve_citation(graph: &GraphStore, src: Option<&str>) -> Result<Citation, AgentError> {
+    let Some(src) = src.map(str::trim) else {
+        return Ok(Citation::None);
+    };
+    let found = if let Some(id) = src.strip_prefix("part:") {
+        graph
+            .get_node(&NodeId(id.trim().to_string()))
+            .ok()
+            .filter(is_reply_part)
+            .map(|node| node.id)
+    } else if let Some(rest) = src.strip_prefix("reply:") {
+        let number = rest
+            .rsplit_once('#')
+            .and_then(|(id, n)| Some((id.trim(), n.trim().parse::<usize>().ok()?)));
+        match number {
+            Some((reply_id, n)) if n >= 1 => {
+                let reply_id = NodeId(reply_id.to_string());
+                if graph.get_node(&reply_id).is_err() {
+                    None
+                } else {
+                    let mut parts: Vec<GraphNode> = graph
+                        .neighbors(&reply_id, Some(EdgeType::Contains), Direction::Outgoing)?
+                        .into_iter()
+                        .filter(is_reply_part)
+                        .collect();
+                    parts.sort_by_key(|p| p.metadata["order"].as_u64().unwrap_or(0));
+                    parts.into_iter().nth(n - 1).map(|node| node.id)
+                }
+            }
+            _ => None,
+        }
+    } else {
+        return Ok(Citation::None);
+    };
+    Ok(found.map_or(Citation::Unresolved, Citation::Resolved))
+}
+
+/// `source` is `None` for Pi replies, which keep their original part metadata
+/// and are not checked for citations (Pi cannot look a part id up).
 fn write_pieces(
     graph: &GraphStore,
     parent: &NodeId,
     text: &str,
     pieces: &[Piece],
     source: Option<PiecesSource>,
-) -> Result<(), AgentError> {
+) -> Result<CitationCounts, AgentError> {
+    let mut citations = CitationCounts::default();
     for piece in pieces {
         let part_id = graph.add_node(part_node(text, piece, source))?;
         graph.add_edge(GraphEdge::new(
@@ -156,11 +222,41 @@ fn write_pieces(
             &piece.items
         };
         for item in items {
-            let line_id = graph.add_node(line_node(item))?;
-            graph.add_edge(GraphEdge::new(EdgeType::Contains, part_id.clone(), line_id))?;
+            let citation = match source {
+                Some(_) => resolve_citation(graph, item.src.as_deref())?,
+                None => Citation::None,
+            };
+            let mut line = line_node(item);
+            if matches!(citation, Citation::Unresolved) {
+                line.metadata["citation_unresolved"] = json!(true);
+            }
+            let line_id = graph.add_node(line)?;
+            graph.add_edge(GraphEdge::new(
+                EdgeType::Contains,
+                part_id.clone(),
+                line_id.clone(),
+            ))?;
+            match citation {
+                Citation::Resolved(cited) => {
+                    graph.add_edge(
+                        GraphEdge::new(EdgeType::DerivedFrom, line_id, cited)
+                            .with_metadata(json!({ "citation": true, "src": item.src })),
+                    )?;
+                    citations.resolved += 1;
+                }
+                Citation::Unresolved => {
+                    tracing::warn!(
+                        reply = %parent,
+                        src = item.src.as_deref().unwrap_or(""),
+                        "Reply line cites a part that does not exist; not linked"
+                    );
+                    citations.unresolved += 1;
+                }
+                Citation::None => {}
+            }
         }
     }
-    Ok(())
+    Ok(citations)
 }
 
 fn part_node(text: &str, piece: &Piece, source: Option<PiecesSource>) -> GraphNode {
@@ -224,7 +320,6 @@ fn element_id(slice: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphirm_graph::Direction;
     use graphirm_graph::nodes::InteractionData;
 
     const HTML: &str = r##"<nav id="index"><ul><li><a href="#a">1.0.0 [result] Ran the tests</a></li></ul></nav>
@@ -316,6 +411,99 @@ mod tests {
         let parts = children(&graph, &id);
         assert_eq!(parts.len(), 1);
         assert_eq!(parts[0].metadata["kind"], "statement");
+    }
+
+    /// A one-line statement page whose line has the given `data-src`.
+    fn citing_page(src: &str) -> String {
+        format!(
+            r##"<nav id="index"><ul><li><a href="#b">1.0.0 [statement] What failed</a></li></ul></nav>
+<section id="b" class="statement"><h2>1.0.0 What failed</h2><p data-n="1.0.1" data-src="{src}">1.0.1 The same 3 tests.</p></section>"##
+        )
+    }
+
+    /// Records `citing_page(src)` as a new reply; returns the reply and its one line.
+    fn cite(graph: &GraphStore, src: &str) -> (GraphNode, GraphNode) {
+        let page = citing_page(src);
+        let id = reply(graph, &page);
+        assert_eq!(
+            record_reply_pieces(graph, &id, &page, false).unwrap(),
+            PiecesSource::Html
+        );
+        let part = children(graph, &id).remove(0);
+        let line = children(graph, &part.id).remove(0);
+        (graph.get_node(&id).unwrap(), line)
+    }
+
+    fn citation_edges(graph: &GraphStore, line: &NodeId) -> Vec<GraphEdge> {
+        graph
+            .edges_for_node(line)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.edge_type == EdgeType::DerivedFrom)
+            .collect()
+    }
+
+    #[test]
+    fn a_citation_links_the_line_to_the_cited_part() {
+        let graph = GraphStore::open_memory().unwrap();
+        let earlier = reply(&graph, HTML);
+        record_reply_pieces(&graph, &earlier, HTML, false).unwrap();
+        let cited = children(&graph, &earlier).remove(0);
+
+        for src in [format!("part:{}", cited.id), format!("reply:{earlier}#1")] {
+            let (node, line) = cite(&graph, &src);
+            let edges = citation_edges(&graph, &line.id);
+            assert_eq!(edges.len(), 1, "{src}");
+            assert_eq!(edges[0].source, line.id);
+            assert_eq!(edges[0].target, cited.id);
+            assert_eq!(edges[0].metadata["citation"], true);
+            assert_eq!(edges[0].metadata["src"], src.as_str());
+            assert!(line.metadata.get("citation_unresolved").is_none());
+            assert_eq!(node.metadata["citations_resolved"], 1);
+            assert_eq!(node.metadata["citations_unresolved"], 0);
+        }
+    }
+
+    #[test]
+    fn an_unknown_citation_target_is_reported_not_linked() {
+        let graph = GraphStore::open_memory().unwrap();
+        let earlier = reply(&graph, HTML);
+        record_reply_pieces(&graph, &earlier, HTML, false).unwrap();
+
+        // No such node, a node that is not a part, a part number the reply lacks, no number.
+        for src in [
+            "part:no-such-node".to_string(),
+            format!("part:{earlier}"),
+            format!("reply:{earlier}#2"),
+            format!("reply:{earlier}"),
+        ] {
+            let (node, line) = cite(&graph, &src);
+            assert!(citation_edges(&graph, &line.id).is_empty(), "{src}");
+            assert_eq!(line.metadata["citation_unresolved"], true, "{src}");
+            assert_eq!(node.metadata["citations_resolved"], 0);
+            assert_eq!(node.metadata["citations_unresolved"], 1);
+        }
+    }
+
+    #[test]
+    fn other_sources_are_not_citations() {
+        let graph = GraphStore::open_memory().unwrap();
+        let (node, line) = cite(&graph, "file:stats.py");
+        assert!(citation_edges(&graph, &line.id).is_empty());
+        assert!(line.metadata.get("citation_unresolved").is_none());
+        assert_eq!(node.metadata["citations_resolved"], 0);
+        assert_eq!(node.metadata["citations_unresolved"], 0);
+    }
+
+    #[test]
+    fn pi_replies_are_not_checked_for_citations() {
+        let graph = GraphStore::open_memory().unwrap();
+        let page = citing_page("part:no-such-node");
+        let id = reply(&graph, &page);
+        attach_html_pieces(&graph, &id, &page).unwrap();
+        let part = children(&graph, &id).remove(0);
+        let line = children(&graph, &part.id).remove(0);
+        assert!(line.metadata.get("citation_unresolved").is_none());
     }
 
     #[test]

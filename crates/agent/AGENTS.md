@@ -25,7 +25,7 @@ and session management. Everything in graphirm that involves deciding what to do
 | `event.rs` | `AgentEvent`, `EventBus` — SSE streaming from agent loop to server/TUI |
 | `error.rs` | `AgentError` enum |
 | `knowledge/extraction.rs` | Entity extraction — LLM, GLiNER2 ONNX, or hybrid; `ExtractionBackend` enum |
-| `knowledge/reply_pieces.rs` | `record_reply_pieces` — `[agent.reply_pieces]`: cut every reply (HTML index via `pi_delegate::pieces::cut_html_index`, else the markdown parser) into `reply_part` / `reply_line` nodes, stamp `pieces_source`; `attach_html_pieces` for Pi replies |
+| `knowledge/reply_pieces.rs` | `record_reply_pieces` — `[agent.reply_pieces]`: cut every reply (HTML index via `pi_delegate::pieces::cut_html_index`, else the markdown parser) into `reply_part` / `reply_line` nodes, stamp `pieces_source`; a line whose `data-src` is `part:<id>` or `reply:<id>#<N>` gets a `DerivedFrom` edge to the cited part (`citation: true`), unknown targets are marked `citation_unresolved` and counted on the reply; `attach_html_pieces` for Pi replies |
 | `knowledge/segments.rs` | Structured response segmentation — parse JSON segments or GLiNER2 fallback (`try_gliner2_fallback`), persist as child `Content` nodes via `Contains` edges |
 | `knowledge/memory.rs` | Cross-session memory — HNSW vector search, inject past knowledge into context |
 | `knowledge/local_extraction.rs` | `OnnxExtractor` — GLiNER2 ONNX tokenisation + inference (feature-gated); `get_or_init_onnx_extractor` caches sessions process-wide by `model_dir` |
