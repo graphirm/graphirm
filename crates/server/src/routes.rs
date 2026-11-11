@@ -366,11 +366,17 @@ async fn create_session(
     // A model named in the request is the model this session runs on: routing would otherwise
     // pick a tier model every turn and ignore it (B-0001).
     let explicit_model = body.model.is_some();
+    let model = body
+        .model
+        .unwrap_or_else(|| state.default_config.model.clone());
+    let prefix = format!("{}/", state.llm.provider_name());
+    let model = model
+        .strip_prefix(&prefix)
+        .map(|s| s.to_string())
+        .unwrap_or(model);
     let mut config = AgentConfig {
         name: agent_name,
-        model: body
-            .model
-            .unwrap_or_else(|| state.default_config.model.clone()),
+        model,
         ..state.default_config.clone()
     };
     if explicit_model {
@@ -2380,6 +2386,81 @@ mod tests {
             .unwrap();
         let session: SessionResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(session.agent, "graphirm");
+    }
+
+    #[tokio::test]
+    async fn test_create_session_strips_provider_prefix() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"model": "mock/gpt-4o"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let session: SessionResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(session.model, "gpt-4o");
+    }
+
+    #[tokio::test]
+    async fn test_create_session_keeps_model_without_prefix() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"model": "gpt-4o"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let session: SessionResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(session.model, "gpt-4o");
+    }
+
+    #[tokio::test]
+    async fn test_create_session_keeps_deepseek_x_without_prefix() {
+        let state = test_app_state();
+        let app = create_router(state.clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"model": "deepseek/x"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let session: SessionResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(session.model, "deepseek/x");
     }
 
     #[tokio::test]

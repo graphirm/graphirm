@@ -749,3 +749,32 @@ async fn test_session_export_not_found() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+/// B-0003: a model named with the server's own provider prefix runs as the bare model name.
+#[tokio::test]
+async fn create_session_strips_the_provider_prefix_from_the_model() {
+    for (requested, expected) in [
+        ("mock/gpt-4o", "gpt-4o"),
+        ("gpt-4o", "gpt-4o"),
+        ("deepseek/x", "deepseek/x"),
+    ] {
+        let app = create_router(test_app_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(r#"{{"model": "{requested}"}}"#)))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let session: SessionResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(session.model, expected, "requested {requested}");
+    }
+}
