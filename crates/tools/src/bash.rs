@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use graphirm_graph::edges::EdgeType;
 use graphirm_graph::nodes::{ContentData, GraphNode, NodeType};
 use serde_json::json;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
@@ -10,6 +12,71 @@ use crate::process::kill_group_and_reap;
 use crate::{Tool, ToolContext, ToolError, ToolOutput};
 
 pub struct BashTool;
+
+/// Metadata for a file at a point in time.
+#[derive(Clone, Debug)]
+struct FileEntry {
+    size: u64,
+    mtime: SystemTime,
+}
+
+/// Snapshot the filesystem under `dir`, skipping well-known build/cache dirs.
+/// Returns a map of relative paths to their metadata.
+fn snapshot_working_dir(dir: &std::path::Path) -> HashMap<PathBuf, FileEntry> {
+    let mut map = HashMap::new();
+    let skip_dirs: &[&str] = &[".git", "target", "node_modules"];
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let rel = path.strip_prefix(dir).unwrap_or(&path).to_path_buf();
+            // Skip ignored directories
+            if rel.components().any(|c| {
+                if let std::path::Component::Normal(s) = &c {
+                    skip_dirs.contains(&s.to_str().unwrap_or(""))
+                } else {
+                    false
+                }
+            }) {
+                continue;
+            }
+            if let Ok(meta) = entry.metadata()
+                && meta.is_file()
+            {
+                map.insert(rel, FileEntry {
+                    size: meta.len(),
+                    mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                });
+            }
+        }
+    }
+    map
+}
+
+/// Compute which paths changed between two snapshots.
+/// Returns paths that are new, deleted, or whose size or mtime differs.
+fn changed_files(
+    before: &HashMap<PathBuf, FileEntry>,
+    after: &HashMap<PathBuf, FileEntry>,
+) -> Vec<PathBuf> {
+    let mut changed = Vec::new();
+    for (path, entry) in after.iter() {
+        match before.get(path) {
+            None => changed.push(path.clone()),           // new file
+            Some(old) if old.size != entry.size || old.mtime != entry.mtime => {
+                changed.push(path.clone());               // modified
+            }
+            _ => {}
+        }
+    }
+    for path in before.keys() {
+        if !after.contains_key(path) {
+            changed.push(path.clone());                   // deleted
+        }
+    }
+    changed.sort();
+    changed.dedup();
+    changed
+}
 
 impl BashTool {
     pub fn new() -> Self {
@@ -100,6 +167,9 @@ impl Tool for BashTool {
         #[cfg(unix)]
         cmd.process_group(0);
 
+        // Snapshot files before execution
+        let before_snapshot = snapshot_working_dir(&working_dir);
+
         let mut child = cmd
             .spawn()
             .map_err(|e| ToolError::ExecutionFailed(format!("failed to spawn bash: {e}")))?;
@@ -144,6 +214,20 @@ impl Tool for BashTool {
         } else {
             format!("{stdout}\nstderr:\n{stderr}")
         };
+
+        // Record Modifies edges for files that changed
+        let after_snapshot = snapshot_working_dir(&working_dir);
+        let changed = changed_files(&before_snapshot, &after_snapshot);
+        for rel_path in &changed {
+            let full_path = working_dir.join(rel_path);
+            let node = GraphNode::new(NodeType::Content(ContentData {
+                content_type: "file".to_string(),
+                path: Some(full_path.to_string_lossy().to_string()),
+                body: String::new(),
+                language: None,
+            }));
+            ctx.record_content_node(node, EdgeType::Modifies).await?;
+        }
 
         let node = GraphNode::new(NodeType::Content(ContentData {
             content_type: "command_output".to_string(),
@@ -490,5 +574,50 @@ mod tests {
             .unwrap();
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("eof"), "{}", out.content);
+    }
+
+    /// Helper: count Modifies edges from the interaction node in the graph.
+    fn count_modifies_edges(ctx: &ToolContext) -> usize {
+        ctx.graph
+            .edges_for_node(&ctx.interaction_id)
+            .unwrap()
+            .iter()
+            .filter(|e| e.edge_type == EdgeType::Modifies)
+            .count()
+    }
+
+    #[tokio::test]
+    async fn bash_records_modifies_edge_for_new_file() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx_with_dir(&dir);
+        let tool = BashTool::new();
+        tool.execute(json!({"command": "echo x > f"}), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(count_modifies_edges(&ctx), 1);
+    }
+
+    #[tokio::test]
+    async fn bash_records_modifies_edge_for_sed_inplace() {
+        let dir = TempDir::new().unwrap();
+        let f = dir.path().join("existing.txt");
+        std::fs::write(&f, "hello").unwrap();
+        let ctx = make_ctx_with_dir(&dir);
+        let tool = BashTool::new();
+        tool.execute(json!({"command": "sed -i 's/hello/world/' existing.txt"}), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(count_modifies_edges(&ctx), 1);
+    }
+
+    #[tokio::test]
+    async fn bash_records_no_modifies_edge_for_readonly_command() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx_with_dir(&dir);
+        let tool = BashTool::new();
+        tool.execute(json!({"command": "echo hello"}), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(count_modifies_edges(&ctx), 0);
     }
 }
