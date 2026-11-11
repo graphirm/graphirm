@@ -25,31 +25,45 @@ struct FileEntry {
 fn snapshot_working_dir(dir: &std::path::Path) -> HashMap<PathBuf, FileEntry> {
     let mut map = HashMap::new();
     let skip_dirs: &[&str] = &[".git", "target", "node_modules"];
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let rel = path.strip_prefix(dir).unwrap_or(&path).to_path_buf();
-            // Skip ignored directories
-            if rel.components().any(|c| {
-                if let std::path::Component::Normal(s) = &c {
-                    skip_dirs.contains(&s.to_str().unwrap_or(""))
-                } else {
-                    false
-                }
-            }) {
-                continue;
-            }
-            if let Ok(meta) = entry.metadata()
-                && meta.is_file()
+    snapshot_walk(dir, dir, &mut map, skip_dirs);
+    map
+}
+
+/// Recursive helper: walk a directory, recording files and descending into
+/// subdirectories whose name is not in `skip_dirs`.
+fn snapshot_walk(
+    root: &std::path::Path,
+    current: &std::path::Path,
+    map: &mut HashMap<PathBuf, FileEntry>,
+    skip_dirs: &[&str],
+) {
+    let Ok(entries) = std::fs::read_dir(current) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.is_dir() {
+            // Check directory name before descending
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && !skip_dirs.contains(&name)
             {
-                map.insert(rel, FileEntry {
+                snapshot_walk(root, &path, map, skip_dirs);
+            }
+        } else if meta.is_file()
+            && let Ok(rel) = path.strip_prefix(root)
+        {
+            map.insert(
+                rel.to_path_buf(),
+                FileEntry {
                     size: meta.len(),
                     mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-                });
-            }
+                },
+            );
         }
     }
-    map
 }
 
 /// Compute which paths changed between two snapshots.
@@ -61,16 +75,16 @@ fn changed_files(
     let mut changed = Vec::new();
     for (path, entry) in after.iter() {
         match before.get(path) {
-            None => changed.push(path.clone()),           // new file
+            None => changed.push(path.clone()), // new file
             Some(old) if old.size != entry.size || old.mtime != entry.mtime => {
-                changed.push(path.clone());               // modified
+                changed.push(path.clone()); // modified
             }
             _ => {}
         }
     }
     for path in before.keys() {
         if !after.contains_key(path) {
-            changed.push(path.clone());                   // deleted
+            changed.push(path.clone()); // deleted
         }
     }
     changed.sort();
@@ -369,8 +383,9 @@ mod tests {
 
     #[tokio::test]
     async fn bash_creates_graph_node() {
+        let dir = TempDir::new().unwrap();
         let tool = BashTool::new();
-        let ctx = make_test_context();
+        let ctx = make_ctx_with_dir(&dir);
         let out = tool
             .execute(json!({"command": "echo tracked"}), &ctx)
             .await
@@ -598,15 +613,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bash_records_modifies_edge_in_subdirectory() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx_with_dir(&dir);
+        let tool = BashTool::new();
+        tool.execute(
+            json!({"command": "mkdir -p sub/dir && echo x > sub/dir/f"}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+        assert_eq!(count_modifies_edges(&ctx), 1);
+    }
+
+    #[tokio::test]
     async fn bash_records_modifies_edge_for_sed_inplace() {
         let dir = TempDir::new().unwrap();
         let f = dir.path().join("existing.txt");
         std::fs::write(&f, "hello").unwrap();
         let ctx = make_ctx_with_dir(&dir);
         let tool = BashTool::new();
-        tool.execute(json!({"command": "sed -i 's/hello/world/' existing.txt"}), &ctx)
-            .await
-            .unwrap();
+        tool.execute(
+            json!({"command": "sed -i 's/hello/world/' existing.txt"}),
+            &ctx,
+        )
+        .await
+        .unwrap();
         assert_eq!(count_modifies_edges(&ctx), 1);
     }
 
