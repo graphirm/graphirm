@@ -80,6 +80,16 @@ pub fn load_agent_config() -> graphirm_agent::AgentConfig {
     })
 }
 
+/// TUI agent config: take the full file-based config and override only the model
+/// with the CLI-provided value. This is the same pattern `graphirm serve` uses.
+pub fn tui_agent_config(
+    mut base: graphirm_agent::AgentConfig,
+    model_name: &str,
+) -> graphirm_agent::AgentConfig {
+    base.model = model_name.to_string();
+    base
+}
+
 pub fn build_tool_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(graphirm_tools::bash::BashTool));
@@ -184,4 +194,39 @@ pub fn open_store(db_path: &Path) -> Result<graphirm_graph::GraphStore, Graphirm
     Ok(graphirm_graph::GraphStore::open(
         db_path.to_str().unwrap_or("graph.db"),
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tui_agent_config_overrides_model_and_preserves_reply_pieces() {
+        let dir = std::env::temp_dir().join("graphirm-test-tui-config");
+        let _ = std::fs::create_dir_all(&dir);
+        let toml_path = dir.join("test-config.toml");
+        std::fs::write(
+            &toml_path,
+            r#"[agent]
+name = "test"
+model = "openrouter/x/y"
+system_prompt = "test"
+max_turns = 5
+
+[agent.reply_pieces]
+enabled = true
+"#,
+        )
+        .expect("write test config");
+
+        let base = graphirm_agent::AgentConfig::from_file(&toml_path).expect("load test config");
+        let result = tui_agent_config(base, "cli-model");
+
+        assert_eq!(result.model, "cli-model");
+        assert!(result.reply_pieces_enabled());
+
+        // Cleanup
+        let _ = std::fs::remove_file(&toml_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
 }
