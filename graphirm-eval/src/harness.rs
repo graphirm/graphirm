@@ -393,6 +393,14 @@ impl TestHarness {
                     n["node_type"]["content_type"].as_str() == Some(content_type.as_str())
                 }))
             }
+            Verifier::GraphModifiesFile { path_suffix } => {
+                let graph = self.client.get_graph(session_id).await?;
+                Ok(graph_has_bash_modifies_edge(
+                    &graph.nodes,
+                    &graph.edges,
+                    path_suffix,
+                ))
+            }
             Verifier::KnowledgeUniqueNames => {
                 let nodes = self.client.get_knowledge(session_id).await?;
                 let distinct = crate::knowledge_checks::distinct(&nodes);
@@ -455,6 +463,52 @@ impl TestHarness {
     }
 }
 
+/// Pure check: does the graph contain a "modifies" edge from a bash interaction
+/// to a file Content node whose `node_type.path` ends with `path_suffix`?
+fn graph_has_bash_modifies_edge(
+    nodes: &[serde_json::Value],
+    edges: &[serde_json::Value],
+    path_suffix: &str,
+) -> bool {
+    // Build a map: node_id -> node for quick lookup
+    use std::collections::HashMap;
+    let node_map: HashMap<&str, &serde_json::Value> = nodes
+        .iter()
+        .filter_map(|n| n["id"].as_str().map(|id| (id, n)))
+        .collect();
+
+    edges.iter().any(|edge| {
+        // Must be a "modifies" edge
+        if edge["edge_type"].as_str() != Some("modifies") {
+            return false;
+        }
+        let source_id = match edge["source"].as_str() {
+            Some(id) => id,
+            None => return false,
+        };
+        let target_id = match edge["target"].as_str() {
+            Some(id) => id,
+            None => return false,
+        };
+
+        // Source must be a bash interaction
+        let source_ok = node_map
+            .get(source_id)
+            .is_some_and(|node| node["metadata"]["tool_name"].as_str() == Some("bash"));
+        if !source_ok {
+            return false;
+        }
+
+        // Target must be a file Content node whose path ends with path_suffix
+        node_map.get(target_id).is_some_and(|node| {
+            node["node_type"]["content_type"].as_str() == Some("file")
+                && node["node_type"]["path"]
+                    .as_str()
+                    .is_some_and(|p| p.ends_with(path_suffix))
+        })
+    })
+}
+
 fn result_from_harness_err(task_id: &str, err: anyhow::Error) -> TaskResult {
     if err.downcast_ref::<InfrastructureError>().is_some() {
         TaskResult::error(task_id, format!("infrastructure error: {err}"))
@@ -471,7 +525,10 @@ impl Drop for TestHarness {
 
 #[cfg(test)]
 mod tests {
-    use super::{assistant_message_count, eval_host_allowed, is_empty_prompt_timeout};
+    use super::{
+        assistant_message_count, eval_host_allowed, graph_has_bash_modifies_edge,
+        is_empty_prompt_timeout,
+    };
     use crate::task::TaskResult;
 
     #[test]
@@ -501,5 +558,85 @@ mod tests {
         );
         worked.turns_used = 6;
         assert!(!is_empty_prompt_timeout(&worked));
+    }
+
+    #[test]
+    fn graph_modifies_file_bash_edge_passes() {
+        let nodes = vec![
+            serde_json::json!({
+                "id": "interaction-1",
+                "node_type": {"type": "Interaction", "role": "tool"},
+                "metadata": {"tool_name": "bash"}
+            }),
+            serde_json::json!({
+                "id": "content-1",
+                "node_type": {"content_type": "file", "path": "/workspace/notes.txt"}
+            }),
+        ];
+        let edges = vec![serde_json::json!({
+            "edge_type": "modifies",
+            "source": "interaction-1",
+            "target": "content-1"
+        })];
+        assert!(graph_has_bash_modifies_edge(&nodes, &edges, "notes.txt"));
+    }
+
+    #[test]
+    fn graph_modifies_file_wrong_tool_fails() {
+        let nodes = vec![
+            serde_json::json!({
+                "id": "interaction-1",
+                "node_type": {"type": "Interaction", "role": "tool"},
+                "metadata": {"tool_name": "write"}
+            }),
+            serde_json::json!({
+                "id": "content-1",
+                "node_type": {"content_type": "file", "path": "/workspace/notes.txt"}
+            }),
+        ];
+        let edges = vec![serde_json::json!({
+            "edge_type": "modifies",
+            "source": "interaction-1",
+            "target": "content-1"
+        })];
+        assert!(!graph_has_bash_modifies_edge(&nodes, &edges, "notes.txt"));
+    }
+
+    #[test]
+    fn graph_modifies_file_no_edge_fails() {
+        let nodes = vec![
+            serde_json::json!({
+                "id": "interaction-1",
+                "node_type": {"type": "Interaction", "role": "tool"},
+                "metadata": {"tool_name": "bash"}
+            }),
+            serde_json::json!({
+                "id": "content-1",
+                "node_type": {"content_type": "file", "path": "/workspace/notes.txt"}
+            }),
+        ];
+        let edges: Vec<serde_json::Value> = vec![];
+        assert!(!graph_has_bash_modifies_edge(&nodes, &edges, "notes.txt"));
+    }
+
+    #[test]
+    fn graph_modifies_file_wrong_suffix_fails() {
+        let nodes = vec![
+            serde_json::json!({
+                "id": "interaction-1",
+                "node_type": {"type": "Interaction", "role": "tool"},
+                "metadata": {"tool_name": "bash"}
+            }),
+            serde_json::json!({
+                "id": "content-1",
+                "node_type": {"content_type": "file", "path": "/workspace/other.txt"}
+            }),
+        ];
+        let edges = vec![serde_json::json!({
+            "edge_type": "modifies",
+            "source": "interaction-1",
+            "target": "content-1"
+        })];
+        assert!(!graph_has_bash_modifies_edge(&nodes, &edges, "notes.txt"));
     }
 }
