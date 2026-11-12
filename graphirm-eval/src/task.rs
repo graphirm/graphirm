@@ -67,6 +67,10 @@ pub enum Verifier {
     /// GET /api/graph/{session} — pass if at least one Content node exists
     /// with `node_type.content_type` matching the given string.
     GraphContainsContentType { content_type: String },
+    /// GET /api/graph/{session} — pass when the graph has a "modifies" edge
+    /// to a file Content node whose `path` ends with `path_suffix`, and the
+    /// session used a bash tool call but did not use write or edit tool calls.
+    GraphModifiesFile { path_suffix: String },
     /// No two distinct Knowledge nodes in the session share a normalised name.
     KnowledgeUniqueNames,
     /// At least `min_fraction` of the session's Knowledge nodes have a non-empty summary.
