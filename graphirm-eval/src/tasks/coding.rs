@@ -109,5 +109,30 @@ pub fn tasks() -> Vec<EvalTask> {
             enable_segments: false,
             segment_filter: None,
         },
+        EvalTask {
+            id: "bash-edit-recorded".to_string(),
+            name: "Use bash to create and edit a file, verified via graph".to_string(),
+            tags: vec!["coding".to_string()],
+            prompts: vec![
+                "Using only the bash tool (do not use the write or edit tools), \
+                 create a file `notes.txt` in the current directory containing the \
+                 single line `alpha`, then change it with `sed -i 's/alpha/beta/' \
+                 notes.txt`, then reply done."
+                    .to_string(),
+            ],
+            verifier: Verifier::All(vec![
+                Verifier::FileContains {
+                    path: "notes.txt".to_string(),
+                    substring: "beta".to_string(),
+                },
+                Verifier::GraphModifiesFile {
+                    path_suffix: "notes.txt".to_string(),
+                },
+            ]),
+            max_turns: 5,
+            timeout_secs: 120,
+            enable_segments: false,
+            segment_filter: None,
+        },
     ]
 }
